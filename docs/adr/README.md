@@ -12,7 +12,7 @@
 
 | # | タイトル | 状態 |
 |---|---|---|
-| [0001](0001-project-founding.md) | プロジェクト創設 — 目的・スコープ・開発の原則 | proposed |
+| [0001](0001-project-founding.md) | プロジェクト創設 — 目的・スコープ・開発の原則 | accepted |
 | [0002](0002-architecture-principles.md) | アーキテクチャ原則 | proposed |
 
 ## 起案予定（設計フェーズ）
