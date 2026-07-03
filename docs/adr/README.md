@@ -15,9 +15,9 @@
 | [0001](0001-project-founding.md) | プロジェクト創設 — 目的・スコープ・開発の原則 | accepted |
 | [0002](0002-architecture-principles.md) | アーキテクチャ原則 | accepted |
 | [0003](0003-ui-policy.md) | UI 方針 — Blazor・デザインシステム先行・テーマ | accepted |
+| [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | proposed |
 
 ## 起案予定（設計フェーズ）
 
-- 0004: セキュリティモデル（信頼ネットワーク前提の成立条件と限界、opt-in 強化の範囲と提供時期、UI 接続層の攻撃面）
 - 0005: OSS 体裁の整備（README・CONTRIBUTING・英語話者向け導線。ルート README は早期に整備する）
 - 0006: v1.0 公開基準（機能凍結・実運用実績・文書整備・後方互換性の凍結・コード署名の 5 観点の具体化）
