@@ -28,8 +28,9 @@
 
 ## 開発体制
 
-- **オーナー / 最終承認**: YANAI Taketo（対話的に詰めるスタイル。推奨は明確に、率直な第三者評価を添える）
+- **オーナー / 最終承認**: YANAI Taketo（対話的に詰めるスタイル。推奨は明確に、率直な第三者評価を添える。質問は選択式で出す）
 - AI エージェント協働。設計文書はオーナー承認を得てから実装に着手する
+- **設計文書はペルソナレビュー制度を通す**: 5 ペルソナのサブエージェントが draft をレビューし、対話は必ず PR コメントとして GitHub に残す（チャット内で完結させない）。詳細: [docs/development/persona-review.md](docs/development/persona-review.md)
 - ブランチ戦略・コミット規約: [docs/development/conventions.md](docs/development/conventions.md)
 
 ## ドキュメントマップ（読む順）
@@ -42,6 +43,7 @@
 | 意思決定の記録 | docs/adr/ |
 | 現在形の全体設計書（設計フェーズで作成） | docs/design/ |
 | 開発規約（コミット・ブランチ・コーディング） | [docs/development/conventions.md](docs/development/conventions.md) |
+| ペルソナレビュー制度（設計対話の進め方） | [docs/development/persona-review.md](docs/development/persona-review.md) |
 
 ## 執筆スタイル
 
