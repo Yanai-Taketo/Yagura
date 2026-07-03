@@ -1,6 +1,6 @@
 # ADR-0001: プロジェクト創設 — 目的・スコープ・開発の原則
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-03
 - 決定者: YANAI Taketo
 - 関連: [docs/README.md](../README.md)（ドキュメント体系）、[docs/development/persona-review.md](../development/persona-review.md)（設計レビュー制度）
