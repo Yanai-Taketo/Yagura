@@ -1,6 +1,6 @@
 # ADR-0003: UI 方針 — Blazor・デザインシステム先行・テーマ
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-04
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)（導入体験の原則・言語ポリシー）、[ADR-0002](0002-architecture-principles.md)（単一プロセス構成・セットアップウィザード・帰結の UI 資源競合）
