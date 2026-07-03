@@ -1,6 +1,6 @@
 # ADR-0002: アーキテクチャ原則
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-03
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)（導入体験の原則・品質の原則の実装方針）、[全体設計書](../design/README.md)
