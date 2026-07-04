@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Yagura.Host.Configuration;
 using Yagura.Ingestion;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Udp;
@@ -12,52 +13,55 @@ namespace Yagura.Host;
 
 public static class Program
 {
-    /// <summary>
-    /// データルートを上書きする環境変数名。本格的な設定基盤（JSON 設定・ウィザード）は M3。
-    /// </summary>
-    public const string DataRootEnvironmentVariable = "YAGURA_DATAROOT";
-
-    /// <summary>
-    /// UDP 受信ポートを上書きする環境変数名。<c>0</c> を指定すると OS がポートを採番する
-    /// （テスト用。<see cref="IngestionPipeline.BoundPort"/> で実ポートを取得できる）。
-    /// </summary>
-    public const string UdpPortEnvironmentVariable = "YAGURA_UDP_PORT";
-
-    /// <summary>
-    /// 閲覧 HTTP リスナのポートを上書きする環境変数名。<c>0</c> を指定すると OS がポートを
-    /// 採番する（テスト用）。
-    /// </summary>
-    public const string HttpPortEnvironmentVariable = "YAGURA_HTTP_PORT";
-
-    /// <summary>
-    /// 閲覧 HTTP リスナの既定ポート（暫定値）。
-    /// </summary>
-    /// <remarks>
-    /// <b>CF-1（configuration.md での既定確定）待ちの暫定値</b>。設計上の既定は「LAN 公開」
-    /// だが、閲覧/管理リスナの分離と loopback 束縛の不変条件テストは M6 の作業であり、
-    /// それまでは安全側として localhost（127.0.0.1）束縛とする。ポート番号 8514 自体も
-    /// 暫定であり、syslog の既定ポート 514 との対応（8 を前置しただけ）以上の根拠はまだない。
-    /// </remarks>
-    public const int DefaultHttpPort = 8514;
-
     public static async Task Main(string[] args)
     {
-        var dataRoot = ResolveDataRoot();
+        // データルートは設定ファイル自体の置き場所を決める入力のため、ファイル読み込みに
+        // 先立って解決する（configuration.md §2。環境変数 > 既定値 %ProgramData%\Yagura）。
+        var dataRoot = YaguraConfigurationLoader.ResolveDataRoot();
         Directory.CreateDirectory(dataRoot);
 
-        var databasePath = Path.Combine(dataRoot, "yagura.db");
+        // 設定基盤（M3-1）: データルート直下の JSON 設定ファイル（既定 yagura.json）を
+        // 読み込み、検証・3 分類の適用・環境変数上書きを経た最終設定を得る。設定ファイルが
+        // 存在しない場合は既定値のみで起動する（ゼロ設定ファーストラン）。
+        // ここで使うロガーは DI コンテナ構築前の一時的なものであり、Generic Host 標準の
+        // コンソールロガーと同じ出力先（標準出力）に揃える。
+        using var bootstrapLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole());
+        var configurationLogger = bootstrapLoggerFactory.CreateLogger("Yagura.Host.Configuration");
+
+        ConfigurationLoadResult configurationLoadResult;
+        try
+        {
+            configurationLoadResult = YaguraConfigurationLoader.Load(dataRoot, configurationLogger);
+        }
+        catch (ConfigurationValidationException ex)
+        {
+            // §1「起動失敗」分類: 受信の成立に不可欠なキーが不正な場合はホスト起動を失敗させる。
+            configurationLogger.LogCritical(ex, "設定ファイルの検証に失敗したため起動を中止します。");
+            throw;
+        }
+
+        if (configurationLoadResult.UnknownKeys.Count > 0)
+        {
+            configurationLogger.LogWarning(
+                "設定ファイルに未知のキーが {Count} 件見つかりました: {Keys}",
+                configurationLoadResult.UnknownKeys.Count,
+                string.Join(", ", configurationLoadResult.UnknownKeys));
+        }
+
+        var resolvedConfiguration = configurationLoadResult.Configuration;
+        var databasePath = Path.Combine(dataRoot, resolvedConfiguration.SqliteFileName);
 
         var builder = WebApplication.CreateBuilder(args);
 
-        // 閲覧リスナは暫定で loopback 束縛のみ（CF-1 確定待ち。上記 DefaultHttpPort のコメント参照）。
-        var httpPort = ResolveHttpPort();
-        builder.WebHost.UseUrls($"http://127.0.0.1:{httpPort}");
+        // 閲覧リスナは暫定で loopback 束縛のみ（CF-1 確定待ち。YaguraHostEnvironment.DefaultHttpPort
+        // のコメント参照）。
+        builder.WebHost.UseUrls($"http://127.0.0.1:{resolvedConfiguration.HttpPort}");
 
         builder.Services.AddSingleton<ILogStore>(_ => new SqliteLogStore(databasePath));
         builder.Services.AddSingleton(new UdpSyslogListenerOptions
         {
-            BindAddress = UdpSyslogListenerOptions.DefaultBindAddress,
-            Port = ResolveUdpPort(),
+            BindAddress = resolvedConfiguration.UdpBindAddress,
+            Port = resolvedConfiguration.UdpPort,
         });
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
@@ -94,53 +98,5 @@ public static class Program
         // 実際に「UDP listener started」ログが「Now listening on:」より先に出ることも
         // 実証している。
         await app.RunAsync().ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// データルートを解決する。既定は <c>%ProgramData%\Yagura</c>（configuration.md §2）。
-    /// <see cref="DataRootEnvironmentVariable"/> 環境変数で上書きできる。
-    /// </summary>
-    private static string ResolveDataRoot()
-    {
-        var overridden = Environment.GetEnvironmentVariable(DataRootEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(overridden))
-        {
-            return overridden;
-        }
-
-        var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        return Path.Combine(programData, "Yagura");
-    }
-
-    /// <summary>
-    /// UDP 受信ポートを解決する。<see cref="UdpPortEnvironmentVariable"/> 環境変数で
-    /// 上書きできる（<c>0</c> 指定で OS 採番。E2E テスト用）。未指定時は
-    /// <see cref="UdpSyslogListenerOptions.DefaultPort"/>。
-    /// </summary>
-    private static int ResolveUdpPort()
-    {
-        var overridden = Environment.GetEnvironmentVariable(UdpPortEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(overridden) && int.TryParse(overridden, out var port))
-        {
-            return port;
-        }
-
-        return UdpSyslogListenerOptions.DefaultPort;
-    }
-
-    /// <summary>
-    /// 閲覧 HTTP リスナのポートを解決する。<see cref="HttpPortEnvironmentVariable"/>
-    /// 環境変数で上書きできる（<c>0</c> 指定で OS 採番。E2E テスト用）。未指定時は
-    /// <see cref="DefaultHttpPort"/>。
-    /// </summary>
-    private static int ResolveHttpPort()
-    {
-        var overridden = Environment.GetEnvironmentVariable(HttpPortEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(overridden) && int.TryParse(overridden, out var port))
-        {
-            return port;
-        }
-
-        return DefaultHttpPort;
     }
 }

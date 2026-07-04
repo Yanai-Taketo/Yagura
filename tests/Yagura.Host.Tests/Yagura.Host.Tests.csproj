@@ -6,9 +6,19 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <!--
+    設定基盤（M3-1）のテストは Microsoft.Extensions.Configuration / Logging の型を直接使う。
+    Yagura.Web.csproj と同じ理由で FrameworkReference により Microsoft.AspNetCore.App から
+    取得する（NuGet パッケージとして参照すると Yagura.Host 経由の推移的参照と重複し NU1510 になる）。
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
