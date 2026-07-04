@@ -1,4 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<!--
+  SDK は Microsoft.NET.Sdk.Web を採用する（Microsoft.NET.Sdk + FrameworkReference 手動追加ではなく）。
+  理由: Yagura.Host は Kestrel を直接ホストする実行可能ファイルであり、Sdk.Web は
+  Microsoft.AspNetCore.App への FrameworkReference を暗黙に含むほか、Web ホスト向けの
+  既定コンテンツ・publish 設定（例: 静的 Web アセットパイプライン）を伴う本来の SDK である。
+  Yagura.Web（Sdk.Razor + 明示 FrameworkReference）は「ホストされるコンポーネントライブラリ」
+  という別の役割のため Sdk.Web を使わない——両者の SDK が異なるのは役割の違いによるもので、
+  対称性を欠く選択ではない。
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
     <ProjectReference Include="..\Yagura.Ingestion\Yagura.Ingestion.csproj" />
@@ -6,9 +15,12 @@
     <ProjectReference Include="..\Yagura.Web\Yagura.Web.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
-  </ItemGroup>
+  <!--
+    Microsoft.Extensions.Hosting への明示 PackageReference は削除した。Sdk.Web が
+    FrameworkReference 経由で Microsoft.AspNetCore.App（Generic Host 機能を含む）を
+    もたらすため、NuGet パッケージとしての参照は NU1510（不要な依存関係）で警告になる
+    （TreatWarningsAsErrors=true のためビルド不可）。
+  -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>

@@ -1,0 +1,87 @@
+﻿@page "/"
+@* 全画面 Interactive Server 単一モード（ADR-0003 決定 1。方式を混在させない）。
+   本ページ自体に対話機能はまだないが、レンダリングモードは全画面で統一する。
+   prerender は既定の有効のまま——初回 HTTP 応答の HTML に描画結果が含まれる。 *@
+@rendermode InteractiveServer
+@inject ILogStore LogStore
+
+<PageTitle>Yagura — 最新ログ</PageTitle>
+
+<h1>最新ログ</h1>
+
+@if (_records is null)
+{
+    <p>読み込み中です。</p>
+}
+else if (_records.Count == 0)
+{
+    <p>まだログがありません。</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>受信時刻 (UTC)</th>
+                <th>送信元</th>
+                <th>重大度</th>
+                <th>分類 (ファシリティ)</th>
+                <th>メッセージ</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var record in _records)
+            {
+                <tr>
+                    <td>@FormatReceivedAtUtc(record.ReceivedAt)</td>
+                    <td>@record.SourceAddress</td>
+                    <td>@FormatSeverity(record)</td>
+                    <td>@FormatFacility(record)</td>
+                    <td>@FormatMessage(record)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    // M2-3 時点の暫定値。QueryLatestAsync の上限件数・タイムアウトは
+    // architecture.md §6 / M-10（実測待ち: 結果上限 10,000 件・タイムアウト 30 秒は
+    // 検索一般の仮値であり、本画面の「最新 N 件」表示には別途の実測が要る）を待つ。
+    // 本画面はさしあたり上限 50 件・タイムアウト 5 秒の固定値で表示する。
+    private const int MaxRecords = 50;
+    private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(5);
+
+    private IReadOnlyList<LogRecordSummary>? _records;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _records = await LogStore.QueryLatestAsync(MaxRecords, QueryTimeout);
+    }
+
+    // 時刻表示の契約（ui.md §6）: 本来は「サーバの OS タイムゾーンでローカル化しオフセットを
+    // 明示する」だが、M2-3 は最小閲覧であり、タイムゾーン変換ロジックの導入は M8 の
+    // デザインシステム反映と合わせて行う。ここでは UTC であることを明示したまま表示する
+    // （変換なしの暫定表示。iso 8601 相当の一意な文字列）。
+    private static string FormatReceivedAtUtc(DateTimeOffset receivedAt) =>
+        $"{receivedAt.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC";
+
+    // 用語対応表（ui.md §7.2）: severity → 「重大度」。解析失敗レコードは値を持たないため
+    // 空欄ではなく、ParseFailed の専用表示に譲る（メッセージ列と同じ注記をここでも出さない
+    // よう、値が無いことのみを示す）。
+    private static string FormatSeverity(LogRecordSummary record) =>
+        record.Severity?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "—";
+
+    // 用語対応表（ui.md §7.2）: facility → 「分類 (ファシリティ)」。
+    private static string FormatFacility(LogRecordSummary record) =>
+        record.Facility?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "—";
+
+    // 用語対応表（ui.md §7.2）: 解析失敗（raw 保存） →
+    // 「形式を解釈できなかったログ（原文のまま保存しています)」。
+    // Raw 自体は一覧に表示しない（一覧は軽量射影のまま。LogRecordSummary は Raw を持たない）。
+    private static string FormatMessage(LogRecordSummary record) => record.ParseStatus switch
+    {
+        ParseStatus.ParseFailed => "形式を解釈できなかったログ（原文のまま保存しています）",
+        _ => record.Message ?? string.Empty,
+    };
+}

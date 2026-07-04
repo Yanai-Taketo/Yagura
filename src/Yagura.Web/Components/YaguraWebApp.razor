@@ -1,0 +1,26 @@
+﻿@namespace Yagura.Web.Components
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Yagura</title>
+    <base href="/" />
+    <!-- 各ページの <PageTitle> がここへ描画され、上の既定 <title> を置き換える。 -->
+    <HeadOutlet />
+</head>
+<body>
+    <!--
+        M2-3 時点はページ固有 CSS を持ち込まない最小骨格（ui.md §1「ページ固有 CSS・JS 原則禁止」）。
+        デザイントークン・共通レイアウト（アプリバー・左ナビゲーション）は M8 で導入する。
+    -->
+    <YaguraWebRoot />
+    <!--
+        Interactive Server（ADR-0003 決定 1）の circuit 確立に必要なフレームワーク同梱
+        スクリプト。ASP.NET Core 本体が配信するアセットであり、ADR-0003 決定 1 の
+        「JS を原則手書きしない・npm/CDN 非依存」に反しない。
+    -->
+    <script src="_framework/blazor.web.js"></script>
+</body>
+</html>

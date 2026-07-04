@@ -1,0 +1,10 @@
+﻿@namespace Yagura.Web.Components
+
+<Router AppAssembly="typeof(YaguraWebRoot).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" />
+    </Found>
+    <NotFound>
+        <p>ページが見つかりません。</p>
+    </NotFound>
+</Router>
