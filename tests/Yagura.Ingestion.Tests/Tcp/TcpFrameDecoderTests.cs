@@ -120,6 +120,18 @@ public sealed class TcpFrameDecoderTests
     }
 
     [Fact]
+    public void Push_OctetCounting_MessageLengthOverflowsInt_ThrowsFrameSizeExceededNotOverflow()
+    {
+        var decoder = new TcpFrameDecoder();
+
+        // 10 桁以内でも int.MaxValue を超える MSG-LEN（例: 9999999999)がある。
+        // OverflowException のまま漏れると TcpSyslogListener の安全側経路（切断 +
+        // Incomplete 退避）を通らず接続タスクが fault し、StopAsync の Task.WhenAll で
+        // 停止処理が壊れるため、TcpFrameSizeExceededException へ変換されることを固定化する。
+        Assert.Throws<TcpFrameSizeExceededException>(() => decoder.Push(Ascii("9999999999 ")));
+    }
+
+    [Fact]
     public void Push_OctetCounting_BodyExceedsMaxAcrossChunks_ThrowsBeforeUnboundedGrowth()
     {
         // MSG-LEN 自体は上限以下だが、本体を送り切る前に別の経路で上限超過を検出できること

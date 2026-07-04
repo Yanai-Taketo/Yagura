@@ -245,13 +245,26 @@ public sealed class TcpFrameDecoder
 
     private static int ParseMessageLength(List<byte> digits)
     {
-        var length = 0;
-        foreach (var b in digits)
+        try
         {
-            length = checked(length * 10 + (b - (byte)'0'));
-        }
+            var length = 0;
+            foreach (var b in digits)
+            {
+                length = checked(length * 10 + (b - (byte)'0'));
+            }
 
-        return length;
+            return length;
+        }
+        catch (OverflowException)
+        {
+            // MaxLengthDigits(10 桁)以内でも int.MaxValue を超える値はあり得る
+            //（例: "9999999999"）。OverflowException のまま伝播させると、呼び出し側の
+            // 「サイズ超過 → 切断 + 読みかけデータの Incomplete 退避」という安全側経路
+            //（TcpSyslogListener の catch）を通らず、接続タスクの fault として
+            // StopAsync の Task.WhenAll まで届いて停止処理を壊すため、ここで変換する。
+            throw new TcpFrameSizeExceededException(
+                "octet-counting の MSG-LEN が int の範囲を超えている（不正なフレーム）。");
+        }
     }
 
     private void AppendChecked(ArrayBufferWriter<byte> buffer, ReadOnlySpan<byte> data)
