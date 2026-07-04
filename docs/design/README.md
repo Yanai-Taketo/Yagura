@@ -6,6 +6,7 @@
 - database.md — DB スキーマと provider 抽象
 - configuration.md — 設定スキーマ（additive-only 原則）
 - ui.md — デザインシステムと画面設計
+- セキュリティ設計文書（security.md 予定。ファイル名・置き場は起筆時に確定） — loopback 束縛の CI 回帰テスト仕様、circuit 上限、監査記録 ほか
 - operations.md — セットアップ・運用手順
 - [homework.md](homework.md) — ADR・レビューから委任された宿題の追跡一覧（起筆時にここから引き取る）
 
