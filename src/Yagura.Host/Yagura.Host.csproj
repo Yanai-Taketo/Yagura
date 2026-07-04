@@ -16,6 +16,14 @@
   </ItemGroup>
 
   <!--
+    設定基盤（M3-1。configuration.md §1・§2）: Microsoft.Extensions.Configuration /
+    .Binder / .Json / Microsoft.Extensions.Options への明示 PackageReference は追加しない。
+    Microsoft.Extensions.Hosting と同じ理由（直下コメント参照）で、Sdk.Web が
+    FrameworkReference 経由でもたらす Microsoft.AspNetCore.App にこれらが既に含まれるため、
+    NuGet パッケージとして参照すると NU1510（不要な依存関係）で警告 → ビルド不可になる。
+    実装は Yagura.Ingestion.Udp と同様、共有フレームワークが提供する API をそのまま使う
+    （Configuration/YaguraConfigurationLoader.cs 参照）。
+
     Microsoft.Extensions.Hosting への明示 PackageReference は削除した。Sdk.Web が
     FrameworkReference 経由で Microsoft.AspNetCore.App（Generic Host 機能を含む）を
     もたらすため、NuGet パッケージとしての参照は NU1510（不要な依存関係）で警告になる
