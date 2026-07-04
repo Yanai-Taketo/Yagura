@@ -2,7 +2,7 @@
 
 システムの「今の姿」を記述する層。設計フェーズで以下の構成を予定。
 
-- architecture.md — 全体アーキテクチャ（プロセス構成、受信パイプライン、永続化、UI）
+- [architecture.md](architecture.md) — 全体アーキテクチャ（プロセス構成、受信パイプライン、信頼性機構、観測性、性能）
 - database.md — DB スキーマと provider 抽象
 - configuration.md — 設定スキーマ（additive-only 原則）
 - ui.md — デザインシステムと画面設計
