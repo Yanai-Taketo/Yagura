@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
 
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
@@ -6,9 +6,18 @@
 
   <ItemGroup>
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+
+    <!--
+      Microsoft.Data.Sqlite 10.0.9 の最小要求 2.1.11 には既知の脆弱性
+      CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) があり NU1903 でブロックされるため、
+      修正版 3.50.3 / 3.0.3 へ明示 pin する (検証日 2026-07-05)。
+    -->
+    <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.3" />
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
   </ItemGroup>
 
 </Project>

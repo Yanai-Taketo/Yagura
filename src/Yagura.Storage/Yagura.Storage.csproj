@@ -1,3 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <!--
+      Microsoft.Data.Sqlite が許容する SQLitePCLRaw.core の最小版 (2.1.11) には既知の高深刻度
+      脆弱性 CVE-2025-6965 がある。CPM の PackageVersion 引き上げを実際に有効化するため、
+      直接 PackageReference として明示する（詳細は Directory.Packages.props のコメント参照）。
+    -->
+    <PackageReference Include="SQLitePCLRaw.core" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
+  </ItemGroup>
+
 </Project>
