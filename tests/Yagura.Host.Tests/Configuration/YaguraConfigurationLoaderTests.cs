@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
+using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 
 namespace Yagura.Host.Tests.Configuration;
@@ -62,6 +63,8 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Equal(UdpSyslogListenerOptions.DefaultBindAddress, result.Configuration.UdpBindAddress);
         Assert.Equal(UdpSyslogListenerOptions.DefaultPort, result.Configuration.UdpPort);
+        Assert.Equal(TcpSyslogListenerOptions.DefaultBindAddress, result.Configuration.TcpBindAddress);
+        Assert.Equal(TcpSyslogListenerOptions.DefaultPort, result.Configuration.TcpPort);
         Assert.Equal(YaguraHostEnvironment.DefaultHttpPort, result.Configuration.HttpPort);
         Assert.Equal("yagura.db", result.Configuration.SqliteFileName);
         Assert.Empty(result.Warnings);
@@ -117,6 +120,18 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Load_EnvironmentVariableSetsTcpPort_NoFile_EnvironmentVariableWins()
+    {
+        // M4-1: YAGURA_TCP_PORT は UDP と同じ優先順位（環境変数 > 設定ファイル > 既定値）。
+        SetEnvironmentVariable(YaguraHostEnvironment.TcpPortEnvironmentVariable, "5141");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(5141, result.Configuration.TcpPort);
+    }
+
+    [Fact]
     public void ResolveDataRoot_EnvironmentVariableSet_OverridesDefault()
     {
         var overridden = Path.Combine(Path.GetTempPath(), $"yagura-dataroot-test-{Guid.NewGuid():N}");
@@ -165,6 +180,34 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     public void Load_UdpPortOutOfRangeViaEnvironmentVariable_ThrowsConfigurationValidationException()
     {
         SetEnvironmentVariable(YaguraHostEnvironment.UdpPortEnvironmentVariable, "-1");
+        var logger = new FakeLogger();
+
+        Assert.Throws<ConfigurationValidationException>(() => YaguraConfigurationLoader.Load(_dataRoot, logger));
+    }
+
+    [Fact]
+    public void Load_TcpPortOutOfRangeInFile_ThrowsConfigurationValidationException()
+    {
+        // M4-1: TCP ポートは UDP と同じ「起動失敗」分類（受信の成立に不可欠）。
+        WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "Port": "70000" } } }""");
+        var logger = new FakeLogger();
+
+        Assert.Throws<ConfigurationValidationException>(() => YaguraConfigurationLoader.Load(_dataRoot, logger));
+    }
+
+    [Fact]
+    public void Load_TcpPortNotNumericInFile_ThrowsConfigurationValidationException()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "Port": "not-a-port" } } }""");
+        var logger = new FakeLogger();
+
+        Assert.Throws<ConfigurationValidationException>(() => YaguraConfigurationLoader.Load(_dataRoot, logger));
+    }
+
+    [Fact]
+    public void Load_TcpPortOutOfRangeViaEnvironmentVariable_ThrowsConfigurationValidationException()
+    {
+        SetEnvironmentVariable(YaguraHostEnvironment.TcpPortEnvironmentVariable, "-1");
         var logger = new FakeLogger();
 
         Assert.Throws<ConfigurationValidationException>(() => YaguraConfigurationLoader.Load(_dataRoot, logger));
@@ -309,6 +352,47 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         Assert.Empty(result.Warnings);
     }
 
+    [Fact]
+    public void Load_TcpBindAddressMalformedInFile_FallsBackToLoopbackAndCollectsWarning()
+    {
+        // M4-1: TCP bind アドレスは UDP と同じ「縮小側で継続」分類。
+        WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "BindAddress": "not-an-ip-address" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("127.0.0.1", result.Configuration.TcpBindAddress);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:Tcp:BindAddress", warning.Key);
+        Assert.Equal("not-an-ip-address", warning.InvalidValue);
+        Assert.Equal("127.0.0.1", warning.AppliedValue);
+    }
+
+    [Fact]
+    public void Load_TcpBindAddressValidSpecificAddress_IsAccepted()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "BindAddress": "192.168.1.10" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("192.168.1.10", result.Configuration.TcpBindAddress);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_TcpBindAddressAllInterfaces_IsAcceptedAsDefault()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "BindAddress": "0.0.0.0" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("0.0.0.0", result.Configuration.TcpBindAddress);
+        Assert.Empty(result.Warnings);
+    }
+
     // ------------------------------------------------------------------
     // 未知キーの検出
     // ------------------------------------------------------------------
@@ -336,7 +420,10 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         WriteConfigurationFile(
             """
             {
-              "Ingestion": { "Udp": { "BindAddress": "0.0.0.0", "Port": "514" } },
+              "Ingestion": {
+                "Udp": { "BindAddress": "0.0.0.0", "Port": "514" },
+                "Tcp": { "BindAddress": "0.0.0.0", "Port": "514" }
+              },
               "Viewer": { "HttpPort": "8514" },
               "Storage": { "SqliteFileName": "custom.db" }
             }

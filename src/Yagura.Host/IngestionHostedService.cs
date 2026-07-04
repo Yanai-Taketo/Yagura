@@ -41,8 +41,10 @@ public sealed class IngestionHostedService : IHostedService
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         // 手順 2（§1.2）: 受信ソケットを開き、受信を開始する。DB 初期化より先に行う。
+        // UDP・TCP は同時に開始する（M4-1 依頼「起動順序: UDP と同時（受信先行の一部）」）。
         await _pipeline.StartListenerAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation("UDP syslog listener started on port {Port}.", _pipeline.BoundPort);
+        _logger.LogInformation("TCP syslog listener started on port {Port}.", _pipeline.TcpBoundPort);
 
         // 手順 3（§1.2）: DB provider を初期化する。完了までの間は Q1・Q2 が緩衝になる
         // （スプールへの退避は M4。M2 時点は Q2 の容量とバックプレッシャで持ちこたえる）。

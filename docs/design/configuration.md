@@ -122,10 +122,12 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 |---|---|---|---|
 | `Ingestion:Udp:BindAddress` | 受信 | 再起動（目標はリスナ再構成。CF-4 で無瞬断適用を特定後に更新） | 縮小側で継続（loopback へ縮小） |
 | `Ingestion:Udp:Port` | 受信 | 再起動（同上） | **起動失敗**（受信の成立に不可欠） |
+| `Ingestion:Tcp:BindAddress` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | 縮小側で継続（loopback へ縮小） |
+| `Ingestion:Tcp:Port` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | **起動失敗**（受信の成立に不可欠） |
 | `Viewer:HttpPort` | UI | 再起動（同上） | 既定値で継続 |
 | `Storage:SqliteFileName` | 永続化 | 再起動 | 既定値で継続 |
 
-環境変数 `YAGURA_DATAROOT` / `YAGURA_UDP_PORT` / `YAGURA_HTTP_PORT` は上書き手段（優先順位: 環境変数 > 設定ファイル > 既定値）。
+環境変数 `YAGURA_DATAROOT` / `YAGURA_UDP_PORT` / `YAGURA_TCP_PORT`（M4-1 で追加） / `YAGURA_HTTP_PORT` は上書き手段（優先順位: 環境変数 > 設定ファイル > 既定値）。
 
 **設定キー追加の規約**（外部貢献を含む。CONTRIBUTING からも参照する）:
 

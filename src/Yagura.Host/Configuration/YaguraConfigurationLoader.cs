@@ -2,6 +2,7 @@
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 
 namespace Yagura.Host.Configuration;
@@ -19,8 +20,9 @@ namespace Yagura.Host.Configuration;
 /// </para>
 /// <para>
 /// <b>優先順位</b>: 環境変数 &gt; 設定ファイル &gt; 既定値（依頼のとおり）。環境変数は
-/// 既存の <c>YAGURA_DATAROOT</c> / <c>YAGURA_HTTP_PORT</c> / <c>YAGURA_UDP_PORT</c> の
-/// 3 つのみを上書き手段として維持する。これらはフラットな名前であり .NET 構成システムの
+/// <c>YAGURA_DATAROOT</c> / <c>YAGURA_HTTP_PORT</c> / <c>YAGURA_UDP_PORT</c> /
+/// <c>YAGURA_TCP_PORT</c>（M4-1 で追加）の 4 つを上書き手段として維持する。これらは
+/// フラットな名前であり .NET 構成システムの
 /// 標準 <c>AddEnvironmentVariables</c>（<c>Section__Key</c> 規約）には従わないため、
 /// <see cref="IConfigurationBuilder"/> に環境変数プロバイダを追加するのではなく、
 /// ファイルからバインドした値を本クラスが個別に上書きする。
@@ -51,6 +53,8 @@ public static class YaguraConfigurationLoader
     {
         "Ingestion:Udp:BindAddress",
         "Ingestion:Udp:Port",
+        "Ingestion:Tcp:BindAddress",
+        "Ingestion:Tcp:Port",
         "Viewer:HttpPort",
         "Storage:SqliteFileName",
     };
@@ -94,6 +98,12 @@ public static class YaguraConfigurationLoader
         // --- 受信: UDP ポート（§1「起動失敗」——受信の成立に不可欠なキー） ---
         var udpPort = ResolveUdpPort(options);
 
+        // --- 受信: TCP bind アドレス（§1「縮小側で継続」。UDP と同じ分類。M4-1） ---
+        var tcpBindAddress = ResolveTcpBindAddress(options, warnings);
+
+        // --- 受信: TCP ポート（§1「起動失敗」——UDP と同じ分類。M4-1） ---
+        var tcpPort = ResolveTcpPort(options);
+
         // --- UI: 閲覧 HTTP ポート（§1「既定値で継続」） ---
         var httpPort = ResolveHttpPort(options, warnings);
 
@@ -114,6 +124,8 @@ public static class YaguraConfigurationLoader
             DataRoot: dataRoot,
             UdpBindAddress: udpBindAddress,
             UdpPort: udpPort,
+            TcpBindAddress: tcpBindAddress,
+            TcpPort: tcpPort,
             HttpPort: httpPort,
             SqliteFileName: sqliteFileName);
 
@@ -211,6 +223,53 @@ public static class YaguraConfigurationLoader
         }
 
         return ParsePortOrThrow(raw, "Ingestion:Udp:Port", "設定ファイル");
+    }
+
+    /// <summary>
+    /// TCP bind アドレスを解決する（M4-1）。UDP と同じ分類（§1「縮小側で継続」）を適用する:
+    /// 環境変数による上書きは現時点で提供しない（既存方針を踏襲）。不正値は loopback へ縮小する。
+    /// </summary>
+    private static string ResolveTcpBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Ingestion?.Tcp?.BindAddress;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return TcpSyslogListenerOptions.DefaultBindAddress;
+        }
+
+        if (raw == TcpSyslogListenerOptions.DefaultBindAddress || IPAddress.TryParse(raw, out _))
+        {
+            return raw;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Ingestion:Tcp:BindAddress",
+            InvalidValue: raw,
+            AppliedValue: IPAddress.Loopback.ToString(),
+            Reason: "bind 先アドレスの形式が不正なため安全側（loopback）へ縮小"));
+
+        return IPAddress.Loopback.ToString();
+    }
+
+    /// <summary>
+    /// TCP 受信ポートを解決する（環境変数 <see cref="YaguraHostEnvironment.TcpPortEnvironmentVariable"/>
+    /// が最優先。M4-1）。UDP と同じ分類（§1「起動失敗」——受信の成立に不可欠なキー）を適用する。
+    /// </summary>
+    private static int ResolveTcpPort(YaguraConfigurationOptions options)
+    {
+        var envOverride = Environment.GetEnvironmentVariable(YaguraHostEnvironment.TcpPortEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(envOverride))
+        {
+            return ParsePortOrThrow(envOverride, "Ingestion:Tcp:Port", "環境変数 " + YaguraHostEnvironment.TcpPortEnvironmentVariable);
+        }
+
+        var raw = options.Ingestion?.Tcp?.Port;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return TcpSyslogListenerOptions.DefaultPort;
+        }
+
+        return ParsePortOrThrow(raw, "Ingestion:Tcp:Port", "設定ファイル");
     }
 
     /// <summary>

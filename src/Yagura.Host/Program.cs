@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.EventLog;
 using Yagura.Host.Configuration;
 using Yagura.Ingestion;
 using Yagura.Ingestion.FlowControl;
+using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
@@ -148,8 +149,14 @@ public static class Program
             BindAddress = resolvedConfiguration.UdpBindAddress,
             Port = resolvedConfiguration.UdpPort,
         });
+        builder.Services.AddSingleton(new TcpSyslogListenerOptions
+        {
+            BindAddress = resolvedConfiguration.TcpBindAddress,
+            Port = resolvedConfiguration.TcpPort,
+        });
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
+            sp.GetRequiredService<TcpSyslogListenerOptions>(),
             sp.GetRequiredService<ILogStore>(),
             new NoopIngressGate(),
             sp.GetRequiredService<ILoggerFactory>()));
