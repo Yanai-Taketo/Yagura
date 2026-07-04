@@ -17,6 +17,7 @@
 ## PR の要件
 
 - 機能を追加・変更する PR は、**対応する全体設計書（docs/design/）の更新を同じ PR に含める**
+- 機能・状態の記述に影響する PR は、**入口文書（README・SECURITY・CONTRIBUTING）の該当箇所も同じ PR で更新する**（入口文書は「常に現在形」の層。ADR-0005）
 - 外部依存を追加・更新する PR は、その日の最新版をライブ検証した記録を body に 1 行残す:
   `Vendored: <pkg> <ver> (verified <cmd> = <ver>, YYYY-MM-DD)`
   （自分の知識にある「最新」を検証なしで最新と書かない）
