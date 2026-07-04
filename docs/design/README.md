@@ -7,5 +7,6 @@
 - configuration.md — 設定スキーマ（additive-only 原則）
 - ui.md — デザインシステムと画面設計
 - operations.md — セットアップ・運用手順
+- [homework.md](homework.md) — ADR・レビューから委任された宿題の追跡一覧（起筆時にここから引き取る）
 
 **機能を追加・変更する PR は、この層の該当文書の更新を同じ PR に含めること**（docs/README.md 参照）。
