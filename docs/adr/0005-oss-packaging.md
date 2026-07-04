@@ -1,6 +1,6 @@
 # ADR-0005: OSS 体裁 — README・貢献導線・脆弱性報告窓口
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-04
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md) 決定 6・7（ライセンス・言語ポリシー）、[ADR-0004](0004-security-model.md) 委任事項（脆弱性報告窓口）
