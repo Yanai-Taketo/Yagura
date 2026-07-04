@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
@@ -101,6 +102,122 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
         Assert.NotNull(found);
         Assert.Equal(ParseStatus.ParseFailed, found!.ParseStatus);
         Assert.Null(found.Message);
+    }
+
+    [Fact]
+    public async Task SentTcpMessage_NonTransparentFraming_ArrivesInSqliteStore_ParsedWithFacilityAndSeverity()
+    {
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            _logStore);
+
+        await pipeline.StartListenerAsync();
+        pipeline.StartConsumers();
+
+        var message = $"tcp-integration-test-{Guid.NewGuid():N}";
+
+        using (var client = new TcpClient())
+        {
+            await client.ConnectAsync(IPAddress.Loopback, pipeline.TcpBoundPort);
+            var stream = client.GetStream();
+            var payload = Encoding.ASCII.GetBytes($"<34>{message}\n");
+            await stream.WriteAsync(payload);
+            await stream.FlushAsync();
+        }
+
+        var found = await PollUntilAsync(
+            async () =>
+            {
+                var results = await _logStore.QueryLatestAsync(limit: 50, timeout: TimeSpan.FromSeconds(5));
+                return results.FirstOrDefault(r => r.Message == message);
+            },
+            timeout: TimeSpan.FromSeconds(10));
+
+        await pipeline.StopAsync();
+
+        Assert.NotNull(found);
+        Assert.Equal(ParseStatus.Parsed, found!.ParseStatus);
+        Assert.Equal(4, found.Facility);
+        Assert.Equal(2, found.Severity);
+        Assert.Equal(Protocol.Tcp, found.Protocol);
+    }
+
+    [Fact]
+    public async Task SentTcpMessage_OctetCountingFraming_ArrivesInSqliteStore()
+    {
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            _logStore);
+
+        await pipeline.StartListenerAsync();
+        pipeline.StartConsumers();
+
+        var message = $"tcp-octet-counting-{Guid.NewGuid():N}";
+        var syslogMessage = $"<34>{message}";
+        var frame = Encoding.ASCII.GetBytes($"{Encoding.ASCII.GetByteCount(syslogMessage)} {syslogMessage}");
+
+        using (var client = new TcpClient())
+        {
+            await client.ConnectAsync(IPAddress.Loopback, pipeline.TcpBoundPort);
+            var stream = client.GetStream();
+            await stream.WriteAsync(frame);
+            await stream.FlushAsync();
+        }
+
+        var found = await PollUntilAsync(
+            async () =>
+            {
+                var results = await _logStore.QueryLatestAsync(limit: 50, timeout: TimeSpan.FromSeconds(5));
+                return results.FirstOrDefault(r => r.Message == message);
+            },
+            timeout: TimeSpan.FromSeconds(10));
+
+        await pipeline.StopAsync();
+
+        Assert.NotNull(found);
+        Assert.Equal(ParseStatus.Parsed, found!.ParseStatus);
+        Assert.Equal(Protocol.Tcp, found.Protocol);
+    }
+
+    [Fact]
+    public async Task SentTcpMessage_DisconnectedBeforeTerminator_ArrivesAsIncomplete()
+    {
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            _logStore);
+
+        await pipeline.StartListenerAsync();
+        pipeline.StartConsumers();
+
+        var marker = $"tcp-incomplete-{Guid.NewGuid():N}";
+
+        using (var client = new TcpClient())
+        {
+            await client.ConnectAsync(IPAddress.Loopback, pipeline.TcpBoundPort);
+            var stream = client.GetStream();
+            // LF を送らないまま切断する（database.md §2.1 の Incomplete 経路）。
+            var payload = Encoding.ASCII.GetBytes($"<34>{marker}");
+            await stream.WriteAsync(payload);
+            await stream.FlushAsync();
+            client.Client.Shutdown(SocketShutdown.Send);
+        }
+
+        var found = await PollUntilAsync(
+            async () =>
+            {
+                var results = await _logStore.QueryLatestAsync(limit: 50, timeout: TimeSpan.FromSeconds(5));
+                return results.FirstOrDefault(r => r.ParseStatus == ParseStatus.Incomplete);
+            },
+            timeout: TimeSpan.FromSeconds(10));
+
+        await pipeline.StopAsync();
+
+        Assert.NotNull(found);
+        Assert.Equal(ParseStatus.Incomplete, found!.ParseStatus);
+        Assert.Equal(Protocol.Tcp, found.Protocol);
     }
 
     /// <summary>

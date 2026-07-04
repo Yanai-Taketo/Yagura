@@ -33,7 +33,19 @@ public sealed class YaguraConfigurationOptions
         /// <summary>UDP 受信リスナの設定。</summary>
         public UdpOptions? Udp { get; set; }
 
+        /// <summary>TCP 受信リスナの設定（M4-1）。</summary>
+        public TcpOptions? Tcp { get; set; }
+
         public sealed class UdpOptions
+        {
+            /// <summary>bind するアドレス（文字列のまま保持し、検証段で <see cref="System.Net.IPAddress"/> 等へ変換する）。</summary>
+            public string? BindAddress { get; set; }
+
+            /// <summary>bind するポート。JSON の数値以外（文字列・範囲外）も受けられるよう <c>string?</c> で保持する。</summary>
+            public string? Port { get; set; }
+        }
+
+        public sealed class TcpOptions
         {
             /// <summary>bind するアドレス（文字列のまま保持し、検証段で <see cref="System.Net.IPAddress"/> 等へ変換する）。</summary>
             public string? BindAddress { get; set; }

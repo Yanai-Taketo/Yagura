@@ -19,6 +19,12 @@ namespace Yagura.Ingestion.Parsing;
 /// PRI 不在・不正、または UTF-8 として不正なバイト列は
 /// <see cref="ParseStatus.ParseFailed"/> + <see cref="LogRecord.Raw"/> 保持で返す。
 /// </para>
+/// <para>
+/// <see cref="RawDatagram.Incomplete"/> が立っている場合（TCP 接続が切断された時点で
+/// メッセージ境界に届いていなかった読みかけデータ）は、PRI が解析できるか否かに関わらず
+/// <see cref="ParseStatus.Incomplete"/> を最優先で返す（database.md §2.1「不完全は
+/// 解析失敗に優先する」——排他 3 値のうち Incomplete が ParseFailed より優先される唯一の分岐）。
+/// </para>
 /// </remarks>
 public static class MinimalSyslogParser
 {
@@ -33,6 +39,20 @@ public static class MinimalSyslogParser
         ArgumentNullException.ThrowIfNull(datagram);
 
         var payload = datagram.Payload;
+
+        if (datagram.Incomplete)
+        {
+            // database.md §2.1: 不完全は解析失敗に優先する排他 3 値。PRI が偶然解析できて
+            // しまう場合でも（境界前で途切れた結果 PRI 部だけは揃っている等）、Incomplete を
+            // 優先して返す——「なぜこの行が保存されているか」の理由を単一にするため。
+            return new LogRecord(
+                ReceivedAt: datagram.ReceivedAt,
+                SourceAddress: datagram.SourceAddress,
+                SourcePort: datagram.SourcePort,
+                Protocol: datagram.Protocol,
+                ParseStatus: ParseStatus.Incomplete,
+                Raw: payload);
+        }
 
         if (TryParsePri(payload, out var facility, out var severity, out var messageStart))
         {

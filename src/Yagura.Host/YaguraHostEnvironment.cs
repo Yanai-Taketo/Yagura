@@ -20,6 +20,12 @@ public static class YaguraHostEnvironment
     public const string UdpPortEnvironmentVariable = "YAGURA_UDP_PORT";
 
     /// <summary>
+    /// TCP 受信ポートを上書きする環境変数名（M4-1）。<c>0</c> を指定すると OS がポートを採番する
+    /// （テスト用。<see cref="Yagura.Ingestion.IngestionPipeline.TcpBoundPort"/> で実ポートを取得できる）。
+    /// </summary>
+    public const string TcpPortEnvironmentVariable = "YAGURA_TCP_PORT";
+
+    /// <summary>
     /// 閲覧 HTTP リスナのポートを上書きする環境変数名。<c>0</c> を指定すると OS がポートを
     /// 採番する（テスト用）。
     /// </summary>

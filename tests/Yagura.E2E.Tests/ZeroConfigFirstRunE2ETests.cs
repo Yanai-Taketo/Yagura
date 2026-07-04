@@ -68,10 +68,13 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
         startInfo.ArgumentList.Add(hostDllPath);
 
         // ゼロ設定ファーストラン: 設定ファイル・手編集を一切行わず、環境変数のみで
-        // 一時データルート・OS 採番ポート（HTTP/UDP とも 0）を指定する。
+        // 一時データルート・OS 採番ポート（HTTP/UDP/TCP とも 0）を指定する。
+        // TCP は M4-1 で追加。既定ポート 514 は多くの環境で管理者権限を要するため、
+        // 0 を指定しないと bind 失敗で起動が止まる（本テストは非管理者実行を前提とする）。
         startInfo.Environment["YAGURA_DATAROOT"] = _dataRoot;
         startInfo.Environment["YAGURA_HTTP_PORT"] = "0";
         startInfo.Environment["YAGURA_UDP_PORT"] = "0";
+        startInfo.Environment["YAGURA_TCP_PORT"] = "0";
 
         _hostProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 

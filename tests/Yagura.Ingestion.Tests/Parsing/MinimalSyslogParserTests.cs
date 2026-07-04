@@ -110,4 +110,62 @@ public class MinimalSyslogParserTests
         Assert.Equal(datagram.SourcePort, record.SourcePort);
         Assert.Equal(datagram.Protocol, record.Protocol);
     }
+
+    // ------------------------------------------------------------------
+    // Incomplete（database.md §2.1「不完全は解析失敗に優先する」。M4-1: TCP 切断由来）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_IncompleteFlagSet_ReturnsIncompleteWithRawPreserved()
+    {
+        var payload = Encoding.UTF8.GetBytes("<34>never terminated");
+        var datagram = new RawDatagram(
+            ReceivedAt: Baseline,
+            SourceAddress: "192.168.1.1",
+            SourcePort: 514,
+            Protocol: Protocol.Tcp,
+            Payload: payload,
+            Incomplete: true);
+
+        var record = MinimalSyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Incomplete, record.ParseStatus);
+        Assert.Equal(payload, record.Raw);
+        Assert.Null(record.Message);
+    }
+
+    [Fact]
+    public void Parse_IncompleteFlagSet_TakesPrecedenceOverOtherwiseValidPri()
+    {
+        // PRI 部だけは偶然揃っている（境界前で途切れた結果）が、Incomplete が優先される
+        // ことを確認する（database.md §2.1 の排他 3 値のうち Incomplete が最優先）。
+        var payload = Encoding.UTF8.GetBytes("<34>");
+        var datagram = new RawDatagram(
+            ReceivedAt: Baseline,
+            SourceAddress: "192.168.1.1",
+            SourcePort: 514,
+            Protocol: Protocol.Tcp,
+            Payload: payload,
+            Incomplete: true);
+
+        var record = MinimalSyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Incomplete, record.ParseStatus);
+        Assert.Null(record.Facility);
+        Assert.Null(record.Severity);
+    }
+
+    [Fact]
+    public void Parse_IncompleteFlagNotSet_UdpDatagramBehavesAsBefore()
+    {
+        // RawDatagram.Incomplete の既定値 (false) が UDP 経路の挙動を変えないことの回帰確認。
+        var payload = Encoding.UTF8.GetBytes("<34>hello");
+        var datagram = CreateDatagram(payload);
+
+        Assert.False(datagram.Incomplete);
+
+        var record = MinimalSyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+    }
 }
