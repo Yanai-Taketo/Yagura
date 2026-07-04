@@ -10,7 +10,16 @@
 
 **開発初期です。まだリリースはありません。リリース時期は未定です。**
 
-現在は設計フェーズにあり、意思決定はすべて [ADR（アーキテクチャ決定記録）](docs/adr/) として公開しています。進捗を追うには、本リポジトリを Watch するか、[docs/adr/](docs/adr/) と Pull Request の履歴をご覧ください。
+設計フェーズを完了し、現在は v0.1 の実装フェーズにあります。意思決定は [ADR（アーキテクチャ決定記録）](docs/adr/) として、全体設計は [docs/design/](docs/design/) として公開しています。進捗を追うには、本リポジトリを Watch するか、Issue・Pull Request の履歴をご覧ください。
+
+## ソースからのビルド
+
+[.NET SDK 10.0](https://dotnet.microsoft.com/download/dotnet/10.0)（`global.json` 参照）が必要です。
+
+```
+dotnet build Yagura.sln
+dotnet test Yagura.sln
+```
 
 ## 確定している設計原則
 
@@ -27,6 +36,7 @@
 |---|---|
 | プロジェクトの目的・スコープ | [ADR-0001](docs/adr/0001-project-founding.md) |
 | 設計の意思決定の一覧 | [docs/adr/](docs/adr/) |
+| 現在形の全体設計書 | [docs/design/](docs/design/) |
 | ドキュメントの体系 | [docs/README.md](docs/README.md) |
 | 貢献の方法 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 脆弱性の報告 | [SECURITY.md](SECURITY.md) |
