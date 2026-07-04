@@ -3,7 +3,7 @@
 システムの「今の姿」を記述する層。設計フェーズで以下の構成を予定。
 
 - [architecture.md](architecture.md) — 全体アーキテクチャ（プロセス構成、受信パイプライン、信頼性機構、観測性、性能）
-- database.md — DB スキーマと provider 抽象
+- [database.md](database.md) — 永続化（provider 抽象と契約、論理スキーマ、保持期間、本番昇格、v1.0 凍結対象）
 - configuration.md — 設定スキーマ（additive-only 原則）
 - ui.md — デザインシステムと画面設計
 - セキュリティ設計文書（security.md 予定。ファイル名・置き場は起筆時に確定） — loopback 束縛の CI 回帰テスト仕様、circuit 上限、監査記録 ほか
