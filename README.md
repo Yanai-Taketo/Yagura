@@ -1,5 +1,7 @@
 # Yagura（やぐら）
 
+![CI](https://github.com/Yanai-Taketo/Yagura/actions/workflows/ci.yml/badge.svg)
+
 > **English**: Yagura is a Windows-native open-source syslog server, designed so that Windows administrators can set up log aggregation using only the skills they already have (Windows services, SQL Server, Active Directory) — no Linux VM, no license fees. It is in early development and has no release yet; the design records (ADRs, in Japanese) live under [docs/adr/](docs/adr/). License: Apache-2.0.
 
 **Windows に syslog ツールを簡単に構築できる仕組みを作る** — それがこのプロジェクトの目的です。
