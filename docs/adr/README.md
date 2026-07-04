@@ -17,7 +17,7 @@
 | [0003](0003-ui-policy.md) | UI 方針 — Blazor・デザインシステム先行・テーマ | accepted |
 | [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | accepted |
 | [0005](0005-oss-packaging.md) | OSS 体裁 — README・貢献導線・脆弱性報告窓口 | accepted |
+| [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | proposed |
 
-## 起案予定（設計フェーズ）
+## 起案予定
 
-- 0006: v1.0 公開基準（機能凍結・実運用実績・文書整備・後方互換性の凍結・コード署名の 5 観点の具体化）
