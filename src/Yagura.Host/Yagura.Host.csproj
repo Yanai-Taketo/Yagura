@@ -30,6 +30,23 @@
     （TreatWarningsAsErrors=true のためビルド不可）。
   -->
 
+  <!--
+    M3-2（#31）: Windows サービス統合。Microsoft.Extensions.Hosting.WindowsServices は
+    Microsoft.AspNetCore.App 共有フレームワークに含まれない Windows 専用の単独 NuGet
+    パッケージである（Sdk.Web の FrameworkReference ではもたらされない）ため、明示
+    PackageReference が必要（NU1510 の対象にならないことを実機 restore で確認済み）。
+
+    Microsoft.Extensions.Logging.EventLog は明示 PackageReference を追加しない。
+    Microsoft.Extensions.Hosting と同様に Microsoft.AspNetCore.App が既にこれを含んでおり
+    （実機 restore で NU1510 を確認済み。2026-07-05）、追加すると NU1510 でビルド不可になる。
+    ライブ検証: 2026-07-05、`curl https://api.nuget.org/v3-flatcontainer/
+    microsoft.extensions.hosting.windowsservices/index.json` で最新版 10.0.9 を確認
+    （本リポジトリの他の Microsoft.Extensions.* 10.0.9 系と同一マイナー系列）。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
   </PropertyGroup>
