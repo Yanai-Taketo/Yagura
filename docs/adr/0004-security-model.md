@@ -1,6 +1,6 @@
 # ADR-0004: セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-04
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md) 決定 5（セキュリティ姿勢の委任元）、[ADR-0002](0002-architecture-principles.md) §6（挿入点）、[ADR-0003](0003-ui-policy.md)（UI 接続層の申し送り）
