@@ -1,0 +1,7 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Yagura.Storage\Yagura.Storage.csproj" />
+  </ItemGroup>
+
+</Project>

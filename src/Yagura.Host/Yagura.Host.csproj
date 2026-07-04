@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Yagura.Ingestion\Yagura.Ingestion.csproj" />
+    <ProjectReference Include="..\Yagura.Storage\Yagura.Storage.csproj" />
+    <ProjectReference Include="..\Yagura.Web\Yagura.Web.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+</Project>
