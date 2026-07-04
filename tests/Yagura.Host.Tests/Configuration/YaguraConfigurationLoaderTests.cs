@@ -11,7 +11,10 @@ namespace Yagura.Host.Tests.Configuration;
 /// configuration.md §1 の要求を軸に構成する: 優先順位（環境変数 &gt; 設定ファイル &gt; 既定値）、
 /// 設定ファイル不在時の既定起動、不正値の 3 分類（起動失敗・既定値継続・縮小継続）それぞれの
 /// 発火、未知キーの検出。一時ディレクトリを都度作成・削除し、他テストと競合しないようにする。
+/// <see cref="ConfigurationEnvironmentVariableTestCollection"/> により、環境変数を読み書きする
+/// 他のテストクラス（<c>YaguraConfigurationWriterTests</c> 等）と並列実行させない。
 /// </remarks>
+[Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class YaguraConfigurationLoaderTests : IDisposable
 {
     private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-config-test-{Guid.NewGuid():N}");
