@@ -21,7 +21,7 @@
 1. **既定 DB は SQL Server** を維持。ただし DB provider 抽象を初日から設計に含め、PostgreSQL / MySQL 対応を積極的に行う
 2. **ゼロ設定ファーストラン**: インストール直後、DB 設定なしで SQLite により即受信・即閲覧できる。SQL Server へは後から「本番昇格」
 3. **セットアップの Web UI ウィザード化**を検討する（CLI と JSON 手編集を前提にしない）
-4. **UI は Blazor**（.NET 10 Razor Components。通常画面は静的 SSR、ウィザード・ダッシュボード等の対話画面のみ Interactive Server）。**デザインシステムを先に決めてから画面を作る**。方向性は「ライト基調 + ダーク切替」
+4. **UI は Blazor**（.NET 10 Razor Components。全画面 Interactive Server 単一モード = [ADR-0003](docs/adr/0003-ui-policy.md) 決定 1。方式を混在させない）。**デザインシステムを先に決めてから画面を作る**。方向性は「ライト基調 + ダーク切替」
 5. **ドキュメントは 2 層構造**: 「常に現在形の全体設計書」+「ADR（決定の履歴）」。差分仕様書の積み重ねはしない。詳細: [docs/README.md](docs/README.md)
 6. **バージョンは v0.1 から始めて v1.0 公開を目指す**
 7. セキュリティは「信頼ネットワーク前提 + opt-in 強化」（既定は平文受信・認証なし、TLS/AD 認証は opt-in）

@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      ProjectReference により Yagura.Host のビルド出力（Yagura.Host.dll・exe・
+      runtimeconfig.json 等）が本プロジェクトの出力ディレクトリへコピーされる
+      （Yagura.Host.Tests の AssemblyLoadSmokeTest で確認済みの既存パターンと同型）。
+      これにより CI（GitHub Actions windows-latest）でも
+      Path.Combine(AppContext.BaseDirectory, "Yagura.Host.dll") で子プロセス起動先を
+      解決でき、ビルド設定・実行環境に依存する相対パス推測を避けられる。
+    -->
+    <ProjectReference Include="..\..\src\Yagura.Host\Yagura.Host.csproj" />
+  </ItemGroup>
+
+</Project>
