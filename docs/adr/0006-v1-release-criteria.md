@@ -1,6 +1,6 @@
 # ADR-0006: v1.0 公開基準
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-04
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md) 決定 8（バージョン戦略の委任元）、[ADR-0002](0002-architecture-principles.md)（基準 1 の実装範囲の根拠）、[ADR-0004](0004-security-model.md) 決定 3（opt-in 強化の提供時期）、[ADR-0005](0005-oss-packaging.md)（脆弱性報告窓口）
