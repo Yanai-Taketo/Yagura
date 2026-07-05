@@ -1,0 +1,95 @@
+{
+  "ScenarioName": "SpoolActivationRecovery",
+  "RunId": "d492554e7941",
+  "StartedAt": "2026-07-05T13:30:43.5204983+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26200",
+    "OsArchitecture": "Arm64",
+    "ProcessorName": "ARMv8 (64-bit) Family 8 Model 1 Revision 201, Qualcomm Technologies Inc",
+    "LogicalProcessorCount": 10,
+    "TotalPhysicalMemoryBytes": 16756006912,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=236GiB, free=90GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "DESKTOP-U2VTV9C"
+  },
+  "LoadGeneratorOptions": {
+    "Transport": 0,
+    "Pattern": 1,
+    "TargetHost": "127.0.0.1",
+    "TargetPort": 57002,
+    "RunId": "d492554e7941",
+    "RatePerSecond": 0,
+    "DurationSeconds": 0,
+    "BurstCount": 20000,
+    "SenderSocketCount": 4,
+    "PaddingBytes": 0
+  },
+  "LoadResult": {
+    "RunId": "d492554e7941",
+    "AttemptedCount": 20000,
+    "SucceededCount": 20000,
+    "FailedCount": 0,
+    "Elapsed": "00:00:00.0909851",
+    "SenderSocketCount": 4,
+    "SentCount": 20000
+  },
+  "Reconciliation": {
+    "SentCount": 20000,
+    "SavedCount": 1695,
+    "AccountedLossCount": 1469,
+    "SpoolEvacuatedCount": 1,
+    "OsUdpDatagramsDiscardedDelta": 0,
+    "DerivedOsBufferLossCount": 16836,
+    "Difference": 16836,
+    "IsReconciled": true,
+    "Counters": {
+      "InternalBufferDropped": 1469,
+      "TcpConnectionRejected": 0,
+      "SpoolEvacuated": 1,
+      "SpoolWriteFailed": 0,
+      "SpoolDiscarded": 0,
+      "PersistenceFailed": 0,
+      "FlowControlDropped": 0
+    }
+  },
+  "ElapsedWallClock": "00:00:06.0773674",
+  "AdditionalMetrics": {
+    "\u30B9\u30D7\u30FC\u30EB\u767A\u52D5": "True",
+    "drain\u5B8C\u4E86": "True",
+    "drain\u6240\u8981\u6642\u9593": "00:00:00.2119840",
+    "\u30B9\u30D7\u30FC\u30EB\u5BB9\u91CF\u30D0\u30A4\u30C8": "1048576"
+  },
+  "Notes": [
+    "\u30B9\u30D7\u30FC\u30EB\u5BB9\u91CF\u3092 1048576 \u30D0\u30A4\u30C8\u306B\u7E2E\u5C0F\u3057\u300120000 \u901A\u306E\u30D0\u30FC\u30B9\u30C8\u3067\u30B9\u30D7\u30FC\u30EB\u767A\u52D5\u3092\u8A98\u767A\u3057\u305F\u3002",
+    "\u30B9\u30D7\u30FC\u30EB\u767A\u52D5\u3092\u78BA\u8A8D\u3057\u305F\uFF08*.seg \u30D5\u30A1\u30A4\u30EB\u304C\u30C7\u30A3\u30B9\u30AF\u4E0A\u306B\u73FE\u308C\u305F\uFF09\u3002",
+    "drain \u304C\u5B8C\u4E86\u3057\u3001\u30B9\u30D7\u30FC\u30EB\u4F7F\u7528\u91CF\u306F 0 \u306B\u623B\u3063\u305F\uFF08\u6240\u8981 00:00:00.2119840\uFF09\u3002"
+  ],
+  "HostStdout": [
+    "info: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[63]",
+    "      User profile is available. Using \u0027C:\\Users\\nigih\\AppData\\Local\\ASP.NET\\DataProtection-Keys\u0027 as key repository and Windows DPAPI to encrypt keys at rest.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      UDP syslog listener started on port 57002.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      TCP syslog listener started on port 56392.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline consumers (parsing/persistence) started.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Retention delete scheduler started.",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::]:56393",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://127.0.0.1:56391",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::1]:56391",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application started. Press Ctrl\u002BC to shut down.",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Hosting environment: Production",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Content root path: C:\\Users\\nigih\\Documents\\Github\\Yagura",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application is shutting down...",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline stopped."
+  ]
+}

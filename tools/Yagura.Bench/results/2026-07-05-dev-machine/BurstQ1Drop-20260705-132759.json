@@ -1,0 +1,92 @@
+{
+  "ScenarioName": "BurstQ1Drop",
+  "RunId": "e086ab5a097c",
+  "StartedAt": "2026-07-05T13:27:59.9784343+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26200",
+    "OsArchitecture": "Arm64",
+    "ProcessorName": "ARMv8 (64-bit) Family 8 Model 1 Revision 201, Qualcomm Technologies Inc",
+    "LogicalProcessorCount": 10,
+    "TotalPhysicalMemoryBytes": 16756006912,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=236GiB, free=90GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "DESKTOP-U2VTV9C"
+  },
+  "LoadGeneratorOptions": {
+    "Transport": 0,
+    "Pattern": 1,
+    "TargetHost": "127.0.0.1",
+    "TargetPort": 50314,
+    "RunId": "e086ab5a097c",
+    "RatePerSecond": 0,
+    "DurationSeconds": 0,
+    "BurstCount": 20000,
+    "SenderSocketCount": 4,
+    "PaddingBytes": 0
+  },
+  "LoadResult": {
+    "RunId": "e086ab5a097c",
+    "AttemptedCount": 20000,
+    "SucceededCount": 20000,
+    "FailedCount": 0,
+    "Elapsed": "00:00:00.1032875",
+    "SenderSocketCount": 4,
+    "SentCount": 20000
+  },
+  "Reconciliation": {
+    "SentCount": 20000,
+    "SavedCount": 2250,
+    "AccountedLossCount": 10916,
+    "SpoolEvacuatedCount": 28,
+    "OsUdpDatagramsDiscardedDelta": 0,
+    "DerivedOsBufferLossCount": 6834,
+    "Difference": 6834,
+    "IsReconciled": true,
+    "Counters": {
+      "InternalBufferDropped": 10916,
+      "TcpConnectionRejected": 0,
+      "SpoolEvacuated": 28,
+      "SpoolWriteFailed": 0,
+      "SpoolDiscarded": 0,
+      "PersistenceFailed": 0,
+      "FlowControlDropped": 0
+    }
+  },
+  "ElapsedWallClock": "00:00:06.2329664",
+  "AdditionalMetrics": {
+    "Q1\u7834\u68C4\u767A\u751F": "True"
+  },
+  "Notes": [
+    "20000 \u901A\u3092\u53EF\u80FD\u306A\u9650\u308A\u9AD8\u901F\u3067\u4E00\u6589\u9001\u51FA\u3057\u305F\uFF08\u9001\u4FE1\u5074 socket \u6570 4\uFF09\u3002",
+    "Q1\uFF08\u5185\u90E8\u30D0\u30C3\u30D5\u30A1\uFF09\u7834\u68C4\u304C 10916 \u4EF6\u767A\u751F\u3057\u305F\u3002architecture.md \u00A73.1 \u306E\u524D\u63D0\uFF08\u30D0\u30FC\u30B9\u30C8\u6642\u306B\u9650\u3089\u308C\u308B\uFF09\u3069\u304A\u308A\u306E\u6319\u52D5\u3002",
+    "OS \u30BD\u30B1\u30C3\u30C8\u30D0\u30C3\u30D5\u30A1\u3067\u306E\u7834\u68C4\uFF08\u5C0E\u51FA\u5024\uFF09\u304C 6834 \u4EF6\u767A\u751F\u3057\u305F\u2014\u2014Q1 \u306B\u5C4A\u304F\u524D\u306E OS \u30EC\u30D9\u30EB\u306E\u640D\u5931\u3002\u53D7\u4FE1\u30D0\u30C3\u30D5\u30A1\u62E1\u5927\uFF08M-2\uFF09\u306E\u52B9\u679C\u6E2C\u5B9A\u306E\u5165\u529B\u306B\u306A\u308B\u3002"
+  ],
+  "HostStdout": [
+    "info: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[63]",
+    "      User profile is available. Using \u0027C:\\Users\\nigih\\AppData\\Local\\ASP.NET\\DataProtection-Keys\u0027 as key repository and Windows DPAPI to encrypt keys at rest.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      UDP syslog listener started on port 50314.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      TCP syslog listener started on port 59746.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline consumers (parsing/persistence) started.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Retention delete scheduler started.",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::]:59747",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://127.0.0.1:59745",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::1]:59745",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application started. Press Ctrl\u002BC to shut down.",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Hosting environment: Production",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Content root path: C:\\Users\\nigih\\Documents\\Github\\Yagura",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application is shutting down...",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline stopped."
+  ]
+}
