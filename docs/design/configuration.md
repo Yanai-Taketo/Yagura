@@ -126,8 +126,11 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Ingestion:Tcp:Port` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | **起動失敗**（受信の成立に不可欠） |
 | `Viewer:HttpPort` | UI | 再起動（同上） | 既定値で継続 |
 | `Storage:SqliteFileName` | 永続化 | 再起動 | 既定値で継続 |
+| `Spool:Enabled` | スプール | 再起動（目標は即時。他キー同様、設定の再読み込みから実際に反映する経路は未実装のため現時点の実効は再起動。§8 表「スプール」区分の目標どおり） | 既定値で継続（真偽値として不正なら既定の有効へ） |
+| `Spool:Directory` | スプール | 再起動（§8 表「置き場所のみサービス再起動」の記載どおり。M4-3） | 既定値で継続（パスとして不正ならデータルート配下の既定へ） |
+| `Spool:QuotaBytes` | スプール | 再起動（同上。目標は即時） | 既定値で継続（正の整数として不正なら既定値 [architecture.md](architecture.md) M-12 の暫定値へ） |
 
-環境変数 `YAGURA_DATAROOT` / `YAGURA_UDP_PORT` / `YAGURA_TCP_PORT`（M4-1 で追加） / `YAGURA_HTTP_PORT` は上書き手段（優先順位: 環境変数 > 設定ファイル > 既定値）。
+環境変数 `YAGURA_DATAROOT` / `YAGURA_UDP_PORT` / `YAGURA_TCP_PORT`（M4-1 で追加） / `YAGURA_HTTP_PORT` は上書き手段（優先順位: 環境変数 > 設定ファイル > 既定値）。スプール 3 キーは環境変数による上書きを現時点で提供しない（既存の上書き対象は受信ポート/データルート/HTTP ポートに限定する既存方針を踏襲）。
 
 **設定キー追加の規約**（外部貢献を含む。CONTRIBUTING からも参照する）:
 

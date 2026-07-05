@@ -7,6 +7,7 @@ using Yagura.Ingestion.Persistence;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
+using Yagura.Storage.Spool;
 
 namespace Yagura.Ingestion;
 
@@ -17,10 +18,10 @@ namespace Yagura.Ingestion;
 /// ホスト（Yagura.Host）は本クラスを介してパイプラインを起動・停止する。
 /// 起動順序（§1.2「受信を最初に開く」）・停止順序（§1.3）の制御はホスト側が担う——
 /// <see cref="StartListenerAsync"/> と <see cref="StartConsumers"/> を分けているのは、
-/// ホストが「受信開始 → DB 初期化 → 消費ループ開始」の順を組み立てられるようにするため。
-/// UDP・TCP の両リスナは同じ Q1 へ投入する（M4-1）。起動は「受信先行」の一部として同時に行い、
-/// 停止は「リスナ停止 → 接続クローズ → drain」の順（TCP リスナの StopAsync 内で接続クローズ
-/// まで完結させ、その後に Q1/Q2 の drain を行う）とする。
+/// ホストが「受信開始 → DB 初期化 → 消費ループ開始 → drain 開始」の順を組み立てられる
+/// ようにするため。UDP・TCP の両リスナは同じ Q1 へ投入する（M4-1）。起動は「受信先行」の
+/// 一部として同時に行い、停止は「リスナ停止 → 接続クローズ → drain（DB を待たずスプールへ
+/// 退避。§1.3）」の順とする。
 /// </remarks>
 public sealed class IngestionPipeline : IAsyncDisposable
 {
@@ -30,11 +31,13 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private readonly TcpSyslogListener _tcpListener;
     private readonly ParsingStage _parsingStage;
     private readonly PersistenceWriter _persistenceWriter;
+    private readonly SpoolDrainCoordinator? _drainCoordinator;
     private readonly IngestionMetrics _metrics;
 
     private CancellationTokenSource? _consumerStoppingCts;
     private Task? _parsingTask;
     private Task? _persistenceTask;
+    private Task? _drainTask;
 
     public IngestionPipeline(UdpSyslogListenerOptions listenerOptions, ILogStore logStore)
         : this(listenerOptions, new TcpSyslogListenerOptions(), logStore, new NoopIngressGate())
@@ -56,12 +59,21 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// <param name="loggerFactory">
     /// 各段のロガーの生成元。<c>null</c> の場合はログを出力しない（テスト等でロガーなしのまま使える）。
     /// </param>
+    /// <param name="spool">
+    /// ディスクスプール（architecture.md §3.2）。<c>null</c> は「スプール領域を開けなかった」
+    /// ためのスプールなし縮退運転（§1.2）を表す——呼び出し側（ホスト）が
+    /// <see cref="DiskSpool.TryOpen"/> の結果をそのまま渡す想定。
+    /// <b>所有権は呼び出し側に残る</b>——本クラスは借用するだけで <see cref="IDisposable.Dispose"/>
+    /// を呼ばない（<see cref="DisposeAsync"/> の実装参照）。開いた側（ホスト）が
+    /// プロセス終了時に解放する。
+    /// </param>
     public IngestionPipeline(
         UdpSyslogListenerOptions udpListenerOptions,
         TcpSyslogListenerOptions tcpListenerOptions,
         ILogStore logStore,
         IIngressGate ingressGate,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        DiskSpool? spool = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
@@ -94,11 +106,28 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
         _udpListener = new UdpSyslogListener(udpListenerOptions, _q1.Writer, ingressGate, _metrics);
         _tcpListener = new TcpSyslogListener(tcpListenerOptions, _q1.Writer, ingressGate, _metrics);
-        _parsingStage = new ParsingStage(_q1.Reader, _q2.Writer);
+        _parsingStage = new ParsingStage(
+            _q1.Reader,
+            _q2.Writer,
+            spool,
+            _metrics,
+            loggerFactory?.CreateLogger<ParsingStage>());
         _persistenceWriter = new PersistenceWriter(
             _q2.Reader,
             logStore,
+            spool,
+            _metrics,
             loggerFactory?.CreateLogger<PersistenceWriter>());
+
+        // スプールがある場合のみ drain コーディネータを組み立てる（縮退運転時は drain 対象が無い）。
+        _drainCoordinator = spool is null
+            ? null
+            : new SpoolDrainCoordinator(
+                spool,
+                _q2.Reader,
+                logStore,
+                _metrics,
+                loggerFactory?.CreateLogger<SpoolDrainCoordinator>());
     }
 
     /// <summary>
@@ -128,8 +157,9 @@ public sealed class IngestionPipeline : IAsyncDisposable
     }
 
     /// <summary>
-    /// 解析段・永続化段の消費ループを開始する。DB 初期化（<see cref="ILogStore.InitializeAsync"/>）
-    /// の完了後に呼び出す（architecture.md §1.2 手順 3）。
+    /// 解析段・永続化段の消費ループと、スプールの drain ループを開始する。
+    /// DB 初期化（<see cref="ILogStore.InitializeAsync"/>）の完了後に呼び出す
+    /// （architecture.md §1.2 手順 3・4「DB provider を初期化する…drain 開始」）。
     /// </summary>
     public void StartConsumers()
     {
@@ -141,19 +171,25 @@ public sealed class IngestionPipeline : IAsyncDisposable
         _consumerStoppingCts = new CancellationTokenSource();
         _parsingTask = Task.Run(() => _parsingStage.RunAsync(_consumerStoppingCts.Token));
         _persistenceTask = Task.Run(() => _persistenceWriter.RunAsync(_consumerStoppingCts.Token));
+
+        if (_drainCoordinator is not null)
+        {
+            _drainTask = Task.Run(() => _drainCoordinator.RunAsync(_consumerStoppingCts.Token));
+        }
     }
 
     /// <summary>
     /// パイプラインを停止する（architecture.md §1.3）。
-    /// 手順: ①受信ソケットを閉じる（TCP は接続クローズまで含む） ②Q1/Q2 を drain して
-    /// 書き切れる分は書く（ベストエフォート）。
+    /// 手順: ①受信ソケットを閉じる（TCP は接続クローズまで含む） ②消費ループを停止し、
+    /// Q1/Q2 に残る分を DB へ書き切るのを待たずスプールへ退避する。
     /// </summary>
     /// <remarks>
     /// 完全な停止順序保証（メタデータ領域へのカウンタ書き込み等）は後続マイルストーンで扱う。
-    /// 本実装は「受信停止（UDP ソケット + TCP リスナ・全接続クローズ）→ drain」の
-    /// ベストエフォートのみを提供する。<see cref="TcpSyslogListener.StopAsync"/> は内部で
-    /// 「リスナ停止 → 各接続の読み取りループ終了待ち（Incomplete 化を含む）」まで完結させるため、
-    /// ここでは UDP・TCP のどちらも同列に await するだけでよい。
+    /// <see cref="TcpSyslogListener.StopAsync"/> は内部で「リスナ停止 → 各接続の読み取り
+    /// ループ終了待ち（Incomplete 化を含む）」まで完結させるため、ここでは UDP・TCP の
+    /// どちらも同列に await するだけでよい。手順 2 のスプール退避は
+    /// <see cref="ParsingStage.RunAsync"/> / <see cref="PersistenceWriter.RunAsync"/> が
+    /// <c>stoppingToken</c> のキャンセルを検知した時点でそれぞれ担う（§1.3）。
     /// </remarks>
     public async Task StopAsync()
     {
@@ -167,11 +203,13 @@ public sealed class IngestionPipeline : IAsyncDisposable
             return;
         }
 
-        // 手順 2 相当: Q1/Q2 を drain して書き切れる分は書く（ベストエフォート）。
-        // 完全な停止順序（§1.3 の耐障害保証）は M4 まで持ち越す。
+        // 手順 2: 消費ループを停止する。ParsingStage・PersistenceWriter は停止要求を
+        // 検知した時点で、DB を待たず Q1/Q2 の残りをスプールへ退避する（§1.3）。
+        // drain コーディネータも同じトークンで停止する（drain 中のセグメントは未消化のまま
+        // 残り、次回起動時に再開される）。
         _consumerStoppingCts.Cancel();
 
-        var consumerTasks = new List<Task>(2);
+        var consumerTasks = new List<Task>(3);
         if (_parsingTask is not null)
         {
             consumerTasks.Add(_parsingTask);
@@ -180,6 +218,11 @@ public sealed class IngestionPipeline : IAsyncDisposable
         if (_persistenceTask is not null)
         {
             consumerTasks.Add(_persistenceTask);
+        }
+
+        if (_drainTask is not null)
+        {
+            consumerTasks.Add(_drainTask);
         }
 
         if (consumerTasks.Count > 0)

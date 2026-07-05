@@ -1,15 +1,29 @@
 ﻿using System.Threading.Channels;
+using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
+using Yagura.Storage.Spool;
 
 namespace Yagura.Ingestion.Tests.Persistence;
 
 /// <summary>
 /// 書き込み例外（一時的なディスクエラー・ロック等）で永続化段の消費ループが
 /// 恒久停止しないことの確認（architecture.md §1.2「黙って縮退しない」）。
+/// M4-3 以降、書き込み失敗バッチは破棄ではなくスプールへ退避する
+/// （architecture.md §3.2.1。PR #28 オーナー確認事項 2 の解消）。
 /// </summary>
-public class PersistenceWriterResilienceTests
+public sealed class PersistenceWriterResilienceTests : IDisposable
 {
+    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-spool-tests-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_spoolDirectory))
+        {
+            Directory.Delete(_spoolDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task WriteBatchThrows_LoopContinues_AndSubsequentBatchIsWritten()
     {
@@ -22,14 +36,18 @@ public class PersistenceWriterResilienceTests
 
         // 1 回目の WriteBatchAsync は例外、2 回目以降は成功する ILogStore スタブ。
         var store = new ThrowOnceLogStore();
-        var writer = new PersistenceWriter(q2.Reader, store);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(spool);
+
+        using var metrics = new IngestionMetrics();
+        var writer = new PersistenceWriter(q2.Reader, store, spool, metrics);
 
         using var stoppingCts = new CancellationTokenSource();
         var runTask = Task.Run(() => writer.RunAsync(stoppingCts.Token));
 
         var baseline = DateTimeOffset.UtcNow;
 
-        // 1 件目——書き込み失敗でバッチごと破棄されるが、ループは継続するはず。
+        // 1 件目——書き込み失敗でバッチごとスプールへ退避されるが、ループは継続するはず。
         await q2.Writer.WriteAsync(CreateRecord(baseline, "first"));
 
         // 失敗した 1 回目の書き込み試行が完了するまで条件ポーリングで待つ。
@@ -40,12 +58,26 @@ public class PersistenceWriterResilienceTests
 
         await WaitUntilAsync(() => store.WrittenRecords.Count >= 1, TimeSpan.FromSeconds(10));
 
+        // 1 件目はスプールへ退避されているはず（drain コーディネータは動かしていないため
+        // セグメントファイルとして残る）。
+        await WaitUntilAsync(() => spool!.CurrentUsageBytes > 0, TimeSpan.FromSeconds(10));
+
         stoppingCts.Cancel();
         await runTask;
 
         Assert.Contains(store.WrittenRecords, r => r.Message == "second");
-        // 1 件目のバッチは破棄される（M2 の仕様。リトライ・スプール退避は M4）。
+        // 1 件目のバッチは DB には現れない（スプールへ退避されたため）。
         Assert.DoesNotContain(store.WrittenRecords, r => r.Message == "first");
+
+        // スプールから実際に読み戻し、"first" が退避されていることを直接確認する。
+        var segments = spool!.TrySealActiveSegmentAndListDrainable();
+        var spooledMessages = segments
+            .SelectMany(path => spool.ReadSegmentRecords(path, out _))
+            .Where(r => r.Kind == SpoolRecordKind.Normal)
+            .Select(r => r.LogRecord!.Message)
+            .ToList();
+
+        Assert.Contains("first", spooledMessages);
     }
 
     private static LogRecord CreateRecord(DateTimeOffset receivedAt, string message) =>

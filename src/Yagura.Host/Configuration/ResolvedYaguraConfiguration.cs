@@ -15,6 +15,9 @@
 /// <param name="TcpPort">TCP 受信リスナのポート（検証済み。M4-1）。</param>
 /// <param name="HttpPort">閲覧 HTTP リスナのポート（検証済み）。</param>
 /// <param name="SqliteFileName">データルート配下の SQLite ファイル名（検証済み）。</param>
+/// <param name="SpoolEnabled">スプールの有効/無効（既定 <c>true</c>。opt-out。M4-3）。</param>
+/// <param name="SpoolDirectory">スプールディレクトリの絶対パス（既定はデータルート配下。M4-3）。</param>
+/// <param name="SpoolQuotaBytes">スプールのディスク使用量上限（バイト。M-12 実測確定待ちの暫定既定値。M4-3）。</param>
 public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
@@ -22,4 +25,7 @@ public sealed record ResolvedYaguraConfiguration(
     string TcpBindAddress,
     int TcpPort,
     int HttpPort,
-    string SqliteFileName);
+    string SqliteFileName,
+    bool SpoolEnabled,
+    string SpoolDirectory,
+    long SpoolQuotaBytes);

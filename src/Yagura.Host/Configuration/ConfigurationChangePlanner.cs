@@ -14,10 +14,10 @@
 /// 隠れて変更なしと判定される」といった不一致が生じる。
 /// </para>
 /// <para>
-/// 現時点で比較するキーは <see cref="ConfigurationKeyMetadata"/> に登録済みの 4 キーのみ
-/// （M3 時点の適用対象は既存キーのみでよい、という依頼のとおり）。新しいキーを
-/// <see cref="YaguraConfigurationOptions"/> に追加する際は、本クラスの比較ロジックと
-/// <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
+/// 比較するキーは <see cref="ConfigurationKeyMetadata"/> に登録済みのキーと同期させる
+/// （M4-3 でスプール 3 キーを追加）。新しいキーを <see cref="YaguraConfigurationOptions"/>
+/// に追加する際は、本クラスの比較ロジックと <see cref="ConfigurationKeyMetadata"/> の
+/// 両方を同じ PR で更新する。
 /// </para>
 /// </remarks>
 public static class ConfigurationChangePlanner
@@ -36,6 +36,9 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Ingestion:Udp:Port", before.Ingestion?.Udp?.Port, after.Ingestion?.Udp?.Port);
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
+        CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
+        CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);
+        CompareKey(changedKeys, "Spool:QuotaBytes", before.Spool?.QuotaBytes, after.Spool?.QuotaBytes);
 
         var requiredEffect = ConfigurationReloadEffect.Immediate;
         foreach (var key in changedKeys)

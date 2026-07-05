@@ -32,6 +32,9 @@
 /// 再起動が実効的な反映方式である。CF-4 確定後に見直す）。</item>
 /// <item><c>Storage:SqliteFileName</c> = サービス再起動（§8 表「永続化」区分「組み込み DB
 /// の置き場所」は明示的に「置き場所はサービス再起動」と記載）。</item>
+/// <item><c>Spool:Enabled</c> / <c>Spool:QuotaBytes</c> = 即時（§8 表「スプール」区分
+/// 「有効/無効（opt-out）・置き場所・上限（M-12）| 即時（置き場所のみサービス再起動）」の
+/// とおり）。<c>Spool:Directory</c> = サービス再起動（同表の「置き場所のみ」の例外。M4-3）。</item>
 /// </list>
 /// </para>
 /// </remarks>
@@ -44,6 +47,9 @@ public static class ConfigurationKeyMetadata
             ["Ingestion:Udp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Viewer:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
             ["Storage:SqliteFileName"] = ConfigurationReloadEffect.RestartRequired,
+            ["Spool:Enabled"] = ConfigurationReloadEffect.Immediate,
+            ["Spool:Directory"] = ConfigurationReloadEffect.RestartRequired,
+            ["Spool:QuotaBytes"] = ConfigurationReloadEffect.Immediate,
         };
 
     /// <summary>
