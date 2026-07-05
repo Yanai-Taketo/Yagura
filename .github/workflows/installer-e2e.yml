@@ -1,0 +1,81 @@
+# インストーラ E2E(M9-2。Issue #75): ゼロ設定ファーストランの証拠(ADR-0006 基準 1)。
+#
+# MSI をビルドし、GitHub ホストランナー上で実際にサイレントインストール →
+# サービス起動 → UDP 514 受信 → 閲覧リスナ(8514)照合 → アンインストール →
+# 残置物確認までを installer/e2e/Invoke-YaguraInstallerE2E.ps1 で実行する。
+#
+# トリガ設計(CI 時間への配慮):
+#   - pull_request は installer/ 配下(+ 本 workflow 自身)の変更時のみ。
+#     src/ 側の変更はビルド・テスト・回帰ベンチを ci.yml が検証しており、
+#     本 workflow は MSI の構造・インストール挙動の検証に特化する
+#   - workflow_dispatch で任意時点の実行(リリース前の証拠採取等)を可能にする
+#
+# ci.yml には触れない(並行 PR との衝突回避。M9-1 からの方針)。
+name: Installer E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/installer-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  installer-e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # MSI ビルド(installer/README.md の手順と同一)。内部で Yagura.Host を
+      # self-contained (win-x64) で publish してから WiX が焼く。
+      - name: Build MSI
+        run: dotnet build installer/Yagura.Installer.wixproj -c Release
+
+      # 管理者権限の根拠(実体検証済みの公式記載):
+      # GitHub 公式ドキュメント「GitHub-hosted runners reference」の
+      # 「Administrative privileges」節(docs.github.com/en/actions/reference/
+      # runners/github-hosted-runners、確認日 2026-07-06)に次の記載がある:
+      #   "Windows virtual machines are configured to run as administrators with
+      #    User Account Control (UAC) disabled."
+      # したがって msiexec /qn(per-machine サイレントインストール)は昇格プロンプト
+      # なしで実行できる見込み。ただしサービス起動(仮想サービスアカウント
+      # NT SERVICE\Yagura)を含む実挙動はここで初めて実体検証される(Issue #75:
+      # 成立しない場合は lab 手順書 + 開発機実行の記録方式へ縮退し、判断を PR に残す)。
+      #
+      # 検証・照合は ASCII トークン(RunId)のみで行う(en-US ランナーの
+      # コードページ CP437 で日本語照合が文字化けする——スクリプト内コメント参照)。
+      - name: Run installer E2E
+        shell: pwsh
+        run: |
+          # MSI パスは実出力から解決する(既定は installer/bin/Release/ja-JP/Yagura.msi
+          # だが、WiX SDK の出力パス構成の変化に頑健にする)。
+          $msi = Get-ChildItem -Path installer/bin -Recurse -Filter Yagura.msi |
+            Select-Object -First 1
+          if ($null -eq $msi) {
+            throw 'Yagura.msi not found under installer/bin'
+          }
+          Write-Host "MSI: $($msi.FullName)"
+          ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 `
+            -MsiPath $msi.FullName `
+            -OutputDir 'e2e-results'
+
+      # 証拠 artifact(ADR-0006 基準 1): 人間可読ログ(*.log.txt)+ 機械可読サマリ
+      # (*.summary.json)+ msiexec 詳細ログ。失敗時も必ず残す(失敗の記録も証拠)。
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-e2e-results
+          path: e2e-results/
+          if-no-files-found: warn
