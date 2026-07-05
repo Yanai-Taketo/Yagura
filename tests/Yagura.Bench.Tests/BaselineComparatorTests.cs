@@ -53,13 +53,14 @@ public sealed class BaselineComparatorTests
             Notes: [],
             HostStdout: []);
 
-    private static BaselineFile BuildBaselineFile(string scenarioKey, double throughput, long savedCount, double tolerance) =>
+    private static BaselineFile BuildBaselineFile(
+        string scenarioKey, double throughput, long savedCount, double tolerance, bool enforceRatio = true) =>
         new()
         {
             Meta = new BaselineMeta("provisional-test", "2026-07-06", "test fixture", "test fixture"),
             Scenarios = new Dictionary<string, BaselineEntry>
             {
-                [scenarioKey] = new(scenarioKey, throughput, savedCount, tolerance),
+                [scenarioKey] = new(scenarioKey, throughput, savedCount, tolerance, RequireReconciled: true, EnforceRatio: enforceRatio),
             },
         };
 
@@ -138,6 +139,37 @@ public sealed class BaselineComparatorTests
     }
 
     [Fact]
+    public void Compare_RatioBelowToleranceButInformational_PassesWithNote()
+    {
+        // enforceRatio=false のシナリオ（M-5 初回実測で双峰性が確認された SustainedZeroDrop 型）は、
+        // 比の劣化を不合格にせず情報として残す。
+        var report = BuildReport("SustainedZeroDrop", sentCount: 5000, savedCount: 1000, elapsed: TimeSpan.FromSeconds(1));
+        var baseline = BuildBaselineFile("SustainedZeroDrop", throughput: 5000, savedCount: 5000, tolerance: 0.5, enforceRatio: false);
+
+        var result = BaselineComparator.Compare(report, baseline);
+
+        Assert.True(result.Passed);
+        Assert.Null(result.FailureReason);
+        Assert.NotNull(result.InformationalNotes);
+        Assert.Contains("保存件数", result.InformationalNotes);
+    }
+
+    [Fact]
+    public void Compare_InformationalRatioDoesNotWaiveReconciliation_Fails()
+    {
+        // enforceRatio=false でも突合成立の不変条件は降格されない（「損失は必ずどれかのカウンタに
+        // 計上される」原則は環境の揺らぎと無関係に成り立つべき）。
+        var report = BuildReport(
+            "SustainedZeroDrop", sentCount: 5000, savedCount: 5000, elapsed: TimeSpan.FromSeconds(1), isReconciled: false);
+        var baseline = BuildBaselineFile("SustainedZeroDrop", throughput: 5000, savedCount: 5000, tolerance: 0.5, enforceRatio: false);
+
+        var result = BaselineComparator.Compare(report, baseline);
+
+        Assert.False(result.Passed);
+        Assert.Contains("突合", result.FailureReason);
+    }
+
+    [Fact]
     public void Compare_ScenarioMissingFromBaseline_Fails()
     {
         var report = BuildReport("Throughput", sentCount: 5000, savedCount: 5000, elapsed: TimeSpan.FromSeconds(1));
@@ -170,6 +202,15 @@ public sealed class BaselineComparatorTests
         Assert.False(
             string.IsNullOrWhiteSpace(baselineFile.Meta.RecordedFrom),
             "_meta.recordedFrom が空。基準値の記録元（ローカル実測の出所または CI run URL）を必ず記載する。");
+
+        // M-5 初回実測（2026-07-06）で確定した判定モードの固定化——変更する場合は実測データを
+        // 添えた基準値更新 PR で本アサーションも意識的に更新する（conventions.md の手続き参照）:
+        // blocking 判定は ProviderWriteCeiling が担い、SustainedZeroDrop の比判定は双峰性の実測に
+        // より情報表示のみ（突合成立の不変条件は両シナリオとも維持）。
+        Assert.True(baselineFile.Scenarios["ProviderWriteCeiling"].EnforceRatio, "ProviderWriteCeiling は blocking 判定を担う（M-5 確定内容）。");
+        Assert.False(baselineFile.Scenarios["SustainedZeroDrop"].EnforceRatio, "SustainedZeroDrop の比判定は情報表示（M-5 実測の双峰性が根拠）。");
+        Assert.True(baselineFile.Scenarios["ProviderWriteCeiling"].RequireReconciled);
+        Assert.True(baselineFile.Scenarios["SustainedZeroDrop"].RequireReconciled);
     }
 
     private static string FindRepositoryRoot()

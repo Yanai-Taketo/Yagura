@@ -78,9 +78,12 @@ jobs:
       # （SustainedZeroDrop 10 秒 + ProviderWriteCeiling(SQLite) 8 秒の負荷時間本体 + 起動/停止/
       # ビルド出力コピー等のオーバーヘッド）。
       #
-      # 基準値ファイルの toleranceRatio=0.5 は M-5（architecture.md §9。CI 環境の揺らぎの実測）が
-      # 完了するまでの暫定値であり、CI を複数回実行して揺らぎを実測した後に本体が正式な帯へ
-      # 更新する（tools/Yagura.Bench/baselines/ci-baseline.json の _meta 参照）。
+      # 許容帯は M-5 初回実測（2026-07-06。同一コミットの CI run 6 回再実行。一次データ:
+      # tools/Yagura.Bench/results/2026-07-06-ci-windows-latest-m5/）で確定済み:
+      # ProviderWriteCeiling が blocking 判定（toleranceRatio=0.15。観測分散 <0.1% に対し約 150 倍の
+      # 余裕）、SustainedZeroDrop は保存率が双峰性（6 回中 3 回 Q1 破棄）のため比判定を情報表示に
+      # 降格（enforceRatio=false。突合成立の不変条件は維持——ここが破れたら失敗する）。
+      # 帯・判定モードの変更手続きは conventions.md「CI 回帰ベンチの基準値更新」節。
       #
       # グレースフル停止（Ctrl+C 経由。ConsoleCtrlSender）は CI のようなコンソールを持たない
       # 実行環境では機能しない可能性がある。その場合は Yagura.Bench.HostProcess.BenchHostProcess が

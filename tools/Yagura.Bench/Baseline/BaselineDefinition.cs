@@ -76,9 +76,22 @@ public sealed record BaselineMeta(
 /// 突合成立（<see cref="Verification.ReconciliationResult.IsReconciled"/>）を合否条件に含めるか。
 /// 既定 true——回帰ベンチも「損失は必ずどれかのカウンタに計上される」という原則を満たすべきである。
 /// </param>
+/// <param name="EnforceRatio">
+/// 基準比（スループット・保存件数）の許容帯判定を合否条件に含めるか。既定 true。
+/// false のとき、比の劣化は不合格にせず情報として出力のみ行う（突合成立の判定
+/// <paramref name="RequireReconciled"/> は本フラグと無関係に効く）。
+/// <b>M-5 初回実測（2026-07-06。CI 5 回）で SustainedZeroDrop を false にした根拠</b>:
+/// windows-latest（2 コア）は UDP 5,000 msg/sec の持続受信を安定維持できず、保存件数が
+/// 双峰性を示した（5 回中 3 回は損失ゼロ、2 回は Q1 破棄 7,511 / 28,355 件 = 保存率 0.85 / 0.43）。
+/// この分布に意味のある許容帯は引けない（0.43 を許す帯は回帰検出能力を持たない）ため、
+/// 同シナリオの比判定は情報表示に降格し、回帰の blocking 判定は分散が小さい
+/// ProviderWriteCeiling（SQLite。同実測で保存件数の振れ幅 0.07%）が担う。
+/// 一次データ: tools/Yagura.Bench/results/2026-07-06-ci-windows-latest-m5/。
+/// </param>
 public sealed record BaselineEntry(
     [property: JsonPropertyName("scenarioKey")] string ScenarioKey,
     [property: JsonPropertyName("baselineThroughputPerSecond")] double BaselineThroughputPerSecond,
     [property: JsonPropertyName("baselineSavedCount")] long BaselineSavedCount,
     [property: JsonPropertyName("toleranceRatio")] double ToleranceRatio,
-    [property: JsonPropertyName("requireReconciled")] bool RequireReconciled = true);
+    [property: JsonPropertyName("requireReconciled")] bool RequireReconciled = true,
+    [property: JsonPropertyName("enforceRatio")] bool EnforceRatio = true);
