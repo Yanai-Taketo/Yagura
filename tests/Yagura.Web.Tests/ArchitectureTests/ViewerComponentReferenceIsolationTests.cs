@@ -1,7 +1,7 @@
 using System.Linq;
 using System.Reflection;
 using Microsoft.AspNetCore.Components;
-using Yagura.Storage.Administration;
+using Yagura.Abstractions.Administration;
 
 namespace Yagura.Web.Tests.ArchitectureTests;
 

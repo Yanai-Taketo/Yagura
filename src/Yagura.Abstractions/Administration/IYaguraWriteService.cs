@@ -1,4 +1,4 @@
-namespace Yagura.Storage.Administration;
+namespace Yagura.Abstractions.Administration;
 
 /// <summary>
 /// 「書き込み系サービス」であることを宣言するマーカーインターフェース（M6-4。Issue #54。
@@ -22,7 +22,7 @@ namespace Yagura.Storage.Administration;
 /// </para>
 /// <para>
 /// <b>マーカーインターフェース方式を採った理由</b>: 名前空間規約（例:
-/// 「<c>Yagura.Storage.Administration.*</c> 名前空間のクラスはすべて書き込み系」）でも
+/// 「<c>Yagura.Abstractions.Administration.*</c> 名前空間のクラスはすべて書き込み系」）でも
 /// 同じ検査は成立するが、名前空間規約はクラスの実装意図を型システムでは表現せず、
 /// 「うっかり読み取り専用の型を同じ名前空間に置いてしまう」事故を静的に防げない。
 /// マーカーインターフェースは C# の型システムに載るため、実装漏れ・誤分類は
@@ -30,6 +30,11 @@ namespace Yagura.Storage.Administration;
 /// で機械的に判定できる）。将来 M8 で書き込み系サービスを追加する実装者への負担も
 /// 「インターフェースを 1 つ実装する」だけで済み、名前空間の配置規約を別途覚える
 /// 必要がない。
+/// </para>
+/// <para>
+/// <b>配置（<c>Yagura.Abstractions</c>）</b>: モジュール横断契約の最下層プロジェクトに置く
+/// （Issue #54 の PR レビューでオーナー決定・2026-07-05。architecture.md §1.1 参照）。
+/// M8 で追加される書き込み系サービスの契約群も本名前空間が第一候補となる。
 /// </para>
 /// </remarks>
 public interface IYaguraWriteService

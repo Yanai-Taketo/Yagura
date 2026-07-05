@@ -5,6 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Yagura.Abstractions\Yagura.Abstractions.csproj" />
     <ProjectReference Include="..\Yagura.Storage\Yagura.Storage.csproj" />
   </ItemGroup>
 
