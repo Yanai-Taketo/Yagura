@@ -54,6 +54,7 @@ public static class YaguraConfigurationLoader
     {
         "Ingestion:Udp:BindAddress",
         "Ingestion:Udp:Port",
+        "Ingestion:Udp:ReceiveBufferBytes",
         "Ingestion:Tcp:BindAddress",
         "Ingestion:Tcp:Port",
         "Viewer:HttpPort",
@@ -108,6 +109,9 @@ public static class YaguraConfigurationLoader
         // --- 受信: UDP ポート（§1「起動失敗」——受信の成立に不可欠なキー） ---
         var udpPort = ResolveUdpPort(options);
 
+        // --- 受信: UDP 受信バッファサイズ（§1「既定値で継続」。M-2） ---
+        var udpReceiveBufferBytes = ResolveUdpReceiveBufferBytes(options, warnings);
+
         // --- 受信: TCP bind アドレス（§1「縮小側で継続」。UDP と同じ分類。M4-1） ---
         var tcpBindAddress = ResolveTcpBindAddress(options, warnings);
 
@@ -152,6 +156,7 @@ public static class YaguraConfigurationLoader
             DataRoot: dataRoot,
             UdpBindAddress: udpBindAddress,
             UdpPort: udpPort,
+            UdpReceiveBufferBytes: udpReceiveBufferBytes,
             TcpBindAddress: tcpBindAddress,
             TcpPort: tcpPort,
             HttpPort: httpPort,
@@ -260,6 +265,41 @@ public static class YaguraConfigurationLoader
         }
 
         return ParsePortOrThrow(raw, "Ingestion:Udp:Port", "設定ファイル");
+    }
+
+    /// <summary>
+    /// UDP 受信ソケットの受信バッファサイズ（バイト）を解決する（M-2。§1「既定値で継続」——
+    /// 受信バッファの拡大は OS 側ロス緩和の改善レバーであって受信の成立に不可欠ではないため、
+    /// 不正値は既定値（<see cref="UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/>）へ
+    /// フォールバックし警告する）。下限
+    /// （<see cref="UdpSyslogListenerOptions.MinReceiveBufferBytes"/>）未満・上限
+    /// （<see cref="UdpSyslogListenerOptions.MaxReceiveBufferBytes"/>）超過も不正値として扱う。
+    /// </summary>
+    private static int ResolveUdpReceiveBufferBytes(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var defaultBytes = UdpSyslogListenerOptions.DefaultReceiveBufferBytes;
+
+        var raw = options.Ingestion?.Udp?.ReceiveBufferBytes;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultBytes;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var bytes)
+            && bytes >= UdpSyslogListenerOptions.MinReceiveBufferBytes
+            && bytes <= UdpSyslogListenerOptions.MaxReceiveBufferBytes)
+        {
+            return bytes;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Ingestion:Udp:ReceiveBufferBytes",
+            InvalidValue: raw,
+            AppliedValue: defaultBytes.ToString(CultureInfo.InvariantCulture),
+            Reason: $"バイト数として不正、または許容範囲（{UdpSyslogListenerOptions.MinReceiveBufferBytes}〜" +
+                $"{UdpSyslogListenerOptions.MaxReceiveBufferBytes}）外のため既定値を適用"));
+
+        return defaultBytes;
     }
 
     /// <summary>

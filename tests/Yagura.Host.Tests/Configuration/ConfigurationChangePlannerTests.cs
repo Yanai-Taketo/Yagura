@@ -131,6 +131,7 @@ public sealed class ConfigurationChangePlannerTests
     [Theory]
     [InlineData("Ingestion:Udp:BindAddress", ConfigurationReloadEffect.ListenerReconfiguration)]
     [InlineData("Ingestion:Udp:Port", ConfigurationReloadEffect.ListenerReconfiguration)]
+    [InlineData("Ingestion:Udp:ReceiveBufferBytes", ConfigurationReloadEffect.ListenerReconfiguration)]
     [InlineData("Viewer:HttpPort", ConfigurationReloadEffect.RestartRequired)]
     [InlineData("Storage:SqliteFileName", ConfigurationReloadEffect.RestartRequired)]
     public void GetReloadEffect_KnownKeys_ReturnsDeclaredEffect(string key, ConfigurationReloadEffect expected)
