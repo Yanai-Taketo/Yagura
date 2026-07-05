@@ -50,6 +50,14 @@ public static class ConfigurationKeyMetadata
             ["Ingestion:Tcp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Ingestion:Tcp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Viewer:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
+            // 公開範囲は bind 先の変更を伴うため、Viewer:HttpPort と同じ「リスナ再構成」区分
+            // （§8 表「UI」区分の目標）に揃える。現時点の実効はポートと同じくサービス再起動
+            // （M6-1 時点は無瞬断リスナ再構成が未実装のため。CF-4 確定後に見直す）。
+            ["Viewer:PublicAccess"] = ConfigurationReloadEffect.RestartRequired,
+            // 管理ポートはリスナの bind 先自体（loopback 固定）を変えないが、Kestrel の
+            // listen アドレス一覧は WebApplication 構築時に固定されるため、他の UI 区分の
+            // ポートキーと同じくサービス再起動が現時点の実効（M6-1）。
+            ["Admin:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
             ["Storage:SqliteFileName"] = ConfigurationReloadEffect.RestartRequired,
             // provider 切替は database.md §6.1 の切替手順（準備フェーズ→切替本番）による専用の
             // 管理操作であり、通常の設定再読み込み（差分適用）の対象ではない。現時点は

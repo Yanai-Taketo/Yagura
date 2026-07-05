@@ -214,6 +214,135 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // 管理リスナ・閲覧リスナの公開範囲(M6-1。Issue #51)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_ConfigurationFileMissing_ViewerPublicAccessDefaultsToLan()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(ViewerPublicAccess.Lan, result.Configuration.ViewerPublicAccess);
+        Assert.Equal(YaguraHostEnvironment.DefaultAdminPort, result.Configuration.AdminHttpPort);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_ViewerPublicAccessLocalhostOnlyInFile_IsAccepted()
+    {
+        WriteConfigurationFile("""{ "Viewer": { "PublicAccess": "LocalhostOnly" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(ViewerPublicAccess.LocalhostOnly, result.Configuration.ViewerPublicAccess);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Theory]
+    [InlineData("lan")]
+    [InlineData("LAN")]
+    [InlineData("Lan")]
+    public void Load_ViewerPublicAccessLanCaseInsensitive_IsAccepted(string value)
+    {
+        WriteConfigurationFile($$"""{ "Viewer": { "PublicAccess": "{{value}}" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(ViewerPublicAccess.Lan, result.Configuration.ViewerPublicAccess);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_ViewerPublicAccessUnknownValue_FallsBackToLocalhostOnlyNotProductDefault()
+    {
+        // configuration.md §1「公開範囲・bind 先の不正値は製品既定（開放側）へ落とさない」
+        // ——既定は Lan（開放側）だが、不正値の縮小先は必ず LocalhostOnly（より狭い側）。
+        WriteConfigurationFile("""{ "Viewer": { "PublicAccess": "Everyone" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(ViewerPublicAccess.LocalhostOnly, result.Configuration.ViewerPublicAccess);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Viewer:PublicAccess", warning.Key);
+        Assert.Equal("Everyone", warning.InvalidValue);
+        Assert.Equal(nameof(ViewerPublicAccess.LocalhostOnly), warning.AppliedValue);
+        Assert.False(string.IsNullOrWhiteSpace(warning.Reason));
+    }
+
+    [Fact]
+    public void Load_ViewerPublicAccessWhitespace_TreatedAsUnsetAndDefaultsToLan()
+    {
+        WriteConfigurationFile("""{ "Viewer": { "PublicAccess": "   " } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(ViewerPublicAccess.Lan, result.Configuration.ViewerPublicAccess);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_AdminHttpPortSetInFile_UsesFileValue()
+    {
+        WriteConfigurationFile("""{ "Admin": { "HttpPort": "18515" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(18515, result.Configuration.AdminHttpPort);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_AdminHttpPortOutOfRangeInFile_FallsBackToDefaultAndCollectsWarning()
+    {
+        WriteConfigurationFile("""{ "Admin": { "HttpPort": "99999" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(YaguraHostEnvironment.DefaultAdminPort, result.Configuration.AdminHttpPort);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Admin:HttpPort", warning.Key);
+        Assert.Equal("99999", warning.InvalidValue);
+        Assert.Equal(YaguraHostEnvironment.DefaultAdminPort.ToString(), warning.AppliedValue);
+    }
+
+    [Fact]
+    public void Load_EnvironmentVariableSetsAdminPort_NoFile_EnvironmentVariableWins()
+    {
+        SetEnvironmentVariable(YaguraHostEnvironment.AdminPortEnvironmentVariable, "18600");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(18600, result.Configuration.AdminHttpPort);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_AdminHttpPortInvalidViaEnvironmentVariable_NoFile_FallsBackToDefaultAndCollectsWarning()
+    {
+        SetEnvironmentVariable(YaguraHostEnvironment.AdminPortEnvironmentVariable, "not-a-port");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(YaguraHostEnvironment.DefaultAdminPort, result.Configuration.AdminHttpPort);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal(YaguraHostEnvironment.AdminPortEnvironmentVariable, warning.Key);
+        Assert.Equal("not-a-port", warning.InvalidValue);
+    }
+
+    // ------------------------------------------------------------------
     // 不正値の 3 分類: 既定値で継続（キー・不正値・適用値の 3 点を警告収集）
     // ------------------------------------------------------------------
 

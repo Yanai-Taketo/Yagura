@@ -57,6 +57,8 @@ public static class YaguraConfigurationLoader
         "Ingestion:Tcp:BindAddress",
         "Ingestion:Tcp:Port",
         "Viewer:HttpPort",
+        "Viewer:PublicAccess",
+        "Admin:HttpPort",
         "Storage:SqliteFileName",
         "Storage:Provider",
         "Storage:SqlServer:ConnectionString",
@@ -115,6 +117,12 @@ public static class YaguraConfigurationLoader
         // --- UI: 閲覧 HTTP ポート（§1「既定値で継続」） ---
         var httpPort = ResolveHttpPort(options, warnings);
 
+        // --- UI: 閲覧リスナの公開範囲（§1「縮小側で継続」。M6-1） ---
+        var viewerPublicAccess = ResolveViewerPublicAccess(options, warnings);
+
+        // --- UI: 管理 HTTP ポート（§1「既定値で継続」。bind 先は常に loopback 固定。M6-1） ---
+        var adminHttpPort = ResolveAdminHttpPort(options, warnings);
+
         // --- 永続化: SQLite ファイル名（§1「既定値で継続」） ---
         var sqliteFileName = ResolveSqliteFileName(options, warnings);
 
@@ -147,6 +155,8 @@ public static class YaguraConfigurationLoader
             TcpBindAddress: tcpBindAddress,
             TcpPort: tcpPort,
             HttpPort: httpPort,
+            ViewerPublicAccess: viewerPublicAccess,
+            AdminHttpPort: adminHttpPort,
             SqliteFileName: sqliteFileName,
             SpoolEnabled: spoolEnabled,
             SpoolDirectory: spoolDirectory,
@@ -361,6 +371,101 @@ public static class YaguraConfigurationLoader
             Reason: "ポート番号として不正なため既定値を適用"));
 
         return YaguraHostEnvironment.DefaultHttpPort;
+    }
+
+    /// <summary>
+    /// 閲覧リスナの公開範囲を解決する（M6-1。configuration.md §4.2・§1）。
+    /// </summary>
+    /// <remarks>
+    /// <b>不正値の扱いは「縮小側で継続」</b>: 公開範囲はセキュリティ上の縮小対象キー
+    /// （configuration.md §1「公開範囲・bind 先・認証関連のセキュリティ項目は、不正値のとき
+    /// 製品既定（開放側）へ落とさない」）であるため、他キーの「既定値で継続」（=製品既定へ戻す）
+    /// とは異なり、既定が <see cref="ViewerPublicAccess.Lan"/>（開放側）であっても不正値の
+    /// フォールバック先は必ず <see cref="ViewerPublicAccess.LocalhostOnly"/>（より狭い側）とする。
+    /// </remarks>
+    private static ViewerPublicAccess ResolveViewerPublicAccess(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Viewer?.PublicAccess;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return ViewerPublicAccess.Lan;
+        }
+
+        if (string.Equals(raw, "Lan", StringComparison.OrdinalIgnoreCase))
+        {
+            return ViewerPublicAccess.Lan;
+        }
+
+        if (string.Equals(raw, "LocalhostOnly", StringComparison.OrdinalIgnoreCase))
+        {
+            return ViewerPublicAccess.LocalhostOnly;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Viewer:PublicAccess",
+            InvalidValue: raw,
+            AppliedValue: nameof(ViewerPublicAccess.LocalhostOnly),
+            Reason: "既知の公開範囲名（Lan / LocalhostOnly）ではないため、縮小側（LocalhostOnly）を適用" +
+                "（configuration.md §1「公開範囲・bind 先の不正値は製品既定へ落とさない」の適用）"));
+
+        return ViewerPublicAccess.LocalhostOnly;
+    }
+
+    /// <summary>
+    /// 管理 HTTP リスナのポートを解決する（M6-1。environment 変数 <see cref="YaguraHostEnvironment.AdminPortEnvironmentVariable"/>
+    /// が最優先。bind 先アドレスは常に loopback 固定であり、設定キーを持たない——本メソッドは
+    /// ポート番号のみを解決する）。不正値は §1「既定値で継続」——管理リスナ自体は loopback 限定の
+    /// ため公開範囲の縮小対象ではなく、ポート番号は他の一般キーと同じ扱いでよい。
+    /// </summary>
+    private static int ResolveAdminHttpPort(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var envOverride = Environment.GetEnvironmentVariable(YaguraHostEnvironment.AdminPortEnvironmentVariable);
+        var envIsSet = !string.IsNullOrWhiteSpace(envOverride);
+
+        if (envIsSet
+            && int.TryParse(envOverride, NumberStyles.Integer, CultureInfo.InvariantCulture, out var envPort)
+            && IsValidPort(envPort))
+        {
+            return envPort;
+        }
+
+        var portFromFileOrDefault = ResolveAdminHttpPortFromFileOrDefault(options, warnings);
+
+        if (envIsSet)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: YaguraHostEnvironment.AdminPortEnvironmentVariable,
+                InvalidValue: envOverride!,
+                AppliedValue: portFromFileOrDefault.ToString(CultureInfo.InvariantCulture),
+                Reason: "環境変数の値がポート番号として不正なため設定ファイル値/既定値を適用"));
+        }
+
+        return portFromFileOrDefault;
+    }
+
+    /// <summary>
+    /// 管理 HTTP ポートのうち「設定ファイル値 → 既定値」の部分を解決する（環境変数を考慮しない）。
+    /// </summary>
+    private static int ResolveAdminHttpPortFromFileOrDefault(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Admin?.HttpPort;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return YaguraHostEnvironment.DefaultAdminPort;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) && IsValidPort(port))
+        {
+            return port;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Admin:HttpPort",
+            InvalidValue: raw,
+            AppliedValue: YaguraHostEnvironment.DefaultAdminPort.ToString(CultureInfo.InvariantCulture),
+            Reason: "ポート番号として不正なため既定値を適用"));
+
+        return YaguraHostEnvironment.DefaultAdminPort;
     }
 
     /// <summary>

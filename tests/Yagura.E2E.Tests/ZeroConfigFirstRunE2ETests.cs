@@ -18,6 +18,15 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
 {
     private const string ListeningOnPrefix = "Now listening on:";
     private const string UdpListenerLogPrefix = "UDP syslog listener started on port";
+
+    // M6-1(Issue #51)以降、Kestrel は複数アドレスへ bind するため「Now listening on:」行が
+    // 3 本(閲覧 1 本 + 管理 2 本)出る。閲覧リスナは既定(Viewer:PublicAccess = Lan)で
+    // ListenAnyIP を使う——実機確認済み(2026-07-05)で Kestrel は "http://[::]:{port}" と
+    // ログに出す(0.0.0.0 ではなく IPv6 ワイルドカード表記)。管理リスナは常に loopback の
+    // 具体アドレス("127.0.0.1:" / "[::1]:")でログに出るため、ワイルドカード表記の行だけを
+    // 閲覧リスナのものとして識別できる。
+    private static readonly Regex ViewerListeningPortPattern =
+        new(@"Now listening on:\s*http://\[::\]:(\d+)\s*$", RegexOptions.Compiled);
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HttpPollTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
@@ -75,12 +84,15 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
         startInfo.Environment["YAGURA_HTTP_PORT"] = "0";
         startInfo.Environment["YAGURA_UDP_PORT"] = "0";
         startInfo.Environment["YAGURA_TCP_PORT"] = "0";
+        // 管理リスナ(M6-1)も OS 採番にする——閲覧・受信ポートと同じ流儀。指定しないと
+        // 既定の 8515 に固定され、CI 上での並列実行や他プロセスとのポート衝突を招き得る。
+        startInfo.Environment["YAGURA_ADMIN_PORT"] = "0";
 
         _hostProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 
         var stdoutLines = new List<string>();
         var stdoutLock = new object();
-        var listeningUrlTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var viewerPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var udpPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _hostProcess.OutputDataReceived += (_, e) =>
@@ -101,11 +113,14 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
                 udpPortTcs.TrySetResult(udpPort);
             }
 
-            var listeningIndex = e.Data.IndexOf(ListeningOnPrefix, StringComparison.Ordinal);
-            if (listeningIndex >= 0)
+            // M6-1(Issue #51)以降、閲覧リスナは既定(Lan)で全インターフェース bind
+            // (ListenAnyIP)のため、Kestrel は "http://[::]:{port}" とログに出す
+            // （ワイルドカードアドレスは接続先として使えないため、127.0.0.1 へ接続する
+            // 実アドレスはポート番号のみここから取り出し、下で組み立てる）。
+            var viewerMatch = ViewerListeningPortPattern.Match(e.Data);
+            if (viewerMatch.Success && int.TryParse(viewerMatch.Groups[1].Value, out var viewerPort))
             {
-                var url = e.Data[(listeningIndex + ListeningOnPrefix.Length)..].Trim();
-                listeningUrlTcs.TrySetResult(url);
+                viewerPortTcs.TrySetResult(viewerPort);
             }
         };
 
@@ -114,7 +129,7 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
         _hostProcess.BeginErrorReadLine();
 
         var udpPort = await WaitWithTimeoutAsync(udpPortTcs.Task, StartupTimeout, "UDP リスナ起動ログ");
-        var listeningUrl = await WaitWithTimeoutAsync(listeningUrlTcs.Task, StartupTimeout, "HTTP listening ログ");
+        var viewerPort = await WaitWithTimeoutAsync(viewerPortTcs.Task, StartupTimeout, "閲覧リスナ HTTP listening ログ");
 
         // architecture.md §1.2 起動順序の実証: 「UDP syslog listener started」のログ行が
         // 「Now listening on:」より先に stdout へ現れること（受信開始が Kestrel の listen
@@ -146,7 +161,9 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
             await udpClient.SendAsync(payload, new IPEndPoint(IPAddress.Loopback, udpPort));
         }
 
-        using var httpClient = new HttpClient { BaseAddress = new Uri(listeningUrl) };
+        // ワイルドカードアドレス([::])は接続先として使えないため、127.0.0.1 へ接続する
+        // (閲覧リスナは既定で LAN 公開だが、ループバックからの接続も当然受け付ける)。
+        using var httpClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{viewerPort}") };
 
         var pageContainsMarker = await PollUntilAsync(
             async () =>

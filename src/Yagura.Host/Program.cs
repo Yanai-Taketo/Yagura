@@ -105,9 +105,47 @@ public static class Program
 
         var builder = WebApplication.CreateBuilder(args);
 
-        // 閲覧リスナは暫定で loopback 束縛のみ（CF-1 確定待ち。YaguraHostEnvironment.DefaultHttpPort
-        // のコメント参照）。
-        builder.WebHost.UseUrls($"http://127.0.0.1:{resolvedConfiguration.HttpPort}");
+        // リスナ分離(M6-1。Issue #51。CF-1 確定値: 閲覧 8514 / 管理 8515)。
+        //
+        // bind 先の計算そのものは ListenerBindPlan に切り出してある(単体テストで
+        // 「管理リスナの bind 先は入力に関わらず常に loopback の両系統になる」を実サーバ
+        // 起動なしに検証するため——ListenerBindPlanTests 参照)。ここでは計算結果を
+        // そのまま Kestrel の Listen/ListenAnyIP へ渡すだけにする。
+        //
+        // UseUrls ではなく ConfigureKestrel + Listen を使う理由: UseUrls は単一の URL 文字列
+        // (またはカンマ区切りの複数 URL)を Kestrel の既定オプションへ変換する簡易 API であり、
+        // IPv4/IPv6 の両系統を明示的に別アドレスとして bind する(本 Issue の要件)場合、
+        // ConfigureKestrel 経由で IPAddress を直接指定する方が意図が明確になる。
+        //
+        // 全インターフェース bind は ListenAnyIP を使う(Listen(IPAddress.Any, port) と
+        // Listen(IPAddress.IPv6Any, port) を両方呼ぶと AddressInUseException になる——
+        // Kestrel のソケットトランスポート層は IPv6Any を bind するソケットに DualMode = true
+        // を設定し、その 1 ソケットだけで IPv4 も IPv6 も受け付ける実装になっている
+        // (dotnet/aspnetcore の SocketTransportOptions.CreateDefaultBoundListenSocket。
+        // ListenAnyIP はこの単一ソケットの Listen(IPv6Any, port) 呼び出しをラップした
+        // 公式の簡易 API——実機確認・ソース確認済み、確認日 2026-07-05)。
+        var listenerBindEntries = ListenerBindPlan.Create(resolvedConfiguration);
+        builder.WebHost.ConfigureKestrel(kestrelOptions =>
+        {
+            foreach (var entry in listenerBindEntries)
+            {
+                if (entry.IsAnyIP)
+                {
+                    kestrelOptions.ListenAnyIP(entry.Port);
+                }
+                else
+                {
+                    kestrelOptions.Listen(entry.Address!, entry.Port);
+                }
+            }
+        });
+
+        // ポートゲート(後述 UseYaguraListenerPortGuard)の判定に使う管理ポートの実値。
+        // resolvedConfiguration.AdminHttpPort をそのまま使わない理由: 0(OS 採番。テスト用)
+        // 指定時、ListenerBindPlan.Create が実際に予約した具体ポート番号はここでしか
+        // 得られない(ResolvedYaguraConfiguration 自体は 0 のまま——ListenerBindPlan の
+        // ResolvePortForDualStackLoopback コメント参照)。
+        var effectiveAdminPort = listenerBindEntries.First(e => e.Kind == ListenerKind.Admin).Port;
 
         // Windows サービス統合（M3-2 #31。architecture.md §1.1 「ホスト」の責務）。
         //
@@ -254,10 +292,27 @@ public static class Program
         // ルーティングを組み込むため、ここでは UseAntiforgery のみを明示する。
         app.UseAntiforgery();
 
-        // ルート登録は Yagura.Web 側の MapYaguraWebViewer に集約する（Yagura.Web
-        // /YaguraWebViewerExtensions.cs のコメント参照。書き込み系エンドポイントを
-        // Host 側で個別に追加しない）。
+        // リスナ分離の実行時強制(M6-1。Issue #51)。UseRouting(MapRazorComponents が暗黙に
+        // 組み込む)によりエンドポイントが確定した後、実処理(Razor Components の描画・
+        // SignalR ハブへのアップグレード等)が始まる前に、管理系エンドポイントへの到達を
+        // 接続の実ローカルポートで判定する(ListenerPortGuardMiddleware のコメント参照——
+        // RequireHost は HTTP Host ヘッダに依存し偽装可能なため採らなかった)。
+        // ミドルウェアの登録順序上、UseAntiforgery の後・MapYaguraWebViewer/MapYaguraAdmin
+        // (エンドポイント実行に相当)の前に置く必要がある。effectiveAdminPort を使う理由は
+        // 上記(122 行目付近)のコメント参照——0 指定時は解決済みの具体ポートで判定する必要がある。
+        app.UseYaguraListenerPortGuard(effectiveAdminPort);
+
+        // ルート登録は Yagura.Web 側の 2 つの集約点に分ける:
+        // - MapYaguraWebViewer(閲覧系。書き込みエンドポイントを持たない)
+        // - MapYaguraAdmin(管理系。ListenerPortGuardEndpointMetadata.Admin を持ち、
+        //   上記ガードにより管理リスナ以外からは 404 になる)
+        // 閲覧系ルートは管理リスナからも到達できる設計とした(ui.md §4 の線引きは「閲覧
+        // リスナに書き込み系を置かない」であり、管理リスナは loopback 限定のため閲覧系が
+        // 同居しても安全側に働く——管理者がローカルで全部見られることはむしろ自然。
+        // MapYaguraWebViewer はガード対象のメタデータを持たないため、両リスナから到達できる)。
+        // Host 側で個別に MapGet 等を追加しない(各拡張メソッドのコメント参照)。
         app.MapYaguraWebViewer();
+        app.MapYaguraAdmin();
 
         // architecture.md §1.2 の起動順序（受信を最初に開く）は IngestionHostedService が
         // 担う。IHostedService.StartAsync は ASP.NET Core の規約により Kestrel が listen を

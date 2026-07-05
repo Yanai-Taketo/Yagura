@@ -35,6 +35,8 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Ingestion:Udp:BindAddress", before.Ingestion?.Udp?.BindAddress, after.Ingestion?.Udp?.BindAddress);
         CompareKey(changedKeys, "Ingestion:Udp:Port", before.Ingestion?.Udp?.Port, after.Ingestion?.Udp?.Port);
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
+        CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);
+        CompareKey(changedKeys, "Admin:HttpPort", before.Admin?.HttpPort, after.Admin?.HttpPort);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
         CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);

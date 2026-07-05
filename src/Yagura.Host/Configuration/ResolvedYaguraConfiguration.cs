@@ -14,6 +14,14 @@
 /// <param name="TcpBindAddress">TCP 受信リスナの bind アドレス（検証・縮小適用済み。M4-1）。</param>
 /// <param name="TcpPort">TCP 受信リスナのポート（検証済み。M4-1）。</param>
 /// <param name="HttpPort">閲覧 HTTP リスナのポート（検証済み）。</param>
+/// <param name="ViewerPublicAccess">
+/// 閲覧リスナの公開範囲（既定 <see cref="Configuration.ViewerPublicAccess.Lan"/>。M6-1）。
+/// 不正値は <see cref="Configuration.ViewerPublicAccess.LocalhostOnly"/> へ縮小済み。
+/// </param>
+/// <param name="AdminHttpPort">
+/// 管理 HTTP リスナのポート（検証済み。M6-1）。bind 先は常に <c>127.0.0.1</c> / <c>::1</c>
+/// 固定（設定で変更不可——configuration.md §1 の不変条件）。
+/// </param>
 /// <param name="SqliteFileName">データルート配下の SQLite ファイル名（検証済み）。</param>
 /// <param name="SpoolEnabled">スプールの有効/無効（既定 <c>true</c>。opt-out。M4-3）。</param>
 /// <param name="SpoolDirectory">スプールディレクトリの絶対パス（既定はデータルート配下。M4-3）。</param>
@@ -39,6 +47,8 @@ public sealed record ResolvedYaguraConfiguration(
     string TcpBindAddress,
     int TcpPort,
     int HttpPort,
+    ViewerPublicAccess ViewerPublicAccess,
+    int AdminHttpPort,
     string SqliteFileName,
     bool SpoolEnabled,
     string SpoolDirectory,

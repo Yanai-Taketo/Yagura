@@ -23,8 +23,11 @@ public sealed class YaguraConfigurationOptions
     /// <summary>§8「受信」区分。</summary>
     public IngestionOptions? Ingestion { get; set; }
 
-    /// <summary>§8「UI」区分（現時点は閲覧ポートのみ。管理リスナ・HTTPS 証明書等は M6 以降で追加）。</summary>
+    /// <summary>§8「UI」区分（閲覧ポート・公開範囲。M6-1。HTTPS 証明書等は M6 以降で追加）。</summary>
     public ViewerOptions? Viewer { get; set; }
+
+    /// <summary>§8「UI」区分のうち管理リスナ（M6-1。Issue #51）。</summary>
+    public AdminOptions? Admin { get; set; }
 
     /// <summary>§8「永続化」区分のうち組み込み DB の置き場所。データルート自体は §2 参照。</summary>
     public StorageOptions? Storage { get; set; }
@@ -65,6 +68,22 @@ public sealed class YaguraConfigurationOptions
     public sealed class ViewerOptions
     {
         /// <summary>閲覧 HTTP リスナのポート。</summary>
+        public string? HttpPort { get; set; }
+
+        /// <summary>
+        /// 閲覧リスナの公開範囲（<c>Lan</c> 既定 / <c>LocalhostOnly</c>。M6-1）。
+        /// 不正値は §1「縮小側で継続」——<c>LocalhostOnly</c>（より狭い側）へ縮小する。
+        /// </summary>
+        public string? PublicAccess { get; set; }
+    }
+
+    public sealed class AdminOptions
+    {
+        /// <summary>
+        /// 管理 HTTP リスナのポート（M6-1）。bind 先（127.0.0.1 / ::1）を変える設定キーは
+        /// 設けない——管理リスナは設定がどう壊れていても loopback 以外へ束縛されない
+        /// （configuration.md §1 の不変条件・security.md §1 L-4）。
+        /// </summary>
         public string? HttpPort { get; set; }
     }
 
