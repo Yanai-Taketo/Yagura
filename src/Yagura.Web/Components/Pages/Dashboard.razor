@@ -114,12 +114,21 @@
                     <MudTh>@UiText.SourceColumnLastReceived</MudTh>
                     <MudTh>@UiText.SourceColumnSilence</MudTh>
                     <MudTh>@UiText.SourceColumnCount</MudTh>
+                    <MudTh>@UiText.SourceColumnActions</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="source">
                     <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@source.SourceAddress</span></MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnLastReceived"><YaguraTimestamp Value="@source.LastReceivedAt" /></MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnSilence">@FormatSilence(source.LastReceivedAt)</MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnCount">@FormatCount(source.RecordCount)</MudTd>
+                    @* 無音化検出 → 当該送信元のログ調査への 1 クリック導線(ui.md §4。
+                       リンク遷移のみでサーバ状態を変更しない = 閲覧面の不変条件の範囲内)。 *@
+                    <MudTd DataLabel="@UiText.SourceColumnActions">
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Text"
+                                   StartIcon="@Icons.Material.Filled.Search"
+                                   Href="@SearchHrefFor(source.SourceAddress)">@UiText.SourceSearchLinkLabel</MudButton>
+                    </MudTd>
                 </RowTemplate>
             </YaguraTable>
             @if (_sources.Count >= SourceLimit)
@@ -327,6 +336,10 @@
         string.Format(CultureInfo.InvariantCulture, UiText.ListenerPortLabelFormat, listener.ProtocolName);
 
     private static string FormatCount(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
+
+    /// <summary>送信元を初期条件にしたログ検索への導線 URL（LogSearch 側の ?source= 受け取りと対）。</summary>
+    private static string SearchHrefFor(string sourceAddress) =>
+        "/search?source=" + Uri.EscapeDataString(sourceAddress);
 
     private static string FormatBytes(long bytes) => bytes switch
     {

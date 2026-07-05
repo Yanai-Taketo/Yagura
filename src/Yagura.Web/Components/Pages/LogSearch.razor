@@ -1,7 +1,9 @@
 @page "/search"
 @using System.Globalization
+@using Microsoft.AspNetCore.WebUtilities
 @inject ILogStore LogStore
 @inject IYaguraSystemStatusReader StatusReader
+@inject NavigationManager Navigation
 
 @*
     ログ検索（ui.md §4。M8-3。Issue #70）:
@@ -122,7 +124,7 @@
             <RowTemplate Context="record">
                 <MudTd DataLabel="受信時刻"><YaguraTimestamp Value="@record.ReceivedAt" /></MudTd>
                 <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@record.SourceAddress</span></MudTd>
-                <MudTd DataLabel="重大度">@(record.Severity?.ToString(CultureInfo.InvariantCulture) ?? "—")</MudTd>
+                <MudTd DataLabel="重大度"><YaguraSeverityChip Severity="@record.Severity" /></MudTd>
                 <MudTd DataLabel="分類（ファシリティ）">@(record.Facility?.ToString(CultureInfo.InvariantCulture) ?? "—")</MudTd>
                 <MudTd DataLabel="メッセージ">@SummaryMessage(record)</MudTd>
             </RowTemplate>
@@ -167,7 +169,7 @@
                     <MudItem xs="12" sm="6" md="3">
                         <MudText Typo="Typo.caption">重大度 / 分類（ファシリティ）</MudText>
                         <MudText Typo="Typo.body2">
-                            @(_detail.Severity?.ToString(CultureInfo.InvariantCulture) ?? "—") /
+                            @UiText.FormatSeverityLong(_detail.Severity) /
                             @(_detail.Facility?.ToString(CultureInfo.InvariantCulture) ?? "—")
                         </MudText>
                     </MudItem>
@@ -279,7 +281,19 @@
             ? DateTimeOffset.UtcNow - TimeSpan.FromDays(days)
             : null;
 
-        // 絞り込みの強制はしない——初期表示は条件なしの検索を自動実行する（architecture.md §6）。
+        // ダッシュボードの送信元別受信状況からの導線（?source=<アドレス>。ui.md §4——
+        // 「静かになった装置に気づく → その装置のログを見る」の調査動線を 1 クリックにする。
+        // 2026-07-06 オーナー指示の UX 改善）。クエリ値は送信元アドレス欄の初期値になるだけで、
+        // 検索条件としての扱い（完全一致）はフォーム経由の入力と同一。
+        var query = QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
+        if (query.TryGetValue("source", out var sourceValues) &&
+            sourceValues.ToString() is { Length: > 0 } sourceFromQuery)
+        {
+            _sourceAddress = sourceFromQuery;
+        }
+
+        // 絞り込みの強制はしない——初期表示は条件なしの検索を自動実行する（architecture.md §6。
+        // 導線経由では送信元だけが初期条件に入った状態で同じ自動実行になる）。
         await RunSearchAsync();
     }
 

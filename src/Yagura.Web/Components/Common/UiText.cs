@@ -282,6 +282,41 @@ public static class UiText
     /// <summary>選択入力の「指定なし」選択肢（絞り込みの強制はしない——architecture.md §6）。</summary>
     public const string SelectNoneOption = "（指定なし）";
 
+    /// <summary>
+    /// 重大度の短形ラベル（一覧セル・チップ用。<see cref="SeverityOptionLabels"/> の長形と
+    /// 添字で 1 対 1 対応——対応表を二重管理しない）。表示部品は
+    /// <c>YaguraSeverityChip</c>（色の対応は ui.md §4 に記録）。
+    /// </summary>
+    public static readonly IReadOnlyList<string> SeverityShortLabels =
+    [
+        "0: 緊急",
+        "1: 警報",
+        "2: 重大",
+        "3: エラー",
+        "4: 警告",
+        "5: 通知",
+        "6: 情報",
+        "7: デバッグ",
+    ];
+
+    /// <summary>
+    /// 重大度の長形ラベル整形（詳細表示用）。範囲外の値は解釈を偽装せず生値のまま返す。
+    /// </summary>
+    public static string FormatSeverityLong(int? severity) => severity switch
+    {
+        null => "—",
+        >= 0 and <= 7 => SeverityOptionLabels[severity.Value],
+        _ => severity.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
+
+    // ---- ダッシュボード → 検索の導線（ui.md §4。無音化検出からの調査動線） ----
+
+    /// <summary>送信元別受信状況テーブルの操作列見出し。</summary>
+    public const string SourceColumnActions = "操作";
+
+    /// <summary>送信元を条件にしたログ検索への導線ラベル。</summary>
+    public const string SourceSearchLinkLabel = "ログを検索";
+
     /// <summary>検索結果 0 件（条件あり）の見出し。</summary>
     public const string SearchNoResultsTitle = "条件に一致するログがありません";
 
