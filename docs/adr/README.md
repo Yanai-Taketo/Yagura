@@ -13,7 +13,7 @@
 | # | タイトル | 状態 |
 |---|---|---|
 | [0001](0001-project-founding.md) | プロジェクト創設 — 目的・スコープ・開発の原則 | accepted |
-| [0002](0002-architecture-principles.md) | アーキテクチャ原則 | accepted |
+| [0002](0002-architecture-principles.md) | アーキテクチャ原則 | accepted（改訂 2026-07-05） |
 | [0003](0003-ui-policy.md) | UI 方針 — Blazor・デザインシステム先行・テーマ | accepted |
 | [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | accepted |
 | [0005](0005-oss-packaging.md) | OSS 体裁 — README・貢献導線・脆弱性報告窓口 | accepted |
