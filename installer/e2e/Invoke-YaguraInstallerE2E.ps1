@@ -184,8 +184,14 @@ function Send-SyslogDatagram {
 function Test-ViewerContainsToken {
     param([string]$BaseUrl, [string]$Token)
     try {
+        # 照合先は /search(条件なし検索の初期表示 = 最新ログの prerender にメッセージ本文が
+        # 出る)。ルート "/" は M8-3 でダッシュボード(件数・推移・送信元別のみでメッセージ
+        # 本文を表示しない)に変わったため、"/" 照合はトークンを永遠に見つけられない
+        # (main への M8 統合後、installer-e2e の workflow_dispatch 実行で実際に検出した
+        # 統合ギャップ。Yagura.E2E.Tests も M8-3 で同じ /search 照合へ移行している)。
+        $url = ('{0}/search' -f $BaseUrl.TrimEnd('/'))
         # -UseBasicParsing: Windows PowerShell 5.1 互換(IE エンジン非依存)。
-        $resp = Invoke-WebRequest -Uri $BaseUrl -UseBasicParsing -TimeoutSec 10
+        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10
         return ($resp.Content.Contains($Token))
     }
     catch {
