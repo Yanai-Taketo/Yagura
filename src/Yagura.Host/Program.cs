@@ -10,10 +10,12 @@ using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
+using Yagura.Storage.Auditing;
 using Yagura.Storage.Sqlite;
 using Yagura.Storage.SqlServer;
 using Yagura.Storage.Spool;
 using Yagura.Web;
+using Yagura.Web.Diagnostics;
 
 namespace Yagura.Host;
 
@@ -259,6 +261,24 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Observability")));
 
         builder.Services.AddHostedService<IngestionHostedService>();
+
+        // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
+        //
+        // Yagura.Web（ListenerPortGuardMiddleware）は Yagura.Storage.Auditing.IAuditRecorder
+        // インターフェースのみを参照し、実体（アプリ記録ファイル + Windows イベントログ併記）は
+        // ここ Yagura.Host が結線する——architecture.md の参照構造（Web は Storage 抽象のみを
+        // 参照する）と、既存の「メタデータ領域・スプールは Host 管轄のホスト管轄ローカル
+        // ファイル」という判断（architecture.md §4.3）に揃える。
+        //
+        // WebGuardMetrics は Yagura.Ingestion.Diagnostics.IngestionMetrics とは別インスタンスだが
+        // 同じ Meter 名 "Yagura" を使う（Yagura.Web は Yagura.Ingestion を参照しない設計のため、
+        // インスタンス共有ではなく Meter 名の一致で単一の計測空間に統合する。
+        // WebGuardMetrics のコメント参照）。
+        builder.Services.AddSingleton<WebGuardMetrics>();
+        builder.Services.AddSingleton<IAuditRecorder>(sp => new Yagura.Host.Observability.Auditing.FileAuditRecorder(
+            dataRoot,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Observability.Auditing"),
+            sp.GetRequiredService<WebGuardMetrics>()));
 
         builder.Services.AddYaguraWebViewer();
 
