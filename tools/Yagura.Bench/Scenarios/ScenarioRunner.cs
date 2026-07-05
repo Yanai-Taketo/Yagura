@@ -99,6 +99,13 @@ public static class ScenarioRunner
     private static async Task<ScenarioReport> RunSustainedZeroDropAsync(ScenarioOptions options, string runId, string dataRoot, DateTimeOffset startedAt)
     {
         var wallClock = System.Diagnostics.Stopwatch.StartNew();
+
+        if (options.UdpReceiveBufferBytes is { } udpReceiveBufferBytes)
+        {
+            // 受信バッファ値別の破棄ゼロ上限比較（M-2 実測。BenchConfigurationFile 参照）。
+            BenchConfigurationFile.WriteUdpReceiveBufferConfiguration(dataRoot, udpReceiveBufferBytes);
+        }
+
         await using var host = await BenchHostProcess.StartAsync(dataRoot).ConfigureAwait(false);
         var osUdpBaseline = OsUdpStatsProbe.GetCurrentTotalDiscarded();
 
@@ -150,6 +157,13 @@ public static class ScenarioRunner
     private static async Task<ScenarioReport> RunBurstQ1DropAsync(ScenarioOptions options, string runId, string dataRoot, DateTimeOffset startedAt)
     {
         var wallClock = System.Diagnostics.Stopwatch.StartNew();
+
+        if (options.UdpReceiveBufferBytes is { } udpReceiveBufferBytes)
+        {
+            // 受信バッファ値別の OS バッファ破棄（導出値）比較（M-2 実測。BenchConfigurationFile 参照）。
+            BenchConfigurationFile.WriteUdpReceiveBufferConfiguration(dataRoot, udpReceiveBufferBytes);
+        }
+
         await using var host = await BenchHostProcess.StartAsync(dataRoot).ConfigureAwait(false);
         var osUdpBaseline = OsUdpStatsProbe.GetCurrentTotalDiscarded();
 

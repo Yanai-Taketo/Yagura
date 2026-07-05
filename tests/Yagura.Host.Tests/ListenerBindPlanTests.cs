@@ -77,6 +77,7 @@ public sealed class ListenerBindPlanTests
             DataRoot: Path.GetTempPath(),
             UdpBindAddress: "0.0.0.0",
             UdpPort: 514,
+            UdpReceiveBufferBytes: Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes,
             TcpBindAddress: "0.0.0.0",
             TcpPort: 514,
             HttpPort: 8514,

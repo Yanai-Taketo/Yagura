@@ -32,6 +32,7 @@ public static class ScenarioOptionsParser
         string? sqlServerConnectionString = null;
         var spoolQuotaBytes = 4L * 1024 * 1024; // 既定 4 MiB。TargetSegmentSizeBytes と同程度——数セグメントで発動させる狙い。
         var keepDataRoot = false;
+        int? udpReceiveBufferBytes = null;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -70,6 +71,9 @@ public static class ScenarioOptionsParser
                 case "--keep-data-root":
                     keepDataRoot = true;
                     break;
+                case "--udp-receive-buffer-bytes":
+                    udpReceiveBufferBytes = int.Parse(RequireValue(args, ref i, "--udp-receive-buffer-bytes"));
+                    break;
                 default:
                     throw new BenchUsageException($"未知のオプション '{args[i]}'。\n\n{BuildUsageText()}");
             }
@@ -87,7 +91,8 @@ public static class ScenarioOptionsParser
             outputDirectory,
             sqlServerConnectionString,
             spoolQuotaBytes,
-            keepDataRoot);
+            keepDataRoot,
+            udpReceiveBufferBytes);
     }
 
     private static LoadTransport ParseTransport(string value) => value.ToLowerInvariant() switch
@@ -134,12 +139,15 @@ public static class ScenarioOptionsParser
           --sqlserver <接続文字列>      SQL Server provider を対象にする（ProviderWriteCeiling 専用）
           --spool-quota-bytes <N>     スプール容量（SpoolActivationRecovery 専用。既定 4194304 = 4MiB）
           --keep-data-root            終了後にデータルートを削除せず残す（障害調査用）
+          --udp-receive-buffer-bytes <N>  UDP 受信バッファサイズ（SO_RCVBUF。バイト。M-2。
+                                           既定: 未指定 = 製品既定のまま上書きしない）
 
         例:
           Yagura.Bench Throughput --transport udp --rate 2000 --duration 15
           Yagura.Bench BurstQ1Drop --burst-count 20000 --sender-sockets 8
           Yagura.Bench SpoolActivationRecovery --spool-quota-bytes 2097152
           Yagura.Bench ProviderWriteCeiling --sqlserver "Server=.;Database=YaguraBench;Integrated Security=true;"
+          Yagura.Bench SustainedZeroDrop --rate 30000 --duration 10 --udp-receive-buffer-bytes 4194304
         """;
 }
 

@@ -11,6 +11,10 @@
 /// <param name="DataRoot">データルートの絶対パス。</param>
 /// <param name="UdpBindAddress">UDP 受信リスナの bind アドレス（検証・縮小適用済み）。</param>
 /// <param name="UdpPort">UDP 受信リスナのポート（検証済み）。</param>
+/// <param name="UdpReceiveBufferBytes">
+/// UDP 受信ソケットの受信バッファサイズ（バイト。M-2。検証済み）。既定は
+/// <see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/>。
+/// </param>
 /// <param name="TcpBindAddress">TCP 受信リスナの bind アドレス（検証・縮小適用済み。M4-1）。</param>
 /// <param name="TcpPort">TCP 受信リスナのポート（検証済み。M4-1）。</param>
 /// <param name="HttpPort">閲覧 HTTP リスナのポート（検証済み）。</param>
@@ -44,6 +48,7 @@ public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
     int UdpPort,
+    int UdpReceiveBufferBytes,
     string TcpBindAddress,
     int TcpPort,
     int HttpPort,

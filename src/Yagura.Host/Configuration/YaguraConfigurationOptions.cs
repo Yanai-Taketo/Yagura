@@ -53,6 +53,13 @@ public sealed class YaguraConfigurationOptions
 
             /// <summary>bind するポート。JSON の数値以外（文字列・範囲外）も受けられるよう <c>string?</c> で保持する。</summary>
             public string? Port { get; set; }
+
+            /// <summary>
+            /// UDP 受信ソケットの受信バッファサイズ（<c>SO_RCVBUF</c>。バイト単位。M-2）。
+            /// 既定は <see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/>。
+            /// 不正値は §1「既定値で継続」——受信の成立に不可欠なキーではない。
+            /// </summary>
+            public string? ReceiveBufferBytes { get; set; }
         }
 
         public sealed class TcpOptions
