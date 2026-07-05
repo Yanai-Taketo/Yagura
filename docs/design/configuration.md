@@ -125,6 +125,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 |---|---|---|---|
 | `Ingestion:Udp:BindAddress` | 受信 | 再起動（目標はリスナ再構成。CF-4 で無瞬断適用を特定後に更新） | 縮小側で継続（loopback へ縮小） |
 | `Ingestion:Udp:Port` | 受信 | 再起動（同上） | **起動失敗**（受信の成立に不可欠） |
+| `Ingestion:Udp:ReceiveBufferBytes` | 受信 | 再起動（同上。ソケット構築時に `SO_RCVBUF` を設定するためリスナ再構成が必要。M-2） | 既定値で継続（既定 **1 MiB = 1,048,576 バイト**——M-2 実測確定値（2026-07-05 開発機。architecture.md §3.1）。バイト数として不正、または下限 64 KiB（OS 既定値）未満・上限 256 MiB（安全弁）超過は既定値へ。受信の成立に不可欠なキーではない） |
 | `Ingestion:Tcp:BindAddress` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | 縮小側で継続（loopback へ縮小） |
 | `Ingestion:Tcp:Port` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | **起動失敗**（受信の成立に不可欠） |
 | `Viewer:HttpPort` | UI | 再起動（同上） | 既定値で継続（既定 **8514**。CF-1 確定値。M6-1） |
