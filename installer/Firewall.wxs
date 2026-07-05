@@ -1,0 +1,86 @@
+<!--
+  ファイアウォール規則とインストール記録(configuration.md §4.3。M9-1)。
+
+  - 規則名は「Yagura」始まりの名前空間(利用者が一覧で識別・監査できる)
+  - UDP 514 / TCP 514(受信)+ TCP 8514(閲覧)の受信許可のみ。管理リスナ 8515 は
+    loopback 束縛のため規則を作らない(不要な穴を開けない)
+  - YAGURA_FIREWALL=1 のときのみ規則コンポーネントをインストール(オプトアウト可)
+  - 選択(YAGURA_FIREWALL の値)と作成した規則の一覧をデータルート直下の
+    firewall-rules.ini に記録する。初回起動時のイベントログ転記(security.md §4.1)は
+    Host 側の後続 Issue がこのファイルを読む
+  - アンインストール時の規則削除: 規則はコンポーネントに帰属し、コンポーネントの
+    アンインストールに伴い Firewall 拡張の custom action が削除する(実機確認は M9-3 lab)
+
+  WixToolset.Firewall.wixext 7.0.0: 当日ライブ検証済み
+  (`dotnet package search WixToolset.Firewall.wixext` を exact-match オプション付きで
+  実行し 7.0.0 が最新安定版であることを確認、2026-07-06)。
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <Fragment>
+    <!--
+      インストール記録(常にインストール): 規則作成のオプトイン/アウトの選択を残す。
+      IniFile の Value 列は MSI の Formatted 型であり、実行時のプロパティ値
+      [YAGURA_FIREWALL] が書き込まれる(learn.microsoft.com/windows/win32/msi/inifile-table
+      の Value 列 = Formatted、確認日 2026-07-06)。オプトアウト時は空文字列になる。
+    -->
+    <!-- CreateFolder を KeyPath とするコンポーネントは GUID 自動生成の対象外
+         (WIX0230。実ビルドで確認)のため明示 GUID を与える。 -->
+    <Component Id="FirewallInstallRecord" Directory="YaguraDataRoot" Guid="39625606-DB54-464A-BB55-250D9244A062">
+      <CreateFolder />
+      <IniFile Id="FwRecordRequested"
+               Action="addLine"
+               Directory="YaguraDataRoot"
+               Name="firewall-rules.ini"
+               Section="Yagura.Firewall"
+               Key="RulesRequested"
+               Value="[YAGURA_FIREWALL]" />
+    </Component>
+
+    <!--
+      規則本体 + 作成した規則一覧の記録(YAGURA_FIREWALL=1 のときのみ)。
+      レジストリ値は機械可読な第 2 の記録を兼ねる(KeyPath 用途)。
+      Port/Protocol に加えて Program でサービス本体の実行ファイルに限定する
+      (公式スキーマ: Program は formatted field で [#fileId] 構文を使える)。
+    -->
+    <Component Id="FirewallRules" Directory="INSTALLFOLDER" Condition="YAGURA_FIREWALL = 1">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\Yagura" Name="FirewallRulesInstalled" Type="integer" Value="1" KeyPath="yes" />
+
+      <fw:FirewallException Id="YaguraSyslogUdp514"
+                            Name="Yagura Syslog (UDP 514)"
+                            Description="!(loc.FwDescriptionUdp514)"
+                            Grouping="Yagura"
+                            Program="[#Yagura.Host.exe]"
+                            Port="514"
+                            Protocol="udp" />
+
+      <fw:FirewallException Id="YaguraSyslogTcp514"
+                            Name="Yagura Syslog (TCP 514)"
+                            Description="!(loc.FwDescriptionTcp514)"
+                            Grouping="Yagura"
+                            Program="[#Yagura.Host.exe]"
+                            Port="514"
+                            Protocol="tcp" />
+
+      <fw:FirewallException Id="YaguraViewerTcp8514"
+                            Name="Yagura Viewer (TCP 8514)"
+                            Description="!(loc.FwDescriptionTcp8514)"
+                            Grouping="Yagura"
+                            Program="[#Yagura.Host.exe]"
+                            Port="8514"
+                            Protocol="tcp" />
+
+      <!-- 作成した規則の一覧(インストール記録。configuration.md §4.3)。 -->
+      <IniFile Id="FwRecordRule1" Action="addLine" Directory="YaguraDataRoot" Name="firewall-rules.ini"
+               Section="Yagura.Firewall" Key="Rule1" Value="Yagura Syslog (UDP 514) / udp 514 / inbound allow" />
+      <IniFile Id="FwRecordRule2" Action="addLine" Directory="YaguraDataRoot" Name="firewall-rules.ini"
+               Section="Yagura.Firewall" Key="Rule2" Value="Yagura Syslog (TCP 514) / tcp 514 / inbound allow" />
+      <IniFile Id="FwRecordRule3" Action="addLine" Directory="YaguraDataRoot" Name="firewall-rules.ini"
+               Section="Yagura.Firewall" Key="Rule3" Value="Yagura Viewer (TCP 8514) / tcp 8514 / inbound allow" />
+      <IniFile Id="FwRecordNoAdminRule" Action="addLine" Directory="YaguraDataRoot" Name="firewall-rules.ini"
+               Section="Yagura.Firewall" Key="AdminListenerNote" Value="no rule for 8515 (loopback only by design)" />
+    </Component>
+  </Fragment>
+
+</Wix>

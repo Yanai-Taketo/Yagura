@@ -1,0 +1,73 @@
+<!--
+  Yagura MSI インストーラ(M9-1。Issue #74)。
+
+  意図的に Yagura.sln へは含めない: CI(ci.yml)は sln 全体を対象にビルドするため、
+  sln へ追加すると ci.yml に触れずに CI のビルド対象が変わってしまう(M9-1 では CI への
+  組み込みをスコープ外とするオーナー方針。回帰ベンチ関連の並行変更との衝突回避)。
+  ビルド手順は installer/README.md を参照。
+
+  WixToolset.Sdk 7.0.0: 当日ライブ検証済み
+  (`dotnet package search WixToolset.Sdk` を exact-match オプション付きで実行し
+  7.0.0 が最新安定版であることを確認、2026-07-06)。
+-->
+<Project Sdk="WixToolset.Sdk/7.0.0">
+
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <!-- 主対象は日本語圏の Windows 管理者(ADR-0005 決定 1 と同じ判断)。
+         WixToolset.UI.wixext は ja-JP の翻訳文字列を同梱している(公式ドキュメント
+         「WixUI dialog library > Localization > Translated strings」に ja-JP が明記。
+         確認日 2026-07-06)。 -->
+    <Cultures>ja-JP</Cultures>
+    <OutputName>Yagura</OutputName>
+
+    <!-- Yagura.Host の publish 出力(MSI に収める実体)。既定はプロジェクト直下の
+         publish フォルダ。-p:YaguraPublishDir=... で差し替え可能。 -->
+    <YaguraPublishDir Condition="'$(YaguraPublishDir)' == ''">$(MSBuildProjectDirectory)\publish</YaguraPublishDir>
+    <DefineConstants>$(DefineConstants);PublishDir=$(YaguraPublishDir)</DefineConstants>
+
+    <!-- WiX v7 の Open Source Maintenance Fee (OSMF) EULA 承諾。公式ドキュメント
+         (docs.firegiant.com/wix/osmf/、確認日 2026-07-06)の Direct Acceptance 方式。
+         支払い義務は「年商 1 万ドル超の組織」にのみ課される(同ページ:
+         "organizations that generate more than $10,000 in annual revenue ... are
+         required to sponsor the wixtoolset GitHub organization")。Yagura は個人運営の
+         非営利 OSS でありこの条件に該当しないが、EULA の承諾自体は v7 のビルドに必須
+         (未承諾は WIX7015 エラー)。 -->
+    <AcceptEula>wix7</AcceptEula>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 拡張 3 点はいずれも 7.0.0 を当日ライブ検証済み(`dotnet package search <id>` を
+         exact-match オプション付きで実行し 7.0.0 が最新安定版であることを確認、2026-07-06)。
+         バージョンは Directory.Packages.props(中央管理)。 -->
+    <PackageReference Include="WixToolset.UI.wixext" />
+    <PackageReference Include="WixToolset.Util.wixext" />
+    <PackageReference Include="WixToolset.Firewall.wixext" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <BindVariable Include="WixUILicenseRtf=$(MSBuildProjectDirectory)\License.rtf" />
+  </ItemGroup>
+
+  <!--
+    Yagura.Host を self-contained(win-x64)で publish してから MSI を焼く。
+    self-contained の判断: ゼロ設定ファーストラン(CLAUDE.md 方針 2)と「追加のサーバ製品なし」
+    (ADR-0002)の思想から、対象サーバに .NET ランタイムの事前導入を要求しない。
+    -p:SkipYaguraHostPublish=true で publish 済み出力の再利用が可能。
+  -->
+  <Target Name="PublishYaguraHost" BeforeTargets="CoreCompile" Condition="'$(SkipYaguraHostPublish)' != 'true'">
+    <!-- DOTNET_HOST_PATH は dotnet CLI 経由の MSBuild が設定する dotnet.exe のフルパス
+         (PATH に依存しない)。未設定の環境(VS 内ビルド等)では dotnet にフォールバック。 -->
+    <PropertyGroup>
+      <_YaguraDotnetExe Condition="'$(DOTNET_HOST_PATH)' != ''">$(DOTNET_HOST_PATH)</_YaguraDotnetExe>
+      <_YaguraDotnetExe Condition="'$(_YaguraDotnetExe)' == ''">dotnet</_YaguraDotnetExe>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_YaguraDotnetExe)&quot; publish &quot;$(MSBuildProjectDirectory)\..\src\Yagura.Host\Yagura.Host.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(YaguraPublishDir)&quot;" />
+  </Target>
+
+  <Target Name="EnsurePublishOutput" BeforeTargets="CoreCompile" AfterTargets="PublishYaguraHost">
+    <Error Condition="!Exists('$(YaguraPublishDir)\Yagura.Host.exe')"
+           Text="Yagura.Host の publish 出力が見つかりません: $(YaguraPublishDir)。installer/README.md の手順でビルドしてください。" />
+  </Target>
+
+</Project>
