@@ -107,6 +107,7 @@ internal static class ConsoleCtrlSender
 
         if (!AttachConsole((uint)processId))
         {
+            ReattachParentConsoleAndRebindStreams();
             return false;
         }
 
@@ -120,6 +121,72 @@ internal static class ConsoleCtrlSender
         // FreeConsole 自体は安全に呼べる（NULL ハンドラの除去とは独立した操作）。
         FreeConsole();
 
+        ReattachParentConsoleAndRebindStreams();
+
         return sent;
+    }
+
+    private const uint AttachParentProcess = unchecked((uint)-1);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+
+    // いずれも FreeConsole の実行前(本クラスの型初期化時 = TrySendCtrlC 呼び出しの前)に確定させる。
+    // FreeConsole 後の初参照では無効化されたハンドルに対する判定になり誤る。
+    //
+    // HadConsoleAtStartup: 起動時に実コンソール(ウィンドウ)を保持していたか。これが false の環境
+    // (パイプ経由・ツール経由の実行)では、末尾の「親コンソールへの再アタッチ + 再バインド」を
+    // 一切行わない——行うと以後の全出力が消失することを実機確認した(2026-07-05。この環境では
+    // FreeConsole 後に何もしない従来挙動で出力・グレースフル停止とも正常に機能する)。
+    // 再アタッチが必要なのは「実コンソールから対話実行していて、FreeConsole で自分のコンソール
+    // ハンドルが死ぬ」場合のみである。
+    private static readonly bool HadConsoleAtStartup = GetConsoleWindow() != IntPtr.Zero;
+    private static readonly bool OutputWasRedirected = Console.IsOutputRedirected;
+    private static readonly bool ErrorWasRedirected = Console.IsErrorRedirected;
+
+    /// <summary>
+    /// 元（親プロセス）のコンソールへ再接続し、.NET の Console ストリームを結び直す。
+    /// </summary>
+    /// <remarks>
+    /// <b>これを怠ると、実コンソールからの対話実行時に以後の <c>Console.WriteLine</c> が
+    /// 未処理例外でクラッシュする（オーナー実機で発生した実障害。exit code 0xE0434352 =
+    /// CLR 未処理例外）</b>: ベンチの stdout が実コンソールのハンドルだった場合、
+    /// <c>FreeConsole</c> は自プロセスのコンソールハンドルを閉じるため（公式ドキュメント
+    /// learn.microsoft.com/windows/console/freeconsole。確認日 2026-07-05）、.NET が起動時に
+    /// キャッシュした <c>Console.Out</c> の下位ハンドルが無効になる。結果ファイル(JSON/サマリ)の
+    /// 書き込みは成功した後、コンソールへのサマリ出力で落ちる——「ファイルはあるのに終了コードが
+    /// 異常」という紛らわしい形で現れる。<c>AttachConsole(ATTACH_PARENT_PROCESS)</c> で元の
+    /// コンソールへ戻し、<c>Console.SetOut/SetError</c> でストリームを開き直すことで解消する
+    /// (stdout がパイプへリダイレクトされている環境——CI・ツール経由の実行——ではパイプは
+    /// <c>FreeConsole</c> の影響を受けず、開き直しても同じパイプが返るだけで無害)。
+    /// </remarks>
+    private static void ReattachParentConsoleAndRebindStreams()
+    {
+        if (!HadConsoleAtStartup)
+        {
+            // パイプ・ツール経由の実行(実コンソールなし)では何もしない——従来挙動が正常に
+            // 機能しており、AttachConsole(親) を呼ぶとかえって出力経路が壊れることを実機確認
+            // (HadConsoleAtStartup のコメント参照)。
+            return;
+        }
+
+        AttachConsole(AttachParentProcess);
+
+        // 再バインドは「stdout/stderr が実コンソールだった場合」に限定する。パイプへ
+        // リダイレクトされている場合(CI・ツール経由)、既存の Console.Out が保持するパイプは
+        // FreeConsole の影響を受けず正常なままで、逆に開き直すと壊れたハンドルに差し替わり
+        // 以後の出力が消失する。判定は FreeConsole 前に確定した静的フィールドを使う
+        // (OutputWasRedirected のコメント参照)。
+        if (!OutputWasRedirected)
+        {
+            var stdout = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
+            Console.SetOut(stdout);
+        }
+
+        if (!ErrorWasRedirected)
+        {
+            var stderr = new StreamWriter(Console.OpenStandardError()) { AutoFlush = true };
+            Console.SetError(stderr);
+        }
     }
 }
