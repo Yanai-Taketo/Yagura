@@ -11,6 +11,7 @@ using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
+using Yagura.Storage.SqlServer;
 using Yagura.Storage.Spool;
 using Yagura.Web;
 
@@ -170,7 +171,15 @@ public static class Program
             settings.SourceName = WindowsServiceName;
         });
 
-        builder.Services.AddSingleton<ILogStore>(_ => new SqliteLogStore(databasePath));
+        // provider 選択の結線（M5-3。database.md §1）。YaguraConfigurationLoader が
+        // Storage:Provider = sqlserver かつ接続文字列未設定の場合を既に SQLite へ縮小済みのため
+        // （ResolveStorageProvider のコメント参照）、ここでは解決済みの値をそのまま分岐すればよい。
+        builder.Services.AddSingleton<ILogStore>(_ => resolvedConfiguration.StorageProvider switch
+        {
+            Yagura.Host.Configuration.StorageProvider.SqlServer =>
+                new SqlServerLogStore(resolvedConfiguration.SqlServerConnectionString!),
+            _ => new SqliteLogStore(databasePath),
+        });
         builder.Services.AddSingleton(new UdpSyslogListenerOptions
         {
             BindAddress = resolvedConfiguration.UdpBindAddress,

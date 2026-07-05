@@ -309,6 +309,100 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // Storage:Provider / Storage:SqlServer:ConnectionString（M5-3。Issue #47）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_StorageProviderUnset_DefaultsToSqlite()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.Sqlite, result.Configuration.StorageProvider);
+        Assert.Null(result.Configuration.SqlServerConnectionString);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_StorageProviderUnknownValue_FallsBackToSqliteAndCollectsWarning()
+    {
+        WriteConfigurationFile("""{ "Storage": { "Provider": "postgresql" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.Sqlite, result.Configuration.StorageProvider);
+        Assert.Null(result.Configuration.SqlServerConnectionString);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Storage:Provider", warning.Key);
+        Assert.Equal("postgresql", warning.InvalidValue);
+        Assert.Equal("sqlite", warning.AppliedValue);
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("SqlServer")]
+    [InlineData("SQLSERVER")]
+    public void Load_StorageProviderSqlServerWithConnectionString_ResolvesToSqlServer(string providerValue)
+    {
+        WriteConfigurationFile(
+            $$"""
+            {
+              "Storage": {
+                "Provider": "{{providerValue}}",
+                "SqlServer": { "ConnectionString": "Server=.;Database=Yagura;Integrated Security=true;" }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.SqlServer, result.Configuration.StorageProvider);
+        Assert.Equal("Server=.;Database=Yagura;Integrated Security=true;", result.Configuration.SqlServerConnectionString);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_StorageProviderSqlServerWithoutConnectionString_FallsBackToSqliteAndCollectsStrongWarning()
+    {
+        // 設計判断（Issue #47）: 起動失敗ではなく SQLite へ縮小する——受信を止めないことを優先する。
+        WriteConfigurationFile("""{ "Storage": { "Provider": "sqlserver" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.Sqlite, result.Configuration.StorageProvider);
+        Assert.Null(result.Configuration.SqlServerConnectionString);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Storage:SqlServer:ConnectionString", warning.Key);
+        Assert.Contains("sqlite", warning.AppliedValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Load_StorageProviderSqlServerWithWhitespaceConnectionString_FallsBackToSqlite()
+    {
+        WriteConfigurationFile(
+            """
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "   " }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.Sqlite, result.Configuration.StorageProvider);
+        Assert.Single(result.Warnings);
+    }
+
+    // ------------------------------------------------------------------
     // 不正値の 3 分類: 縮小側で継続（bind 先。安全側 = loopback へ）
     // ------------------------------------------------------------------
 

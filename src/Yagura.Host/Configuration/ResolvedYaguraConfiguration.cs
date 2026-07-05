@@ -22,6 +22,16 @@
 /// 保持期間（日数）。<c>null</c> は「削除しない」（database.md DB-1 確定前の暫定既定。M5-1）。
 /// </param>
 /// <param name="RetentionExecutionTimeOfDay">保持期間削除の定期実行の開始時刻（サーバローカル時刻。M5-1）。</param>
+/// <param name="StorageProvider">
+/// 永続化 provider の選択（M5-3。既定 <see cref="Configuration.StorageProvider.Sqlite"/>）。
+/// <c>Storage:SqlServer:ConnectionString</c> が未設定のまま <c>sqlserver</c> が指定された場合、
+/// この値は <see cref="Configuration.StorageProvider.Sqlite"/> へ縮小済み（<see cref="YaguraConfigurationLoader"/>
+/// の設計判断。§1「既定値で継続」の適用——最終報告参照）。
+/// </param>
+/// <param name="SqlServerConnectionString">
+/// SQL Server provider 選択時の接続文字列（<see cref="StorageProvider"/> が
+/// <see cref="Configuration.StorageProvider.SqlServer"/> のときのみ非 null）。
+/// </param>
 public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
@@ -34,4 +44,6 @@ public sealed record ResolvedYaguraConfiguration(
     string SpoolDirectory,
     long SpoolQuotaBytes,
     int? RetentionDays,
-    TimeOnly RetentionExecutionTimeOfDay);
+    TimeOnly RetentionExecutionTimeOfDay,
+    StorageProvider StorageProvider,
+    string? SqlServerConnectionString);
