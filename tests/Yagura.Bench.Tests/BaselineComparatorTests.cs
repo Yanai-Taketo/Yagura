@@ -203,11 +203,14 @@ public sealed class BaselineComparatorTests
             string.IsNullOrWhiteSpace(baselineFile.Meta.RecordedFrom),
             "_meta.recordedFrom が空。基準値の記録元（ローカル実測の出所または CI run URL）を必ず記載する。");
 
-        // M-5 初回実測（2026-07-06）で確定した判定モードの固定化——変更する場合は実測データを
+        // M-5 v2（2026-07-06 改訂）で確定した判定モードの固定化——変更する場合は実測データを
         // 添えた基準値更新 PR で本アサーションも意識的に更新する（conventions.md の手続き参照）:
-        // blocking 判定は ProviderWriteCeiling が担い、SustainedZeroDrop の比判定は双峰性の実測に
-        // より情報表示のみ（突合成立の不変条件は両シナリオとも維持）。
-        Assert.True(baselineFile.Scenarios["ProviderWriteCeiling"].EnforceRatio, "ProviderWriteCeiling は blocking 判定を担う（M-5 確定内容）。");
+        // GitHub ホストランナーはランナー個体差（ディスク性能）が支配的で、比判定は両シナリオとも
+        // blocking にできない（第 7 標本 run 28754273026 で ProviderWriteCeiling の保存率 22.4% を
+        // 観測——初回 v1 の帯 0.15 は同一個体 5 標本による誤較正だった）。blocking は突合成立
+        // （requireReconciled）のみ——機能保証（損失は必ずカウンタに計上される）は遅い個体でも
+        // 成立する、環境個体差と無関係な判定である。
+        Assert.False(baselineFile.Scenarios["ProviderWriteCeiling"].EnforceRatio, "ProviderWriteCeiling の比判定は情報表示（M-5 v2: ランナー個体差の実測が根拠）。");
         Assert.False(baselineFile.Scenarios["SustainedZeroDrop"].EnforceRatio, "SustainedZeroDrop の比判定は情報表示（M-5 実測の双峰性が根拠）。");
         Assert.True(baselineFile.Scenarios["ProviderWriteCeiling"].RequireReconciled);
         Assert.True(baselineFile.Scenarios["SustainedZeroDrop"].RequireReconciled);

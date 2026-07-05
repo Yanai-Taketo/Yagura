@@ -1,9 +1,9 @@
 {
   "_meta": {
-    "status": "confirmed-initial-m5-2026-07-06",
+    "status": "confirmed-v2-m5-2026-07-06-reconciliation-only-gate",
     "lastUpdated": "2026-07-06",
-    "recordedFrom": "CI 実測（windows-latest）: https://github.com/Yanai-Taketo/Yagura/actions/runs/28745534803 の attempt 1〜6（同一コミットの再実行 6 回。attempt 4 は SustainedZeroDrop の旧暫定帯超過で fail し ProviderWriteCeiling ステップが未実行のため、ProviderWriteCeiling は 5 標本）。一次データ: tools/Yagura.Bench/results/2026-07-06-ci-windows-latest-m5/",
-    "updateProcedureReference": "docs/development/conventions.md の『CI 回帰ベンチの基準値更新』節を参照。引き下げ方向の更新には理由の分類（実行環境の変更 / 機能追加による意図的なトレードオフ）を明示すること。M-5 初回実測（2026-07-06。上記 recordedFrom）による確定内容: (1) ProviderWriteCeiling が blocking 判定を担う——保存件数の振れ幅 0.1% 未満（23,972〜23,988）と安定しており、toleranceRatio=0.15（基準比 85% 未満で不合格）は観測分散の約 150 倍の余裕を持ちつつ実回帰（15% 超の劣化）を検出できる。(2) SustainedZeroDrop は enforceRatio=false（比判定は情報表示のみ）——windows-latest は UDP 5k msg/sec の持続受信を安定維持できず、保存件数が双峰性（6 回中 3 回で Q1 破棄 3,503〜28,355 件 = 保存率 0.43〜0.93）を示し、意味のある許容帯を引けないため。突合成立（requireReconciled）は両シナリオとも無条件の不変条件（6 回全実行で成立を確認済み——Q1 破棄が起きた実行でも損失は全てカウンタに計上された）。"
+    "recordedFrom": "CI 実測（windows-latest）: 初回 = https://github.com/Yanai-Taketo/Yagura/actions/runs/28745534803 attempt 1〜6（同一コミット再実行。一次データ: tools/Yagura.Bench/results/2026-07-06-ci-windows-latest-m5/）。第 7 標本（v2 改訂の根拠）= https://github.com/Yanai-Taketo/Yagura/actions/runs/28754273026 —— ProviderWriteCeiling の保存件数が基準比 22.4%（5,380/23,978。突合は成立 = 残りはスプール退避で損失ゼロ）に崩落し、初回 6 標本が同一ランナー個体に偏っていたこと（ランナー個体のディスク性能差を分散に含んでいなかったこと）が判明した。",
+    "updateProcedureReference": "docs/development/conventions.md の『CI 回帰ベンチの基準値更新』節を参照。引き下げ方向の更新には理由の分類（実行環境の変更 / 機能追加による意図的なトレードオフ）を明示すること。M-5 v2（2026-07-06。同日中の改訂）の確定内容: **CI（GitHub ホストランナー）ではランナー個体差（特にディスク性能）が支配的で、スループット・保存件数の比判定は blocking にできない**——初回確定（v1）が置いた ProviderWriteCeiling の toleranceRatio=0.15 は同一個体 5 標本による誤較正だった（第 7 標本で保存率 22.4% を観測。分散の 150 倍の余裕は個体内分散に対してのみ成立していた）。よって両シナリオとも enforceRatio=false（数値は情報記録）とし、**blocking 判定は突合成立（requireReconciled）のみ**——「損失は必ずどれかのカウンタに計上される」という機能保証は全 7 標本（遅い個体を含む）で成立しており、環境個体差と無関係に判定できる。性能退行の blocking 検知は基準環境での絶対値判定（M-6。architecture.md §5.2 の 2 層目）の管轄へ移す。toleranceRatio は情報表示の参考帯として残す。"
   },
   "scenarios": {
     "SustainedZeroDrop": {
@@ -20,7 +20,7 @@
       "baselineSavedCount": 23978,
       "toleranceRatio": 0.15,
       "requireReconciled": true,
-      "enforceRatio": true
+      "enforceRatio": false
     }
   }
 }
