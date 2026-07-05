@@ -46,3 +46,5 @@ dotnet test Yagura.sln
 ## ライセンス
 
 [Apache License 2.0](LICENSE)
+
+同梱する第三者ソフトウェアのライセンス表記は [NOTICE](NOTICE) を参照してください。

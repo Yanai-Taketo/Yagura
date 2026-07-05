@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -88,12 +89,31 @@ public sealed class ViewerEndpointAllowlistTests
         new("/_framework/opaque-redirect", new[] { "GET" }),
     }.AsReadOnly();
 
+    /// <summary>
+    /// MudBlazor 同梱静的アセット（M8-1 で MapStaticAssets が登録する読み取り専用経路）の
+    /// 制約付き許可パターン。固定リスト（<see cref="ViewerAllowlist"/>）に載せない理由:
+    /// MapStaticAssets はフィンガープリント付き経路（例: MudBlazor.min.8fy1no3hvo.css）と
+    /// 圧縮変種（.gz / .br。publish 時のみ .br が加わる）を自動生成し、フィンガープリントは
+    /// MudBlazor の版更新のたびに変わるため、byte 固定のリストは版更新のたびに無意味な
+    /// 改訂を強いる。代わりに「_content/MudBlazor/ 配下の既知 3 アセット
+    /// （MudBlazor.min.css / MudBlazor.min.js / MudBlazor.min.js.map）とその
+    /// フィンガープリント・圧縮変種のみ」というパターンで突合し、HTTP メソッドは
+    /// <see cref="MudBlazorStaticAssets_AreReadOnlyAndConstrainedToKnownAssets"/> で
+    /// GET/HEAD に限定されることを検証する（L-5 の趣旨——リスト外の経路追加で落ちる——は
+    /// パターン外の静的アセットが追加された時点で本テスト群が落ちることで維持される）。
+    /// </summary>
+    private static readonly Regex MudBlazorStaticAssetRoutePattern = new(
+        "^_content/MudBlazor/MudBlazor\\.min(\\.[0-9a-z]+)?\\.(css|js)(\\.(gz|br))?$" +
+        "|^_content/MudBlazor/MudBlazor\\.min\\.js(\\.[0-9a-z]+)?\\.map(\\.(gz|br))?$",
+        RegexOptions.Compiled);
+
     [Fact]
     public async Task ViewerAllowlist_MatchesAllRegisteredViewerEndpoints()
     {
         await using var harness = await ViewerHostHarness.StartAsync();
 
         var actual = harness.GetViewerEndpoints()
+            .Where(e => !IsStaticAssetRoute(e))
             .Select(e => new ExpectedEndpoint(e.RoutePattern.RawText ?? string.Empty, GetMethods(e)))
             .OrderBy(e => e.RoutePattern, StringComparer.Ordinal)
             .ToList();
@@ -104,6 +124,45 @@ public sealed class ViewerEndpointAllowlistTests
 
         Assert.Equal(expected, actual);
     }
+
+    [Fact]
+    public async Task MudBlazorStaticAssets_AreReadOnlyAndConstrainedToKnownAssets()
+    {
+        // M8-1(Issue #68): MapStaticAssets が登録する MudBlazor 同梱アセットの経路が
+        // (a) 既知 3 アセット(+フィンガープリント・圧縮変種)のパターンに完全一致し、
+        // (b) HTTP メソッドが GET/HEAD のみ(読み取り専用——ui.md §4 の「閲覧リスナは
+        //     いかなる書き込みエンドポイントも持たない」不変条件)であることを検証する。
+        await using var harness = await ViewerHostHarness.StartAsync();
+
+        var staticAssetEndpoints = harness.GetViewerEndpoints()
+            .Where(IsStaticAssetRoute)
+            .ToList();
+
+        // css と js が最低 1 経路ずつ現れること(検出対象が空集合のまま green になる
+        // 空虚な真を避ける——本クラスの他テストと同じ注意)。
+        Assert.Contains(staticAssetEndpoints, e => NormalizeRoute(e) == "_content/MudBlazor/MudBlazor.min.css");
+        Assert.Contains(staticAssetEndpoints, e => NormalizeRoute(e) == "_content/MudBlazor/MudBlazor.min.js");
+
+        foreach (var endpoint in staticAssetEndpoints)
+        {
+            var route = NormalizeRoute(endpoint);
+            Assert.Matches(MudBlazorStaticAssetRoutePattern, route);
+
+            var methods = GetMethods(endpoint);
+            Assert.NotNull(methods);
+            Assert.All(methods, m => Assert.Contains(m, new[] { "GET", "HEAD" }));
+        }
+    }
+
+    /// <summary>
+    /// 静的アセット経路の判定（<c>_content/</c> 配下——Razor Class Library / NuGet 同梱
+    /// アセットの規約プレフィックス）。固定許可リストとパターン許可リストの分割点。
+    /// </summary>
+    private static bool IsStaticAssetRoute(RouteEndpoint endpoint) =>
+        NormalizeRoute(endpoint).StartsWith("_content/", StringComparison.Ordinal);
+
+    private static string NormalizeRoute(RouteEndpoint endpoint) =>
+        (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/');
 
     [Fact]
     public async Task ViewerAllowlistContainsNoAdminEndpoints()

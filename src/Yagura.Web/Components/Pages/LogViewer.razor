@@ -1,8 +1,10 @@
 ﻿@page "/"
-@* 全画面 Interactive Server 単一モード（ADR-0003 決定 1。方式を混在させない）。
-   本ページ自体に対話機能はまだないが、レンダリングモードは全画面で統一する。
-   prerender は既定の有効のまま——初回 HTTP 応答の HTML に描画結果が含まれる。 *@
-@rendermode InteractiveServer
+@* 全画面 Interactive Server 単一モード（ADR-0003 決定 1。方式を混在させない）は
+   ルートコンポーネント（YaguraWebApp.razor の <YaguraWebRoot @rendermode>）で一括指定する
+   （M8-1 でページ個別の @rendermode 指定から移行——モード指定の箇所も 1 箇所に集約）。
+   prerender は既定の有効のまま——初回 HTTP 応答の HTML に描画結果が含まれる。
+   本ページの表組みの MudBlazor 共通コンポーネント化（テーブル規約 ui.md §3.1）は
+   画面実装（M8-3）のスコープ。M8-1 はデザインシステム側（トークン・テーマ・切替 UI）のみ。 *@
 @inject ILogStore LogStore
 
 <PageTitle>Yagura — 最新ログ</PageTitle>

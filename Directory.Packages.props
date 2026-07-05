@@ -18,6 +18,14 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <!--
+      UI コンポーネントライブラリ（M8-1。Issue #68。採用判断は ADR-0003 決定 3）。
+      当日ライブ検証: nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/mudblazor/index.json) と Search API
+      (azuresearch-usnc.nuget.org/query?q=packageid:MudBlazor&prerelease=false) の両方で
+      最新安定版 9.6.0 を確認（検証日 2026-07-06）。ライセンス MIT（NOTICE 記載は導入 PR で実施）。
+    -->
+    <PackageVersion Include="MudBlazor" Version="9.6.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <!--

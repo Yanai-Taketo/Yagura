@@ -1,4 +1,4 @@
-﻿@namespace Yagura.Web.Components
+@namespace Yagura.Web.Components
 
 <!DOCTYPE html>
 <html lang="ja">
@@ -7,20 +7,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Yagura</title>
     <base href="/" />
+    <!--
+        MudBlazor の同梱 CSS（NuGet パッケージ同梱の静的アセット。MapStaticAssets が配信する。
+        外部 URL 参照が皆無であることは実体確認済み——ui.md §10 の UI-3 記録参照）。
+        MudBlazor 公式ドキュメントが案内する Google Fonts（Roboto）の <link> は追加しない:
+        フォントは OS 提供スタックのみを使う（ui.md §2.2。閉域完結）。テーマ側
+        （Theming/YaguraTheme.cs）でフォントスタックを割り当てるため、Roboto への参照は
+        生成 CSS にも現れない。
+    -->
+    <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
     <!-- 各ページの <PageTitle> がここへ描画され、上の既定 <title> を置き換える。 -->
-    <HeadOutlet />
+    <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
     <!--
-        M2-3 時点はページ固有 CSS を持ち込まない最小骨格（ui.md §1「ページ固有 CSS・JS 原則禁止」）。
-        デザイントークン・共通レイアウト（アプリバー・左ナビゲーション）は M8 で導入する。
+        全画面 Interactive Server 単一モード（ADR-0003 決定 1）は、ルートコンポーネントへの
+        rendermode 属性付与で表現する（M8-1 で各ページの rendermode 個別指定から移行——
+        「方式を混在させない」の実装形として、モード指定の箇所も 1 箇所に集約する）。
+        prerender は既定の有効のまま——初回応答の HTML に描画結果が含まれ、E2E smoke は
+        この prerender 出力を検証する。
     -->
-    <YaguraWebRoot />
+    <YaguraWebRoot @rendermode="InteractiveServer" />
     <!--
         Interactive Server（ADR-0003 決定 1）の circuit 確立に必要なフレームワーク同梱
         スクリプト。ASP.NET Core 本体が配信するアセットであり、ADR-0003 決定 1 の
         「JS を原則手書きしない・npm/CDN 非依存」に反しない。
     -->
     <script src="_framework/blazor.web.js"></script>
+    <!--
+        MudBlazor の同梱 JS（対話部品・テーマの OS 設定検知等が使う。手書き JS ではなく
+        NuGet 同梱アセット。外部への動的ロード・通信構文が皆無であることは実体確認済み
+        ——ui.md §10 の UI-3 記録参照）。
+    -->
+    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
 </body>
 </html>
