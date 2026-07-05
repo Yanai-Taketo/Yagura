@@ -43,6 +43,14 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     public static async Task<ViewerHostHarness> StartAsync()
     {
         var builder = WebApplication.CreateBuilder();
+
+        // Program.cs と同じ設定(M8-1): MapStaticAssets の開発時フォールバック
+        // (catch-all {**path:file}。build マニフェスト使用時のみ登録される)を無効化し、
+        // 静的アセットの配信面を「マニフェスト記載のアセットのみ」に固定する。
+        // これにより本ハーネスの列挙面は publish 構成の実運用面と一致する(Program.cs の
+        // 同キーのコメント参照)。
+        builder.Configuration["DisableStaticAssetNotFoundRuntimeFallback"] = "true";
+
         builder.Services.AddYaguraWebViewer();
         builder.Services.AddSingleton<ILogStore>(_ => new NoopLogStore());
         builder.Services.AddSingleton<WebGuardMetrics>();
@@ -54,7 +62,14 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.WebHost.ConfigureKestrel(o => o.Listen(System.Net.IPAddress.Loopback, 0));
 
         var app = builder.Build();
-        app.MapYaguraWebViewer();
+
+        // 静的アセットのマニフェストは明示指定する(M8-1): 既定解決は
+        // {ApplicationName}.staticwebassets.endpoints.json だが、テスト実行時の
+        // ApplicationName はエントリアセンブリ由来の "testhost" になり解決できない。
+        // テスト出力には Yagura.Web(RCL)単位のマニフェストが生成されることを実機確認済みの
+        // ため、それを指定する(MudBlazor 等の参照パッケージのアセットを含む——
+        // YaguraWebViewerExtensions.MapYaguraWebViewer の引数コメント参照)。
+        app.MapYaguraWebViewer("Yagura.Web.staticwebassets.endpoints.json");
         app.MapYaguraAdmin();
 
         await app.StartAsync();

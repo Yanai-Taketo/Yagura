@@ -1,8 +1,12 @@
-﻿@namespace Yagura.Web.Components
+@namespace Yagura.Web.Components
 
+@*
+    DefaultLayout = MainLayout（全画面共通の骨格。ui.md §4）。各ページは @layout を
+    個別指定せず、この既定レイアウトに乗る（骨格も共通コンポーネントとする、の実装形）。
+*@
 <Router AppAssembly="typeof(YaguraWebRoot).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" />
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
     </Found>
     <NotFound>
         <p>ページが見つかりません。</p>

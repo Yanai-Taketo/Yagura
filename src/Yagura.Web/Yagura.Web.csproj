@@ -5,6 +5,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- UI コンポーネントライブラリ（ADR-0003 決定 3。版のライブ検証記録は Directory.Packages.props）。 -->
+    <PackageReference Include="MudBlazor" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Yagura.Abstractions\Yagura.Abstractions.csproj" />
     <ProjectReference Include="..\Yagura.Storage\Yagura.Storage.csproj" />
   </ItemGroup>

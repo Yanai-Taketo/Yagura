@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using MudBlazor.Services;
 using Yagura.Web.Components;
 
 namespace Yagura.Web;
@@ -33,15 +34,40 @@ public static class YaguraWebViewerExtensions
         services.AddRazorComponents()
             .AddInteractiveServerComponents();
 
+        // MudBlazor（M8-1。ADR-0003 決定 3）。AddMudServices が登録するのは
+        // ダイアログ・トースト・ポップオーバー等の DI サービスのみで、
+        // エンドポイントは追加しない（ルート登録は下の MapYaguraWebViewer に集約されたまま）。
+        services.AddMudServices();
+
         return services;
     }
 
     /// <summary>
     /// 閲覧ページのルートを 1 箇所に集約してマップする。書き込み系エンドポイントは追加しない。
     /// </summary>
-    public static IEndpointRouteBuilder MapYaguraWebViewer(this IEndpointRouteBuilder endpoints)
+    /// <param name="endpoints">エンドポイントビルダー。</param>
+    /// <param name="staticAssetsManifestPath">
+    /// 静的アセットの endpoints マニフェストのパス（<c>AppContext.BaseDirectory</c> からの相対）。
+    /// <c>null</c> の場合は既定解決（<c>{ApplicationName}.staticwebassets.endpoints.json</c>。
+    /// Yagura.Host からの呼び出しはこちらで、build/publish の両出力に存在することを実機確認済み）。
+    /// テストハーネスのようにエントリアセンブリがアプリ本体でないホストは、テスト出力に生成される
+    /// RCL 単位のマニフェスト <c>Yagura.Web.staticwebassets.endpoints.json</c> を明示指定する
+    /// （RCL 単位のマニフェストは publish 出力には含まれないことを実機確認済みのため、
+    /// 本番経路の既定にはしない）。
+    /// </param>
+    public static IEndpointRouteBuilder MapYaguraWebViewer(
+        this IEndpointRouteBuilder endpoints,
+        string? staticAssetsManifestPath = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
+
+        // MudBlazor の同梱静的アセット（_content/MudBlazor/ 配下）の配信（M8-1）。
+        // UseStaticFiles（ミドルウェア方式）ではなく MapStaticAssets（エンドポイント方式）を
+        // 採る理由: 配信経路が EndpointDataSource の列挙に現れ、L-5 の全ルート許可リスト
+        // 突合（ViewerEndpointAllowlistTests）の機械検証にそのまま乗るため（security.md §1 L-5）。
+        // 静的アセットは GET/HEAD のみで、閲覧リスナの「書き込みエンドポイントを持たない」
+        // 不変条件（ui.md §4）を破らない。
+        endpoints.MapStaticAssets(staticAssetsManifestPath);
 
         // AddInteractiveServerRenderMode は Interactive Server の circuit エンドポイント
         // （SignalR。既定パス /_blazor）を有効化する。circuit 数の上限・失効の反映等の

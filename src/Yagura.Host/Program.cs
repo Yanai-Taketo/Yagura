@@ -107,6 +107,38 @@ public static class Program
 
         var builder = WebApplication.CreateBuilder(args);
 
+        // 静的アセット配信面の最小化(M8-1。Issue #68)。.NET 10 の MapStaticAssets は、
+        // build 出力のマニフェスト使用時に限り「マニフェスト外のファイルも web root から
+        // 配信する」開発時フォールバック(catch-all ルート {**path:file}。GET/HEAD 限定・
+        // 実在ファイル制約付き)を追加登録する。publish 出力のマニフェストでは登録されない
+        // (dotnet/aspnetcore release/10.0 の StaticAssetDevelopmentRuntimeHandler.cs で
+        // 実体確認済み: IsEnabled は isBuildManifest を条件とし、本キー
+        // DisableStaticAssetNotFoundRuntimeFallback=true で無効化できる。確認日 2026-07-06)。
+        // 閲覧リスナの配信面は「マニフェスト記載のアセットのみ」に固定する——開発実行・E2E・
+        // publish のすべてで L-5 許可リスト(security.md §1)と同じ面になり、開発時だけ広い
+        // 配信面が現れることを避ける(Yagura.Host は自前の wwwroot を持たず、フォールバックが
+        // 有用な場面もない)。
+        builder.Configuration["DisableStaticAssetNotFoundRuntimeFallback"] = "true";
+
+        // 静的 Web アセットの解決を実行環境名に依存させない(M8-1)。既定では
+        // ASPNETCORE_ENVIRONMENT=Development のときだけ runtime マニフェスト
+        // ({AppName}.staticwebassets.runtime.json。NuGet キャッシュ上の MudBlazor 実ファイル
+        // への対応表)が読み込まれるため、build 出力を Production(既定)のまま実行すると
+        // _content/MudBlazor/* が中身 0 バイトで応答する事象を実機確認した(2026-07-06)。
+        // ここで無条件にマニフェストを読み込むことで、build 出力からの実行(E2E テスト・
+        // 開発時)でもアセットが解決される。publish 出力には runtime マニフェストが含まれず
+        // 実ファイルが wwwroot/ 配下へ物理配置されるため、この呼び出しは無害な no-op になる
+        // (dotnet/aspnetcore release/10.0 の StaticWebAssetsLoader.ResolveManifest が
+        // マニフェスト不在時に "the feature is not enabled" として何もしないことをソースで
+        // 確認済み。確認日 2026-07-06)。
+        // 注: builder.WebHost.UseStaticWebAssets() 拡張ではなくローダーを直接呼ぶ。
+        // 拡張経由(ConfigureAppConfiguration コールバック内)では最終的な
+        // WebRootFileProvider へ反映されないことを実機確認した(builder.Environment に
+        // 対して直接適用するのが minimal hosting での確実な経路。同日実機確認)。
+        Microsoft.AspNetCore.Hosting.StaticWebAssets.StaticWebAssetsLoader.UseStaticWebAssets(
+            builder.Environment,
+            builder.Configuration);
+
         // リスナ分離(M6-1。Issue #51。CF-1 確定値: 閲覧 8514 / 管理 8515)。
         //
         // bind 先の計算そのものは ListenerBindPlan に切り出してある(単体テストで

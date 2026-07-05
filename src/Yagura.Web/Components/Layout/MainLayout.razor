@@ -1,0 +1,149 @@
+@namespace Yagura.Web.Components.Layout
+@inherits LayoutComponentBase
+@inject IJSRuntime JSRuntime
+
+@*
+    全画面共通の骨格（ui.md §4: 上部アプリバー + 左ナビゲーション + コンテンツ領域）の
+    先行最小形（M8-1）。本マイルストーンはデザインシステム側（トークン・テーマ・切替 UI）の
+    確立が目的のため、アプリバー + コンテンツ領域のみを置く。左ナビゲーション・状態帯は
+    画面実装（M8-3）で追加する。
+
+    MudThemeProvider が YaguraTheme（ui.md §2 のトークン割当。Theming/YaguraTheme.cs）を
+    CSS 変数として描画する。ObserveSystemDarkModeChange は false —— OS テーマ追従は
+    既定で無効とし、利用者が「OS の設定に合わせる」を明示選択した場合のみ
+    WatchSystemDarkModeAsync で追従する（ui.md §2.4「既定では手動選択を尊重する」）。
+*@
+<MudThemeProvider @ref="_themeProvider"
+                  Theme="YaguraTheme.Instance"
+                  IsDarkMode="_isDarkMode"
+                  ObserveSystemDarkModeChange="false" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    @* 影はカード段（elevation 1）。3 段規約は ui.md §2.3。 *@
+    <MudAppBar Elevation="1">
+        <MudText Typo="Typo.h6">Yagura</MudText>
+        <MudSpacer />
+        @*
+            テーマ切替（ui.md §2.4）: ライト / ダーク / OS の設定に合わせる の 3 択。
+            選択はブラウザの localStorage（端末ごと）に保存し、サーバへは書き込まない
+            ——閲覧リスナは書き込みエンドポイントを持たない（ui.md §4 の不変条件）。
+        *@
+        <MudMenu Icon="@CurrentModeIcon" Color="Color.Inherit" AriaLabel="表示テーマの切替">
+            <MudMenuItem Icon="@Icons.Material.Filled.LightMode"
+                         OnClick="() => SelectModeAsync(YaguraThemeMode.Light)">ライト</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Filled.DarkMode"
+                         OnClick="() => SelectModeAsync(YaguraThemeMode.Dark)">ダーク</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Filled.SettingsBrightness"
+                         OnClick="() => SelectModeAsync(YaguraThemeMode.System)">OS の設定に合わせる</MudMenuItem>
+        </MudMenu>
+    </MudAppBar>
+    <MudMainContent Class="pa-4">
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    /// <summary>
+    /// テーマ選択の保存キー（ブラウザの localStorage。端末ごと保存 = ui.md §2.4 の
+    /// 「掲示用の大型モニタはダーク・手元 PC はライト」の使い分けと整合）。
+    /// </summary>
+    private const string StorageKey = "yagura.theme-mode";
+
+    private MudThemeProvider? _themeProvider;
+    private YaguraThemeMode _mode = YaguraThemeMode.Light;
+    private bool _isDarkMode;
+    private bool _systemWatchRegistered;
+
+    private string CurrentModeIcon => _mode switch
+    {
+        YaguraThemeMode.Dark => Icons.Material.Filled.DarkMode,
+        YaguraThemeMode.System => Icons.Material.Filled.SettingsBrightness,
+        _ => Icons.Material.Filled.LightMode,
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // 保存済みの選択を復元する。prerender 中は JS 呼び出しが使えないため初回描画後に行う
+        // （circuit 確立までの一瞬は既定のライトで表示される——既定がライトである以上、
+        // ダーク保存端末での短時間の明転を v0.1 では許容する）。
+        // localStorage は標準 API を IJSRuntime から直接呼ぶ——手書き JS ファイルは
+        // 追加しない（ADR-0003 決定 1 の範囲内。分離 JS モジュールの例外手続きも不要）。
+        YaguraThemeMode restored;
+        try
+        {
+            var stored = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+            restored = Enum.TryParse<YaguraThemeMode>(stored, ignoreCase: true, out var parsed)
+                ? parsed
+                : YaguraThemeMode.Light;
+        }
+        catch (JSException)
+        {
+            // localStorage が使えない環境（プライベートモードの一部等）では既定のライトで動作する。
+            restored = YaguraThemeMode.Light;
+        }
+
+        await ApplyModeAsync(restored, persist: false);
+    }
+
+    private async Task SelectModeAsync(YaguraThemeMode mode)
+    {
+        await ApplyModeAsync(mode, persist: true);
+    }
+
+    private async Task ApplyModeAsync(YaguraThemeMode mode, bool persist)
+    {
+        _mode = mode;
+
+        if (mode == YaguraThemeMode.System && _themeProvider is not null)
+        {
+            // OS 追従（UI-9 で「JS 手書きなしで可」を確認済み。ui.md §2.4）:
+            // MudThemeProvider の同梱 JS（matchMedia("(prefers-color-scheme: dark)")）を使う。
+            _isDarkMode = await _themeProvider.GetSystemDarkModeAsync();
+
+            if (!_systemWatchRegistered)
+            {
+                await _themeProvider.WatchSystemDarkModeAsync(OnSystemDarkModeChangedAsync);
+                _systemWatchRegistered = true;
+            }
+        }
+        else
+        {
+            _isDarkMode = mode == YaguraThemeMode.Dark;
+        }
+
+        if (persist)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, mode.ToString());
+            }
+            catch (JSException)
+            {
+                // 保存できなくても表示の切替自体は成立させる（次回訪問時に既定へ戻るだけ）。
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private Task OnSystemDarkModeChangedAsync(bool isDarkMode)
+    {
+        // 手動選択尊重（ui.md §2.4）: OS 側の変化を反映するのは「OS の設定に合わせる」を
+        // 選択中の場合のみ。ライト/ダーク手動選択中は勝手に切り替えない。
+        if (_mode == YaguraThemeMode.System)
+        {
+            _isDarkMode = isDarkMode;
+            StateHasChanged();
+        }
+
+        return Task.CompletedTask;
+    }
+}
