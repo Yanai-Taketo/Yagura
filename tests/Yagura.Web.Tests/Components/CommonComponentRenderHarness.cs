@@ -31,7 +31,20 @@ namespace Yagura.Web.Tests.Components;
 internal static class CommonComponentRenderHarness
 {
     /// <summary>コンポーネントを描画して HTML 文字列を返す。</summary>
-    public static async Task<string> RenderAsync<TComponent>(Dictionary<string, object?>? parameters = null)
+    /// <param name="parameters">コンポーネントへ渡すパラメータ。</param>
+    /// <param name="configureServices">
+    /// 追加のサービス登録（M8-3: 画面コンポーネントが注入する ILogStore・
+    /// IYaguraSystemStatusReader 等のフェイクを利用側テストが登録する差し込み口）。
+    /// </param>
+    /// <param name="includePopoverProvider">
+    /// MudPopoverProvider を同居させるか（既定 true）。MainLayout のように検証対象自身が
+    /// プロバイダ群を内包するコンポーネントは false にする（二重登録は
+    /// SectionRegistry の重複購読エラーになる——実挙動で確認済み）。
+    /// </param>
+    public static async Task<string> RenderAsync<TComponent>(
+        Dictionary<string, object?>? parameters = null,
+        Action<IServiceCollection>? configureServices = null,
+        bool includePopoverProvider = true)
         where TComponent : IComponent
     {
         var services = new ServiceCollection();
@@ -41,6 +54,12 @@ internal static class CommonComponentRenderHarness
         // スタブ IJSRuntime を与える（初期描画は JS を呼ばない——prerender 安全性の前提）。
         services.AddSingleton<IJSRuntime>(new StubJSRuntime());
         services.AddMudServices();
+
+        // ナビゲーション系コンポーネント（MudNavLink・MudLink 等）が要求する NavigationManager
+        // （HtmlRenderer には既定登録がないため、固定 URI のテスト実装を与える）。
+        services.AddSingleton<NavigationManager>(new TestNavigationManager());
+
+        configureServices?.Invoke(services);
 
         await using var provider = services.BuildServiceProvider();
         var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
@@ -54,6 +73,7 @@ internal static class CommonComponentRenderHarness
             {
                 [nameof(ProviderHost.ComponentType)] = typeof(TComponent),
                 [nameof(ProviderHost.ComponentParameters)] = parameters,
+                [nameof(ProviderHost.IncludePopoverProvider)] = includePopoverProvider,
             });
             var output = await renderer.RenderComponentAsync<ProviderHost>(hostParameters);
             return output.ToHtmlString();
@@ -79,10 +99,16 @@ internal static class CommonComponentRenderHarness
         [Parameter]
         public Dictionary<string, object?>? ComponentParameters { get; set; }
 
+        [Parameter]
+        public bool IncludePopoverProvider { get; set; } = true;
+
         protected override void BuildRenderTree(Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder builder)
         {
-            builder.OpenComponent<MudBlazor.MudPopoverProvider>(0);
-            builder.CloseComponent();
+            if (IncludePopoverProvider)
+            {
+                builder.OpenComponent<MudBlazor.MudPopoverProvider>(0);
+                builder.CloseComponent();
+            }
 
             builder.OpenComponent(1, ComponentType);
             if (ComponentParameters is not null)
@@ -93,6 +119,19 @@ internal static class CommonComponentRenderHarness
             }
 
             builder.CloseComponent();
+        }
+    }
+
+    private sealed class TestNavigationManager : NavigationManager
+    {
+        public TestNavigationManager()
+        {
+            Initialize("http://localhost/", "http://localhost/");
+        }
+
+        protected override void NavigateToCore(string uri, bool forceLoad)
+        {
+            // 描画テストでは遷移しない。
         }
     }
 

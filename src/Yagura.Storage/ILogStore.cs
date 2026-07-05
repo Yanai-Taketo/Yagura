@@ -112,4 +112,68 @@ public interface ILogStore
     /// 統計情報（保存件数・DB サイズ）を取得する（database.md §1.2 契約 6）。
     /// </summary>
     Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
+
+    // ------------------------------------------------------------------
+    // M8-3（Issue #70）で追加した読み取り専用 3 操作。
+    // database.md §1.2「契約拡張の予約」(a) 一括読み出し・(b) 集計のうち、閲覧 3 画面が
+    // 必要とする最小の読み取り口を実体化した（詳細表示の個別取得・システムイベントの読み出し・
+    // 送信元別集計）。v0.x のため直接メソッドとして追加する（v1.0 凍結時に optional 操作
+    // ——capability 検出——へ移すかは §7 の凍結判断で確定する）。いずれも書き込みを行わない。
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// レコード識別子で 1 件を全項目（<see cref="LogRecord.Message"/> 全文・
+    /// <see cref="LogRecord.StructuredData"/>・<see cref="LogRecord.Raw"/> を含む）取得する
+    /// （architecture.md §6「全文は詳細表示で個別取得する」の読み取り口。M8-3）。
+    /// </summary>
+    /// <param name="id">レコード識別子（<see cref="LogRecordSummary.Id"/>）。</param>
+    /// <param name="timeout">クエリの実行時間上限。</param>
+    /// <returns>該当レコード。存在しない（保持期間削除等で消えた後を含む）場合は <c>null</c>。</returns>
+    /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
+    Task<LogRecord?> FindByIdAsync(
+        long id,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// システムイベント（database.md §2.3。受信断区間・保持期間削除の実行記録等）を読み出す
+    /// （受信断区間の時間軸表示・受信断履歴の表示の読み取り口——architecture.md §4.4
+    /// 「受信断区間は検索・ダッシュボードで通常のログと同じ時間軸上に可視化する」。M8-3）。
+    /// </summary>
+    /// <param name="from">
+    /// 区間の重なり判定の下限（UTC）。<c>null</c> は下限なし。指定時は
+    /// 「<see cref="SystemEvent.EndAt"/> &gt;= from」で判定する（区間が範囲に少しでも掛かれば返す）。
+    /// </param>
+    /// <param name="to">
+    /// 区間の重なり判定の上限（UTC）。<c>null</c> は上限なし。指定時は
+    /// 「<see cref="SystemEvent.StartAt"/> &lt;= to」で判定する。
+    /// </param>
+    /// <param name="limit">結果件数の上限（必須。<see cref="SystemEvent.StartAt"/> 降順で新しい順に返す）。</param>
+    /// <param name="timeout">クエリの実行時間上限。</param>
+    /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
+    Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 送信元別の受信状況（最終受信時刻・件数）を集計して返す（database.md §1.2
+    /// 「契約拡張の予約」(b) 集計の実体化。UI-4 無音化検出の入力。M8-3）。
+    /// </summary>
+    /// <remarks>
+    /// <b>並び順は <see cref="SourceActivity.LastReceivedAt"/> の昇順（古い順）</b>——
+    /// 「いつも静かな装置が黙った」を検出するため、無音の疑いが強い送信元から返す
+    /// （量の上位 N を返す集計にしない。ui.md §12 UI-4 の制約）。<paramref name="limit"/> は
+    /// 送信元数の異常な膨張（送信元詐称等）に対する読み取り側の防御であり、打ち切りが起きた
+    /// 場合も切り捨てられるのは「最近まで受信できている送信元」側である（昇順のため）。
+    /// </remarks>
+    /// <param name="limit">返却する送信元数の上限（必須）。</param>
+    /// <param name="timeout">クエリの実行時間上限。</param>
+    /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
+    Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
 }

@@ -1,12 +1,20 @@
 @namespace Yagura.Web.Components.Layout
 @inherits LayoutComponentBase
 @inject IJSRuntime JSRuntime
+@inject ILogStore LogStore
+@inject IYaguraSystemStatusReader StatusReader
+@implements IAsyncDisposable
 
 @*
-    全画面共通の骨格（ui.md §4: 上部アプリバー + 左ナビゲーション + コンテンツ領域）の
-    先行最小形（M8-1）。本マイルストーンはデザインシステム側（トークン・テーマ・切替 UI）の
-    確立が目的のため、アプリバー + コンテンツ領域のみを置く。左ナビゲーション・状態帯は
-    画面実装（M8-3）で追加する。
+    全画面共通の骨格（ui.md §4: 上部アプリバー + 左ナビゲーション + コンテンツ領域。
+    骨格自体も共通コンポーネント——本レイアウトがその実体）。M8-1 の先行最小形
+    （アプリバー + コンテンツ領域）に、M8-3 で左ナビゲーション（折りたたみ可）と
+    全画面共通の状態帯（ui.md §5.1）を追加した。
+
+    状態帯のデータ（健康状態の判定結果 + 全送信元合算の最終受信時刻）は共通骨格が
+    定期更新する（更新間隔は UI-2 の仮値 10 秒——どの画面を開いていても「今」を映す）。
+    判定自体はサーバ側観測性（Yagura.Host.Observability.SystemStatusReader）の管轄で、
+    ここは表示のみを担う（ui.md §5.1 実装参照のとおり）。
 
     MudThemeProvider が YaguraTheme（ui.md §2 のトークン割当。Theming/YaguraTheme.cs）を
     CSS 変数として描画する。ObserveSystemDarkModeChange は false —— OS テーマ追従は
@@ -24,6 +32,10 @@
 <MudLayout>
     @* 影はカード段（elevation 1）。3 段規約は ui.md §2.3。 *@
     <MudAppBar Elevation="1">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       aria-label="ナビゲーションの開閉"
+                       OnClick="ToggleDrawer" />
         <MudText Typo="Typo.h6">Yagura</MudText>
         <MudSpacer />
         @*
@@ -40,7 +52,26 @@
                          OnClick="() => SelectModeAsync(YaguraThemeMode.System)">OS の設定に合わせる</MudMenuItem>
         </MudMenu>
     </MudAppBar>
+    <MudDrawer @bind-Open="_drawerOpen" Elevation="1" ClipMode="DrawerClipMode.Always">
+        @* 左ナビゲーション（ui.md §4。画面一覧・折りたたみ可） *@
+        <MudNavMenu aria-label="@UiText.NavAriaLabel">
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">@UiText.NavDashboard</MudNavLink>
+            <MudNavLink Href="/search" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Search">@UiText.NavSearch</MudNavLink>
+            <MudNavLink Href="/status" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MonitorHeart">@UiText.NavStatus</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
     <MudMainContent Class="pa-4">
+        @*
+            全画面共通の状態帯（ui.md §5.1「ダッシュボード最上部（および全画面の状態帯）」）。
+            「稼働中」はポートの待ち受けを意味し、ログが現に届いていることは意味しないため、
+            全送信元合算の最終受信時刻を併記し、送信元別の受信状況への導線を置く。
+        *@
+        <div class="mb-4">
+            <YaguraStatusBand Status="@_bandStatus"
+                              Summary="@_bandSummary"
+                              LastReceivedAt="@_lastReceivedAt"
+                              SourcesLinkHref="/#sources" />
+        </div>
         @Body
     </MudMainContent>
 </MudLayout>
@@ -52,10 +83,93 @@
     /// </summary>
     private const string StorageKey = "yagura.theme-mode";
 
+    /// <summary>状態帯の更新間隔（UI-2 の仮値。ダッシュボードの更新間隔と同じ）。</summary>
+    private static readonly TimeSpan BandUpdateInterval = TimeSpan.FromSeconds(10);
+
+    /// <summary>最終受信時刻の取得（最新 1 件）のタイムアウト（内部クエリの防御値。仮値）。</summary>
+    private static readonly TimeSpan LastReceivedQueryTimeout = TimeSpan.FromSeconds(5);
+
     private MudThemeProvider? _themeProvider;
     private YaguraThemeMode _mode = YaguraThemeMode.Light;
     private bool _isDarkMode;
     private bool _systemWatchRegistered;
+    private bool _drawerOpen = true;
+
+    private YaguraStatusKind _bandStatus = YaguraStatusKind.Ok;
+    private string? _bandSummary;
+    private DateTimeOffset? _lastReceivedAt;
+    private PeriodicTimer? _bandTimer;
+    private Task? _bandLoop;
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 初期表示（prerender を含む）で状態帯を組み立てる。以後は定期更新
+        // （OnAfterRenderAsync で開始——prerender では動かない）。
+        await RefreshStatusBandAsync();
+    }
+
+    private async Task RunBandLoopAsync(PeriodicTimer timer)
+    {
+        try
+        {
+            while (await timer.WaitForNextTickAsync())
+            {
+                await RefreshStatusBandAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 破棄による停止。
+        }
+    }
+
+    private async Task RefreshStatusBandAsync()
+    {
+        try
+        {
+            var status = StatusReader.ReadCurrent();
+            _bandStatus = status.Health.Kind switch
+            {
+                YaguraHealthKind.Error => YaguraStatusKind.Error,
+                YaguraHealthKind.Warning => YaguraStatusKind.Warning,
+                _ => YaguraStatusKind.Ok,
+            };
+            _bandSummary = BuildSummary(status.Health);
+
+            // 全送信元合算の最終受信時刻 = 最新 1 件の受信時刻（ui.md §5.1 の併記要件。
+            // 「保存済みの最新」であり、スプール滞留分は反映が遅れ得る——観測できる範囲の値）。
+            var latest = await LogStore.QueryLatestAsync(1, LastReceivedQueryTimeout);
+            _lastReceivedAt = latest.Count > 0 ? latest[0].ReceivedAt : null;
+        }
+        catch (Exception)
+        {
+            // 状態帯の更新失敗で画面全体を壊さない——前回値を保持する（更新停止の警告は
+            // ダッシュボード側の出し分けと YaguraStaleGuard が担う。ui.md §5.2）。
+        }
+    }
+
+    /// <summary>判定理由 → 平易語サマリ（YaguraHealthReason と 1 対 1。ui.md §7）。</summary>
+    private static string? BuildSummary(YaguraHealthReading health)
+    {
+        if (health.Reasons.Count == 0)
+        {
+            return null; // 正常時は YaguraStatusBand の既定文言（ui.md §5.1 の確定文言）に委ねる。
+        }
+
+        var parts = health.Reasons.Select(reason => reason switch
+        {
+            YaguraHealthReason.LossObserved => UiText.HealthReasonLoss,
+            YaguraHealthReason.SpoolEvacuationObserved => UiText.HealthReasonSpoolEvacuation,
+            YaguraHealthReason.SpoolUsageNearLimit => UiText.HealthReasonSpoolNearLimit,
+            YaguraHealthReason.SpoolDegraded => UiText.HealthReasonSpoolDegraded,
+            _ => reason.ToString(),
+        });
+
+        return string.Join("。", parts);
+    }
 
     private string CurrentModeIcon => _mode switch
     {
@@ -70,6 +184,10 @@
         {
             return;
         }
+
+        // 状態帯の定期更新を開始する（対話モード確立後のみ——prerender では動かない）。
+        _bandTimer = new PeriodicTimer(BandUpdateInterval);
+        _bandLoop = RunBandLoopAsync(_bandTimer);
 
         // 保存済みの選択を復元する。prerender 中は JS 呼び出しが使えないため初回描画後に行う
         // （circuit 確立までの一瞬は既定のライトで表示される——既定がライトである以上、
@@ -145,5 +263,22 @@
         }
 
         return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _bandTimer?.Dispose();
+
+        if (_bandLoop is not null)
+        {
+            try
+            {
+                await _bandLoop;
+            }
+            catch (Exception)
+            {
+                // 破棄時の後片付け——更新ループの失敗はここでは伝播させない。
+            }
+        }
     }
 }

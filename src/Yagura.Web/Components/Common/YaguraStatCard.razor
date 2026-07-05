@@ -1,0 +1,29 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    数値の大表示カード（ui.md §3.1。M8-3）: ダッシュボードのカウンタ・ゲージ現在値の表示。
+    数値は大表示段 28px = Typo.h4（ui.md §2.2「28（数値の大表示——ダッシュボードのカウンタ等）」）。
+    カード面（角丸 8px・elevation 1）は YaguraCard に委譲する。
+*@
+<YaguraCard>
+    <MudText Typo="Typo.body2" Class="yagura-stat-card-label">@Label</MudText>
+    <MudText Typo="Typo.h4" Class="yagura-stat-card-value">@Value</MudText>
+    @if (!string.IsNullOrEmpty(Supplement))
+    {
+        <MudText Typo="Typo.caption" Class="yagura-stat-card-supplement">@Supplement</MudText>
+    }
+</YaguraCard>
+
+@code {
+    /// <summary>数値の意味（平易語。ui.md §7）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>表示する値（整形済み文字列。整形は利用側——単位・桁区切りを含めて渡す）。</summary>
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = string.Empty;
+
+    /// <summary>補足（任意。上限値・注記等）。</summary>
+    [Parameter]
+    public string? Supplement { get; set; }
+}

@@ -1,0 +1,66 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    選択入力（ui.md §3.1 フォーム規約に従う具体入力部品。M8-3——
+    「他の入力種別は画面実装時に §3.2 の手順で追加」の追加分）。
+    ラベル・必須表記・エラー表示は YaguraFormField（共通枠）が担う。
+
+    入力本体はネイティブ <select> とする（MudSelect はポップオーバー描画に依存し、
+    ここで必要なのは静的な選択肢の単一選択のみ——低レベル API の露出を増やさず、
+    キーボード操作・支援技術対応はネイティブ要素の標準挙動に乗る。ui.md §8）。
+    見た目はトークン由来の CSS 変数のみで整える（.yagura-select。yagura-components.css）。
+*@
+<YaguraFormField Label="@Label"
+                 Required="@Required"
+                 ErrorText="@ErrorText"
+                 HelpText="@HelpText"
+                 InputId="@_inputId">
+    <select id="@_inputId"
+            class="yagura-select"
+            value="@(Value ?? string.Empty)"
+            @onchange="HandleChangeAsync">
+        <option value="">@UiText.SelectNoneOption</option>
+        @foreach (var option in Options ?? [])
+        {
+            <option value="@option.Value">@option.Label</option>
+        }
+    </select>
+</YaguraFormField>
+
+@code {
+    private readonly string _inputId = $"yagura-field-{Guid.NewGuid():N}";
+
+    /// <summary>項目のラベル（入力の上に表示）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>選択肢。</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<YaguraSelectOption>? Options { get; set; }
+
+    /// <summary>選択値（未選択 = null。「指定なし」を常に選べる——絞り込みの強制はしない）。</summary>
+    [Parameter]
+    public string? Value { get; set; }
+
+    /// <summary>選択値の変更通知（@bind-Value で双方向バインドできる）。</summary>
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>必須項目か（「必須」表記。ui.md §3.1）。</summary>
+    [Parameter]
+    public bool Required { get; set; }
+
+    /// <summary>検証エラー文言（項目直下に文言で表示。ui.md §3.1）。</summary>
+    [Parameter]
+    public string? ErrorText { get; set; }
+
+    /// <summary>補足説明（任意）。</summary>
+    [Parameter]
+    public string? HelpText { get; set; }
+
+    private Task HandleChangeAsync(ChangeEventArgs e)
+    {
+        var raw = e.Value as string;
+        return ValueChanged.InvokeAsync(string.IsNullOrEmpty(raw) ? null : raw);
+    }
+}

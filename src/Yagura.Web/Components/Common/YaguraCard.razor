@@ -1,0 +1,30 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    カードの共通コンポーネント（ui.md §3.1。M8-3）。
+
+    - 角丸 8px はテーマの 1 値（既定 4px——入力・ボタン）では表現できないため、
+      本部品の実装内部（.yagura-card。yagura-components.css）で適用する
+      （ui.md §2.3「カード・ダイアログの 8px は…共通コンポーネント（M8-3）の実装内部で適用する」
+      の実装位置）。
+    - 影はカード段 = elevation 1（ui.md §2.3 影 3 段）。
+    - ページは MudPaper を直接使わず本部品でカード面を組む（低レベル API をページに
+      散乱させない——ui.md §1）。
+*@
+<MudPaper Elevation="1" Class="yagura-card pa-4">
+    @if (!string.IsNullOrEmpty(Title))
+    {
+        <MudText Typo="Typo.h6" Class="yagura-card-title mb-2">@Title</MudText>
+    }
+    @ChildContent
+</MudPaper>
+
+@code {
+    /// <summary>カードの見出し（任意。小見出し段 16px = Typo.h6——ui.md §2.2）。</summary>
+    [Parameter]
+    public string? Title { get; set; }
+
+    /// <summary>カードの内容。</summary>
+    [Parameter, EditorRequired]
+    public RenderFragment? ChildContent { get; set; }
+}

@@ -604,4 +604,131 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
 
         Assert.Null(exception);
     }
+
+    // ------------------------------------------------------------------
+    // M8-3 追加の読み取り専用 3 操作（ILogStore の同名メソッドの doc コメント参照。
+    // database.md §1.2「契約拡張の予約」の実体化——詳細取得・システムイベント読み出し・
+    // 送信元別集計）
+    // ------------------------------------------------------------------
+
+    [SkippableFact]
+    public async Task FindByIdAsync_ReturnsFullRecordIncludingRawAndStructuredData()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        var raw = new byte[] { 0x3C, 0x31, 0x33, 0xFF, 0xFE }; // 不正 UTF-8 を含むバイト列
+        var record = new LogRecord(
+            ReceivedAt: baseline,
+            SourceAddress: "192.0.2.10",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.ParseFailed,
+            StructuredData: "[exampleSDID@32473 iut=\"3\"]",
+            Message: new string('あ', 500), // 射影長 200 を超える全文が切り詰めなしで往復すること
+            Raw: raw);
+        await Store.WriteBatchAsync([record]);
+
+        var summaries = await Store.QueryLatestAsync(1, TimeSpan.FromSeconds(30));
+        var found = await Store.FindByIdAsync(summaries[0].Id, TimeSpan.FromSeconds(30));
+
+        Assert.NotNull(found);
+        Assert.Equal(record.SourceAddress, found.SourceAddress);
+        Assert.Equal(record.Message, found.Message); // 全文（一覧の軽量射影と異なり切り詰めない）
+        Assert.Equal(record.StructuredData, found.StructuredData);
+        Assert.Equal(raw, found.Raw);
+        Assert.Equal(ParseStatus.ParseFailed, found.ParseStatus);
+    }
+
+    [SkippableFact]
+    public async Task FindByIdAsync_UnknownId_ReturnsNull()
+    {
+        var found = await Store.FindByIdAsync(long.MaxValue, TimeSpan.FromSeconds(30));
+
+        Assert.Null(found);
+    }
+
+    [SkippableFact]
+    public async Task QuerySystemEventsAsync_FiltersByOverlapAndOrdersByStartDescending()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        // 3 区間: 古い（範囲外）・中間・新しい（いずれも範囲内）
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "downtime.normal-stop", baseline.AddHours(-10), baseline.AddHours(-9), Approximate: false));
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "downtime.crash-approximate", baseline.AddHours(-2), baseline.AddHours(-1), Approximate: true));
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "retention.delete", baseline.AddMinutes(-30), baseline.AddMinutes(-29), Approximate: false, Details: "deleted=5"));
+
+        var events = await Store.QuerySystemEventsAsync(
+            from: baseline.AddHours(-3),
+            to: baseline,
+            limit: 10,
+            timeout: TimeSpan.FromSeconds(30));
+
+        // 範囲（-3h〜now）に重なるのは後ろの 2 件のみ・StartAt 降順（新しい順）。
+        Assert.Equal(2, events.Count);
+        Assert.Equal("retention.delete", events[0].Kind);
+        Assert.Equal("downtime.crash-approximate", events[1].Kind);
+        Assert.True(events[1].Approximate);
+        Assert.Equal("deleted=5", events[0].Details);
+    }
+
+    [SkippableFact]
+    public async Task QuerySystemEventsAsync_NoRange_ReturnsAllUpToLimit()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "downtime.normal-stop", baseline.AddMinutes(-10), baseline.AddMinutes(-9), Approximate: false));
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "downtime.normal-stop", baseline.AddMinutes(-5), baseline.AddMinutes(-4), Approximate: false));
+
+        var all = await Store.QuerySystemEventsAsync(null, null, limit: 10, TimeSpan.FromSeconds(30));
+        var limited = await Store.QuerySystemEventsAsync(null, null, limit: 1, TimeSpan.FromSeconds(30));
+
+        Assert.Equal(2, all.Count);
+        Assert.Single(limited);
+        // limit は新しい順に効く（StartAt 降順の先頭から返す）。
+        Assert.Equal(all[0].StartAt, limited[0].StartAt);
+    }
+
+    [SkippableFact]
+    public async Task QuerySourceActivityAsync_AggregatesPerSourceOldestFirst()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        // 送信元 A: 2 件（最終 = -1 分）。送信元 B: 1 件（最終 = -30 分 = 無音が長い）。
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-20), "192.0.2.1", "a-1"),
+            CreateParsedRecord(baseline.AddMinutes(-1), "192.0.2.1", "a-2"),
+            CreateParsedRecord(baseline.AddMinutes(-30), "192.0.2.2", "b-1"),
+        ]);
+
+        var activity = await Store.QuerySourceActivityAsync(limit: 10, TimeSpan.FromSeconds(30));
+
+        Assert.Equal(2, activity.Count);
+        // 最終受信時刻の古い順（無音の疑いが強い順。UI-4——ILogStore の契約）。
+        Assert.Equal("192.0.2.2", activity[0].SourceAddress);
+        Assert.Equal(1, activity[0].RecordCount);
+        Assert.Equal("192.0.2.1", activity[1].SourceAddress);
+        Assert.Equal(2, activity[1].RecordCount);
+        // 最終受信時刻は MAX(ReceivedAt)（秒未満の丸めは provider の時刻表現に依存するため、
+        // 1 秒の許容幅で突合する）。
+        Assert.True((activity[1].LastReceivedAt - baseline.AddMinutes(-1)).Duration() < TimeSpan.FromSeconds(1));
+    }
+
+    [SkippableFact]
+    public async Task QuerySourceActivityAsync_LimitCutsNewestSide()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-30), "192.0.2.1", "old"),
+            CreateParsedRecord(baseline.AddMinutes(-1), "192.0.2.2", "new"),
+        ]);
+
+        var activity = await Store.QuerySourceActivityAsync(limit: 1, TimeSpan.FromSeconds(30));
+
+        // 打ち切りで残るのは「最終受信が古い側」（無音検出を上限が損なわない——ILogStore の契約）。
+        Assert.Single(activity);
+        Assert.Equal("192.0.2.1", activity[0].SourceAddress);
+    }
 }

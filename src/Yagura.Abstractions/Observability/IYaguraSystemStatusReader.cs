@@ -1,0 +1,121 @@
+namespace Yagura.Abstractions.Observability;
+
+/// <summary>
+/// 閲覧画面（M8-3。Issue #70）がホスト管轄の観測値（カウンタ累積値・スプール状態・
+/// 判定済みの健康状態・保持期間の適用値・受信リスナの構成）を読むための読み取り専用契約。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>読み取り専用である</b>——本契約は <c>Yagura.Abstractions.Administration.IYaguraWriteService</c>
+/// を実装しない（閲覧リスナ側コンポーネントからの参照が L-5 の参照分離検査
+/// ——ViewerComponentReferenceIsolationTests——で許容される側）。サーバ状態を変更する
+/// メンバーを本契約へ追加してはならない。
+/// </para>
+/// <para>
+/// <b>配置</b>: 計測の実体（<c>Yagura.Ingestion.Diagnostics.IngestionMetrics</c>）と
+/// スプール（<c>Yagura.Storage.Spool.DiskSpool</c>）はホスト側の結線でしか束ねられず、
+/// UI（Yagura.Web）は Yagura.Ingestion を参照しない参照構造（architecture.md §1.1）のため、
+/// 契約を最下層（本プロジェクト）に置き、実装はホスト
+/// （<c>Yagura.Host.Observability.SystemStatusReader</c>）が担う。
+/// </para>
+/// <para>
+/// <b>健康状態の判定は暫定実装</b>（ui.md §5.1・§12 UI-6）: 観測窓の幅・復帰条件は
+/// 実利用で確定するまでの仮値であり、実装側（ホスト）が保持する。本契約は判定結果
+/// （<see cref="YaguraHealthReading"/>）のみを公開する——部品（YaguraStatusBand）は表示のみを
+/// 担う、という ui.md §5.1 の分担のとおり。
+/// </para>
+/// </remarks>
+public interface IYaguraSystemStatusReader
+{
+    /// <summary>現在の観測値のスナップショットを返す（同期・軽量。DB へはアクセスしない）。</summary>
+    YaguraSystemStatusSnapshot ReadCurrent();
+}
+
+/// <summary>
+/// <see cref="IYaguraSystemStatusReader.ReadCurrent"/> が返す観測値のスナップショット。
+/// </summary>
+/// <param name="TakenAt">スナップショット取得時刻（UTC）。</param>
+/// <param name="Counters">
+/// カウンタ累積値の一覧。<see cref="YaguraCounterReading.InstrumentName"/> は
+/// architecture.md §4.1.1 の計器名（<c>yagura.ingestion.*</c>）と 1 対 1 対応する
+/// （画面の平易語への対応は ui.md §7 の用語対応表——表示側（UiText）の管轄）。
+/// </param>
+/// <param name="Spool">スプールの現在状態。スプール無効・縮退運転中は <c>null</c>。</param>
+/// <param name="SpoolDegraded">
+/// スプールなし縮退運転中か（architecture.md §1.2——スプールを開けず受信のみ続行している状態。
+/// 利用者が明示的に無効化した場合は <c>false</c>——縮退ではなく意図した構成）。
+/// </param>
+/// <param name="Health">健康状態の判定結果（ui.md §5.1 の 3 状態 + 判定理由）。</param>
+/// <param name="RetentionDays">
+/// 保持期間の適用値（日数。database.md §3）。不正値フォールバック（削除しない）の場合は <c>null</c>。
+/// </param>
+/// <param name="Listeners">受信リスナの構成（プロトコル・ポート。空状態画面の受信先案内に使う）。</param>
+public sealed record YaguraSystemStatusSnapshot(
+    DateTimeOffset TakenAt,
+    IReadOnlyList<YaguraCounterReading> Counters,
+    YaguraSpoolReading? Spool,
+    bool SpoolDegraded,
+    YaguraHealthReading Health,
+    int? RetentionDays,
+    IReadOnlyList<YaguraListenerEndpoint> Listeners);
+
+/// <summary>カウンタ累積値の 1 行（計器名 = 開発用語側のキーと、その累積値）。</summary>
+/// <param name="InstrumentName">計器名（architecture.md §4.1.1。例: <c>yagura.ingestion.spool.evacuated</c>）。</param>
+/// <param name="Value">累積値（前回までの累積 + 今回プロセス分。architecture.md §4.3）。</param>
+/// <param name="IsLoss">
+/// この計上が「取りこぼし」（サーバに届いた後に失われたログ。ui.md §7.2）を意味するか。
+/// 状態帯の異常判定（観測窓内の破棄カウンタの増分——ui.md §5.1）の入力。
+/// </param>
+public sealed record YaguraCounterReading(string InstrumentName, long Value, bool IsLoss);
+
+/// <summary>スプールの現在状態（architecture.md §4.6 のゲージのうち使用量）。</summary>
+/// <param name="CurrentUsageBytes">現在のディスク使用量（バイト）。</param>
+/// <param name="QuotaBytes">ディスク使用量上限（バイト）。</param>
+public sealed record YaguraSpoolReading(long CurrentUsageBytes, long QuotaBytes)
+{
+    /// <summary>使用率（0〜1。上限 0 以下なら 0）。</summary>
+    public double UsageRatio => QuotaBytes <= 0 ? 0 : (double)CurrentUsageBytes / QuotaBytes;
+}
+
+/// <summary>健康状態の判定結果（ui.md §5.1 状態帯の入力）。</summary>
+/// <param name="Kind">3 状態（稼働中 / 警告あり / 異常あり）。</param>
+/// <param name="Reasons">判定理由（表示側が平易語のサマリへ写像する）。正常時は空。</param>
+public sealed record YaguraHealthReading(YaguraHealthKind Kind, IReadOnlyList<YaguraHealthReason> Reasons)
+{
+    /// <summary>正常（理由なし）。</summary>
+    public static YaguraHealthReading Ok { get; } = new(YaguraHealthKind.Ok, []);
+}
+
+/// <summary>状態帯の 3 状態（ui.md §5.1）。</summary>
+public enum YaguraHealthKind
+{
+    /// <summary>稼働中（state-ok）。</summary>
+    Ok,
+
+    /// <summary>警告あり（state-warning）。</summary>
+    Warning,
+
+    /// <summary>異常あり（state-error）。</summary>
+    Error,
+}
+
+/// <summary>健康状態の判定理由（ui.md §5.1 の判定入力に対応）。</summary>
+public enum YaguraHealthReason
+{
+    /// <summary>観測窓内に取りこぼし（いずれかの破棄カウンタの増分）が発生した（→ 異常あり）。</summary>
+    LossObserved,
+
+    /// <summary>観測窓内にスプール退避が発生している（→ 警告あり）。</summary>
+    SpoolEvacuationObserved,
+
+    /// <summary>スプール使用量が上限に接近している（→ 警告あり）。</summary>
+    SpoolUsageNearLimit,
+
+    /// <summary>スプールなし縮退運転中（architecture.md §1.2。→ 警告あり）。</summary>
+    SpoolDegraded,
+}
+
+/// <summary>受信リスナの構成の 1 行（空状態画面の受信先案内・状態画面の表示に使う）。</summary>
+/// <param name="ProtocolName">プロトコル表示名（例: <c>UDP</c> / <c>TCP</c>）。</param>
+/// <param name="Port">待ち受けポート番号。</param>
+public sealed record YaguraListenerEndpoint(string ProtocolName, int Port);

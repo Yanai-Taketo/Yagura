@@ -240,5 +240,16 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
 
         public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new LogStoreStatistics(0, 0));
+
+        // M8-3 で追加された読み取り専用 3 操作（閲覧画面用の読み取り口）。本テストダブルの
+        // 検証対象では使用しないため未対応で明示する。
+        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+
+        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
     }
 }

@@ -72,8 +72,14 @@ public sealed class ViewerEndpointAllowlistTests
     /// </remarks>
     private static readonly IReadOnlyList<ExpectedEndpoint> ViewerAllowlist = new List<ExpectedEndpoint>
     {
-        // Razor Components の @page ルート（Yagura.Web.Components.Pages.LogViewer）。
+        // Razor Components の @page ルート（Yagura.Web.Components.Pages。M8-3 で閲覧 3 画面
+        // ——ダッシュボード "/"・ログ検索 "/search"・システム状態 "/status"——に拡張。
+        // いずれも読み取り専用ページであり、GET/POST は MapRazorComponents の既定登録
+        // （POST は Razor Components パイプラインの内部経路で、書き込みエンドポイントの
+        // 追加ではない——"/" 1 画面時代からの既存挙動と同一）。
         new("/", new[] { "GET", "POST" }),
+        new("/search", new[] { "GET", "POST" }),
+        new("/status", new[] { "GET", "POST" }),
 
         // Interactive Server（Blazor Server）circuit の確立に必要な SignalR ハブ関連経路。
         // AddInteractiveServerRenderMode が自動登録するもので、Yagura 側では個別に MapHub 等を

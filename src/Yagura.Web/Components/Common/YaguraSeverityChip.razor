@@ -1,0 +1,43 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    重大度の表示部品（ui.md §4 ログ検索。M8-3 の UX 改善——2026-07-06 オーナー指示）。
+
+    数値のままの重大度（syslog PRI の severity 0〜7）は一覧を流し読みする調査時に
+    意味を読み取れないため、短形ラベル（UiText.SeverityShortLabels——選択肢の長形
+    SeverityOptionLabels と同一の対応）+ 状態色で表示する。色の対応は ui.md §4 に記録:
+    0〜3（緊急/警報/重大/エラー）= state-error / 4（警告）= state-warning /
+    5〜7（通知/情報/デバッグ）= 通常表示。数値も併記する（ラベルは補助であり、
+    RFC 上の生値が読めることを損なわない——§5.3「欠けているデータの明示」と同じ向き）。
+
+    範囲外の値（解析失敗レコード等で理論上あり得る）は解釈を偽装せず生値のまま表示する。
+*@
+@if (Severity is { } severity && severity >= 0 && severity <= 7)
+{
+    <MudChip T="string"
+             Size="Size.Small"
+             Variant="Variant.Text"
+             Color="@ChipColor(severity)"
+             Class="yagura-severity-chip">@UiText.SeverityShortLabels[severity]</MudChip>
+}
+else if (Severity is { } raw)
+{
+    <span>@raw</span>
+}
+else
+{
+    <span>—</span>
+}
+
+@code {
+    /// <summary>重大度（syslog PRI の severity。解析できなかったレコードは null）。</summary>
+    [Parameter]
+    public int? Severity { get; set; }
+
+    private static Color ChipColor(int severity) => severity switch
+    {
+        <= 3 => Color.Error,
+        4 => Color.Warning,
+        _ => Color.Default,
+    };
+}

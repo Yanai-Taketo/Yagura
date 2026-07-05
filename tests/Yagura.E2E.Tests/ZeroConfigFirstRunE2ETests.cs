@@ -165,10 +165,14 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
         // (閲覧リスナは既定で LAN 公開だが、ループバックからの接続も当然受け付ける)。
         using var httpClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{viewerPort}") };
 
+        // M8-3 で "/" はダッシュボード（集計表示）になり、生ログの一覧はログ検索画面
+        // （/search。初期表示で条件なし検索を自動実行——絞り込みの強制はしない）が担う。
+        // 本 smoke の「送ったメッセージが閲覧ページに現れる」の検証対象も /search の
+        // prerender 出力へ移す。
         var pageContainsMarker = await PollUntilAsync(
             async () =>
             {
-                var html = await httpClient.GetStringAsync("/");
+                var html = await httpClient.GetStringAsync("/search");
                 return html.Contains(marker, StringComparison.Ordinal);
             },
             HttpPollTimeout);

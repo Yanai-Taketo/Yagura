@@ -296,6 +296,23 @@ public static class Program
 
         builder.Services.AddHostedService<IngestionHostedService>();
 
+        // 閲覧画面向けの読み取り専用の観測値公開（M8-3。Issue #70）。契約は Yagura.Abstractions
+        // （IYaguraSystemStatusReader——書き込み系マーカー IYaguraWriteService を実装しない
+        // 読み取り専用契約）、実装はホスト管轄（IngestionMetrics・DiskSpool・設定適用値の
+        // 結線はここでしかできない——architecture.md §1.1 の参照構造）。
+        builder.Services.AddSingleton<Yagura.Abstractions.Observability.IYaguraSystemStatusReader>(sp =>
+            new Observability.SystemStatusReader(
+                sp.GetRequiredService<IngestionPipeline>().Metrics,
+                spool,
+                spoolQuotaBytes: resolvedConfiguration.SpoolQuotaBytes,
+                spoolDegraded: spoolDegraded,
+                retentionDays: resolvedConfiguration.RetentionDays,
+                listeners:
+                [
+                    new Yagura.Abstractions.Observability.YaguraListenerEndpoint("UDP", resolvedConfiguration.UdpPort),
+                    new Yagura.Abstractions.Observability.YaguraListenerEndpoint("TCP", resolvedConfiguration.TcpPort),
+                ]));
+
         // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
         //
         // Yagura.Web（ListenerPortGuardMiddleware）は Yagura.Storage.Auditing.IAuditRecorder
