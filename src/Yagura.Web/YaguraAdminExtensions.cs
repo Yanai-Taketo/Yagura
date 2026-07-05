@@ -52,9 +52,20 @@ public static class YaguraAdminExtensions
     /// <param name="app">アプリケーションビルダー。</param>
     /// <param name="adminPort">管理リスナの実ポート番号（<c>ResolvedYaguraConfiguration.AdminHttpPort</c>）。</param>
     /// <remarks>
+    /// <para>
     /// <c>UseRouting</c>（または暗黙にルーティングを組み込む <c>MapRazorComponents</c> 等）の
     /// 後、エンドポイントの実処理が始まる前に呼び出すこと——<c>HttpContext.GetEndpoint()</c>
     /// がルーティング確定後のメタデータを返すために必要な順序。Program.cs 参照。
+    /// </para>
+    /// <para>
+    /// <b>DI 前提（M6-2）</b>: <see cref="ListenerPortGuardMiddleware"/> は明示引数
+    /// <c>adminPort</c> 以外に <c>Yagura.Storage.Auditing.IAuditRecorder</c> と
+    /// <c>Yagura.Web.Diagnostics.WebGuardMetrics</c> をコンストラクタで要求する。
+    /// <c>UseMiddleware</c> は明示引数以外のコンストラクタパラメータを DI コンテナから
+    /// 解決するため、呼び出し前に両方のサービスを <c>IServiceCollection</c> へ登録しておくこと
+    /// （<see cref="IAuditRecorder"/> の実体は <c>Yagura.Host</c> 側が結線する。
+    /// <c>WebGuardMetrics</c> は本クラスと対称のシングルトンとして Program.cs が登録する）。
+    /// </para>
     /// </remarks>
     public static IApplicationBuilder UseYaguraListenerPortGuard(this IApplicationBuilder app, int adminPort)
     {

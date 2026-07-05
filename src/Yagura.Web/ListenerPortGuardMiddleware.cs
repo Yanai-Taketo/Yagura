@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Http;
+using Yagura.Storage.Auditing;
+using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web;
 
@@ -30,21 +32,51 @@ namespace Yagura.Web;
 /// </para>
 /// <para>
 /// <b>拒否時の応答</b>: 404 Not Found を返す（存在しないルートと区別しない——管理系パスの
-/// 存在自体を非 loopback クライアントへ漏らさない）。拒否の監査記録（security.md §1 L-3b
-/// 「拒否 + 監査記録」）は後続 Issue #52 のスコープであり、本ミドルウェアは「実行されない」
-/// 構造のみを提供する。
+/// 存在自体を非 loopback クライアントへ漏らさない）。
+/// </para>
+/// <para>
+/// <b>拒否の監査記録（M6-2。Issue #52。security.md §1 L-3b「拒否 + 監査記録」）</b>:
+/// 拒否時に <see cref="IAuditRecorder"/>（実体は <c>Yagura.Host</c> が DI で結線する
+/// <c>FileAuditRecorder</c>）へ 1 件記録し、<see cref="WebGuardMetrics"/> へ拒否カウンタを
+/// 計上する。監査記録の書き込みは非同期だが、**応答（404）は監査記録の完了を待たずに返す
+/// ことはしない**——<see cref="IAuditRecorder.RecordAsync"/> 自体が失敗しても例外を投げない
+/// 契約（インターフェースの remarks 参照）のため、awaitしても要求処理を妨げない
+/// （ADR-0004 決定 7）。
+/// </para>
+/// <para>
+/// <b>「管理系パス」判定方式の限界（SEC-7・security.md §1 L-3b）</b>: 本ミドルウェアは
+/// <see cref="ListenerPortGuardEndpointMetadata.Admin"/> を持つ「登録済みエンドポイント」への
+/// 到達のみを監査記録・拒否カウンタの対象とする（ルート表からの機械的導出方式）。
+/// 閲覧リスナへの <c>/admin/xxx</c> 等、管理系ルート表に一致しない未登録パスへの要求は
+/// 通常の 404（ASP.NET Core の既定のルーティング未一致）であり、本ミドルウェアを経由しない
+/// ため監査記録・カウンタの対象にならない。この覆域の限界は security.md §1 L-3b に
+/// 明記されている（PR で「⚠️ オーナー確認事項」として提起する）。
 /// </para>
 /// </remarks>
 public sealed class ListenerPortGuardMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly int _adminPort;
+    private readonly IAuditRecorder _auditRecorder;
+    private readonly WebGuardMetrics _metrics;
+    private readonly TimeProvider _timeProvider;
 
-    public ListenerPortGuardMiddleware(RequestDelegate next, int adminPort)
+    public ListenerPortGuardMiddleware(
+        RequestDelegate next,
+        int adminPort,
+        IAuditRecorder auditRecorder,
+        WebGuardMetrics metrics,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(next);
+        ArgumentNullException.ThrowIfNull(auditRecorder);
+        ArgumentNullException.ThrowIfNull(metrics);
+
         _next = next;
         _adminPort = adminPort;
+        _auditRecorder = auditRecorder;
+        _metrics = metrics;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -57,6 +89,26 @@ public sealed class ListenerPortGuardMiddleware
             // 閲覧リスナ（または将来追加され得る他ポート）経由での管理系エンドポイント到達を
             // 拒否する。存在自体を漏らさないため 404（NotFound）で応答する。
             context.Response.StatusCode = StatusCodes.Status404NotFound;
+
+            _metrics.RecordListenerGuardRejected();
+
+            var auditEvent = new AuditEvent(
+                OccurredAt: _timeProvider.GetUtcNow(),
+                Kind: AuditEventKind.ViewerListenerAdminRequestRejected,
+                RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
+                RemotePort: context.Connection.RemotePort,
+                AttemptedPath: context.Request.Path.Value ?? string.Empty,
+                ReachedListenerPort: context.Connection.LocalPort);
+
+            // IAuditRecorder.RecordAsync は失敗しても例外を投げない契約（インターフェースの
+            // remarks 参照）。await することで書き込み完了を待つが、要求処理（404 応答）は
+            // 既に確定済みであり、本 await 自体が要求処理を妨げることはない
+            // （ADR-0004 決定 7「監査記録の書き込み不能は要求処理を妨げない」）。
+            // CancellationToken.None を渡す理由: クライアントの切断（RequestAborted）で
+            // 監査記録の書き込み自体を打ち切ってはならない——応答が届くかどうかに関わらず
+            // 「拒否した事実」は記録する（拒否の判断自体は既に確定済み）。
+            await _auditRecorder.RecordAsync(auditEvent, CancellationToken.None).ConfigureAwait(false);
+
             return;
         }
 
