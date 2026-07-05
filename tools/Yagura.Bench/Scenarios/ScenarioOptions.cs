@@ -23,6 +23,11 @@ namespace Yagura.Bench.Scenarios;
 /// 縮小容量（バイト）。
 /// </param>
 /// <param name="KeepDataRoot">終了後にデータルートを削除せず残すか（障害調査用）。</param>
+/// <param name="CompareBaselinePath">
+/// 指定時、実行結果を基準値ファイル（<see cref="Baseline.BaselineFile"/>）と比較し、許容帯を
+/// 超える劣化があれば終了コード 3 で不合格を返す（Issue #62。architecture.md §5.2「CI の回帰判定
+/// は基準比とする」）。未指定時は従来どおり突合結果のみで終了コードを決める。
+/// </param>
 /// <param name="UdpReceiveBufferBytes">
 /// UDP 受信ソケットの受信バッファサイズ（バイト。M-2）。<c>null</c> は「製品既定のまま」
 /// （<see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/>
@@ -43,4 +48,5 @@ public sealed record ScenarioOptions(
     string? SqlServerConnectionString,
     long SpoolQuotaBytes,
     bool KeepDataRoot,
+    string? CompareBaselinePath = null,
     int? UdpReceiveBufferBytes = null);
