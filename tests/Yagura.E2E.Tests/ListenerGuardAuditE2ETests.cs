@@ -13,6 +13,13 @@ namespace Yagura.E2E.Tests;
 /// 本テストは「拒否 + 監査記録」——閲覧ポート経由の <c>/admin</c> 要求が 404 になったうえで、
 /// データルート配下の監査記録ファイル（<c>audit/audit.jsonl</c>）に 1 行残ることを、実際の
 /// Yagura.Host 実行ファイルを子プロセスとして起動して確認する。
+/// <para>
+/// <b>M6-3（Issue #53）との対応</b>: security.md §1 の loopback 束縛 CI 回帰テスト表のうち
+/// <c>L-3b</c>（閲覧リスナへの管理系要求の拒否 + 監査記録）は本クラスの
+/// <see cref="ViewerPort_AdminRequest_ReturnsNotFound_AndLeavesOneAuditLine"/> が担う。
+/// <see cref="LoopbackBindingRegressionTests"/>（L-1・L-2・L-3a・L-4）は本テストと重複実装せず、
+/// 本コメントへの参照のみを置く。
+/// </para>
 /// </remarks>
 public sealed class ListenerGuardAuditE2ETests : IDisposable
 {
