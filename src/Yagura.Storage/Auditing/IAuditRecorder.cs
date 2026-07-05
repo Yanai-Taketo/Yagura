@@ -17,8 +17,8 @@ namespace Yagura.Storage.Auditing;
 /// <see cref="RecordAsync"/> は例外を投げない契約とする。実装内部でファイル書き込み・イベント
 /// ログ書き込みの両方が失敗しても、呼び出し元（<c>ListenerPortGuardMiddleware</c> 等）の
 /// 要求処理（404 応答等）を妨げてはならない。実装は失敗をカウンタで観測可能にする
-/// （<c>Yagura.Ingestion.Diagnostics.IngestionMetrics.RecordAuditWriteFailed</c> 等、
-/// 呼び出し側の計器体系に委ねる）。
+/// （<c>Yagura.Web.Diagnostics.WebGuardMetrics.RecordAuditWriteFailed</c>。
+/// architecture.md §4.1.1 の計器一覧参照）。
 /// </para>
 /// </remarks>
 public interface IAuditRecorder
