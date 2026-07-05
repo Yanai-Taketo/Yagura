@@ -63,6 +63,7 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Equal(UdpSyslogListenerOptions.DefaultBindAddress, result.Configuration.UdpBindAddress);
         Assert.Equal(UdpSyslogListenerOptions.DefaultPort, result.Configuration.UdpPort);
+        Assert.Equal(UdpSyslogListenerOptions.DefaultReceiveBufferBytes, result.Configuration.UdpReceiveBufferBytes);
         Assert.Equal(TcpSyslogListenerOptions.DefaultBindAddress, result.Configuration.TcpBindAddress);
         Assert.Equal(TcpSyslogListenerOptions.DefaultPort, result.Configuration.TcpPort);
         Assert.Equal(YaguraHostEnvironment.DefaultHttpPort, result.Configuration.HttpPort);
@@ -617,6 +618,94 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // UDP 受信バッファサイズ（M-2。§1「既定値で継続」）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_UdpReceiveBufferBytesValid_IsAccepted()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "ReceiveBufferBytes": "4194304" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(4 * 1024 * 1024, result.Configuration.UdpReceiveBufferBytes);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_UdpReceiveBufferBytesNotNumericInFile_FallsBackToDefaultAndCollectsWarning()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "ReceiveBufferBytes": "not-a-number" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(UdpSyslogListenerOptions.DefaultReceiveBufferBytes, result.Configuration.UdpReceiveBufferBytes);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:Udp:ReceiveBufferBytes", warning.Key);
+        Assert.Equal("not-a-number", warning.InvalidValue);
+        Assert.Equal(
+            UdpSyslogListenerOptions.DefaultReceiveBufferBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            warning.AppliedValue);
+    }
+
+    [Fact]
+    public void Load_UdpReceiveBufferBytesBelowMinimum_FallsBackToDefaultAndCollectsWarning()
+    {
+        // 下限（64 KiB）未満は「受信バッファを拡大する」という設定項目の目的に反するため不正値扱い。
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "ReceiveBufferBytes": "1024" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(UdpSyslogListenerOptions.DefaultReceiveBufferBytes, result.Configuration.UdpReceiveBufferBytes);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:Udp:ReceiveBufferBytes", warning.Key);
+    }
+
+    [Fact]
+    public void Load_UdpReceiveBufferBytesAboveMaximum_FallsBackToDefaultAndCollectsWarning()
+    {
+        // 上限（256 MiB）超過は非現実的な巨大値として不正値扱い（誤入力の桁違いを弾く安全弁）。
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "ReceiveBufferBytes": "9999999999" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(UdpSyslogListenerOptions.DefaultReceiveBufferBytes, result.Configuration.UdpReceiveBufferBytes);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:Udp:ReceiveBufferBytes", warning.Key);
+    }
+
+    [Fact]
+    public void Load_UdpReceiveBufferBytesAtMinimumBoundary_IsAccepted()
+    {
+        WriteConfigurationFile(
+            $$"""{ "Ingestion": { "Udp": { "ReceiveBufferBytes": "{{UdpSyslogListenerOptions.MinReceiveBufferBytes}}" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(UdpSyslogListenerOptions.MinReceiveBufferBytes, result.Configuration.UdpReceiveBufferBytes);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_UdpReceiveBufferBytesAtMaximumBoundary_IsAccepted()
+    {
+        WriteConfigurationFile(
+            $$"""{ "Ingestion": { "Udp": { "ReceiveBufferBytes": "{{UdpSyslogListenerOptions.MaxReceiveBufferBytes}}" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(UdpSyslogListenerOptions.MaxReceiveBufferBytes, result.Configuration.UdpReceiveBufferBytes);
+        Assert.Empty(result.Warnings);
+    }
+
+    // ------------------------------------------------------------------
     // 未知キーの検出
     // ------------------------------------------------------------------
 
@@ -644,7 +733,7 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
             """
             {
               "Ingestion": {
-                "Udp": { "BindAddress": "0.0.0.0", "Port": "514" },
+                "Udp": { "BindAddress": "0.0.0.0", "Port": "514", "ReceiveBufferBytes": "4194304" },
                 "Tcp": { "BindAddress": "0.0.0.0", "Port": "514" }
               },
               "Viewer": { "HttpPort": "8514" },

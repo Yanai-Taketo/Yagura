@@ -45,6 +45,10 @@ public static class ConfigurationKeyMetadata
         {
             ["Ingestion:Udp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Ingestion:Udp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
+            // 受信バッファサイズ（M-2）は BindAddress/Port と同じ「受信」区分（§8）に属し、
+            // ソケット構築時（bind と同時）に SO_RCVBUF を設定する実装のため、リスナの再構成を
+            // 経なければ反映されない。BindAddress/Port と同じ分類とする。
+            ["Ingestion:Udp:ReceiveBufferBytes"] = ConfigurationReloadEffect.ListenerReconfiguration,
             // TCP キー(M4-1)は UDP と同じ「受信」区分(§8)。本表への登録が M4-1 で漏れており
             // M5-1 のレビューで追補した(KnownKeys との整合はテストで機械検証される)。
             ["Ingestion:Tcp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,

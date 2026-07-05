@@ -33,6 +33,7 @@ public static class ScenarioOptionsParser
         var spoolQuotaBytes = 4L * 1024 * 1024; // 既定 4 MiB。TargetSegmentSizeBytes と同程度——数セグメントで発動させる狙い。
         var keepDataRoot = false;
         string? compareBaselinePath = null;
+        int? udpReceiveBufferBytes = null;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -74,6 +75,9 @@ public static class ScenarioOptionsParser
                 case "--compare-baseline":
                     compareBaselinePath = RequireValue(args, ref i, "--compare-baseline");
                     break;
+                case "--udp-receive-buffer-bytes":
+                    udpReceiveBufferBytes = int.Parse(RequireValue(args, ref i, "--udp-receive-buffer-bytes"));
+                    break;
                 default:
                     throw new BenchUsageException($"未知のオプション '{args[i]}'。\n\n{BuildUsageText()}");
             }
@@ -92,7 +96,8 @@ public static class ScenarioOptionsParser
             sqlServerConnectionString,
             spoolQuotaBytes,
             keepDataRoot,
-            compareBaselinePath);
+            compareBaselinePath,
+            udpReceiveBufferBytes);
     }
 
     private static LoadTransport ParseTransport(string value) => value.ToLowerInvariant() switch
@@ -141,6 +146,8 @@ public static class ScenarioOptionsParser
           --keep-data-root            終了後にデータルートを削除せず残す（障害調査用）
           --compare-baseline <path>   基準値ファイルと比較し、許容帯超過の劣化で終了コード 3（CI 回帰判定。
                                       Issue #62 / architecture.md §5.2。絶対値の合否は行わない）
+          --udp-receive-buffer-bytes <N>  UDP 受信バッファサイズ（SO_RCVBUF。バイト。M-2。
+                                           既定: 未指定 = 製品既定のまま上書きしない）
 
         例:
           Yagura.Bench Throughput --transport udp --rate 2000 --duration 15
@@ -148,6 +155,7 @@ public static class ScenarioOptionsParser
           Yagura.Bench SpoolActivationRecovery --spool-quota-bytes 2097152
           Yagura.Bench ProviderWriteCeiling --sqlserver "Server=.;Database=YaguraBench;Integrated Security=true;"
           Yagura.Bench SustainedZeroDrop --rate 5000 --duration 10 --compare-baseline tools\Yagura.Bench\baselines\ci-baseline.json
+          Yagura.Bench SustainedZeroDrop --rate 30000 --duration 10 --udp-receive-buffer-bytes 4194304
         """;
 }
 

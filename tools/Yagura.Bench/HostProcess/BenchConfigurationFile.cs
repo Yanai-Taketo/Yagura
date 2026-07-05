@@ -55,4 +55,24 @@ public static class BenchConfigurationFile
 
         File.WriteAllText(Path.Combine(dataRoot, FileName), json);
     }
+
+    /// <summary>
+    /// UDP 受信バッファサイズ（<c>Ingestion:Udp:ReceiveBufferBytes</c>。M-2）を明示指定した
+    /// 設定ファイルを書く（バッファ値別の破棄ゼロ上限比較用。ScenarioRunner の
+    /// SustainedZeroDrop/BurstQ1Drop から呼ばれる）。
+    /// </summary>
+    public static void WriteUdpReceiveBufferConfiguration(string dataRoot, int receiveBufferBytes)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
+
+        var json = JsonSerializer.Serialize(new
+        {
+            Ingestion = new
+            {
+                Udp = new { ReceiveBufferBytes = receiveBufferBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) },
+            },
+        }, new JsonSerializerOptions { WriteIndented = true });
+
+        File.WriteAllText(Path.Combine(dataRoot, FileName), json);
+    }
 }

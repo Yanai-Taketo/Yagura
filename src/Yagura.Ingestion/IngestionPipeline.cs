@@ -110,7 +110,12 @@ public sealed class IngestionPipeline : IAsyncDisposable
             FullMode = BoundedChannelFullMode.Wait,
         });
 
-        _udpListener = new UdpSyslogListener(udpListenerOptions, _q1.Writer, ingressGate, _metrics);
+        _udpListener = new UdpSyslogListener(
+            udpListenerOptions,
+            _q1.Writer,
+            ingressGate,
+            _metrics,
+            loggerFactory?.CreateLogger<UdpSyslogListener>());
         _tcpListener = new TcpSyslogListener(tcpListenerOptions, _q1.Writer, ingressGate, _metrics);
         _parsingStage = new ParsingStage(
             _q1.Reader,

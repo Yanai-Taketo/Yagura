@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Storage;
@@ -28,6 +29,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     private readonly ChannelWriter<RawDatagram> _q1Writer;
     private readonly IIngressGate _ingressGate;
     private readonly IngestionMetrics _metrics;
+    private readonly ILogger<UdpSyslogListener>? _logger;
     private UdpClient? _udpClient;
     private Task? _receiveLoopTask;
     private CancellationTokenSource? _stoppingCts;
@@ -36,7 +38,8 @@ public sealed class UdpSyslogListener : IAsyncDisposable
         UdpSyslogListenerOptions options,
         ChannelWriter<RawDatagram> q1Writer,
         IIngressGate ingressGate,
-        IngestionMetrics metrics)
+        IngestionMetrics metrics,
+        ILogger<UdpSyslogListener>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(q1Writer);
@@ -47,6 +50,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
         _q1Writer = q1Writer;
         _ingressGate = ingressGate;
         _metrics = metrics;
+        _logger = logger;
     }
 
     /// <summary>
@@ -69,10 +73,63 @@ public sealed class UdpSyslogListener : IAsyncDisposable
         _udpClient = new UdpClient(endpoint);
         BoundPort = ((IPEndPoint)_udpClient.Client.LocalEndPoint!).Port;
 
+        ApplyReceiveBufferSize(_udpClient.Client, _options.ReceiveBufferBytes, _logger);
+
         _stoppingCts = new CancellationTokenSource();
         _receiveLoopTask = Task.Run(() => ReceiveLoopAsync(_stoppingCts.Token), CancellationToken.None);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// UDP 受信ソケットの <c>SO_RCVBUF</c> を設定し、実効値をログへ記録する
+    /// （architecture.md §9 M-2・§4.2「受信バッファサイズを設定項目にする」）。
+    /// </summary>
+    /// <remarks>
+    /// <b>実効値を読み戻してログに出す理由</b>: OS が要求値を丸める、または一部の環境で
+    /// setsockopt 自体が失敗する可能性があるため（legacy-lessons.md A-1 の記録。ただし
+    /// 開発機（Windows 11 ARM64 10.0.26200・.NET 10.0.301）の実機検証では丸め・失敗のいずれも
+    /// 再現しなかった——<see cref="UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/> の
+    /// remarks 参照）。設定した値と実際に効いた値が異なる環境が将来現れても、この一致・不一致を
+    /// 起動ログで確認できるようにする。
+    /// </remarks>
+    private static void ApplyReceiveBufferSize(Socket socket, int requestedBytes, ILogger<UdpSyslogListener>? logger)
+    {
+        try
+        {
+            socket.ReceiveBufferSize = requestedBytes;
+        }
+        catch (SocketException ex)
+        {
+            // setsockopt 自体が失敗した環境（legacy-lessons.md A-1 が記録する仮説上の制約。
+            // 本開発機では再現しないが、防御的に catch する）。ソケットは OS 既定のバッファの
+            // まま受信を継続する——受信の成立に不可欠なキーではないため、ここで例外を
+            // 再送出して起動を止めない（configuration.md §1「既定値で継続」と同じ判断）。
+            logger?.LogWarning(
+                ex,
+                "UDP 受信バッファサイズ {RequestedBytes} バイトの設定に失敗したため、" +
+                "OS 既定のバッファサイズ {EffectiveBytes} バイトのまま継続します。",
+                requestedBytes,
+                socket.ReceiveBufferSize);
+            return;
+        }
+
+        var effectiveBytes = socket.ReceiveBufferSize;
+        if (effectiveBytes == requestedBytes)
+        {
+            logger?.LogInformation(
+                "UDP 受信バッファサイズを {EffectiveBytes} バイトに設定しました。",
+                effectiveBytes);
+        }
+        else
+        {
+            // OS が要求値を丸めた場合の観測点（本開発機では未観測。§4.2 M-2 の実機記録参照）。
+            logger?.LogWarning(
+                "UDP 受信バッファサイズは要求値 {RequestedBytes} バイトに対し、" +
+                "OS により {EffectiveBytes} バイトへ丸められました。",
+                requestedBytes,
+                effectiveBytes);
+        }
     }
 
     /// <summary>

@@ -28,6 +28,13 @@ namespace Yagura.Bench.Scenarios;
 /// 超える劣化があれば終了コード 3 で不合格を返す（Issue #62。architecture.md §5.2「CI の回帰判定
 /// は基準比とする」）。未指定時は従来どおり突合結果のみで終了コードを決める。
 /// </param>
+/// <param name="UdpReceiveBufferBytes">
+/// UDP 受信ソケットの受信バッファサイズ（バイト。M-2）。<c>null</c> は「製品既定のまま」
+/// （<see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/>
+/// を明示的に上書きしない——bench 側で yagura.json を書かない）を意味する。
+/// <see cref="BenchScenario.SustainedZeroDrop"/>・<see cref="BenchScenario.BurstQ1Drop"/> で
+/// バッファ値別の破棄ゼロ上限・OS バッファ破棄（導出値）を比較測定するために使う。
+/// </param>
 public sealed record ScenarioOptions(
     BenchScenario Scenario,
     LoadTransport Transport,
@@ -41,4 +48,5 @@ public sealed record ScenarioOptions(
     string? SqlServerConnectionString,
     long SpoolQuotaBytes,
     bool KeepDataRoot,
-    string? CompareBaselinePath = null);
+    string? CompareBaselinePath = null,
+    int? UdpReceiveBufferBytes = null);

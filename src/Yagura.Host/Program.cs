@@ -224,6 +224,7 @@ public static class Program
         {
             BindAddress = resolvedConfiguration.UdpBindAddress,
             Port = resolvedConfiguration.UdpPort,
+            ReceiveBufferBytes = resolvedConfiguration.UdpReceiveBufferBytes,
         });
         builder.Services.AddSingleton(new TcpSyslogListenerOptions
         {
