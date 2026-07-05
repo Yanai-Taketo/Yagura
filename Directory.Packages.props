@@ -6,6 +6,12 @@
 
   <ItemGroup>
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <!--
+      SQL Server provider（M5-3。Issue #47）。当日ライブ検証: nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/index.json) で確認した最新安定版
+      7.0.2（7.1.0-preview1.26124.5 はプレリリースのため除外。検証日 2026-07-05）。
+    -->
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.7.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
@@ -14,6 +20,15 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!--
+      SQL Server 適合テストの動的スキップ（M5-3。Issue #47）。当日ライブ検証:
+      nuget.org registration（api.nuget.org/v3/registration5-semver1/xunit.skippablefact/1.5.61.json）で
+      2025-12-27 公開の最新安定版であることを確認、ソース（AArnott/Xunit.SkippableFact の
+      Sdk/SkippableFactTestCase.cs）を直接確認し、SkipException が IAsyncLifetime.InitializeAsync
+      から送出されても RunAsync 全体（コンストラクタ・InitializeAsync・テスト本体を包含）を
+      SkippableTestMessageBus でラップして Skipped へ変換することを確認済み（検証日 2026-07-05）。
+    -->
+    <PackageVersion Include="Xunit.SkippableFact" Version="1.5.61" />
 
     <!--
       Microsoft.Data.Sqlite 10.0.9 の最小要求 2.1.11 には既知の脆弱性

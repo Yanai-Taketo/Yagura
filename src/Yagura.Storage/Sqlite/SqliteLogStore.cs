@@ -398,7 +398,7 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                     AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
                     ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
                     MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                    Message: TruncateMessage(message, query.MessageProjectionLength)));
+                    Message: MessageProjection.Truncate(message, query.MessageProjectionLength)));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -412,12 +412,6 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
 
         return results;
     }
-
-    /// <summary>
-    /// 一覧射影用にメッセージを先頭 N 文字へ切り詰める（database.md §2.1「一覧は先頭 N 文字の射影」）。
-    /// </summary>
-    private static string? TruncateMessage(string? message, int projectionLength) =>
-        message is null || message.Length <= projectionLength ? message : message[..projectionLength];
 
     private static string EscapeLikePattern(string value)
     {

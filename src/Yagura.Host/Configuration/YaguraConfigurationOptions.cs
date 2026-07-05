@@ -75,6 +75,24 @@ public sealed class YaguraConfigurationOptions
         /// 不正として既定値へフォールバックする（データルート脱出を防ぐ。§1「既定値で継続」）。
         /// </summary>
         public string? SqliteFileName { get; set; }
+
+        /// <summary>
+        /// 永続化 provider の選択（<c>sqlite</c> 既定 / <c>sqlserver</c>）。M5-3。
+        /// 不正値は §1「既定値で継続」——<c>sqlite</c> へフォールバックし警告する。
+        /// </summary>
+        public string? Provider { get; set; }
+
+        /// <summary>SQL Server provider 選択時の接続設定（M5-3）。</summary>
+        public SqlServerOptions? SqlServer { get; set; }
+    }
+
+    public sealed class SqlServerOptions
+    {
+        /// <summary>
+        /// SQL Server への接続文字列。<c>Storage:Provider = sqlserver</c> のとき必須
+        /// （configuration.md §2 の DPAPI 保護対象。復号は本 Issue の範囲外——挿入点のみ）。
+        /// </summary>
+        public string? ConnectionString { get; set; }
     }
 
     public sealed class SpoolOptions

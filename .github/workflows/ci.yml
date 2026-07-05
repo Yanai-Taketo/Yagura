@@ -21,6 +21,45 @@ jobs:
         with:
           global-json-file: global.json
 
+      # SQL Server 適合テスト（M5-3。Issue #47）の CI 実行手段。
+      #
+      # 実体検証（確認日 2026-07-05）: actions/runner-images の Windows2022-Readme.md を直接確認した。
+      # 「Installed Software > Databases」節は PostgreSQL・MongoDB のみを standalone サービスとして
+      # 掲載しており、SQL Server / LocalDB は掲載されない。一方「Visual Studio Enterprise 2022」の
+      # ワークロード構成要素として Microsoft.VisualStudio.Component.SQL.LocalDB.Runtime が含まれる
+      # （バージョン 17.14.36510.44）。これは VS のコンポーネントであり、独立した保証ではない。
+      #
+      # actions/runner-images issue #3691「Add SQL Server Express LocalDB」のメンテナ回答が
+      # 明確な結論を与える: sqllocaldb.exe の存在は保証せず、`sqllocaldb info MSSQLLocalDB` で
+      # 確認し、無ければ公式 MSI（SqlLocalDB.msi）をその場でダウンロード・サイレントインストール
+      # する防御的パターンを推奨している。本ステップはそのパターンをそのまま採用する
+      # （代替候補として検討した potatoqualitee/mssqlsuite アクションは不採用——本製品が必要と
+      # するのは LocalDB のみであり、追加の外部アクション依存を増やすほどの利益がないため、
+      # Microsoft 公式 MSI を直接叩く最小構成を選んだ）。
+      - name: Ensure SQL Server LocalDB is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Write-Host "Checking for existing MSSQLLocalDB instance..."
+          $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
+            Write-Host "MSSQLLocalDB not found. Downloading official SqlLocalDB.msi..."
+            Import-Module BitsTransfer
+            Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
+            Write-Host "Installing SqlLocalDB.msi..."
+            Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
+          } else {
+            Write-Host "MSSQLLocalDB instance already registered."
+          }
+
+          Write-Host "Starting MSSQLLocalDB instance..."
+          # sqllocaldb.exe はネイティブ実行ファイルであり -ErrorAction は使えない
+          # （PowerShell コマンドレット専用のパラメータのため）。インスタンスが既に存在する場合の
+          # "create" の失敗は無視してよいため、終了コードを見ずに実行を続ける。
+          sqllocaldb create MSSQLLocalDB
+          sqllocaldb start MSSQLLocalDB
+          sqllocaldb info MSSQLLocalDB
+
       - name: Restore
         run: dotnet restore
 

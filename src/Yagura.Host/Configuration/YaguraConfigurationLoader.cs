@@ -58,6 +58,8 @@ public static class YaguraConfigurationLoader
         "Ingestion:Tcp:Port",
         "Viewer:HttpPort",
         "Storage:SqliteFileName",
+        "Storage:Provider",
+        "Storage:SqlServer:ConnectionString",
         "Spool:Enabled",
         "Spool:Directory",
         "Spool:QuotaBytes",
@@ -116,6 +118,9 @@ public static class YaguraConfigurationLoader
         // --- 永続化: SQLite ファイル名（§1「既定値で継続」） ---
         var sqliteFileName = ResolveSqliteFileName(options, warnings);
 
+        // --- 永続化: provider 選択・SQL Server 接続文字列（§1「既定値で継続」。M5-3） ---
+        var (storageProvider, sqlServerConnectionString) = ResolveStorageProvider(options, warnings);
+
         // --- スプール: 有効/無効・置き場所・上限（§1「既定値で継続」。M4-3） ---
         var spoolEnabled = ResolveSpoolEnabled(options, warnings);
         var spoolDirectory = ResolveSpoolDirectory(options, dataRoot, warnings);
@@ -147,7 +152,9 @@ public static class YaguraConfigurationLoader
             SpoolDirectory: spoolDirectory,
             SpoolQuotaBytes: spoolQuotaBytes,
             RetentionDays: retentionDays,
-            RetentionExecutionTimeOfDay: retentionExecutionTimeOfDay);
+            RetentionExecutionTimeOfDay: retentionExecutionTimeOfDay,
+            StorageProvider: storageProvider,
+            SqlServerConnectionString: sqlServerConnectionString);
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
     }
@@ -382,6 +389,79 @@ public static class YaguraConfigurationLoader
             Reason: "ファイル名として不正な文字を含むため既定値を適用"));
 
         return defaultFileName;
+    }
+
+    /// <summary>
+    /// 永続化 provider の選択を解決する（M5-3。database.md §1）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>不正な provider 名の扱い</b>: <c>sqlite</c>/<c>sqlserver</c> 以外の値（大文字小文字は
+    /// 区別しない）は §1「既定値で継続」により <see cref="Configuration.StorageProvider.Sqlite"/>
+    /// へフォールバックし警告する。
+    /// </para>
+    /// <para>
+    /// <b>設計判断（本 Issue の設計判断）: provider=sqlserver かつ接続文字列が未設定の場合、
+    /// 起動失敗ではなく SQLite へ縮小 + 強い警告とする</b>。理由:
+    /// (1) configuration.md §1 が定める「起動失敗」の対象は<b>受信の成立に不可欠なキー</b>
+    /// （受信ポート等）に限定される——永続化 provider の選択はこの基準に該当しない
+    /// （受信自体は継続でき、書き込み失敗時はスプールが吸収する。architecture.md §3.2）。
+    /// (2) 本製品は「ログを失わない」を最優先し、縮退（既定値・安全側フォールバック）を
+    /// 起動失敗より優先する設計思想を随所で採用している（同種の前例:
+    /// スプール領域が開けない場合の縮退運転——<c>[spool-degraded-mode]</c> 警告。
+    /// bind 失敗時の縮小継続——configuration.md §4.1）。SQL Server への昇格を意図した
+    /// 環境で接続文字列の設定漏れがあっても、**サービスが全く起動せずログを一切受信できない**
+    /// 事態より、**SQLite で受信を継続しながら強い警告で気づかせる**方が「ログを失わない」
+    /// 原則に忠実である。
+    /// (3) database.md §1.2 の契約 3 分類（一時障害・恒久障害・容量枯渇）に照らすと、
+    /// 「接続文字列が無い」は SQL Server provider を構築する<b>前</b>の設定検証段階の問題であり、
+    /// provider 自体の実行時障害ではない——本メソッドが SQLite へ縮小することで、
+    /// 実際に構築される provider は常に接続可能な状態が保証され、後続の
+    /// <see cref="SqlServerFailureClassifier"/> 等の実行時分類の対象にはならない。
+    /// </para>
+    /// <para>
+    /// <b>警告の強さ</b>: 通常の「既定値で継続」警告と同じ経路（<see cref="ConfigurationWarning"/>）
+    /// に乗せるが、Reason 文言で「SQL Server を意図していたのに SQLite で動作している」という
+    /// 事故（気づかれないと本番想定の環境が組み込み DB のまま運用され続ける）を明示する。
+    /// </para>
+    /// </remarks>
+    private static (StorageProvider Provider, string? SqlServerConnectionString) ResolveStorageProvider(
+        YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var rawProvider = options.Storage?.Provider;
+
+        if (string.IsNullOrWhiteSpace(rawProvider) || string.Equals(rawProvider, "sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StorageProvider.Sqlite, null);
+        }
+
+        if (!string.Equals(rawProvider, "sqlserver", StringComparison.OrdinalIgnoreCase))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Storage:Provider",
+                InvalidValue: rawProvider,
+                AppliedValue: "sqlite",
+                Reason: "既知の provider 名（sqlite / sqlserver）ではないため既定の SQLite を適用"));
+
+            return (StorageProvider.Sqlite, null);
+        }
+
+        var connectionString = options.Storage?.SqlServer?.ConnectionString;
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Storage:SqlServer:ConnectionString",
+                InvalidValue: "(未設定)",
+                AppliedValue: "sqlite への縮小",
+                Reason: "Storage:Provider が sqlserver ですが接続文字列が未設定のため、" +
+                    "起動を継続するために組み込み SQLite へ縮小しました。SQL Server での運用を意図する場合は" +
+                    "Storage:SqlServer:ConnectionString を設定してください（本縮小は受信を止めないための" +
+                    "設計判断——database.md §1「ログを失わない」原則の適用）"));
+
+            return (StorageProvider.Sqlite, null);
+        }
+
+        return (StorageProvider.SqlServer, connectionString);
     }
 
     /// <summary>

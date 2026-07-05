@@ -51,6 +51,12 @@ public static class ConfigurationKeyMetadata
             ["Ingestion:Tcp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Viewer:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
             ["Storage:SqliteFileName"] = ConfigurationReloadEffect.RestartRequired,
+            // provider 切替は database.md §6.1 の切替手順（準備フェーズ→切替本番）による専用の
+            // 管理操作であり、通常の設定再読み込み（差分適用）の対象ではない。現時点は
+            // ウィザード未実装のため実効はサービス再起動（configuration.md §8 表「永続化」区分
+            // 「provider 切替は database.md §6.1 の切替手順による（備考: ウィザード経由のみ）」）。
+            ["Storage:Provider"] = ConfigurationReloadEffect.RestartRequired,
+            ["Storage:SqlServer:ConnectionString"] = ConfigurationReloadEffect.RestartRequired,
             ["Spool:Enabled"] = ConfigurationReloadEffect.Immediate,
             ["Spool:Directory"] = ConfigurationReloadEffect.RestartRequired,
             ["Spool:QuotaBytes"] = ConfigurationReloadEffect.Immediate,
