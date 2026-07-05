@@ -227,6 +227,30 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
     }
 
     /// <inheritdoc />
+    public async Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(systemEvent);
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO SystemEvents (Kind, StartAt, EndAt, Approximate, Details)
+            VALUES ($kind, $startAt, $endAt, $approximate, $details);
+            """;
+
+        command.Parameters.Add("$kind", SqliteType.Text).Value = systemEvent.Kind;
+        command.Parameters.Add("$startAt", SqliteType.Text).Value = systemEvent.StartAt.UtcDateTime.ToString("O");
+        command.Parameters.Add("$endAt", SqliteType.Text).Value = systemEvent.EndAt.UtcDateTime.ToString("O");
+        command.Parameters.Add("$approximate", SqliteType.Integer).Value = systemEvent.Approximate ? 1 : 0;
+        command.Parameters.Add("$details", SqliteType.Text).Value = (object?)systemEvent.Details ?? DBNull.Value;
+
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
         // Microsoft.Data.Sqlite は既定でネイティブ接続をプールするため、接続の Dispose 後も

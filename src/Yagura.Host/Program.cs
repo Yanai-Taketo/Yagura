@@ -188,6 +188,15 @@ public static class Program
             new NoopIngressGate(),
             sp.GetRequiredService<ILoggerFactory>(),
             spool));
+
+        // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
+        // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
+        // 同じインスタンスへメタデータ領域の値を引き継ぐ・書き出す）。
+        builder.Services.AddSingleton(sp => new Observability.ObservabilityCoordinator(
+            dataRoot,
+            sp.GetRequiredService<IngestionPipeline>().Metrics,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Observability")));
+
         builder.Services.AddHostedService<IngestionHostedService>();
 
         builder.Services.AddYaguraWebViewer();

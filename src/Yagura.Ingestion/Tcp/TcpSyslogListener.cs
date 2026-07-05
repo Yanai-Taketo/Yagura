@@ -248,6 +248,9 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     {
                         if (!_ingressGate.ShouldAdmit(remoteEndPoint?.Address ?? IPAddress.None, message))
                         {
+                            // 挿入点のみ（architecture.md §3.3）。UDP 側と同じく計上の枠を設ける
+                            // （M4-4。v0.1 の NoopIngressGate ではこの分岐に到達しない）。
+                            _metrics.RecordFlowControlDropped();
                             continue;
                         }
 

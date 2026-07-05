@@ -145,6 +145,9 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
             TimeSpan timeout,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
+        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 
     private sealed class RecordingLogStore : ILogStore
@@ -168,5 +171,8 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
             TimeSpan timeout,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
+        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 }
