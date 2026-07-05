@@ -256,7 +256,7 @@ public sealed class BenchHostProcess : IAsyncDisposable
         }
 
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(20);
-        var ctrlCSent = ConsoleCtrlSender.TrySendCtrlC(_process.Id);
+        var ctrlCSent = TrySendCtrlCViaHelper(_process.Id);
 
         if (ctrlCSent)
         {
@@ -289,6 +289,62 @@ public sealed class BenchHostProcess : IAsyncDisposable
     /// <c>false</c> は Kill フォールバックが発生したことを示す（検証器が突合結果の解釈に使う）。
     /// </summary>
     public bool? GracefulStopSucceeded { get; private set; }
+
+    /// <summary>
+    /// Ctrl+C 送出を使い捨てのヘルパープロセス（自分自身の dll を <c>__send-ctrlc</c> モードで
+    /// 起動）に隔離して実行する。
+    /// </summary>
+    /// <remarks>
+    /// 送出処理（<see cref="ConsoleCtrlSender"/>）は <c>FreeConsole</c> で呼び出しプロセスの
+    /// コンソールを失う。これをベンチ本体プロセスで行うと、実コンソールからの対話実行時に
+    /// 以後の <c>Console.WriteLine</c> が未処理例外でクラッシュする実障害が起きた
+    /// （exit 0xE0434352。オーナー実機 + ローカル再現で確認。再アタッチによる修復は環境ごとに
+    /// 副作用が異なり安定しなかった）。使い捨てプロセスに隔離すれば本体のコンソール状態には
+    /// 一切影響しない。ヘルパーの exit code 0 = 送出成功（<see cref="ConsoleCtrlSender.TrySendCtrlC"/>
+    /// の戻り値）。
+    /// </remarks>
+    private static bool TrySendCtrlCViaHelper(int targetProcessId)
+    {
+        var benchDllPath = Path.Combine(AppContext.BaseDirectory, "Yagura.Bench.dll");
+        if (!File.Exists(benchDllPath))
+        {
+            return false;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = ResolveDotnetExecutablePath(),
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add(benchDllPath);
+        startInfo.ArgumentList.Add("__send-ctrlc");
+        startInfo.ArgumentList.Add(targetProcessId.ToString());
+
+        try
+        {
+            using var helper = Process.Start(startInfo);
+            if (helper is null)
+            {
+                return false;
+            }
+
+            if (!helper.WaitForExit(10_000))
+            {
+                helper.Kill(entireProcessTree: true);
+                return false;
+            }
+
+            return helper.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // ヘルパーの起動自体に失敗した場合は Kill フォールバックに委ねる。
+            return false;
+        }
+    }
 
     private async Task<bool> WaitForExitAsync(TimeSpan timeout)
     {

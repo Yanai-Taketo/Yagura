@@ -10,6 +10,17 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // 隠しモード: Ctrl+C 送出ヘルパー(BenchHostProcess.StopGracefullyAsync が self-invoke する)。
+        // コンソールの切り離し(FreeConsole)を伴う Ctrl+C 送出をベンチ本体プロセスで行うと、
+        // 実コンソールからの対話実行時に本体のコンソールハンドルが壊れ、以後の Console 出力が
+        // 未処理例外でクラッシュする(exit 0xE0434352。オーナー実機 + ローカル再現で確認。
+        // AttachConsole での再接続 + ストリーム再バインドでも解消しなかった)。使い捨ての
+        // ヘルパープロセスに隔離すれば、本体のコンソールには一切触れずに送出できる。
+        if (args.Length == 2 && args[0] == "__send-ctrlc" && int.TryParse(args[1], out var targetPid))
+        {
+            return HostProcess.ConsoleCtrlSender.TrySendCtrlC(targetPid) ? 0 : 1;
+        }
+
         ScenarioOptions options;
         try
         {

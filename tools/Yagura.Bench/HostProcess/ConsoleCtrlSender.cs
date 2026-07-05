@@ -84,34 +84,38 @@ internal static class ConsoleCtrlSender
     /// 送出成功可否を返す（失敗時は呼び出し側が Kill へフォールバックする想定）。
     /// </summary>
     /// <remarks>
-    /// <b>NULL ハンドラを外すタイミングに関する実機での発覚</b>: 当初の実装は
-    /// <c>GenerateConsoleCtrlEvent</c> 呼び出し直後の <c>finally</c> で
-    /// <c>SetConsoleCtrlHandler(IntPtr.Zero, add: false)</c>（NULL ハンドラの除去）を行っていたが、
-    /// 実機検証でベンチプロセス自身が終了コード 130（Ctrl+C 相当）で異常終了する事象が発生した。
-    /// <c>GenerateConsoleCtrlEvent</c> は非同期にシグナルを配送する（呼び出しの戻り値は「配送を
-    /// 試みた」ことを示すのみで、配送・各プロセスでの処理完了を待たない）ため、NULL ハンドラを
-    /// 早期に除去すると、シグナルがベンチプロセス自身に実際に届く前に既定の Ctrl+C 動作
-    /// （プロセス終了）へ戻ってしまい、ベンチ自身が終了する競合が起きていたと考えられる
-    /// （公式ドキュメントは配送のタイミング保証を明記していない——本コメントは実機観測に基づく
-    /// 判断であり、推測を実装の正当化根拠にしない方針に従い、対症療法として「除去しない」を
-    /// 採用した）。本メソッドはプロセスごとに 1 回だけ・ベンチの寿命の終盤で呼ばれる想定
-    /// （<see cref="Yagura.Bench.Scenarios.ScenarioRunner.StopAndReconcileAsync"/> 参照）であり、
-    /// 以後ベンチ自身が Ctrl+C を受ける場面はないため、NULL ハンドラを除去せず放置しても実害はない。
+    /// <para>
+    /// <b>NULL ハンドラを外すタイミングに関する実機での発覚</b>: 当初の実装は送出直後に
+    /// NULL ハンドラを除去していたが、実機検証で呼び出しプロセス自身が終了コード 130
+    /// （Ctrl+C 相当）で異常終了した。<c>GenerateConsoleCtrlEvent</c> は非同期にシグナルを
+    /// 配送するため、早期除去はシグナルが自分へ届く前に既定動作（プロセス終了）へ戻す競合を
+    /// 生む——「除去しない」を採用した（ヘルパープロセスは直後に終了するため実害なし）。
+    /// </para>
+    /// <para>
+    /// <b>本メソッドは使い捨てのヘルパープロセス（<c>Yagura.Bench.dll __send-ctrlc &lt;pid&gt;</c>。
+    /// Program.cs の隠しモード）からのみ呼ぶこと</b>。呼び出しプロセス自身のコンソールを
+    /// <c>FreeConsole</c> で失うため、その後にコンソールへ出力するプロセス（ベンチ本体）から
+    /// 直接呼ぶと、実コンソールからの対話実行時に以後の <c>Console.WriteLine</c> が未処理例外で
+    /// クラッシュする（exit 0xE0434352。オーナー実機 + ローカル再現で確認。
+    /// <c>AttachConsole(ATTACH_PARENT_PROCESS)</c> での再接続 + <c>Console.SetOut</c> の
+    /// 再バインドも試したが解消せず、かつパイプ実行環境では再接続自体が出力経路を壊した——
+    /// 環境ごとに正解が異なる修復を本体プロセスで行うより、コンソール状態を汚す操作を
+    /// 使い捨てプロセスへ隔離する方が原理的に安全である）。
+    /// </para>
     /// </remarks>
     public static bool TrySendCtrlC(int processId)
     {
-        // 自プロセス（コンソールを保持している場合）を先にデタッチする——同一コンソールへの
+        // 自プロセス（コンソールを継承している場合）を先にデタッチする——同一コンソールへの
         // 二重アタッチは失敗するため（AttachConsole の公式ドキュメント "A process can be
         // attached to at most one console"。確認日 2026-07-05）。
         FreeConsole();
 
         if (!AttachConsole((uint)processId))
         {
-            ReattachParentConsoleAndRebindStreams();
             return false;
         }
 
-        // ベンチ自身（= アタッチ後は子と同じコンソールの一員）がこのイベントで終了しない
+        // ヘルパー自身（= アタッチ後は対象と同じコンソールの一員）がこのイベントで終了しない
         // よう、NULL ハンドラを追加して無視する（公式ドキュメント "Handling Ctrl+C" の定石。
         // 確認日 2026-07-05）。上記 remarks のとおり、意図的に除去しない。
         SetConsoleCtrlHandler(IntPtr.Zero, add: true);
@@ -119,74 +123,9 @@ internal static class ConsoleCtrlSender
         var sent = GenerateConsoleCtrlEvent(CtrlCEvent, 0);
 
         // FreeConsole 自体は安全に呼べる（NULL ハンドラの除去とは独立した操作）。
+        // ヘルパーはこの直後に終了するため、コンソールを失ったままで問題ない。
         FreeConsole();
 
-        ReattachParentConsoleAndRebindStreams();
-
         return sent;
-    }
-
-    private const uint AttachParentProcess = unchecked((uint)-1);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetConsoleWindow();
-
-    // いずれも FreeConsole の実行前(本クラスの型初期化時 = TrySendCtrlC 呼び出しの前)に確定させる。
-    // FreeConsole 後の初参照では無効化されたハンドルに対する判定になり誤る。
-    //
-    // HadConsoleAtStartup: 起動時に実コンソール(ウィンドウ)を保持していたか。これが false の環境
-    // (パイプ経由・ツール経由の実行)では、末尾の「親コンソールへの再アタッチ + 再バインド」を
-    // 一切行わない——行うと以後の全出力が消失することを実機確認した(2026-07-05。この環境では
-    // FreeConsole 後に何もしない従来挙動で出力・グレースフル停止とも正常に機能する)。
-    // 再アタッチが必要なのは「実コンソールから対話実行していて、FreeConsole で自分のコンソール
-    // ハンドルが死ぬ」場合のみである。
-    private static readonly bool HadConsoleAtStartup = GetConsoleWindow() != IntPtr.Zero;
-    private static readonly bool OutputWasRedirected = Console.IsOutputRedirected;
-    private static readonly bool ErrorWasRedirected = Console.IsErrorRedirected;
-
-    /// <summary>
-    /// 元（親プロセス）のコンソールへ再接続し、.NET の Console ストリームを結び直す。
-    /// </summary>
-    /// <remarks>
-    /// <b>これを怠ると、実コンソールからの対話実行時に以後の <c>Console.WriteLine</c> が
-    /// 未処理例外でクラッシュする（オーナー実機で発生した実障害。exit code 0xE0434352 =
-    /// CLR 未処理例外）</b>: ベンチの stdout が実コンソールのハンドルだった場合、
-    /// <c>FreeConsole</c> は自プロセスのコンソールハンドルを閉じるため（公式ドキュメント
-    /// learn.microsoft.com/windows/console/freeconsole。確認日 2026-07-05）、.NET が起動時に
-    /// キャッシュした <c>Console.Out</c> の下位ハンドルが無効になる。結果ファイル(JSON/サマリ)の
-    /// 書き込みは成功した後、コンソールへのサマリ出力で落ちる——「ファイルはあるのに終了コードが
-    /// 異常」という紛らわしい形で現れる。<c>AttachConsole(ATTACH_PARENT_PROCESS)</c> で元の
-    /// コンソールへ戻し、<c>Console.SetOut/SetError</c> でストリームを開き直すことで解消する
-    /// (stdout がパイプへリダイレクトされている環境——CI・ツール経由の実行——ではパイプは
-    /// <c>FreeConsole</c> の影響を受けず、開き直しても同じパイプが返るだけで無害)。
-    /// </remarks>
-    private static void ReattachParentConsoleAndRebindStreams()
-    {
-        if (!HadConsoleAtStartup)
-        {
-            // パイプ・ツール経由の実行(実コンソールなし)では何もしない——従来挙動が正常に
-            // 機能しており、AttachConsole(親) を呼ぶとかえって出力経路が壊れることを実機確認
-            // (HadConsoleAtStartup のコメント参照)。
-            return;
-        }
-
-        AttachConsole(AttachParentProcess);
-
-        // 再バインドは「stdout/stderr が実コンソールだった場合」に限定する。パイプへ
-        // リダイレクトされている場合(CI・ツール経由)、既存の Console.Out が保持するパイプは
-        // FreeConsole の影響を受けず正常なままで、逆に開き直すと壊れたハンドルに差し替わり
-        // 以後の出力が消失する。判定は FreeConsole 前に確定した静的フィールドを使う
-        // (OutputWasRedirected のコメント参照)。
-        if (!OutputWasRedirected)
-        {
-            var stdout = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
-            Console.SetOut(stdout);
-        }
-
-        if (!ErrorWasRedirected)
-        {
-            var stderr = new StreamWriter(Console.OpenStandardError()) { AutoFlush = true };
-            Console.SetError(stderr);
-        }
     }
 }
