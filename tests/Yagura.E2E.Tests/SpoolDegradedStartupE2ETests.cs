@@ -19,7 +19,10 @@ namespace Yagura.E2E.Tests;
 public sealed class SpoolDegradedStartupE2ETests : IDisposable
 {
     private const string UdpListenerLogPrefix = "UDP syslog listener started on port";
-    private const string SpoolDegradedLogMarker = "スプールなし縮退運転で起動します";
+    // ロケール非依存の ASCII トークンで照合する(Program.cs の縮退警告に併記)。日本語本文での
+    // 照合は、リダイレクトされた子プロセス stdout のコードページが日本語を表現できない環境
+    // (en-US の GitHub Actions ランナー = CP437 等)で文字化けし、一致しない実障害があった。
+    private const string SpoolDegradedLogMarker = "[spool-degraded-mode]";
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
 

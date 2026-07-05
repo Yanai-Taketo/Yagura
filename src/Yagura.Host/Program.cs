@@ -204,9 +204,13 @@ public static class Program
             // 時点で「永続化失敗」カウンタへ計上される形で行われる（ParsingStage・
             // PersistenceWriter 側の実装参照）。
             var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Startup");
+            // 先頭の [spool-degraded-mode] はロケール非依存の機械照合用トークン。日本語本文は
+            // リダイレクトされた子プロセス stdout のコードページ次第で化け得るため(en-US 環境の
+            // CP437 等)、E2E テストはこの ASCII トークンで照合する。恒久的なイベント ID 体系は
+            // security.md §4.3 の監査記録実装時に整備する。
             startupLogger.LogWarning(
                 spoolOpenFailure,
-                "スプール領域 {SpoolDirectory} を開けなかったため、スプールなし縮退運転で起動します。" +
+                "[spool-degraded-mode] スプール領域 {SpoolDirectory} を開けなかったため、スプールなし縮退運転で起動します。" +
                 "縮退中は Q2 溢れ・書き込み失敗分が破棄され、永続化失敗カウンタへ計上されます。",
                 resolvedConfiguration.SpoolDirectory);
         }
