@@ -79,6 +79,8 @@ public sealed class SpoolDegradedStartupE2ETests : IDisposable
         startInfo.Environment["YAGURA_HTTP_PORT"] = "0";
         startInfo.Environment["YAGURA_UDP_PORT"] = "0";
         startInfo.Environment["YAGURA_TCP_PORT"] = "0";
+        // 管理リスナ(M6-1)も OS 採番にする——ZeroConfigFirstRunE2ETests と同じ流儀。
+        startInfo.Environment["YAGURA_ADMIN_PORT"] = "0";
 
         _hostProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 
