@@ -1,0 +1,32 @@
+<!--
+  Yagura.Bench 自身の自己検証テスト（Issue #60「短時間の煙テスト」）。ハーネス本体を
+  ProjectReference し、小さい流量での「送信 = 保存 + 計上」一致を CI で回せる速さで確認する。
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      ProjectReference により Yagura.Bench のビルド出力（Yagura.Bench.dll と、その推移的な
+      ProjectReference である Yagura.Host.dll 一式）が本プロジェクトの出力ディレクトリへ
+      コピーされる（tests/Yagura.E2E.Tests と同型のパターン——BenchHostProcess.
+      ResolveYaguraHostDllPath が AppContext.BaseDirectory から Yagura.Host.dll を解決するため）。
+    -->
+    <ProjectReference Include="..\..\tools\Yagura.Bench\Yagura.Bench.csproj" />
+  </ItemGroup>
+
+</Project>
