@@ -4,8 +4,9 @@ namespace Yagura.Host.Configuration;
 
 /// <summary>
 /// 設定ファイル（既定 <c>yagura.json</c>）の全体書き換え保存 API
-/// （configuration.md §3。ウィザード・手編集・自動書き換え（DPAPI 暗号化。§2）という
-/// 3 者の書き手のうち、ウィザードが最初に使う「保存」の受け皿）。
+/// （configuration.md §3。書き手はウィザード・手編集の 2 者——旧設計の第 3 の書き手
+/// 「自動書き換え（平文の DPAPI 暗号化書き戻し）」は 2026-07-06 オーナー決定で行わない
+/// （§2）——のうち、ウィザードが使う「保存」の受け皿）。
 /// </summary>
 /// <remarks>
 /// <para>

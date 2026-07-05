@@ -45,6 +45,13 @@
   -->
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <!--
+      SQL Server 接続文字列の DPAPI 暗号化（ADR-0004 決定 5。configuration.md §2）。
+      System.Security.Cryptography.ProtectedData は Microsoft.AspNetCore.App 共有フレームワークに
+      含まれない Windows 専用の単独 NuGet パッケージであるため、明示 PackageReference が必要
+      （バージョンは Directory.Packages.props で中央管理。ライブ検証の記録も同所）。
+    -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
 
   <PropertyGroup>

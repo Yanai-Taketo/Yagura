@@ -19,12 +19,17 @@ namespace Yagura.Host.Administration;
 /// ディスク・ログ・監査記録には書かない（監査は「使用した」事実と成否のみ）。
 /// </para>
 /// <para>
-/// <b>M8-4 骨格の既知の制約（後続 Issue へ申し送り）</b>: 切替実行は検証済みの接続文字列を
-/// <c>Storage:SqlServer:ConnectionString</c> として設定ファイルへ保存する。configuration.md §2 の
-/// DPAPI 暗号化は M5-3 時点で検出の枠組みのみ（<see cref="SqlServerConnectionStringCredentialGuard"/>）
-/// が存在し、暗号化の実装は後続 Issue のため、<b>保存時点では平文で書かれる</b>（手編集と同じ
-/// 現状の水準。暗号化実装後にこの経路も自動的に暗号化表現になる）。切替本番の実行時手順
-/// （database.md §6.1 ①〜④の無瞬断切替・旧 DB ファイルの実処分）も同様に後続 Issue。
+/// <b>資格情報の保存形式（configuration.md §2。ADR-0004 決定 5）</b>: 切替実行は検証済みの
+/// 接続文字列を <see cref="Yagura.Host.Configuration.DpapiConnectionStringProtector"/> で
+/// <b>常に DPAPI 暗号化表現（<c>dpapi:&lt;Base64&gt;</c>）へ暗号化してから</b>
+/// <c>Storage:SqlServer:ConnectionString</c> として設定ファイルへ保存する——平文が設定ファイルへ
+/// 書かれる経路をウィザードには残さない。暗号化自体が失敗した場合は例外を伝播させ、
+/// <b>平文での保存へはフォールバックしない</b>（machine スコープの DPAPI 暗号化が Windows 上で
+/// 失敗するのはシステム自体の異常であり、静かに平文を書く方が害が大きい）。
+/// </para>
+/// <para>
+/// <b>M8-4 骨格の既知の制約（後続 Issue へ申し送り）</b>: 切替本番の実行時手順
+/// （database.md §6.1 ①〜④の無瞬断切替・旧 DB ファイルの実処分）は後続 Issue。
 /// </para>
 /// </remarks>
 public sealed class PromotionWizardService : IPromotionWizardService
@@ -209,7 +214,10 @@ public sealed class PromotionWizardService : IPromotionWizardService
             after.Storage ??= new YaguraConfigurationOptions.StorageOptions();
             after.Storage.Provider = "sqlserver";
             after.Storage.SqlServer ??= new YaguraConfigurationOptions.SqlServerOptions();
-            after.Storage.SqlServer.ConnectionString = _connectionString;
+
+            // 常に DPAPI 暗号化表現で保存する（configuration.md §2。ADR-0004 決定 5。
+            // 暗号化失敗時は例外を伝播——平文保存へはフォールバックしない。クラス remarks 参照）。
+            after.Storage.SqlServer.ConnectionString = DpapiConnectionStringProtector.Protect(_connectionString);
 
             try
             {

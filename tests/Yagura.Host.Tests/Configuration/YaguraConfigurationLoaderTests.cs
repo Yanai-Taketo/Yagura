@@ -533,6 +533,144 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // Storage:SqlServer:ConnectionString の DPAPI 暗号化表現
+    // （configuration.md §2。ADR-0004 決定 5「v0.1: DPAPI 完動」）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_EncryptedConnectionString_DecryptsAndResolvesToSqlServer()
+    {
+        // DPAPI machine スコープはマシン依存のため、暗号化表現は同一プロセス内で生成する
+        // （固定の暗号文資産を持たない——CI 上でもそのまま成立する round-trip 検証）。
+        const string plaintext = "Server=db.example.test;Database=Yagura;User Id=sa;Password=secret!";
+        var encrypted = DpapiConnectionStringProtector.Protect(plaintext);
+        WriteConfigurationFile(
+            $$"""
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "{{encrypted}}" }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.SqlServer, result.Configuration.StorageProvider);
+        Assert.Equal(plaintext, result.Configuration.SqlServerConnectionString);
+        // 暗号化表現の使用は正規の状態であり警告を出さない（平文資格情報の警告とも無縁）。
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_EncryptedConnectionStringUndecryptable_FallsBackToSqliteAndCollectsStrongWarning()
+    {
+        // 復号失敗（改ざん・別マシンで暗号化された yagura.json のコピー）の模擬:
+        // Base64 としては正しいが DPAPI 暗号文として不正な値。
+        var undecryptable = "dpapi:" + Convert.ToBase64String(new byte[] { 0x01, 0x02, 0x03, 0x04 });
+        WriteConfigurationFile(
+            $$"""
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "{{undecryptable}}" }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        // M5-3 の「接続文字列不備」と同じ縮小側継続（起動を止めない）。
+        Assert.Equal(StorageProvider.Sqlite, result.Configuration.StorageProvider);
+        Assert.Null(result.Configuration.SqlServerConnectionString);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Storage:SqlServer:ConnectionString", warning.Key);
+        Assert.Contains("sqlite", warning.AppliedValue, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("復号", warning.Reason);
+        // 資格情報由来の値（暗号文を含む）は警告に載せない。
+        Assert.DoesNotContain(undecryptable, warning.InvalidValue);
+        Assert.DoesNotContain(undecryptable, warning.Reason);
+    }
+
+    [Fact]
+    public void Load_EncryptedConnectionStringMalformedBase64_FallsBackToSqlite()
+    {
+        WriteConfigurationFile(
+            """
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "dpapi:not-valid-base64!!" }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.Sqlite, result.Configuration.StorageProvider);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Storage:SqlServer:ConnectionString", warning.Key);
+    }
+
+    [Fact]
+    public void Load_PlaintextCredentialConnectionString_AcceptedWithWarning()
+    {
+        // 手編集の平文は従来どおり受理する（2026-07-06 オーナー決定: 自動書き換えはしない）。
+        // 資格情報入りの平文には警告を出す（SqlServerConnectionStringCredentialGuard の配線）。
+        const string plaintext = "Server=db;Database=Yagura;User Id=sa;Password=hunter2";
+        WriteConfigurationFile(
+            $$"""
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "{{plaintext}}" }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        // 受理: SQL Server provider として平文のまま使用する（手編集ユーザーを壊さない）。
+        Assert.Equal(StorageProvider.SqlServer, result.Configuration.StorageProvider);
+        Assert.Equal(plaintext, result.Configuration.SqlServerConnectionString);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Storage:SqlServer:ConnectionString", warning.Key);
+        Assert.Contains("平文", warning.Reason);
+        // パスワード値そのものは警告のどのフィールドにも載せない。
+        Assert.DoesNotContain("hunter2", warning.InvalidValue);
+        Assert.DoesNotContain("hunter2", warning.AppliedValue);
+        Assert.DoesNotContain("hunter2", warning.Reason);
+    }
+
+    [Fact]
+    public void Load_PlaintextIntegratedSecurityConnectionString_AcceptedWithoutWarning()
+    {
+        // Windows 統合認証（第一推奨。ADR-0004 決定 5）の平文接続文字列は資格情報を含まず、
+        // 警告なしでそのまま受理される（既存テストの明示的な対として固定する）。
+        WriteConfigurationFile(
+            """
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "Server=.;Database=Yagura;Integrated Security=true;" }
+              }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(StorageProvider.SqlServer, result.Configuration.StorageProvider);
+        Assert.Empty(result.Warnings);
+    }
+
+    // ------------------------------------------------------------------
     // 不正値の 3 分類: 縮小側で継続（bind 先。安全側 = loopback へ）
     // ------------------------------------------------------------------
 

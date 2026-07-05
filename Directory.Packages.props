@@ -26,6 +26,14 @@
       最新安定版 9.6.0 を確認（検証日 2026-07-06）。ライセンス MIT（NOTICE 記載は導入 PR で実施）。
     -->
     <PackageVersion Include="MudBlazor" Version="9.6.0" />
+    <!--
+      SQL Server 接続文字列の DPAPI 暗号化（ADR-0004 決定 5「v0.1: DPAPI 完動」。
+      configuration.md §2）。当日ライブ検証: nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/system.security.cryptography.protecteddata/index.json) で
+      確認した最新安定版 10.0.9（11.0.0-preview.5.26302.115 はプレリリースのため除外。
+      本リポジトリの他の Microsoft.* 10.0.9 系列と同一。検証日 2026-07-06）。
+    -->
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <!--
