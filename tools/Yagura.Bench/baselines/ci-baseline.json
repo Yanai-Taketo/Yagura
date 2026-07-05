@@ -2,20 +2,21 @@
   "_meta": {
     "status": "provisional-tolerance-pending-ci-measurement",
     "lastUpdated": "2026-07-06",
-    "updateProcedureReference": "docs/development/conventions.md の『CI 回帰ベンチの基準値更新』節を参照。引き下げ方向の更新には理由の分類（実行環境の変更 / 機能追加による意図的なトレードオフ）を明示すること。toleranceRatio=0.5（基準比 50% 劣化まで許容）は M-5（architecture.md §9）が CI 実測で確定するまでの暫定値——windows-latest ランナーの揺らぎを複数回実測してから正式な帯へ差し替える。baselineThroughputPerSecond / baselineSavedCount は開発機（Windows 11 ARM64。tools/Yagura.Bench/results/2026-07-05-dev-machine/ と同一機）でのローカル動作確認 1 回分の実測値をそのまま仮値として使っており、CI ランナー（windows-latest）実測値ではない——ランナー性能は開発機と別物のため、この仮値のままでは初回 CI 実行が実測不足で不合格になる可能性がある。CI 実測後の最初の更新 PR で本コメントと _meta.status を『確定』に更新すること。"
+    "recordedFrom": "ローカル開発機実測（暫定）: tools/Yagura.Bench/results/2026-07-06-dev-machine-ci-baseline/ の 2 実行（Windows 11 ARM64 開発機。merge コミット dad574c 時点のコードで CI と同一パラメータを実測）。CI 実測で確定したら、当該 CI run の URL（https://github.com/<owner>/<repo>/actions/runs/<id>）をここに記載する。",
+    "updateProcedureReference": "docs/development/conventions.md の『CI 回帰ベンチの基準値更新』節を参照。引き下げ方向の更新には理由の分類（実行環境の変更 / 機能追加による意図的なトレードオフ）を明示すること。toleranceRatio=0.5（基準比 50% 劣化まで許容）は M-5（architecture.md §9）が CI 実測で確定するまでの暫定値——windows-latest ランナーの揺らぎを複数回実測してから正式な帯へ差し替える。baselineThroughputPerSecond / baselineSavedCount も暫定（recordedFrom のとおり開発機実測であり、CI ランナー実測値ではない）——ランナー性能は開発機と別物のため、この仮値のままでは初回 CI 実行が実測不足で不合格になる可能性がある。CI 実測後の最初の更新 PR で recordedFrom を CI run URL に差し替え、_meta.status を『確定』に更新すること。"
   },
   "scenarios": {
     "SustainedZeroDrop": {
       "scenarioKey": "SustainedZeroDrop",
-      "baselineThroughputPerSecond": 4978.7,
-      "baselineSavedCount": 49955,
+      "baselineThroughputPerSecond": 4980.1,
+      "baselineSavedCount": 49962,
       "toleranceRatio": 0.5,
       "requireReconciled": true
     },
     "ProviderWriteCeiling": {
       "scenarioKey": "ProviderWriteCeiling",
-      "baselineThroughputPerSecond": 2989.0,
-      "baselineSavedCount": 23978,
+      "baselineThroughputPerSecond": 2987.9,
+      "baselineSavedCount": 23984,
       "toleranceRatio": 0.5,
       "requireReconciled": true
     }

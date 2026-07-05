@@ -1,0 +1,90 @@
+{
+  "ScenarioName": "ProviderWriteCeiling",
+  "RunId": "bd4afd4501d0",
+  "StartedAt": "2026-07-05T15:32:57.3523214+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26200",
+    "OsArchitecture": "Arm64",
+    "ProcessorName": "ARMv8 (64-bit) Family 8 Model 1 Revision 201, Qualcomm Technologies Inc",
+    "LogicalProcessorCount": 10,
+    "TotalPhysicalMemoryBytes": 16756006912,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=236GiB, free=89GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "DESKTOP-U2VTV9C"
+  },
+  "LoadGeneratorOptions": {
+    "Transport": 0,
+    "Pattern": 0,
+    "TargetHost": "127.0.0.1",
+    "TargetPort": 59865,
+    "RunId": "bd4afd4501d0",
+    "RatePerSecond": 3000,
+    "DurationSeconds": 8,
+    "BurstCount": 0,
+    "SenderSocketCount": 4,
+    "PaddingBytes": 0
+  },
+  "LoadResult": {
+    "RunId": "bd4afd4501d0",
+    "AttemptedCount": 23984,
+    "SucceededCount": 23984,
+    "FailedCount": 0,
+    "Elapsed": "00:00:08.0271167",
+    "SenderSocketCount": 4,
+    "SentCount": 23984
+  },
+  "Reconciliation": {
+    "SentCount": 23984,
+    "SavedCount": 23984,
+    "AccountedLossCount": 0,
+    "SpoolEvacuatedCount": 0,
+    "OsUdpDatagramsDiscardedDelta": 1,
+    "DerivedOsBufferLossCount": 0,
+    "Difference": 0,
+    "IsReconciled": true,
+    "Counters": {
+      "InternalBufferDropped": 0,
+      "TcpConnectionRejected": 0,
+      "SpoolEvacuated": 0,
+      "SpoolWriteFailed": 0,
+      "SpoolDiscarded": 0,
+      "PersistenceFailed": 0,
+      "FlowControlDropped": 0
+    }
+  },
+  "ElapsedWallClock": "00:00:34.1371613",
+  "AdditionalMetrics": {
+    "provider": "Sqlite",
+    "\u4E0A\u9650\u63A5\u8FD1\u30B7\u30B0\u30CA\u30EB(\u30B9\u30D7\u30FC\u30EB\u9000\u907F\u003E0)": "False"
+  },
+  "Notes": [
+    "provider: SQLite\u3002\u76EE\u6A19\u30EC\u30FC\u30C8 3000 msg/sec \u3092 8 \u79D2\u9593\u9001\u51FA\u3057\u305F\u3002",
+    "\u30B9\u30D7\u30FC\u30EB\u9000\u907F\u306F\u767A\u751F\u3057\u306A\u304B\u3063\u305F\u2014\u2014\u3053\u306E\u30EC\u30FC\u30C8\u306F provider \u304C\u6B63\u5473\u51E6\u7406\u3067\u304D\u3066\u3044\u308B\u7BC4\u56F2\u5185\u3002"
+  ],
+  "HostStdout": [
+    "info: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[63]",
+    "      User profile is available. Using \u0027C:\\Users\\nigih\\AppData\\Local\\ASP.NET\\DataProtection-Keys\u0027 as key repository and Windows DPAPI to encrypt keys at rest.",
+    "info: Yagura.Ingestion.Udp.UdpSyslogListener[0]",
+    "      UDP \u53D7\u4FE1\u30D0\u30C3\u30D5\u30A1\u30B5\u30A4\u30BA\u3092 1048576 \u30D0\u30A4\u30C8\u306B\u8A2D\u5B9A\u3057\u307E\u3057\u305F\u3002",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      UDP syslog listener started on port 59865.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      TCP syslog listener started on port 53516.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline consumers (parsing/persistence) started.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Retention delete scheduler started.",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::]:53517",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://127.0.0.1:53515",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::1]:53515",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application started. Press Ctrl\u002BC to shut down.",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Hosting environment: Production",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Content root path: C:\\Users\\nigih\\Documents\\Github\\Yagura"
+  ]
+}

@@ -56,7 +56,7 @@ public sealed class BaselineComparatorTests
     private static BaselineFile BuildBaselineFile(string scenarioKey, double throughput, long savedCount, double tolerance) =>
         new()
         {
-            Meta = new BaselineMeta("provisional-test", "2026-07-06", "test fixture"),
+            Meta = new BaselineMeta("provisional-test", "2026-07-06", "test fixture", "test fixture"),
             Scenarios = new Dictionary<string, BaselineEntry>
             {
                 [scenarioKey] = new(scenarioKey, throughput, savedCount, tolerance),
@@ -164,6 +164,12 @@ public sealed class BaselineComparatorTests
         Assert.NotEmpty(baselineFile.Scenarios);
         Assert.Contains("SustainedZeroDrop", baselineFile.Scenarios.Keys);
         Assert.Contains("ProviderWriteCeiling", baselineFile.Scenarios.Keys);
+
+        // 記録元（暫定の間はローカル実測の出所、CI 実測確定後は CI run URL）が空になる回帰を防ぐ
+        // ——基準値の出所を追跡できることが更新手続き（conventions.md）の前提であるため。
+        Assert.False(
+            string.IsNullOrWhiteSpace(baselineFile.Meta.RecordedFrom),
+            "_meta.recordedFrom が空。基準値の記録元（ローカル実測の出所または CI run URL）を必ず記載する。");
     }
 
     private static string FindRepositoryRoot()

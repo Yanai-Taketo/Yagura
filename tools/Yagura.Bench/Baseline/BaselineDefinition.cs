@@ -39,12 +39,18 @@ public sealed class BaselineFile
 /// ことを機械可読にも残すためのフィールド。
 /// </param>
 /// <param name="LastUpdated">最終更新日（YYYY-MM-DD）。</param>
+/// <param name="RecordedFrom">
+/// 基準値の記録元。CI 実測で確定した基準値は当該 CI run の URL
+/// （https://github.com/&lt;owner&gt;/&lt;repo&gt;/actions/runs/&lt;id&gt;）をここに記載する。暫定値の間は
+/// ローカル実測の出所（マシン・結果ファイルの所在）を記載する。
+/// </param>
 /// <param name="UpdateProcedureReference">
 /// 更新手続きの参照先（docs/development/conventions.md の該当節）。
 /// </param>
 public sealed record BaselineMeta(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("lastUpdated")] string LastUpdated,
+    [property: JsonPropertyName("recordedFrom")] string RecordedFrom,
     [property: JsonPropertyName("updateProcedureReference")] string UpdateProcedureReference);
 
 /// <summary>
