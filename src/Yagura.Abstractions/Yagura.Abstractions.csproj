@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    モジュール横断の契約(抽象)の置き場(M6-4。Issue #54 の PR レビューでオーナー決定)。
+    Yagura.Web が Yagura.Host 管轄の実装や書き込み系サービスを型として参照するための
+    最下層プロジェクトであり、他のどの Yagura プロジェクトにも依存しない(依存を持った
+    時点で「横断契約の最下層」という位置づけが壊れるため、ProjectReference を追加しない)。
+  -->
+
+</Project>
