@@ -214,6 +214,10 @@ function Get-YaguraService {
 
 function Get-YaguraFirewallRules {
     # Get-NetFirewallRule はワイルドカード不一致でエラーを出すため SilentlyContinue で拾う。
+    # 注意: return @(...) はパイプライン経由で配列が展開され、0 件時に $null・1 件時に
+    # スカラーが返る(呼び出し側の .Count が StrictMode で失敗する——CI 初回実行
+    # run 28749730036 の residue-firewall-removed で実際に発生。規則削除は成功していたのに
+    # 0 件 = $null で落ちた)。呼び出し側で必ず @() に包むこと。
     return @(Get-NetFirewallRule -DisplayName 'Yagura*' -ErrorAction SilentlyContinue)
 }
 
@@ -367,7 +371,7 @@ try {
         }
         else {
             [void](Invoke-E2EStep -Name 'installed-state-evidence' -Action {
-                $rules = Get-YaguraFirewallRules
+                $rules = @(Get-YaguraFirewallRules)
                 $ruleNames = @($rules | ForEach-Object { $_.DisplayName })
                 foreach ($expected in $script:FirewallDisplayNames) {
                     if ($ruleNames -notcontains $expected) {
@@ -450,7 +454,7 @@ try {
             })
 
             [void](Invoke-E2EStep -Name 'residue-firewall-removed' -ContinueOnFailure $true -Action {
-                $rules = Get-YaguraFirewallRules
+                $rules = @(Get-YaguraFirewallRules)
                 if ($rules.Count -gt 0) {
                     $names = @($rules | ForEach-Object { $_.DisplayName }) -join '; '
                     throw ('firewall rules still present after uninstall: {0}' -f $names)
