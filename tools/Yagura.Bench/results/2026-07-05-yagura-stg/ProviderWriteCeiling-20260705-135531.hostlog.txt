@@ -1,0 +1,26 @@
+info: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[63]
+      User profile is available. Using 'C:\Users\Yagura\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+info: Yagura.Host.IngestionHostedService[0]
+      UDP syslog listener started on port 53272.
+info: Yagura.Host.IngestionHostedService[0]
+      TCP syslog listener started on port 58293.
+info: Yagura.Host.IngestionHostedService[0]
+      Ingestion pipeline consumers (parsing/persistence) started.
+info: Yagura.Host.IngestionHostedService[0]
+      Retention delete scheduler started.
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://[::]:58294
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:58292
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://[::1]:58292
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Production
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\YaguraBench
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: Yagura.Host.IngestionHostedService[0]
+      Ingestion pipeline stopped.
