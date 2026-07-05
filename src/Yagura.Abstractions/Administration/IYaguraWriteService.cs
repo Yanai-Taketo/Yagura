@@ -13,12 +13,13 @@ namespace Yagura.Abstractions.Administration;
 /// ことで「書き込み系」であることをアーキテクチャテストに申告する。
 /// </para>
 /// <para>
-/// <b>M6-4 時点でこのインターフェースを実装する具体クラスは存在しない</b>——設定ウィザード・
-/// 昇格・circuit 管理は M8 のスコープであり、まだ実装されていない
-/// （ui.md §4「設定（ウィザード群）」画面の裏側）。本インターフェースは「その時が来たら
-/// 検査が実効化する」ための先置きの規約であり、現時点では
-/// <c>Yagura.Web.Tests.ArchitectureTests.ViewerComponentReferenceIsolationTests</c>
-/// の検査対象が 0 件（違反ゼロで green）であることを意味する。
+/// <b>M8-4（Issue #71）で検査は実効化した</b>: 本インターフェースを実装する契約
+/// （<see cref="ISetupWizardService"/>・<see cref="IPromotionWizardService"/>・
+/// <see cref="ICircuitManagementService"/>）と実装クラス（<c>Yagura.Host.Administration</c> の
+/// ウィザードサービス群・<c>Yagura.Web.Administration.CircuitManagementService</c>）が存在し、
+/// <c>Yagura.Web.Tests.ArchitectureTests.ViewerComponentReferenceIsolationTests</c> は
+/// 実在する書き込み系サービスへの誤参照を検出する状態にある（「違反ゼロで green」の
+/// 空虚な真ではないことは同テスト群が実装の実在も検証する）。
 /// </para>
 /// <para>
 /// <b>マーカーインターフェース方式を採った理由</b>: 名前空間規約（例:

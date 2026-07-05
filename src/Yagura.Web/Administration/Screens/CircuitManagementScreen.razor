@@ -1,0 +1,70 @@
+@page "/admin/circuits"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Circuits
+@inject ICircuitManagementService CircuitManagement
+@inject YaguraCircuitContext CircuitContext
+@inject IYaguraNotifier Notifier
+
+@*
+    circuit 管理（security.md §2.2「circuit の可視化と選択的切断」。M8-4。Issue #71）。
+    一覧（接続元・確立時刻・最終活動時刻）+ 個別切断。切断は管理操作として監査記録の対象
+    （2000 番台 = ID 2004。記録はサービス側 CircuitManagementService が行う）。
+    閲覧リスナのシステム状態画面には一覧を置かない（§2.2 の線引き——本画面は管理リスナ帰属）。
+*@
+<PageTitle>@UiText.AdminCircuitsTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminCircuitsTitle</MudText>
+
+<div class="mt-4">
+    <YaguraTable TItem="CircuitInfo" Items="@_circuits">
+        <HeaderContent>
+            <MudTh>@UiText.CircuitColumnRemote</MudTh>
+            <MudTh>@UiText.CircuitColumnListener</MudTh>
+            <MudTh>@UiText.CircuitColumnOpenedAt</MudTh>
+            <MudTh>@UiText.CircuitColumnLastActivity</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate Context="circuit">
+            <MudTd>@(circuit.RemoteAddress ?? "-")</MudTd>
+            <MudTd>@(circuit.IsAdminListener == true ? UiText.CircuitListenerAdmin : UiText.CircuitListenerViewer)</MudTd>
+            <MudTd><YaguraTimestamp Value="circuit.OpenedAt" /></MudTd>
+            <MudTd><YaguraTimestamp Value="circuit.LastActivityAt" /></MudTd>
+            <MudTd>
+                <YaguraButton Role="YaguraButtonRole.Destructive"
+                              ConfirmTitle="@UiText.CircuitDisconnectConfirmTitle"
+                              ConfirmSummary="@UiText.CircuitDisconnectConfirmSummary"
+                              ConfirmActionLabel="@UiText.CircuitDisconnectConfirmAction"
+                              OnClick="() => DisconnectAsync(circuit)">
+                    @UiText.CircuitDisconnect
+                </YaguraButton>
+            </MudTd>
+        </RowTemplate>
+    </YaguraTable>
+</div>
+
+@code {
+    private IReadOnlyList<CircuitInfo> _circuits = [];
+
+    protected override void OnInitialized()
+    {
+        _circuits = CircuitManagement.ListCircuits();
+    }
+
+    private async Task DisconnectAsync(CircuitInfo circuit)
+    {
+        var accepted = await CircuitManagement.DisconnectAsync(circuit.CircuitId, CircuitContext.RemoteAddress);
+
+        if (accepted)
+        {
+            Notifier.NotifyOk(UiText.CircuitDisconnectAccepted);
+        }
+        else
+        {
+            Notifier.NotifyWarning(UiText.CircuitDisconnectNotAccepted);
+        }
+
+        _circuits = CircuitManagement.ListCircuits();
+    }
+}

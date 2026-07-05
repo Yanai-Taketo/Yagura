@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Http;
-using Yagura.Storage.Auditing;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web;

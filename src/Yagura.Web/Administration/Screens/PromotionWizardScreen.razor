@@ -1,0 +1,174 @@
+@page "/admin/promotion"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Circuits
+@inject IPromotionWizardService PromotionWizard
+@inject YaguraCircuitContext CircuitContext
+
+@*
+    本番昇格（SQLite → SQL Server）ウィザードの骨格（database.md §6.1・ui.md §4。M8-4。Issue #71）。
+
+    - 準備（接続検証）と本番（切替実行）を分離する（§6.1。準備は何度でも中断・再開できる）
+    - 接続文字列は資格情報としてサーバのメモリにのみ保持し、無操作 15 分（CF-3 仮値）で破棄
+      （configuration.md §5。破棄後の再開では再入力を求め、確定済みの選択は保持される）
+    - 切替の確定前に蓄積ログが参照できなくなる帰結を予告する（§6.1 の予告義務・文言は ui.md §5.4）
+    - 切替実行は破壊的操作 = 確認ダイアログ必須（ui.md §3.1）+ 冪等トークン（configuration.md §7）
+*@
+<PageTitle>@UiText.AdminPromotionWizardTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminPromotionWizardTitle</MudText>
+
+@if (_snapshot is null)
+{
+    <MudText>@UiText.AdminScreenAccessChecking</MudText>
+}
+else if (_snapshot.Executed || _applyResult is not null)
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText>@_resultMessage</MudText>
+        @if (_applyResult is { Outcome: WizardApplyOutcome.Applied or WizardApplyOutcome.AlreadyApplied })
+        {
+            <MudText Class="mt-2">@FormatEffect(_applyResult.RequiredEffect)</MudText>
+        }
+    </MudPaper>
+}
+else
+{
+    @* --- 準備フェーズ: 接続の設定と検証（database.md §6.1） --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.PromotionValidateConnection</MudText>
+        <MudText Class="mt-2">@UiText.PromotionCredentialHandlingNote</MudText>
+
+        @if (_snapshot.CredentialReentryRequired)
+        {
+            <MudText Class="mt-2">@UiText.PromotionCredentialReentryRequired</MudText>
+        }
+
+        <YaguraTextField Label="@UiText.PromotionConnectionStringLabel"
+                         Required="true"
+                         @bind-Value="_connectionString"
+                         ErrorText="@_connectionErrorText" />
+
+        <div class="mt-4">
+            <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ValidateAsync">@UiText.PromotionValidateConnection</YaguraButton>
+        </div>
+
+        @if (_validationResult is not null)
+        {
+            <MudText Class="mt-2">@_validationResult.Message</MudText>
+        }
+    </MudPaper>
+
+    @* --- 旧・組み込み DB ファイルの処分の選択（database.md §6.1「残置しない」） --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">これまでに保存したログの扱い</MudText>
+        <MudText Class="mt-2">@UiText.PromotionSwitchWarning</MudText>
+
+        <div class="mt-4">
+            <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Evacuate)"
+                          Disabled="@(_snapshot.Disposal == OldDatabaseDisposal.Evacuate)">
+                @UiText.PromotionDisposalEvacuate
+            </YaguraButton>
+            <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Delete)"
+                          Disabled="@(_snapshot.Disposal == OldDatabaseDisposal.Delete)">
+                @UiText.PromotionDisposalDelete
+            </YaguraButton>
+        </div>
+
+        @if (_snapshot.Disposal is OldDatabaseDisposal chosen)
+        {
+            <MudText Class="mt-2">選択中: @(chosen == OldDatabaseDisposal.Evacuate ? UiText.PromotionDisposalEvacuate : UiText.PromotionDisposalDelete)</MudText>
+        }
+    </MudPaper>
+
+    @* --- 切替本番（すべての事前検証が通ってから実行できる） --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <YaguraButton Role="YaguraButtonRole.Destructive"
+                      Disabled="@(!CanExecute)"
+                      ConfirmTitle="@UiText.PromotionExecuteConfirmTitle"
+                      ConfirmSummary="@UiText.PromotionSwitchWarning"
+                      ConfirmActionLabel="@UiText.PromotionExecuteConfirmAction"
+                      OnClick="ExecuteAsync">
+            @UiText.PromotionExecute
+        </YaguraButton>
+    </MudPaper>
+}
+
+@code {
+    private PromotionWizardSnapshot? _snapshot;
+    private PromotionValidationResult? _validationResult;
+    private PromotionApplyResult? _applyResult;
+    private string? _resultMessage;
+    private string? _connectionString;
+    private string? _connectionErrorText;
+
+    private bool CanExecute =>
+        _snapshot is { ConnectionValidated: true, Disposal: not null, ExecuteIdempotencyToken: not null };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await PromotionWizard.GetSnapshotAsync();
+        if (_snapshot.Executed)
+        {
+            _resultMessage = UiText.WizardApplied;
+        }
+    }
+
+    private static string FormatEffect(ConfigurationApplyEffect effect) => effect switch
+    {
+        ConfigurationApplyEffect.Immediate => UiText.ApplyEffectImmediate,
+        ConfigurationApplyEffect.ListenerReconfiguration => UiText.ApplyEffectListenerReconfiguration,
+        _ => UiText.ApplyEffectRestartRequired,
+    };
+
+    private async Task ValidateAsync()
+    {
+        try
+        {
+            _connectionErrorText = null;
+
+            // 入力済みの接続文字列を都度設定してから検証する（無操作タイムアウトで破棄済みの
+            // 場合も、この経路が再入力そのものになる）。
+            if (!string.IsNullOrWhiteSpace(_connectionString))
+            {
+                _snapshot = await PromotionWizard.SetConnectionStringAsync(_connectionString);
+            }
+
+            _validationResult = await PromotionWizard.ValidateConnectionAsync(CircuitContext.RemoteAddress);
+            _snapshot = await PromotionWizard.GetSnapshotAsync();
+        }
+        catch (WizardValidationException ex)
+        {
+            _connectionErrorText = ex.Message;
+        }
+    }
+
+    private async Task ChooseDisposalAsync(OldDatabaseDisposal disposal)
+    {
+        _snapshot = await PromotionWizard.ChooseOldDatabaseDisposalAsync(disposal);
+    }
+
+    private async Task ExecuteAsync()
+    {
+        if (_snapshot?.ExecuteIdempotencyToken is not string token)
+        {
+            return;
+        }
+
+        _applyResult = await PromotionWizard.ExecuteAsync(token, CircuitContext.RemoteAddress);
+        _resultMessage = _applyResult.Outcome switch
+        {
+            WizardApplyOutcome.Applied => _applyResult.Message,
+            WizardApplyOutcome.AlreadyApplied => UiText.WizardAlreadyApplied,
+            WizardApplyOutcome.Conflict => UiText.WizardConflict,
+            _ => UiText.WizardInvalidToken,
+        };
+
+        if (_applyResult.Outcome is WizardApplyOutcome.Conflict or WizardApplyOutcome.InvalidToken)
+        {
+            _snapshot = await PromotionWizard.GetSnapshotAsync();
+            _applyResult = null;
+        }
+    }
+}

@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Yagura.Storage;
-using Yagura.Storage.Auditing;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web.Tests.ArchitectureTests;
@@ -57,6 +57,13 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddSingleton<IAuditRecorder, NoopAuditRecorder>();
         builder.Services.AddSingleton<Yagura.Abstractions.Observability.IYaguraSystemStatusReader, NoopStatusReader>();
 
+        // M8-4: circuit 統治・管理画面が要求するサービス（Program.cs と同じ結線の最小形。
+        // ポート値は本ハーネスでは到達判定に使われないため、既定の 8515 を置く）。
+        builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(8515));
+        builder.Services.AddYaguraAdmin();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService, StubSetupWizardService>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService, StubPromotionWizardService>();
+
         // 閲覧・管理の両方を同一ホストにマップする(Program.cs と同じ構造。ポートによる
         // 到達可否の分離は実行時の ListenerPortGuardMiddleware が担うため、エンドポイント表
         // レベルでは両者は同居する——ViewerEndpointAllowlistTests のコメント参照)。
@@ -70,8 +77,8 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         // テスト出力には Yagura.Web(RCL)単位のマニフェストが生成されることを実機確認済みの
         // ため、それを指定する(MudBlazor 等の参照パッケージのアセットを含む——
         // YaguraWebViewerExtensions.MapYaguraWebViewer の引数コメント参照)。
-        app.MapYaguraWebViewer("Yagura.Web.staticwebassets.endpoints.json");
-        app.MapYaguraAdmin();
+        var razorComponents = app.MapYaguraWebViewer("Yagura.Web.staticwebassets.endpoints.json");
+        app.MapYaguraAdmin(razorComponents);
 
         await app.StartAsync();
 
@@ -147,5 +154,55 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     private sealed class NoopAuditRecorder : IAuditRecorder
     {
         public Task RecordAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 管理画面（Razor Components ページ）の DI 要求を満たすためのスタブ（本ハーネスの目的は
+    /// ルーティング表の機械列挙であり、ウィザードの実処理は対象外——実処理は
+    /// <c>Yagura.Host.Tests</c> の SetupWizardServiceTests / PromotionWizardServiceTests が検証する）。
+    /// </summary>
+    private sealed class StubSetupWizardService : Yagura.Abstractions.Administration.ISetupWizardService
+    {
+        public Task<Yagura.Abstractions.Administration.SetupWizardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.SetupWizardSnapshot> ConfirmStepAsync(
+            Yagura.Abstractions.Administration.SetupWizardStep step,
+            IReadOnlyDictionary<string, string> values,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.SetupWizardApplyResult> ApplyAsync(
+            string idempotencyToken,
+            string? operatorAddress = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubPromotionWizardService : Yagura.Abstractions.Administration.IPromotionWizardService
+    {
+        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> SetConnectionStringAsync(
+            string connectionString,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.PromotionValidationResult> ValidateConnectionAsync(
+            string? operatorAddress = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
+            Yagura.Abstractions.Administration.OldDatabaseDisposal disposal,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.PromotionApplyResult> ExecuteAsync(
+            string idempotencyToken,
+            string? operatorAddress = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
 }

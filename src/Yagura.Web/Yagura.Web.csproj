@@ -14,4 +14,12 @@
     <ProjectReference Include="..\Yagura.Storage\Yagura.Storage.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      circuit 統治（M8-4）の内部状態（YaguraCircuitContext.IsAdminListener 等の internal setter）を
+      単体テストから構成するため（Yagura.Storage → Yagura.Storage.Tests と同じ判断）。
+    -->
+    <InternalsVisibleTo Include="Yagura.Web.Tests" />
+  </ItemGroup>
+
 </Project>

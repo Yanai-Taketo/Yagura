@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Observability.Auditing;
-using Yagura.Storage.Auditing;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Host.Tests.Observability.Auditing;
@@ -133,5 +133,34 @@ public sealed class FileAuditRecorderTests : IDisposable
 
         var auditDirectory = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName);
         Assert.True(Directory.Exists(auditDirectory));
+    }
+
+    [Fact]
+    public async Task RecordAsync_AdminOperation_WritesInformationLevelWith2000BandIdAndDetail()
+    {
+        // M8-4（Issue #71）: 2000 番台（管理操作の監査）はレベル「情報」で併記される
+        // （security.md §4.3 の区画割当——3000 番台の警告と機械的に区別される）。
+        // 要約（Detail）はファイル行・イベントログ本文の両方に残る。
+        var logger = new FakeLogger();
+        using var metrics = new WebGuardMetrics();
+        var recorder = new FileAuditRecorder(_dataRoot, logger, metrics);
+
+        await recorder.RecordAsync(new AuditEvent(
+            OccurredAt: new DateTimeOffset(2026, 7, 6, 12, 0, 0, TimeSpan.Zero),
+            Kind: AuditEventKind.ConfigurationSaved,
+            RemoteAddress: "127.0.0.1",
+            RemotePort: null,
+            Detail: "変更キー: Retention:Days"));
+
+        var record = Assert.Single(logger.Collector.GetSnapshot());
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Information, record.Level);
+        Assert.Equal(AuditEventIds.ConfigurationSaved.Id, record.Id.Id);
+        Assert.Contains("Retention:Days", record.Message);
+
+        var filePath = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.FileName);
+        var line = Assert.Single(await File.ReadAllLinesAsync(filePath));
+        Assert.Contains("ConfigurationSaved", line);
+        Assert.Contains("2001", line);
+        Assert.Contains("Retention:Days", line);
     }
 }

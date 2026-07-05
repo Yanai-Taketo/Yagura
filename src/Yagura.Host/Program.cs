@@ -10,7 +10,7 @@ using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
-using Yagura.Storage.Auditing;
+using Yagura.Abstractions.Auditing;
 using Yagura.Storage.Sqlite;
 using Yagura.Storage.SqlServer;
 using Yagura.Storage.Spool;
@@ -315,7 +315,7 @@ public static class Program
 
         // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
         //
-        // Yagura.Web（ListenerPortGuardMiddleware）は Yagura.Storage.Auditing.IAuditRecorder
+        // Yagura.Web（ListenerPortGuardMiddleware）は Yagura.Abstractions.Auditing.IAuditRecorder
         // インターフェースのみを参照し、実体（アプリ記録ファイル + Windows イベントログ併記）は
         // ここ Yagura.Host が結線する——architecture.md の参照構造（Web は Storage 抽象のみを
         // 参照する）と、既存の「メタデータ領域・スプールは Host 管轄のホスト管轄ローカル
@@ -330,6 +330,36 @@ public static class Program
             dataRoot,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Observability.Auditing"),
             sp.GetRequiredService<WebGuardMetrics>()));
+
+        // 監査の 2000 番台（管理操作）はレベル「情報」でイベントログへ併記する（security.md §4.3）。
+        // EventLog プロバイダの既定フィルタは Warning 以上のため、監査カテゴリに限り Information
+        // まで通す（「ソース Yagura の警告以上を通知」という最小監視構成は 1000/3000 番台の
+        // 警告で成立したまま、管理操作の証跡もイベントログに残る）。
+        builder.Logging.AddFilter<EventLogLoggerProvider>(
+            "Yagura.Host.Observability.Auditing",
+            LogLevel.Information);
+
+        // ---- 管理画面の書き込み系サービス（M8-4。Issue #71）----
+        //
+        // 契約は Yagura.Abstractions.Administration（IYaguraWriteService 実装群——security.md
+        // §1 L-5 の参照分離検査の対象）、実体は設定ファイル・DB 接続を管轄する Host 側に置く
+        // （FileAuditRecorder と同じ結線パターン。architecture.md §1.1）。
+        builder.Services.AddSingleton<Yagura.Host.Administration.ISqlServerConnectionValidator,
+            Yagura.Host.Administration.SqlServerConnectionValidator>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService>(sp =>
+            new Yagura.Host.Administration.SetupWizardService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>()));
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService>(sp =>
+            new Yagura.Host.Administration.PromotionWizardService(
+                dataRoot,
+                sp.GetRequiredService<Yagura.Host.Administration.ISqlServerConnectionValidator>(),
+                sp.GetRequiredService<IAuditRecorder>()));
+
+        // circuit 統治（M8-4。security.md §2）: リスナ帰属判定・上限ガードが参照する管理ポートの
+        // 実値と、circuit 管理（一覧・個別切断）のサービスを登録する。
+        builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(effectiveAdminPort));
+        builder.Services.AddYaguraAdmin();
 
         builder.Services.AddYaguraWebViewer();
 
@@ -373,17 +403,22 @@ public static class Program
         // 上記(122 行目付近)のコメント参照——0 指定時は解決済みの具体ポートで判定する必要がある。
         app.UseYaguraListenerPortGuard(effectiveAdminPort);
 
+        // circuit 統治のガード(M8-4。security.md §2.1 origin 検証・§2.2 上限。SEC-1/SEC-8 仮値)。
+        // ポートガードの直後(管理系 404 の判定が先——存在を漏らさない応答が上限案内より優先)。
+        app.UseYaguraCircuitGuard();
+
         // ルート登録は Yagura.Web 側の 2 つの集約点に分ける:
         // - MapYaguraWebViewer(閲覧系。書き込みエンドポイントを持たない)
-        // - MapYaguraAdmin(管理系。ListenerPortGuardEndpointMetadata.Admin を持ち、
-        //   上記ガードにより管理リスナ以外からは 404 になる)
+        // - MapYaguraAdmin(管理系。M8-4 から管理画面は Razor Components のページ——
+        //   Yagura.Web.Administration 名前空間——であり、MapYaguraAdmin はそれらの
+        //   エンドポイントへ ListenerPortGuardEndpointMetadata.Admin を機械的に付与する
+        //   規約を差し込む。上記ガードにより管理リスナ以外からは 404 になる)
         // 閲覧系ルートは管理リスナからも到達できる設計とした(ui.md §4 の線引きは「閲覧
         // リスナに書き込み系を置かない」であり、管理リスナは loopback 限定のため閲覧系が
-        // 同居しても安全側に働く——管理者がローカルで全部見られることはむしろ自然。
-        // MapYaguraWebViewer はガード対象のメタデータを持たないため、両リスナから到達できる)。
+        // 同居しても安全側に働く——管理者がローカルで全部見られることはむしろ自然)。
         // Host 側で個別に MapGet 等を追加しない(各拡張メソッドのコメント参照)。
-        app.MapYaguraWebViewer();
-        app.MapYaguraAdmin();
+        var razorComponents = app.MapYaguraWebViewer();
+        app.MapYaguraAdmin(razorComponents);
 
         // architecture.md §1.2 の起動順序（受信を最初に開く）は IngestionHostedService が
         // 担う。IHostedService.StartAsync は ASP.NET Core の規約により Kestrel が listen を

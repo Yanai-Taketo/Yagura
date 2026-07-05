@@ -43,6 +43,9 @@ public sealed class WebGuardMetrics : IDisposable
     private readonly Meter _meter;
     private readonly Counter<long> _listenerGuardRejected;
     private readonly Counter<long> _auditWriteFailed;
+    private readonly Counter<long> _circuitOriginRejected;
+    private readonly Counter<long> _circuitLimitRejected;
+    private readonly Counter<long> _circuitIdleReclaimed;
 
     public WebGuardMetrics()
     {
@@ -57,6 +60,21 @@ public sealed class WebGuardMetrics : IDisposable
             "yagura.web.audit.write_failed",
             unit: "{event}",
             description: "監査記録の書き込み失敗件数（アプリ記録ファイル・イベントログの両方が失敗。security.md §4.2）。");
+
+        _circuitOriginRejected = _meter.CreateCounter<long>(
+            "yagura.web.circuit.origin_rejected",
+            unit: "{request}",
+            description: "同一サイト以外からの circuit 確立試行の拒否件数（origin 検証。security.md §2.1）。");
+
+        _circuitLimitRejected = _meter.CreateCounter<long>(
+            "yagura.web.circuit.limit_rejected",
+            unit: "{request}",
+            description: "circuit 数上限による新規接続の拒否件数（security.md §2.2。SEC-1 仮値）。");
+
+        _circuitIdleReclaimed = _meter.CreateCounter<long>(
+            "yagura.web.circuit.idle_reclaimed",
+            unit: "{circuit}",
+            description: "無操作 circuit の回収件数（security.md §2.2。SEC-8 仮値）。");
     }
 
     /// <summary>
@@ -70,8 +88,29 @@ public sealed class WebGuardMetrics : IDisposable
     /// </summary>
     public void RecordAuditWriteFailed() => _auditWriteFailed.Add(1);
 
+    /// <summary>
+    /// 同一サイト以外からの circuit 確立試行の拒否を 1 件計上する（security.md §2.1
+    /// 「拒否は計測する」）。
+    /// </summary>
+    public void RecordCircuitOriginRejected() => _circuitOriginRejected.Add(1);
+
+    /// <summary>
+    /// circuit 数上限による新規接続の拒否を 1 件計上する（security.md §2.2「拒否はカウンタに
+    /// 計上する」）。
+    /// </summary>
+    public void RecordCircuitLimitRejected() => _circuitLimitRejected.Add(1);
+
+    /// <summary>無操作 circuit の回収を 1 件計上する（SEC-8）。</summary>
+    public void RecordCircuitIdleReclaimed() => _circuitIdleReclaimed.Add(1);
+
     /// <summary>拒否カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> ListenerGuardRejectedCounter => _listenerGuardRejected;
+
+    /// <summary>origin 拒否カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> CircuitOriginRejectedCounter => _circuitOriginRejected;
+
+    /// <summary>circuit 上限拒否カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> CircuitLimitRejectedCounter => _circuitLimitRejected;
 
     /// <summary>監査記録書き込み失敗カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> AuditWriteFailedCounter => _auditWriteFailed;

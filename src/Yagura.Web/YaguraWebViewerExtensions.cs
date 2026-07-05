@@ -1,8 +1,13 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components.Server.Circuits;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using MudBlazor.Services;
+using Yagura.Web.Circuits;
 using Yagura.Web.Components;
+using Yagura.Web.Components.Common;
 
 namespace Yagura.Web;
 
@@ -12,9 +17,9 @@ namespace Yagura.Web;
 /// <remarks>
 /// <b>ルート登録は本クラスの <see cref="MapYaguraWebViewer"/> の 1 箇所に集約する</b>。
 /// 閲覧リスナは書き込みエンドポイントを持たず（architecture.md §6・ui.md §4 の不変条件）、
-/// 将来 security.md L-5 で導入予定の「全ルート許可リスト」アーキテクチャテストは、
-/// この集約点を検査対象にする想定である。新しい閲覧系ページを追加する場合も、
-/// ルート登録は必ずこのメソッド経由で行うこと（Host 側で個別に <c>MapGet</c> 等を
+/// security.md §1 L-5 の「全ルート許可リスト」アーキテクチャテスト
+/// （<c>ViewerEndpointAllowlistTests</c>）がこの集約点を検査対象にする。新しい閲覧系ページを
+/// 追加する場合も、ルート登録は必ずこのメソッド経由で行うこと（Host 側で個別に <c>MapGet</c> 等を
 /// 追加しない）。
 /// </remarks>
 public static class YaguraWebViewerExtensions
@@ -44,6 +49,23 @@ public static class YaguraWebViewerExtensions
         // ISnackbar（AddMudServices が Scoped 登録）に合わせて Scoped。
         services.AddScoped<Components.Common.IYaguraNotifier, Components.Common.YaguraSnackbarNotifier>();
 
+        // ---- circuit 統治（M8-4。Issue #71。security.md §2）----
+        //
+        // - CircuitRegistry: プロセス内の全 circuit の台帳（一覧・上限・回収の共通基盤）
+        // - YaguraCircuitContext / YaguraCircuitHandler: circuit スコープの帰属・切断伝達。
+        //   CircuitHandler は circuit ごとの DI スコープから解決されるため、Scoped 登録で
+        //   circuit 1 本 = 1 インスタンスの対応になる
+        // - IHttpContextAccessor: circuit 確立時の接続（WebSocket 要求）の実ローカルポートから
+        //   リスナ帰属を判定するために使う（YaguraCircuitHandler のコメント参照——取得不能時は
+        //   帰属不明 = 閲覧相当の安全側へ倒す）
+        // - CircuitIdleReclaimService: 無操作 circuit の定期回収（SEC-8 仮値）
+        services.AddHttpContextAccessor();
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<CircuitRegistry>();
+        services.AddScoped<YaguraCircuitContext>();
+        services.AddScoped<CircuitHandler, YaguraCircuitHandler>();
+        services.AddHostedService<CircuitIdleReclaimService>();
+
         return services;
     }
 
@@ -60,7 +82,13 @@ public static class YaguraWebViewerExtensions
     /// （RCL 単位のマニフェストは publish 出力には含まれないことを実機確認済みのため、
     /// 本番経路の既定にはしない）。
     /// </param>
-    public static IEndpointRouteBuilder MapYaguraWebViewer(
+    /// <returns>
+    /// Razor Components エンドポイントの規約ビルダー。<b>呼び出し側は必ずこれを
+    /// <see cref="YaguraAdminExtensions.MapYaguraAdmin"/> へ渡すこと</b>——管理画面
+    /// （<c>Yagura.Web.Administration.Screens</c> 配下の <c>@page</c> ルート）への
+    /// Admin メタデータ付与（リスナ帰属の機械的導出）は MapYaguraAdmin が担う（M8-4）。
+    /// </returns>
+    public static RazorComponentsEndpointConventionBuilder MapYaguraWebViewer(
         this IEndpointRouteBuilder endpoints,
         string? staticAssetsManifestPath = null)
     {
@@ -74,12 +102,31 @@ public static class YaguraWebViewerExtensions
         // 不変条件（ui.md §4）を破らない。
         endpoints.MapStaticAssets(staticAssetsManifestPath);
 
-        // AddInteractiveServerRenderMode は Interactive Server の circuit エンドポイント
-        // （SignalR。既定パス /_blazor）を有効化する。circuit 数の上限・失効の反映等の
-        // 統治は security.md（ADR-0004 決定 6）の管轄で M6/M8 スコープ。
-        endpoints.MapRazorComponents<YaguraWebApp>()
-            .AddInteractiveServerRenderMode();
+        // 接続終了の案内ページ（M8-4。security.md §2.2 の個別切断・SEC-8 の無操作回収の着地先）。
+        // circuit を要しない静的応答であり、読み取り専用（GET のみ）——閲覧リスナの
+        // 「書き込みエンドポイントを持たない」不変条件を破らない。L-5 許可リストに登録済み。
+        endpoints.MapGet(CircuitGovernor.CircuitEndedPagePath, (HttpContext context) =>
+        {
+            var reason = context.Request.Query[CircuitGovernor.ReasonQueryParameter].ToString();
+            var body = reason == CircuitTerminationReasons.IdleReclaimed
+                ? UiText.CircuitEndedByIdleBody
+                : UiText.CircuitEndedByAdministratorBody;
 
-        return endpoints;
+            var html =
+                "<!DOCTYPE html><html lang=\"ja\"><head><meta charset=\"utf-8\" />" +
+                $"<title>{UiText.CircuitEndedTitle}</title></head><body>" +
+                $"<h1>{UiText.CircuitEndedTitle}</h1>" +
+                $"<p>{body}</p>" +
+                $"<p>{UiText.CircuitEndedReloadHint}</p>" +
+                "</body></html>";
+
+            return Results.Content(html, "text/html; charset=utf-8");
+        });
+
+        // AddInteractiveServerRenderMode は Interactive Server の circuit エンドポイント
+        // （SignalR。既定パス /_blazor）を有効化する。circuit 数の上限・origin 検証・無操作回収の
+        // 統治は M8-4 で実装済み（CircuitGuardMiddleware・CircuitRegistry。security.md §2）。
+        return endpoints.MapRazorComponents<YaguraWebApp>()
+            .AddInteractiveServerRenderMode();
     }
 }

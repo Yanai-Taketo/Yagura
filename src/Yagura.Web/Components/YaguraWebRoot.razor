@@ -1,8 +1,16 @@
 @namespace Yagura.Web.Components
 
 @*
+    circuit 統治の受け手（M8-4。security.md §2.2 の個別切断・SEC-8 の無操作回収）。
+    全 circuit に常駐させるためルートに置く。描画は行わない。
+*@
+<CircuitGovernor />
+
+@*
     DefaultLayout = MainLayout（全画面共通の骨格。ui.md §4）。各ページは @layout を
     個別指定せず、この既定レイアウトに乗る（骨格も共通コンポーネントとする、の実装形）。
+    管理画面（Yagura.Web.Administration.Screens）のみ AdminScreenLayout（MainLayout に
+    入れ子）を各ページで指定し、circuit 層のリスナ帰属検査を通す（M8-4）。
 *@
 <Router AppAssembly="typeof(YaguraWebRoot).Assembly">
     <Found Context="routeData">
