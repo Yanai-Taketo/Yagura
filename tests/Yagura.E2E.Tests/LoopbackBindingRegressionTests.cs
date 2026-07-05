@@ -48,8 +48,14 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
 
     // 管理リスナは常に loopback の具体アドレスでログに出る（127.0.0.1 と [::1] の 2 行。
     // ListenerBindPlan の ResolvePortForDualStackLoopback により両方とも同じポートになる）。
+    // Kestrel は bind 順（閲覧 → 管理 IPv4 → 管理 IPv6）に "Now listening on:" を出すため、
+    // 起動完了の待機は最後に出る [::1] 行まで行う——127.0.0.1 行の検出だけで先へ進むと、
+    // [::1] 行が stdout コールバックに届く前に L-1 の行数検証が走る競合があり得る。
     private static readonly Regex AdminListeningPortPattern =
         new(@"Now listening on:\s*http://127\.0\.0\.1:(\d+)\s*$", RegexOptions.Compiled);
+
+    private static readonly Regex AdminV6ListeningPortPattern =
+        new(@"Now listening on:\s*http://\[::1\]:(\d+)\s*$", RegexOptions.Compiled);
 
     private static readonly Regex ViewerListeningPortPattern =
         new(@"Now listening on:\s*http://\[::\]:(\d+)\s*$", RegexOptions.Compiled);
@@ -240,6 +246,16 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
                 IPAddress.IsLoopback(listener.Address),
                 $"管理ポート {adminPort} が loopback 以外のアドレス {listener.Address} で listen している。");
         }
+
+        // L-1 の合格条件は「127.0.0.1 と ::1 のみ」であり、「loopback のみ」に加えて
+        // 「両系統が存在する」ことも含む(片系統の bind が黙って失われた退行を捕まえる。
+        // L-4 はこの検証を再利用するため、破損設定下でも両系統が揃うことまで確認される)。
+        Assert.True(
+            matchingListeners.Any(l => l.Address.Equals(IPAddress.Loopback)),
+            $"管理ポート {adminPort} の IPv4 loopback (127.0.0.1) の listen が存在しない。");
+        Assert.True(
+            matchingListeners.Any(l => l.Address.Equals(IPAddress.IPv6Loopback)),
+            $"管理ポート {adminPort} の IPv6 loopback (::1) の listen が存在しない。");
     }
 
     /// <summary>
@@ -490,6 +506,7 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
 
         var udpPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var adminPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adminV6PortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var viewerPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         process.OutputDataReceived += (_, e) =>
@@ -512,6 +529,12 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
                 adminPortTcs.TrySetResult(adminPort);
             }
 
+            var adminV6Match = AdminV6ListeningPortPattern.Match(e.Data);
+            if (adminV6Match.Success && int.TryParse(adminV6Match.Groups[1].Value, out var adminV6Port))
+            {
+                adminV6PortTcs.TrySetResult(adminV6Port);
+            }
+
             var viewerMatch = ViewerListeningPortPattern.Match(e.Data);
             if (viewerMatch.Success && int.TryParse(viewerMatch.Groups[1].Value, out var viewerPort))
             {
@@ -524,7 +547,13 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
         process.BeginErrorReadLine();
 
         await WaitWithTimeoutAsync(udpPortTcs.Task, StartupTimeout, "UDP リスナ起動ログ");
-        var resolvedAdminPort = await WaitWithTimeoutAsync(adminPortTcs.Task, StartupTimeout, "管理リスナ HTTP listening ログ");
+        var resolvedAdminPort = await WaitWithTimeoutAsync(adminPortTcs.Task, StartupTimeout, "管理リスナ HTTP listening ログ (127.0.0.1)");
+
+        // Kestrel の "Now listening on:" は bind 順に出るため、最後に出る管理リスナ [::1] 行まで
+        // 待つ(127.0.0.1 行の検出だけで先へ進むと、[::1] 行が届く前に L-1 の行数検証が走る
+        // 競合があり得る——AdminV6ListeningPortPattern のコメント参照)。
+        var resolvedAdminV6Port = await WaitWithTimeoutAsync(adminV6PortTcs.Task, StartupTimeout, "管理リスナ HTTP listening ログ ([::1])");
+        Assert.Equal(resolvedAdminPort, resolvedAdminV6Port);
 
         // 閲覧リスナも起動完了まで待つ(公開範囲が LocalhostOnly に縮小された場合でも
         // "Now listening on:" ログ自体は出るため、ViewerListeningPortPattern が一致しない
