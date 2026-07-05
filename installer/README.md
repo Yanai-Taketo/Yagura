@@ -41,10 +41,37 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される |
 | アンインストール | 規則・ショートカット・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除) |
 
+## E2E 検証(M9-2。Issue #75 / ADR-0006 基準 1)
+
+ゼロ設定ファーストラン(インストール直後、DB 設定なしで SQLite により即受信・即閲覧)を
+実 MSI で検証する E2E。**設定ファイルの手編集は一切行わない**。
+
+- スクリプト: [e2e/Invoke-YaguraInstallerE2E.ps1](e2e/Invoke-YaguraInstallerE2E.ps1)
+  - Full モード(管理者権限必須): サイレントインストール(`msiexec /i /qn`)→ サービス
+    `Yagura` の Running 待機 → インストール状態の証拠採取(規則 3 本・データルート・
+    firewall-rules.ini)→ UDP 514 へ syslog 送出 → 閲覧リスナ(http://localhost:8514/)の
+    HTML で照合 → アンインストール(`msiexec /x /qn`)→ 残置物確認(サービス・規則・
+    スタートメニュー消滅、**データルート保持** = 上の責務表どおり)
+  - `-DryRun`: msiexec・サービス操作を行わず手順と出力の配管のみ検証(開発機用)
+  - `-SendVerifyOnly -UdpPort <p> -ViewerBaseUrl <url>`: 送出・照合部分のみを起動済みの
+    Yagura.Host に対して実行(開発機用。管理者権限不要)
+  - 照合は ASCII の RunId トークンのみで行う(日本語本文の照合は en-US CI の CP437 で
+    文字化けして誤判定するため)
+- CI: [.github/workflows/installer-e2e.yml](../.github/workflows/installer-e2e.yml)
+  (workflow_dispatch + installer/ 配下変更の pull_request)。MSI ビルド → E2E 実行 →
+  証拠を artifact `installer-e2e-results` に保存する
+- 証拠形式(ADR-0006 基準 1): 人間可読ログ(`*.log.txt`)+ 機械可読サマリ
+  (`*.summary.json`。RunId・各手順の合否・所要時間・実行環境)+ msiexec 詳細ログ。
+  CI 実行記録(workflow run と artifact)を基準 1 の証拠としてリンクする
+
 ## 検証状態
 
 - ローカルビルド + WiX 標準の ICE 検証(ビルドに内蔵)を通過(警告 0)
 - MSI テーブルの内容検証済み(ServiceInstall / Wix4ServiceConfig / MsiLockPermissionsEx /
   Wix5FirewallException / IniFile / Upgrade / ControlEvent を WindowsInstaller COM で照合)
-- **インストール実行(サービス起動・ACL 適用・規則作成・アップグレード・アンインストールの
-  実挙動)は未検証**: 実機検証は M9-3(lab)の管轄
+- E2E スクリプトは開発機で `-DryRun` と `-SendVerifyOnly`(実ビルド出力の Yagura.Host に
+  対する送出・照合)を検証済み。**Full モード(実インストール)の初回実行は CI
+  (installer-e2e.yml)で行う**——GitHub ホストランナーの管理者権限の根拠は workflow 内の
+  コメント参照。CI で成立しない場合は lab 手順書方式へ縮退(Issue #75)
+- **インストール実行のうち ACL 適用・アップグレードの実挙動は未検証**: 実機検証は
+  M9-3(lab)の管轄
