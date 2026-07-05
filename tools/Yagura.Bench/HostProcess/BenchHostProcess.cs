@@ -180,16 +180,58 @@ public sealed class BenchHostProcess : IAsyncDisposable
             }
         };
 
-        process.ErrorDataReceived += (_, _) => { };
+        // stderr も採取する(接頭辞で stdout と区別)。オーナー実機での SQL Server 実測時、
+        // 起動タイムアウトの原因(provider 初期化の失敗)が子プロセスの出力ごと闇に消えて
+        // 診断不能になった実障害への対処——起動失敗の一次情報は必ず拾う。
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is null)
+            {
+                return;
+            }
+
+            lock (bench._stdoutLock)
+            {
+                bench._stdoutLines.Add($"[stderr] {e.Data}");
+            }
+        };
 
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
         var timeout = startupTimeout ?? TimeSpan.FromSeconds(30);
-        bench.UdpPort = await WaitWithTimeoutAsync(udpPortTcs.Task, timeout, "UDP リスナ起動ログ").ConfigureAwait(false);
-        bench.TcpPort = await WaitWithTimeoutAsync(tcpPortTcs.Task, timeout, "TCP リスナ起動ログ").ConfigureAwait(false);
-        bench.ViewerHttpPort = await WaitWithTimeoutAsync(viewerPortTcs.Task, timeout, "閲覧リスナ HTTP listening ログ").ConfigureAwait(false);
+        try
+        {
+            bench.UdpPort = await WaitWithTimeoutAsync(udpPortTcs.Task, timeout, "UDP リスナ起動ログ").ConfigureAwait(false);
+            bench.TcpPort = await WaitWithTimeoutAsync(tcpPortTcs.Task, timeout, "TCP リスナ起動ログ").ConfigureAwait(false);
+            bench.ViewerHttpPort = await WaitWithTimeoutAsync(viewerPortTcs.Task, timeout, "閲覧リスナ HTTP listening ログ").ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            // 起動待機のタイムアウトは「子プロセス側で何かが起きた」の症状にすぎない。
+            // 一次情報(子プロセスの stdout/stderr の末尾・終了コード)を例外に含めて、
+            // 実機での診断を一目で可能にする(オーナー実機の SQL Server 初期化失敗が
+            // 診断不能だった実障害への対処)。プロセスは取り残さず必ず止める。
+            var exitNote = process.HasExited
+                ? $"子プロセスは既に終了している(exit code {process.ExitCode})。"
+                : "子プロセスはまだ実行中(このあと Kill する)。";
+
+            string[] outputTail;
+            lock (bench._stdoutLock)
+            {
+                outputTail = bench._stdoutLines.TakeLast(40).ToArray();
+            }
+
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            throw new TimeoutException(
+                $"{ex.Message}\n{exitNote}\n--- 子プロセス出力(末尾 {outputTail.Length} 行) ---\n{string.Join("\n", outputTail)}",
+                ex);
+        }
 
         return bench;
     }
