@@ -74,4 +74,6 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   (installer-e2e.yml)で行う**——GitHub ホストランナーの管理者権限の根拠は workflow 内の
   コメント参照。CI で成立しない場合は lab 手順書方式へ縮退(Issue #75)
 - **インストール実行のうち ACL 適用・アップグレードの実挙動は未検証**: 実機検証は
-  M9-3(lab)の管轄
+  M9-3(lab)の管轄。オーナー実行の手順書:
+  [lab/m9-3-lab-procedure.md](lab/m9-3-lab-procedure.md)(Issue #76。ACL = SEC-3・
+  失敗時再起動・アップグレード・M-15・DB-8・イベントログ・ja-JP UI・E2E Full の lab 再現)
