@@ -449,4 +449,187 @@ public static class UiText
 
     /// <summary>履歴が 1 件もない場合の表示。</summary>
     public const string HistoryEmpty = "まだ記録がありません";
+    // ---- circuit 統治（security.md §2.2。M8-4。用語対応表: circuit → 画面とサーバの接続） ----
+
+    /// <summary>circuit 数上限到達の案内ページの見出し（security.md §2.2 の静的な案内）。</summary>
+    public const string CircuitLimitNoticeTitle = "閲覧者数が上限に達しています";
+
+    /// <summary>上限到達の案内本文（現在の閲覧者数・上限値を含める——security.md §2.2 の要件）。</summary>
+    public static string FormatCircuitLimitNoticeBody(int current, int limit) =>
+        $"現在の閲覧者数が {current} で、上限の {limit} に達しているため、新しく画面を開けません。" +
+        "表示中の画面には影響ありません。";
+
+    /// <summary>上限到達時の解放の導線（管理者への連絡——security.md §2.2 の要件）。</summary>
+    public const string CircuitLimitNoticeContactHint =
+        "しばらくしてから再度お試しください。急ぐ場合は、サーバの管理者に連絡して" +
+        "使われていない画面とサーバの接続を切断してもらうと、枠が解放されます。";
+
+    /// <summary>接続終了ページ（circuit を要しない静的な案内）の見出し。</summary>
+    public const string CircuitEndedTitle = "画面とサーバの接続を終了しました";
+
+    /// <summary>管理者による個別切断の案内（security.md §2.2）。</summary>
+    public const string CircuitEndedByAdministratorBody =
+        "サーバの管理者がこの画面とサーバの接続を切断しました。ログの受信は継続しています。";
+
+    /// <summary>無操作回収（SEC-8 仮値）の案内。</summary>
+    public const string CircuitEndedByIdleBody =
+        "一定時間操作がなかったため、この画面とサーバの接続を終了しました。ログの受信は継続しています。";
+
+    /// <summary>接続終了ページからの復帰導線。</summary>
+    public const string CircuitEndedReloadHint = "続きを見るには、ページを再読み込みしてください。";
+
+    // ---- 管理画面共通（ui.md §4「設定（ウィザード群）」。M8-4） ----
+
+    /// <summary>
+    /// 管理画面の circuit 層ガードの拒否表示（閲覧側からの到達。管理系パスの存在自体を
+    /// 説明しない——ListenerPortGuardMiddleware の 404 と同じ判断）。
+    /// </summary>
+    public const string AdminScreenNotFound = "ページが見つかりません。";
+
+    /// <summary>管理画面の circuit 層ガードで帰属を確認できない間の表示（fail-closed の中間状態）。</summary>
+    public const string AdminScreenAccessChecking = "接続の帰属を確認しています…";
+
+    /// <summary>設定トップ（/admin）の画面見出し（ui.md §4 の画面構成「設定（ウィザード群）」）。</summary>
+    public const string AdminHomeTitle = "設定";
+
+    /// <summary>初期セットアップウィザードへの導線・見出し。</summary>
+    public const string AdminSetupWizardTitle = "初期セットアップ";
+
+    /// <summary>本番昇格ウィザードへの導線・見出し（用語対応表: 本番昇格 → 保存先を SQL Server に切り替える）。</summary>
+    public const string AdminPromotionWizardTitle = "保存先を SQL Server に切り替える";
+
+    /// <summary>circuit 管理画面への導線・見出し。</summary>
+    public const string AdminCircuitsTitle = "画面とサーバの接続の管理";
+
+    // ---- 初期セットアップウィザード（configuration.md §3〜§7。M8-4 骨格） ----
+
+    /// <summary>ステップ: 受信設定。</summary>
+    public const string SetupStepReceptionTitle = "受信設定";
+
+    /// <summary>ステップ: 閲覧と管理。</summary>
+    public const string SetupStepViewerAccessTitle = "閲覧と管理";
+
+    /// <summary>ステップ: ログを保存しておく期間（用語対応表: 保持期間）。</summary>
+    public const string SetupStepRetentionTitle = "ログを保存しておく期間";
+
+    /// <summary>ステップ: 確認。</summary>
+    public const string SetupStepReviewTitle = "確認";
+
+    /// <summary>ステップ確定ボタン。</summary>
+    public const string WizardConfirmStep = "この内容で次へ";
+
+    /// <summary>設定の適用ボタン。</summary>
+    public const string WizardApply = "設定を保存する";
+
+    /// <summary>再開位置の明示（configuration.md §7「どこから再開しているか」。{0} にステップ名）。</summary>
+    public const string WizardResumeNoticeFormat = "「{0}」から再開しています。確定済みの内容は保存されています。";
+
+    /// <summary>適用完了。</summary>
+    public const string WizardApplied = "設定を保存しました。";
+
+    /// <summary>二重適用の抑止結果（冪等トークンによる再送検出。configuration.md §7）。</summary>
+    public const string WizardAlreadyApplied = "この操作は既に適用済みです（二重適用は行われていません）。";
+
+    /// <summary>
+    /// 楽観競合の検出結果（configuration.md §3——上書きせずに再読み込みを促す）。
+    /// </summary>
+    public const string WizardConflict =
+        "設定ファイルがほかの手段（手編集など）で変更されていたため、保存を中止しました。" +
+        "内容を確認のうえ、確認ステップからやり直してください。";
+
+    /// <summary>冪等トークン不一致（期限切れ・別セッション）。</summary>
+    public const string WizardInvalidToken = "操作の有効期限が切れています。確認ステップからやり直してください。";
+
+    /// <summary>反映方式の表示（configuration.md §3・ui.md §5.4）: 即時反映。</summary>
+    public const string ApplyEffectImmediate = "変更はすぐに反映されます";
+
+    /// <summary>反映方式の表示: リスナ再構成（接続の瞬断あり）。</summary>
+    public const string ApplyEffectListenerReconfiguration = "反映時に受信の接続が一時的に切れます";
+
+    /// <summary>反映方式の表示: サービス再起動が必要。</summary>
+    public const string ApplyEffectRestartRequired = "反映にはサービスの再起動が必要です（再起動中は受信できません）";
+
+    // ---- 本番昇格ウィザード（database.md §6.1。M8-4 骨格） ----
+
+    /// <summary>接続文字列の入力ラベル。</summary>
+    public const string PromotionConnectionStringLabel = "SQL Server への接続文字列";
+
+    /// <summary>接続文字列の取り扱いの説明（configuration.md §5 の統治を利用者の言葉で）。</summary>
+    public const string PromotionCredentialHandlingNote =
+        "接続文字列はこのウィザードの実行中だけサーバのメモリ上に保持され、完了または中断で破棄されます。" +
+        "15 分間操作がない場合も破棄され、再開時に再入力が必要です。";
+
+    /// <summary>接続検証ボタン（database.md §6.1 準備フェーズ）。</summary>
+    public const string PromotionValidateConnection = "接続を検証する";
+
+    /// <summary>接続検証成功。</summary>
+    public const string PromotionValidationSucceeded = "SQL Server への接続を確認しました。";
+
+    /// <summary>接続文字列の再入力要求（無操作タイムアウト後の再開。configuration.md §5）。</summary>
+    public const string PromotionCredentialReentryRequired =
+        "操作の間隔が空いたため、接続文字列を破棄しました。再入力してください（確定済みの選択は保存されています）。";
+
+    /// <summary>
+    /// 切替確定前の予告（database.md §6.1 の委任を ui.md §5.4 が確定した文言）。
+    /// </summary>
+    public const string PromotionSwitchWarning =
+        "切り替えると、これまでに保存したログは移行機能の提供まで画面から参照できなくなります。" +
+        "あとで参照する可能性がある場合は「退避」を選んでください。";
+
+    /// <summary>旧・組み込み DB ファイルの処分: 退避。</summary>
+    public const string PromotionDisposalEvacuate = "退避（指定した場所へ移動して保管する）";
+
+    /// <summary>旧・組み込み DB ファイルの処分: 削除。</summary>
+    public const string PromotionDisposalDelete = "削除";
+
+    /// <summary>切替実行ボタン（破壊的操作。確認ダイアログ必須——ui.md §3.1）。</summary>
+    public const string PromotionExecute = "切り替えを実行する";
+
+    /// <summary>切替実行の確認ダイアログの見出し。</summary>
+    public const string PromotionExecuteConfirmTitle = "保存先を SQL Server に切り替えます";
+
+    /// <summary>切替実行の確認ダイアログの確認ボタン。</summary>
+    public const string PromotionExecuteConfirmAction = "切り替える";
+
+    // ---- circuit 管理画面（security.md §2.2。M8-4） ----
+
+    /// <summary>一覧列: 接続元。</summary>
+    public const string CircuitColumnRemote = "接続元";
+
+    /// <summary>
+    /// 一覧列: 接続の種別（管理 / 閲覧）。開発用語「リスナ」を画面に出さない（ui.md §7.1）。
+    /// </summary>
+    public const string CircuitColumnListener = "種別";
+
+    /// <summary>一覧列: 確立時刻。</summary>
+    public const string CircuitColumnOpenedAt = "接続した時刻";
+
+    /// <summary>一覧列: 最終活動時刻。</summary>
+    public const string CircuitColumnLastActivity = "最後に操作した時刻";
+
+    /// <summary>リスナ表示: 管理。</summary>
+    public const string CircuitListenerAdmin = "管理";
+
+    /// <summary>リスナ表示: 閲覧（帰属不明も閲覧として表示する——安全側の扱いと揃える）。</summary>
+    public const string CircuitListenerViewer = "閲覧";
+
+    /// <summary>切断ボタン。</summary>
+    public const string CircuitDisconnect = "切断";
+
+    /// <summary>切断の確認ダイアログの見出し。</summary>
+    public const string CircuitDisconnectConfirmTitle = "画面とサーバの接続を切断します";
+
+    /// <summary>切断の確認ダイアログの要約（何が起きるか——ui.md §3.1 確認ダイアログ規約）。</summary>
+    public const string CircuitDisconnectConfirmSummary =
+        "選択した閲覧者の画面は接続終了の案内に切り替わります。ログの受信には影響しません。";
+
+    /// <summary>切断の確認ダイアログの確認ボタン。</summary>
+    public const string CircuitDisconnectConfirmAction = "切断する";
+
+    /// <summary>切断要求の受理。</summary>
+    public const string CircuitDisconnectAccepted = "切断しました。";
+
+    /// <summary>切断要求の不成立（対象が既に終了している等）。</summary>
+    public const string CircuitDisconnectNotAccepted =
+        "切断できませんでした。対象の接続が既に終了しているか、切断を受け付けられない状態です。";
 }

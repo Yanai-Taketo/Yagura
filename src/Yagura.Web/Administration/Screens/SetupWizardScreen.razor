@@ -1,0 +1,190 @@
+@page "/admin/setup"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Circuits
+@inject ISetupWizardService SetupWizard
+@inject YaguraCircuitContext CircuitContext
+
+@*
+    初期セットアップウィザードの骨格（configuration.md §3〜§7・ui.md §4。M8-4。Issue #71）。
+
+    - 進行状態はサーバ側セッション（ISetupWizardService の実装 = Yagura.Host 管轄）に置き、
+      circuit 喪失後の再入で確定済みステップから再開する（§7）。再開位置は明示する。
+    - 適用は冪等トークンつき（§7 の一回性保証）。反映方式（§3）を適用前に表示する。
+    - 書き込み系サービスの参照は本画面（Yagura.Web.Administration.Screens）に限る——
+      閲覧側コンポーネントからの参照は ViewerComponentReferenceIsolationTests が検出する。
+*@
+<PageTitle>@UiText.AdminSetupWizardTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminSetupWizardTitle</MudText>
+
+@if (_snapshot is null)
+{
+    <MudText>@UiText.AdminScreenAccessChecking</MudText>
+}
+else if (_snapshot.Applied || _applyResult is not null)
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText>@_resultMessage</MudText>
+        @if (_applyResult is { Outcome: WizardApplyOutcome.Applied or WizardApplyOutcome.AlreadyApplied })
+        {
+            <MudText Class="mt-2">@FormatEffect(_applyResult.RequiredEffect)</MudText>
+        }
+    </MudPaper>
+}
+else
+{
+    @if (_snapshot.ConfirmedSteps.Count > 0)
+    {
+        @* 再開位置の明示（configuration.md §7「黙って空フォームに戻さない」） *@
+        <MudText Class="mt-2">@string.Format(UiText.WizardResumeNoticeFormat, StepTitle(_snapshot.NextStep))</MudText>
+    }
+
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@StepTitle(_snapshot.NextStep)</MudText>
+
+        @if (!string.IsNullOrEmpty(_errorText))
+        {
+            <MudText Class="mt-2">@_errorText</MudText>
+        }
+
+        @switch (_snapshot.NextStep)
+        {
+            case SetupWizardStep.Reception:
+                <YaguraTextField Label="UDP 受信ポート" Required="true" @bind-Value="_udpPort" />
+                <YaguraTextField Label="TCP 受信ポート" Required="true" @bind-Value="_tcpPort" />
+                break;
+            case SetupWizardStep.ViewerAccess:
+                <YaguraTextField Label="閲覧ポート" Required="true" @bind-Value="_viewerPort" />
+                <YaguraTextField Label="公開範囲（Lan または LocalhostOnly）" Required="true" @bind-Value="_publicAccess" />
+                <YaguraTextField Label="管理ポート" Required="true" @bind-Value="_adminPort" />
+                break;
+            case SetupWizardStep.Retention:
+                <YaguraTextField Label="@($"{UiText.SetupStepRetentionTitle}（日数）")" Required="true" @bind-Value="_retentionDays" />
+                break;
+            case SetupWizardStep.Review:
+                <MudText>これまでに確定した内容で設定ファイル（yagura.json）を生成します。</MudText>
+                <MudSimpleTable Elevation="0" Dense="true" Class="mt-2">
+                    <tbody>
+                        @foreach (var pair in _snapshot.ConfirmedValues.OrderBy(p => p.Key, StringComparer.Ordinal))
+                        {
+                            <tr><td>@pair.Key</td><td>@pair.Value</td></tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                break;
+        }
+
+        <div class="mt-4">
+            @if (_snapshot.NextStep == SetupWizardStep.Review && _snapshot.ApplyIdempotencyToken is not null)
+            {
+                <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ApplyAsync">@UiText.WizardApply</YaguraButton>
+            }
+            else
+            {
+                <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ConfirmCurrentStepAsync">@UiText.WizardConfirmStep</YaguraButton>
+            }
+        </div>
+    </MudPaper>
+}
+
+@code {
+    private SetupWizardSnapshot? _snapshot;
+    private SetupWizardApplyResult? _applyResult;
+    private string? _resultMessage;
+    private string? _errorText;
+
+    private string? _udpPort = "514";
+    private string? _tcpPort = "514";
+    private string? _viewerPort = "8514";
+    private string? _publicAccess = "Lan";
+    private string? _adminPort = "8515";
+    private string? _retentionDays = "30";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await SetupWizard.GetSnapshotAsync();
+        if (_snapshot.Applied)
+        {
+            _resultMessage = UiText.WizardApplied;
+        }
+    }
+
+    private static string StepTitle(SetupWizardStep step) => step switch
+    {
+        SetupWizardStep.Reception => UiText.SetupStepReceptionTitle,
+        SetupWizardStep.ViewerAccess => UiText.SetupStepViewerAccessTitle,
+        SetupWizardStep.Retention => UiText.SetupStepRetentionTitle,
+        _ => UiText.SetupStepReviewTitle,
+    };
+
+    private static string FormatEffect(ConfigurationApplyEffect effect) => effect switch
+    {
+        ConfigurationApplyEffect.Immediate => UiText.ApplyEffectImmediate,
+        ConfigurationApplyEffect.ListenerReconfiguration => UiText.ApplyEffectListenerReconfiguration,
+        _ => UiText.ApplyEffectRestartRequired,
+    };
+
+    private async Task ConfirmCurrentStepAsync()
+    {
+        if (_snapshot is null)
+        {
+            return;
+        }
+
+        var values = _snapshot.NextStep switch
+        {
+            SetupWizardStep.Reception => new Dictionary<string, string>
+            {
+                [SetupWizardValueKeys.UdpPort] = _udpPort ?? string.Empty,
+                [SetupWizardValueKeys.TcpPort] = _tcpPort ?? string.Empty,
+            },
+            SetupWizardStep.ViewerAccess => new Dictionary<string, string>
+            {
+                [SetupWizardValueKeys.ViewerHttpPort] = _viewerPort ?? string.Empty,
+                [SetupWizardValueKeys.ViewerPublicAccess] = _publicAccess ?? string.Empty,
+                [SetupWizardValueKeys.AdminHttpPort] = _adminPort ?? string.Empty,
+            },
+            SetupWizardStep.Retention => new Dictionary<string, string>
+            {
+                [SetupWizardValueKeys.RetentionDays] = _retentionDays ?? string.Empty,
+            },
+            _ => new Dictionary<string, string>(),
+        };
+
+        try
+        {
+            _errorText = null;
+            _snapshot = await SetupWizard.ConfirmStepAsync(_snapshot.NextStep, values);
+        }
+        catch (WizardValidationException ex)
+        {
+            // 検証エラーは項目直下相当の文言表示（ui.md §3.1——色だけにしない）。
+            _errorText = ex.Message;
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        if (_snapshot?.ApplyIdempotencyToken is not string token)
+        {
+            return;
+        }
+
+        _applyResult = await SetupWizard.ApplyAsync(token, CircuitContext.RemoteAddress);
+        _resultMessage = _applyResult.Outcome switch
+        {
+            WizardApplyOutcome.Applied => UiText.WizardApplied,
+            WizardApplyOutcome.AlreadyApplied => UiText.WizardAlreadyApplied,
+            WizardApplyOutcome.Conflict => UiText.WizardConflict,
+            _ => UiText.WizardInvalidToken,
+        };
+
+        if (_applyResult.Outcome is WizardApplyOutcome.Conflict or WizardApplyOutcome.InvalidToken)
+        {
+            // 再読み込み（確認ステップからのやり直し）のため最新スナップショットを取り直す。
+            _snapshot = await SetupWizard.GetSnapshotAsync();
+        }
+    }
+}

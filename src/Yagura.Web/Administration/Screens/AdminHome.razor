@@ -1,0 +1,19 @@
+@page "/admin"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+
+@*
+    設定トップ（ui.md §4 の画面構成「設定（ウィザード群）」の入口。M8-4 骨格）。
+    管理リスナ帰属・ガードは AdminScreenLayout が担う。
+*@
+<PageTitle>@UiText.AdminHomeTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminHomeTitle</MudText>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudNavMenu>
+        <MudNavLink Href="/admin/setup">@UiText.AdminSetupWizardTitle</MudNavLink>
+        <MudNavLink Href="/admin/promotion">@UiText.AdminPromotionWizardTitle</MudNavLink>
+        <MudNavLink Href="/admin/circuits">@UiText.AdminCircuitsTitle</MudNavLink>
+    </MudNavMenu>
+</MudPaper>

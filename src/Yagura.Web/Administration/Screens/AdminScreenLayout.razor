@@ -1,0 +1,79 @@
+@namespace Yagura.Web.Administration.Screens
+@inherits LayoutComponentBase
+@layout Yagura.Web.Components.Layout.MainLayout
+@using Microsoft.AspNetCore.Http
+@using Yagura.Abstractions.Auditing
+@using Yagura.Web.Administration
+@using Yagura.Web.Circuits
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraAdminListenerPort AdminPort
+@inject IAuditRecorder AuditRecorder
+@inject NavigationManager Navigation
+@inject TimeProvider Time
+
+@*
+    管理画面共通のガードレイアウト（M8-4。Issue #71）。
+
+    管理画面（Yagura.Web.Administration.Screens 配下の全ページ）は必ず本レイアウトを
+    経由する（AdminScreenArchitectureTests が機械検証する）。役割はリスナ帰属の二層目の検査:
+
+    - 一層目（HTTP 到達）: エンドポイントの Admin メタデータ + ListenerPortGuardMiddleware
+      （実ローカルポート判定。閲覧リスナ経由の直接到達は 404 + 監査 3001）
+    - 二層目（circuit 上の対話的ナビゲーション）: 確立済み circuit の対話的ルーターは同一
+      アセンブリ内の @page ルートを HTTP 要求なしに解決できる（security.md §1 L-5 の覆域の
+      限界）ため、circuit 確立時に束縛したリスナ帰属（YaguraCircuitContext）を描画前に検査する
+      （AdminScreenAccessPolicy。fail-closed——帰属不明は描画しない）
+
+    拒否時の表示はポートガードの 404 と同じく存在を説明しない文言とし、拒否は
+    「閲覧リスナに到達した管理系要求の拒否」（security.md §1 L-3b と同じ事象種別・ID 3001）
+    として監査記録する。
+*@
+@switch (_access)
+{
+    case AdminScreenAccess.Allowed:
+        @Body
+        break;
+    case AdminScreenAccess.Denied:
+        <MudText Typo="Typo.h5">@UiText.AdminScreenNotFound</MudText>
+        break;
+    default:
+        <MudText>@UiText.AdminScreenAccessChecking</MudText>
+        break;
+}
+
+@code {
+    /// <summary>
+    /// HTTP 要求文脈（静的 SSR / prerender）でのみ供給されるカスケード値。対話的描画では
+    /// null（公式ドキュメントの制約どおり）——その場合は circuit の帰属で判定する。
+    /// </summary>
+    [CascadingParameter]
+    public HttpContext? HttpContext { get; set; }
+
+    private AdminScreenAccess _access = AdminScreenAccess.Undetermined;
+    private string? _auditedDeniedUri;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _access = AdminScreenAccessPolicy.Decide(
+            HttpContext?.Connection.LocalPort,
+            CircuitContext.IsAdminListener,
+            AdminPort.Port);
+
+        if (_access == AdminScreenAccess.Denied && _auditedDeniedUri != Navigation.Uri)
+        {
+            // 同一 URI への再描画で監査を重複させない（対話的ナビゲーション 1 回 = 1 記録）。
+            _auditedDeniedUri = Navigation.Uri;
+
+            await AuditRecorder.RecordAsync(
+                new AuditEvent(
+                    OccurredAt: Time.GetUtcNow(),
+                    Kind: AuditEventKind.ViewerListenerAdminRequestRejected,
+                    RemoteAddress: CircuitContext.RemoteAddress ?? HttpContext?.Connection.RemoteIpAddress?.ToString(),
+                    RemotePort: HttpContext?.Connection.RemotePort,
+                    AttemptedPath: new Uri(Navigation.Uri).AbsolutePath,
+                    ReachedListenerPort: HttpContext?.Connection.LocalPort,
+                    Detail: "circuit 上の対話的ナビゲーションによる管理画面への到達試行（circuit 層ガード）"),
+                CancellationToken.None);
+        }
+    }
+}

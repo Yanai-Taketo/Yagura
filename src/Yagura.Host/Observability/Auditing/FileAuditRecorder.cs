@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Yagura.Storage.Auditing;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Host.Observability.Auditing;
@@ -81,7 +81,8 @@ public sealed class FileAuditRecorder : IAuditRecorder
         // Windows イベントログへの併記は、アプリ記録ファイルの成否に関わらず常に試みる
         // （security.md §4.2「アプリ記録が書けなければイベントログへ」——アプリ記録が
         // 書けた場合も、独立した経路として二重に記録すること自体が改変耐性の下支えになる。
-        // ADR-0004 決定 7・§4.3「3000 番台 = 拒否・セキュリティ事象。レベルは警告」）。
+        // ADR-0004 決定 7。レベルは §4.3 の区画割当のとおり——2000 番台 = 情報 /
+        // 3000 番台 = 警告——を ResolveLogLevel で機械的に適用する）。
         var eventLogWriteSucceeded = TryWriteEventLog(auditEvent, eventId);
 
         if (!fileWriteSucceeded && !eventLogWriteSucceeded)
@@ -113,6 +114,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
                 RemotePort = auditEvent.RemotePort,
                 AttemptedPath = auditEvent.AttemptedPath,
                 ReachedListenerPort = auditEvent.ReachedListenerPort,
+                Detail = auditEvent.Detail,
             };
 
             var json = JsonSerializer.Serialize(line, SerializerOptions);
@@ -149,14 +151,16 @@ public sealed class FileAuditRecorder : IAuditRecorder
     {
         try
         {
-            _logger.LogWarning(
+            _logger.Log(
+                ResolveLogLevel(eventId),
                 eventId,
-                "[audit] {Kind}: 接続元={RemoteAddress}:{RemotePort} 試行パス={AttemptedPath} 到達リスナポート={ReachedListenerPort}",
+                "[audit] {Kind}: 接続元={RemoteAddress}:{RemotePort} 試行パス={AttemptedPath} 到達リスナポート={ReachedListenerPort} 要約={Detail}",
                 auditEvent.Kind,
                 auditEvent.RemoteAddress ?? "(unknown)",
                 auditEvent.RemotePort,
                 auditEvent.AttemptedPath,
-                auditEvent.ReachedListenerPort);
+                auditEvent.ReachedListenerPort,
+                auditEvent.Detail);
             return true;
         }
         catch (Exception ex)
@@ -179,6 +183,18 @@ public sealed class FileAuditRecorder : IAuditRecorder
     private static EventId ResolveEventId(AuditEventKind kind) => kind switch
     {
         AuditEventKind.ViewerListenerAdminRequestRejected => AuditEventIds.ViewerListenerAdminRequestRejected,
+        AuditEventKind.ConfigurationSaved => AuditEventIds.ConfigurationSaved,
+        AuditEventKind.PromotionConnectionValidated => AuditEventIds.PromotionConnectionValidated,
+        AuditEventKind.PromotionExecuted => AuditEventIds.PromotionExecuted,
+        AuditEventKind.CircuitDisconnected => AuditEventIds.CircuitDisconnected,
+        AuditEventKind.CircuitOriginRejected => AuditEventIds.CircuitOriginRejected,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
+
+    /// <summary>
+    /// イベントレベルの区画割当（security.md §4.3——2000 番台 = 管理操作 = 情報 /
+    /// 3000 番台 = 拒否・セキュリティ事象 = 警告。「レベルだけで最低限の監視が組める」の実装）。
+    /// </summary>
+    internal static LogLevel ResolveLogLevel(EventId eventId) =>
+        eventId.Id is >= 2000 and < 3000 ? LogLevel.Information : LogLevel.Warning;
 }

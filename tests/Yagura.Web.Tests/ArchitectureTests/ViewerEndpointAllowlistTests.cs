@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Yagura.Storage;
-using Yagura.Storage.Auditing;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web.Tests.ArchitectureTests;
@@ -80,6 +80,10 @@ public sealed class ViewerEndpointAllowlistTests
         new("/", new[] { "GET", "POST" }),
         new("/search", new[] { "GET", "POST" }),
         new("/status", new[] { "GET", "POST" }),
+
+        // 接続終了の案内ページ（M8-4。security.md §2.2 の個別切断・SEC-8 の無操作回収の着地先。
+        // circuit を要しない静的応答・読み取り専用 GET のみ——書き込みエンドポイントではない）。
+        new("/circuit-ended", new[] { "GET" }),
 
         // Interactive Server（Blazor Server）circuit の確立に必要な SignalR ハブ関連経路。
         // AddInteractiveServerRenderMode が自動登録するもので、Yagura 側では個別に MapHub 等を
@@ -227,9 +231,14 @@ public sealed class ViewerEndpointAllowlistTests
         Assert.All(adminEndpointRoutes, adminRoute =>
             Assert.DoesNotContain(ViewerAllowlist, e => e.RoutePattern == adminRoute));
 
-        // 逆方向: 現状の管理系エンドポイント(/admin)が実際に存在することも確認する
-        // （「管理系が 0 件だから許可リストに含まれない」という空虚な真になっていないことの保証）。
+        // 逆方向: 管理画面 4 ページ(M8-4。Yagura.Web.Administration.Screens 配下)が実際に
+        // Admin メタデータ付きで存在することも確認する（「管理系が 0 件だから許可リストに
+        // 含まれない」という空虚な真になっていないことの保証。MapYaguraAdmin の名前空間
+        // 由来の機械的付与——convention——が実際に効いていることの検証でもある）。
         Assert.Contains("/admin", adminEndpointRoutes);
+        Assert.Contains("/admin/setup", adminEndpointRoutes);
+        Assert.Contains("/admin/promotion", adminEndpointRoutes);
+        Assert.Contains("/admin/circuits", adminEndpointRoutes);
     }
 
     [Fact]

@@ -25,7 +25,7 @@
 | UI | Blazor Web UI（ADR-0003）、検索・ダッシュボード・セットアップウィザード | —（読み取り側） |
 
 - モジュール間の参照は「ホスト → 各モジュール」「受信・UI → 永続化の抽象インターフェース」のみとし、受信と UI は互いを参照しない
-- **モジュール横断の契約の置き場として `Yagura.Abstractions` を置く**（M6-4。Issue #54 の PR レビューでオーナー決定・2026-07-05）: どの Yagura プロジェクトにも依存しない最下層プロジェクトで、UI が「ホスト管轄の実装を持つサービス」を型として参照するための抽象（現時点では書き込み系サービスのマーカー `IYaguraWriteService`。security.md §1 L-5 の参照分離検査の規約）を置く。**依存を持たないことがこのプロジェクトの成立条件**であり、`ProjectReference` の追加は参照構造の設計変更として扱う。M8 の管理画面実装で書き込み系サービスの契約群が増える際の置き場もここが第一候補となる（監査記録の書き込み口 `IAuditRecorder` 等、現在 `Yagura.Storage` にある横断契約の移設も M8 で判断する）
+- **モジュール横断の契約の置き場として `Yagura.Abstractions` を置く**（M6-4。Issue #54 の PR レビューでオーナー決定・2026-07-05）: どの Yagura プロジェクトにも依存しない最下層プロジェクトで、UI が「ホスト管轄の実装を持つサービス」を型として参照するための抽象を置く。**依存を持たないことがこのプロジェクトの成立条件**であり、`ProjectReference` の追加は参照構造の設計変更として扱う。**M8-4（Issue #71）で M6-4 の申し送り 2 件を決着した**: ①管理画面の書き込み系サービスの契約群（`ISetupWizardService`・`IPromotionWizardService`・`ICircuitManagementService`。いずれもマーカー `IYaguraWriteService` を実装——security.md §1 L-5 の参照分離検査の規約）を `Yagura.Abstractions.Administration` に配置し、実体はウィザード系 = `Yagura.Host.Administration`（設定ファイル・DB 接続の管轄が Host のため）/ circuit 管理 = `Yagura.Web.Administration`（circuit 台帳が Web 層のため）が持つ。②監査記録の書き込み口（`IAuditRecorder`・`AuditEvent`・`AuditEventKind`）を `Yagura.Storage.Auditing` から `Yagura.Abstractions.Auditing` へ**移設した**——監査記録の実体はログ本体の永続化（provider 抽象 = Storage の管轄）とは独立した「ホスト管轄のローカルファイル + イベントログ併記」（security.md §4.2）であり、Web・Host の両方が使う横断契約は最下層に置くのが参照構造として正しいため（実体 `FileAuditRecorder` の結線は従来どおり Host）
 
 ### 1.2 起動順序 — 受信を最初に開く
 

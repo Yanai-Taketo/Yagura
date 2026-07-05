@@ -4,7 +4,7 @@ namespace Yagura.Host.Observability.Auditing;
 /// アプリ記録ファイル（監査記録。security.md §4.2）の JSON Lines 1 行分の形式。
 /// </summary>
 /// <remarks>
-/// <see cref="Yagura.Storage.Auditing.AuditEvent"/> をそのままシリアライズしない理由:
+/// <see cref="Yagura.Abstractions.Auditing.AuditEvent"/> をそのままシリアライズしない理由:
 /// 本形式はファイル上の永続表現として独立に安定させたい（<c>AuditEvent</c> 側のプロパティ名・
 /// 型変更が、既に書き出し済みのファイルの読み直し互換性に直結することを避ける。
 /// <c>Yagura.Host.Configuration.YaguraConfigurationWriter</c>・<c>MetadataStore</c> の
@@ -18,7 +18,7 @@ internal sealed class AuditFileLine
     /// <summary>事象発生時刻（UTC。ISO 8601 ラウンドトリップ形式）。</summary>
     public string? OccurredAtUtc { get; init; }
 
-    /// <summary>事象種別（<see cref="Yagura.Storage.Auditing.AuditEventKind"/> の文字列表現）。</summary>
+    /// <summary>事象種別（<see cref="Yagura.Abstractions.Auditing.AuditEventKind"/> の文字列表現）。</summary>
     public string? Kind { get; init; }
 
     /// <summary>Windows イベントログの併記先イベント ID（<see cref="AuditEventIds"/>）。</summary>
@@ -30,9 +30,12 @@ internal sealed class AuditFileLine
     /// <summary>接続元ポート。</summary>
     public int? RemotePort { get; init; }
 
-    /// <summary>試行されたパス。</summary>
+    /// <summary>試行されたパス（拒否系事象のみ。管理操作では null）。</summary>
     public string? AttemptedPath { get; init; }
 
-    /// <summary>到達したリスナの実ポート番号。</summary>
-    public int ReachedListenerPort { get; init; }
+    /// <summary>到達したリスナの実ポート番号（拒否系事象のみ。管理操作では null。M8-4 で nullable 化——additive）。</summary>
+    public int? ReachedListenerPort { get; init; }
+
+    /// <summary>事象の要約（変更キー・成否等。秘密情報は含まない——security.md §4.1。M8-4 で追加——additive）。</summary>
+    public string? Detail { get; init; }
 }
