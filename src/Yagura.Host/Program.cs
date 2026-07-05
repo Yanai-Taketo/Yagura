@@ -233,7 +233,8 @@ public static class Program
 
         // 保持期間削除スケジューラ（M5-1。database.md §3）。容量枯渇（§1.2 契約 3）を契機とした
         // 前倒し実行の自走復旧経路（§4・§5.3）でもあるため、ICapacityExhaustionHandler として
-        // IngestionPipeline へ渡す——RetentionDays が未設定（既定「削除しない」）でも、
+        // IngestionPipeline へ渡す——RetentionDays が null（既定 30 日への自動フォールバックを
+        // 避ける不正値時のフォールバック。DB-1 確定に伴い既定は通常 30 が入る）でも、
         // スケジューラ自体は常に構成し、容量枯渇時の警告発火（保持期間の設定を促す）は行う。
         builder.Services.AddSingleton(sp => new Yagura.Host.Retention.RetentionScheduler(
             sp.GetRequiredService<ILogStore>(),

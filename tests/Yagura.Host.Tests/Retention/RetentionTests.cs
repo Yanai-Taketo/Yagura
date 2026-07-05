@@ -71,12 +71,12 @@ public sealed class RetentionTests : IDisposable
     }
 
     [Fact]
-    public void Load_RetentionDaysUnset_DefaultsToNoDeletion()
+    public void Load_RetentionDaysUnset_DefaultsTo30Days()
     {
         var result = YaguraConfigurationLoader.Load(_dataRoot, new FakeLogger());
 
-        // DB-1(既定値)確定前の暫定既定 =「削除しない」。
-        Assert.Null(result.Configuration.RetentionDays);
+        // DB-1(既定値): 2026-07-05 オーナー決定により 30 日(PR #64 決定記録)。
+        Assert.Equal(30, result.Configuration.RetentionDays);
         Assert.Empty(result.Warnings);
     }
 
@@ -90,6 +90,8 @@ public sealed class RetentionTests : IDisposable
 
         var result = YaguraConfigurationLoader.Load(_dataRoot, new FakeLogger());
 
+        // 不正値は既定 30 日へは自動フォールバックしない——意図しない自動削除の開始を
+        // 避ける安全側の判断(本 Issue の設計判断。YaguraConfigurationLoader のコメント参照)。
         Assert.Null(result.Configuration.RetentionDays);
         var warning = Assert.Single(result.Warnings);
         Assert.Equal("Retention:Days", warning.Key);

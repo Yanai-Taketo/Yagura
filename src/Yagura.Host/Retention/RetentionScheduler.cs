@@ -14,7 +14,8 @@ namespace Yagura.Host.Retention;
 /// <see cref="RetentionSchedulerOptions.RetentionDays"/> が設定されていれば
 /// <c>基準時刻 - RetentionDays 日</c> より古いレコードを <see cref="ILogStore.DeleteOlderThanAsync"/>
 /// で削除する。<see cref="RetentionSchedulerOptions.RetentionDays"/> が <c>null</c>
-/// （未設定 = 「削除しない」既定。<see cref="RetentionSchedulerOptions"/> のドキュメント参照）の
+/// （「削除しない」。<see cref="RetentionSchedulerOptions"/> のドキュメント参照——設定ファイル
+/// 未設定時の既定は 30 日であり、<c>null</c> になるのは不正値時のフォールバックの場合のみ）の
 /// 場合、定期実行は何もしない（削除を試みない）。
 /// </para>
 /// <para>
