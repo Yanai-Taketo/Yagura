@@ -1,0 +1,121 @@
+@namespace Yagura.Web.Components.Common
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+@*
+    最終更新時刻の常時表示 + ステール警告（ui.md §5.2。M8-2）。
+
+    - 最終更新時刻を常時表示し、表示が古くなったら画面全体に警告を重ねる（時刻表示の
+      色変化だけにしない——暗所の大型モニタで遠目に分かること）
+    - 閾値は仮値: 更新間隔の 3 倍（UI-2。StaleThreshold で上書き可）
+    - 起点はクライアントが最後にデータを受信した時刻 = NotifyUpdatedAsync が呼ばれた時刻
+    - ステール検知と警告の描画はクライアント側 JS（stale-guard.js）で自律動作する:
+      サーバ停止・circuit 回復不能の局面でこそ警告が要るため、サーバ側レンダリングに
+      依存できない。この分離 JS モジュールは ui.md §5.2 が設計上確定した ADR-0003 決定 1 の
+      例外であり、§11 台帳（ページ固有 CSS の例外）の対象外
+    - 警告文言は受信への影響を必ず含める——クライアント単独では「サーバの状態が確認できない」
+      局面と区別できないため、自律表示の文言は ui.md §5.2 の「サーバの状態を確認できない場合」
+      の確定文言を使う。circuit 生存中に更新だけが止まった局面の文言出し分け（接続維持・
+      更新停止）は、更新経路を持つ画面側（M8-3 ダッシュボード）が引き受ける
+    - 役割分担: 本警告は在室者の誤読防止を担い、無人時間帯の実効通知はイベントログ経由の
+      既存監視（architecture.md §4.6）が担う
+*@
+<span class="yagura-last-updated">
+    @UiText.LastUpdatedLabel: <span data-yagura-last-updated-text>@_lastUpdatedText</span>
+</span>
+<div @ref="_overlayElement" class="yagura-stale-overlay" role="alert" aria-hidden="true">
+    <div class="yagura-stale-overlay-panel">
+        <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Large" aria-hidden="true" />
+        <p class="yagura-stale-overlay-title" data-yagura-stale-title></p>
+        <p class="yagura-stale-overlay-body">@UiText.StaleWarningBody</p>
+    </div>
+</div>
+
+@code {
+    private ElementReference _overlayElement;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _watchdog;
+    private string _lastUpdatedText = "—";
+
+    /// <summary>画面の更新間隔（ステール閾値の基準。値は画面ごとに UI-2 で確定）。</summary>
+    [Parameter, EditorRequired]
+    public TimeSpan UpdateInterval { get; set; }
+
+    /// <summary>
+    /// ステール警告の閾値。既定（null）は更新間隔の 3 倍（ui.md §5.2 の仮値。UI-2）。
+    /// </summary>
+    [Parameter]
+    public TimeSpan? StaleThreshold { get; set; }
+
+    /// <summary>時刻表示のタイムゾーン差し替え口（テスト用。既定はサーバ OS タイムゾーン）。</summary>
+    [Parameter]
+    public TimeZoneInfo? TimeZone { get; set; }
+
+    private TimeSpan EffectiveThreshold => StaleThreshold ?? UpdateInterval * 3;
+
+    /// <summary>
+    /// データ受信を通知する（利用側画面がデータ更新のたびに呼ぶ）。最終更新時刻の表示を
+    /// 更新し、クライアント側の監視タイマーを起点からやり直す。
+    /// </summary>
+    /// <param name="receivedAt">受信したデータのサーバ時刻（UTC。表示は ui.md §6 の契約で整形）。</param>
+    public async Task NotifyUpdatedAsync(DateTimeOffset receivedAt)
+    {
+        _lastUpdatedText = YaguraTimeFormatter.FormatLocal(receivedAt, TimeZone ?? TimeZoneInfo.Local);
+        StateHasChanged();
+
+        if (_watchdog is not null)
+        {
+            try
+            {
+                await _watchdog.InvokeVoidAsync("notifyUpdated", BuildStaleTitle());
+            }
+            catch (JSDisconnectedException)
+            {
+                // circuit 喪失後はクライアント側 JS が自律的に警告を出す（本部品の設計意図）。
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // 分離 JS モジュールの読み込み（ui.md §5.2 で設計確定した例外。上部コメント参照）。
+        _module = await JSRuntime.InvokeAsync<IJSObjectReference>(
+            "import", "./_content/Yagura.Web/js/stale-guard.js");
+        _watchdog = await _module.InvokeAsync<IJSObjectReference>(
+            "init",
+            _overlayElement,
+            EffectiveThreshold.TotalMilliseconds,
+            BuildStaleTitle());
+    }
+
+    private string BuildStaleTitle() => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        UiText.StaleWarningTitleFormat,
+        _lastUpdatedText);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_watchdog is not null)
+            {
+                await _watchdog.InvokeVoidAsync("dispose");
+                await _watchdog.DisposeAsync();
+            }
+
+            if (_module is not null)
+            {
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // circuit 喪失時は破棄呼び出しが届かない——ブラウザ側のページ遷移で回収される。
+        }
+    }
+}

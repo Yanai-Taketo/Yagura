@@ -48,11 +48,14 @@ public static class YaguraTheme
             LinesDefault = "#D7DDE4",
             TableLines = "#D7DDE4",
 
-            // 状態色トークン（意味固定。ui.md §2.1）
+            // 状態色トークン（意味固定。ui.md §2.1）。
+            // Warning / Info は UI-1 のコントラスト検証（M8-2。DesignTokenContrastTests）で
+            // 初期値（#B26A00 / #0277BD）が WCAG AA 4.5:1 未達と判明したため調整済み
+            // （ui.md §2.1 の表と同期。§8 に検証記録あり）。
             Success = "#2E7D32",
-            Warning = "#B26A00",
+            Warning = "#A05F00",
             Error = "#C62828",
-            Info = "#0277BD",
+            Info = "#0270B2",
 
             // 派生割当（独立トークンを増やさない。ui.md §2.1.1）:
             // 共通骨格の面（アプリバー・ドロワー）は surface / text-primary を流用する。

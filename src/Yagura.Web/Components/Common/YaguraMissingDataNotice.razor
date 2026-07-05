@@ -1,0 +1,68 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    欠けているデータの明示（ui.md §5.3。M8-2）:「無い」の理由を画面で見分けられるようにする。
+    - 受信断区間（クラッシュ由来の近似断点はその旨を印す）
+    - 保持地平（保持期間外・削除済み）
+    - 検索の打ち切り（件数・条件を絞る案内と共に）
+    状態色は state-info（案内）を使う——データ欠落の「理由の明示」であり、進行中の異常
+    （state-error）とは意味を分ける（ui.md §2.1 状態色の意味固定）。
+    注意（利用側の規約）: 保持地平より古い受信断区間は、保持地平の明示とセットでのみ見せる
+    （誤読防止。ui.md §5.3）。
+
+    時間軸グラフ上の区間描画（ダッシュボード・検索の時間軸表示）は M8-3 の画面実装が担い、
+    本部品は一覧・結果面での文言明示を引き受ける。
+*@
+<MudAlert Severity="Severity.Info"
+          Variant="Variant.Outlined"
+          Dense="true"
+          Class="yagura-missing-data-notice mt-2"
+          role="note">
+    <span>@MainText</span>
+    @if (PeriodStart is not null && PeriodEnd is not null)
+    {
+        <span class="ml-2">
+            <YaguraTimestamp Value="@PeriodStart.Value" TimeZone="@TimeZone" />
+            〜
+            <YaguraTimestamp Value="@PeriodEnd.Value" TimeZone="@TimeZone" />
+        </span>
+    }
+    @if (Kind == YaguraMissingDataKind.ReceptionOutageApproximate)
+    {
+        <MudText Typo="Typo.caption" Class="yagura-missing-data-note">@UiText.MissingDataOutageApproximateNote</MudText>
+    }
+</MudAlert>
+
+@code {
+    /// <summary>欠けている理由の種別。</summary>
+    [Parameter, EditorRequired]
+    public YaguraMissingDataKind Kind { get; set; }
+
+    /// <summary>区間の開始（受信断区間・保持地平の範囲表示に使う。任意）。</summary>
+    [Parameter]
+    public DateTimeOffset? PeriodStart { get; set; }
+
+    /// <summary>区間の終了（任意）。</summary>
+    [Parameter]
+    public DateTimeOffset? PeriodEnd { get; set; }
+
+    /// <summary>打ち切り時の表示済み件数（Kind=SearchTruncated で使用）。</summary>
+    [Parameter]
+    public int? DisplayedCount { get; set; }
+
+    /// <summary>時刻表示のタイムゾーン差し替え口（テスト用。既定はサーバ OS タイムゾーン）。</summary>
+    [Parameter]
+    public TimeZoneInfo? TimeZone { get; set; }
+
+    private string MainText => Kind switch
+    {
+        YaguraMissingDataKind.ReceptionOutage => UiText.MissingDataOutage,
+        YaguraMissingDataKind.ReceptionOutageApproximate => UiText.MissingDataOutage,
+        YaguraMissingDataKind.RetentionHorizon => UiText.MissingDataRetentionHorizon,
+        YaguraMissingDataKind.SearchTruncated => string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            UiText.MissingDataTruncatedFormat,
+            DisplayedCount ?? 0),
+        _ => string.Empty,
+    };
+}

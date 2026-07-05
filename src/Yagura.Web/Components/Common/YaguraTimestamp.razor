@@ -1,0 +1,26 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    時刻表示の共通コンポーネント（ui.md §6。M8-2）: 保存は UTC、表示はサーバの OS
+    タイムゾーンでローカル化し、そのレコードの時刻時点のオフセットを明示する。
+    整形は YaguraTimeFormatter（契約の実装位置）に委譲し、画面ごとの独自書式を持たない。
+    <time> の datetime 属性には ISO 8601 の UTC 表記を出す（機械可読の一意表現）。
+*@
+<time class="yagura-timestamp"
+      datetime="@Value.UtcDateTime.ToString("o", System.Globalization.CultureInfo.InvariantCulture)">@FormattedText</time>
+
+@code {
+    /// <summary>表示対象の時刻（UTC 保存値。database.md §2.2）。</summary>
+    [Parameter, EditorRequired]
+    public DateTimeOffset Value { get; set; }
+
+    /// <summary>
+    /// 表示に使うタイムゾーン。既定（null）はサーバの OS タイムゾーン（ui.md §6 の契約。
+    /// 閲覧者ごとの変換はしない）。テスト・プレビュー用の差し替え口としてのみ公開する。
+    /// </summary>
+    [Parameter]
+    public TimeZoneInfo? TimeZone { get; set; }
+
+    private string FormattedText =>
+        YaguraTimeFormatter.FormatLocal(Value, TimeZone ?? TimeZoneInfo.Local);
+}

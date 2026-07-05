@@ -1,0 +1,61 @@
+@namespace Yagura.Web.Components.Common
+@inject IJSRuntime JSRuntime
+
+@*
+    コピー可能な値の表示（ui.md §3.1 空状態規約の「受信先情報をコピーできる形で表示」の
+    実装部品。M8-2）。試用報告のコピー機能（状態画面。UI-7）でも将来使う想定の汎用部品。
+    値は等幅（生データ系の表示——ui.md §2.2 の等幅スタックを共通コンポーネント実装内部で適用）。
+    クリップボードへの書き込みは標準 API（navigator.clipboard）を IJSRuntime から直接呼ぶ
+    ——手書き JS ファイルは追加しない（ADR-0003 決定 1 の範囲内。テーマ保存と同じ方式）。
+*@
+<div class="yagura-copy-field d-inline-flex align-center">
+    <MudText Typo="Typo.body2" Class="yagura-copy-field-label mr-2">@Label:</MudText>
+    <code class="yagura-copy-field-value yagura-monospace">@Value</code>
+    <MudIconButton Icon="@(_copied ? Icons.Material.Filled.Check : Icons.Material.Outlined.ContentCopy)"
+                   Size="Size.Small"
+                   Class="ml-1"
+                   aria-label="@CopyButtonLabel"
+                   OnClick="CopyAsync" />
+    @if (_copied)
+    {
+        <MudText Typo="Typo.caption" role="status" Class="ml-1">@UiText.CopySucceeded</MudText>
+    }
+    @if (_copyFailed)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Error" role="alert" Class="ml-1">@UiText.CopyFailed</MudText>
+    }
+</div>
+
+@code {
+    private bool _copied;
+    private bool _copyFailed;
+
+    /// <summary>値のラベル（例: 「受信先」）。コピーボタンの読み上げにも使う。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>コピー対象の値（例: 「192.168.1.10:514 (UDP)」）。</summary>
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = string.Empty;
+
+    private string CopyButtonLabel => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        UiText.CopyButtonLabelFormat,
+        Label);
+
+    private async Task CopyAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", Value);
+            _copied = true;
+            _copyFailed = false;
+        }
+        catch (JSException)
+        {
+            // クリップボードが使えない環境（非 https の一部・権限拒否等）では手動コピーを案内する。
+            _copied = false;
+            _copyFailed = true;
+        }
+    }
+}

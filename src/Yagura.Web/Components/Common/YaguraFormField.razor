@@ -1,0 +1,55 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    フォーム項目の共通枠（ui.md §3.1 フォーム規約。M8-2）:
+    - ラベルは入力の上
+    - 必須項目は「必須」表記（記号 * だけにしない）
+    - 検証エラーは項目直下に文言で表示（色だけにしない——文言そのものが色以外の手がかり）
+    入力部品（YaguraTextField 等）は本枠の上に組む。
+*@
+<div class="yagura-form-field mb-4">
+    <label class="yagura-form-field-label" for="@InputId">
+        <MudText Typo="Typo.subtitle2" Inline="true">@Label</MudText>
+        @if (Required)
+        {
+            <MudText Typo="Typo.caption" Inline="true" Class="yagura-form-field-required ml-1">（@UiText.FormRequiredMark）</MudText>
+        }
+    </label>
+    @if (!string.IsNullOrEmpty(HelpText))
+    {
+        <MudText Typo="Typo.caption" Class="yagura-form-field-help">@HelpText</MudText>
+    }
+    <div class="yagura-form-field-input mt-1">
+        @ChildContent
+    </div>
+    @if (!string.IsNullOrEmpty(ErrorText))
+    {
+        <MudText Typo="Typo.caption" Color="Color.Error" Class="yagura-form-field-error mt-1" role="alert">@ErrorText</MudText>
+    }
+</div>
+
+@code {
+    /// <summary>項目のラベル（入力の上に表示。ui.md §3.1）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>必須項目か（「必須」表記を付ける。ui.md §3.1）。</summary>
+    [Parameter]
+    public bool Required { get; set; }
+
+    /// <summary>検証エラー文言（項目直下に表示。null/空なら非表示）。</summary>
+    [Parameter]
+    public string? ErrorText { get; set; }
+
+    /// <summary>補足説明（任意。ラベルと入力の間に表示）。</summary>
+    [Parameter]
+    public string? HelpText { get; set; }
+
+    /// <summary>ラベルと入力要素を関連付ける id（支援技術向け。ui.md §8）。</summary>
+    [Parameter]
+    public string? InputId { get; set; }
+
+    /// <summary>入力部品。</summary>
+    [Parameter, EditorRequired]
+    public RenderFragment? ChildContent { get; set; }
+}

@@ -1,0 +1,101 @@
+@namespace Yagura.Web.Components.Common
+@inject IDialogService DialogService
+
+@*
+    ボタンの共通コンポーネント（ui.md §3.1 ボタン規約。M8-2）。
+
+    - 主ボタン（Role=Primary。primary 塗り）は 1 ビューに 1 つまで——ビュー = 同時に視認
+      される単位（ページ本体・ダイアログ・ウィザードの 1 ステップはそれぞれ別のビュー）。
+      個数の制約は静的検査できないため、利用側画面のレビュー観点とする。
+    - 破壊的操作（Role=Destructive）は state-error 系 + 確認ダイアログ必須。本コンポーネントが
+      確認ダイアログの表示を内蔵し、確認なしで OnClick が呼ばれない構造にする。
+*@
+<MudButton Variant="@Variant"
+           Color="@Color"
+           Disabled="@Disabled"
+           StartIcon="@StartIcon"
+           ButtonType="@ButtonType"
+           OnClick="HandleClickAsync">@ChildContent</MudButton>
+
+@code {
+    /// <summary>ボタンの役割（既定: 通常操作）。</summary>
+    [Parameter]
+    public YaguraButtonRole Role { get; set; } = YaguraButtonRole.Normal;
+
+    /// <summary>ボタンの表示内容（文言）。</summary>
+    [Parameter, EditorRequired]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// クリック時の処理。Role=Destructive の場合は確認ダイアログで確認された後にのみ呼ばれる。
+    /// </summary>
+    [Parameter]
+    public EventCallback<MouseEventArgs> OnClick { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    /// <summary>先頭アイコン（任意。状態・エラーの伝達は色 + アイコンまたは文言で——ui.md §8）。</summary>
+    [Parameter]
+    public string? StartIcon { get; set; }
+
+    /// <summary>HTML のボタン型（フォーム送信に使う場合は Submit）。</summary>
+    [Parameter]
+    public ButtonType ButtonType { get; set; } = ButtonType.Button;
+
+    /// <summary>確認ダイアログの見出し（Role=Destructive で必須）。</summary>
+    [Parameter]
+    public string? ConfirmTitle { get; set; }
+
+    /// <summary>確認ダイアログに出す「何が起きるかの要約」（Role=Destructive で必須。ui.md §3.1）。</summary>
+    [Parameter]
+    public string? ConfirmSummary { get; set; }
+
+    /// <summary>確認ダイアログの確認ボタン文言（Role=Destructive で必須）。</summary>
+    [Parameter]
+    public string? ConfirmActionLabel { get; set; }
+
+    private Variant Variant => Role switch
+    {
+        YaguraButtonRole.Primary => Variant.Filled,
+        YaguraButtonRole.Destructive => Variant.Filled,
+        _ => Variant.Outlined,
+    };
+
+    private Color Color => Role switch
+    {
+        YaguraButtonRole.Primary => Color.Primary,
+        YaguraButtonRole.Destructive => Color.Error,
+        _ => Color.Default,
+    };
+
+    protected override void OnParametersSet()
+    {
+        // 確認ダイアログ必須（ui.md §3.1）を構造で強制する: 破壊的操作なのに確認内容が
+        // 与えられていない使い方は実装誤りとして即座に失敗させる。
+        if (Role == YaguraButtonRole.Destructive &&
+            (string.IsNullOrWhiteSpace(ConfirmTitle) ||
+             string.IsNullOrWhiteSpace(ConfirmSummary) ||
+             string.IsNullOrWhiteSpace(ConfirmActionLabel)))
+        {
+            throw new InvalidOperationException(
+                "破壊的操作のボタン（Role=Destructive）には ConfirmTitle・ConfirmSummary・" +
+                "ConfirmActionLabel が必須です（確認ダイアログ必須——ui.md §3.1 ボタン規約）。");
+        }
+    }
+
+    private async Task HandleClickAsync(MouseEventArgs args)
+    {
+        if (Role == YaguraButtonRole.Destructive)
+        {
+            var confirmed = await YaguraConfirmDialog.ShowAsync(
+                DialogService, ConfirmTitle!, ConfirmSummary!, ConfirmActionLabel!, destructive: true);
+            if (!confirmed)
+            {
+                return;
+            }
+        }
+
+        await OnClick.InvokeAsync(args);
+    }
+}

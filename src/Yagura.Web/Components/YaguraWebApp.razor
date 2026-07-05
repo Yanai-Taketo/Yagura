@@ -16,6 +16,13 @@
         生成 CSS にも現れない。
     -->
     <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
+    <!--
+        共通コンポーネントの内部スタイル（M8-2。ui.md §2.1「独自の CSS 変数の併設は
+        共通コンポーネントの実装内部に限る」の実装位置。色はすべてテーマ由来の CSS 変数
+        （mud-palette 系）を参照し、hex 直書きを持たない）。閲覧リスナの配信面の増加は
+        L-5 許可リスト（ViewerEndpointAllowlistTests）へ同一 PR で反映済み。
+    -->
+    <link rel="stylesheet" href="_content/Yagura.Web/css/yagura-components.css" />
     <!-- 各ページの <PageTitle> がここへ描画され、上の既定 <title> を置き換える。 -->
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>

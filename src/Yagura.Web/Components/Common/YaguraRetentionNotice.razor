@@ -1,0 +1,22 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    保持期間の常時明示（ui.md §5.3。M8-2）: ダッシュボードに「◯日より古いログは自動的に
+    削除されます」の現在値を常時表示する（database.md §3 の引き受け）。
+    ファーストラン完了画面でも同じ部品で案内する。
+*@
+<div class="yagura-retention-notice d-inline-flex align-center" role="note">
+    <MudIcon Icon="@Icons.Material.Outlined.AutoDelete" Size="Size.Small" aria-hidden="true" Class="mr-1" />
+    <MudText Typo="Typo.caption">@NoticeText</MudText>
+</div>
+
+@code {
+    /// <summary>保持期間の現在値（日数。configuration.md の retention 設定の適用値）。</summary>
+    [Parameter, EditorRequired]
+    public int RetentionDays { get; set; }
+
+    private string NoticeText => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        UiText.RetentionNoticeFormat,
+        RetentionDays);
+}
