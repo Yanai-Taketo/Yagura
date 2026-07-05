@@ -190,6 +190,14 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         }
     }
 
+    // SqlServerFailureClassifier.IsPermissionFailure が true を返すエラー番号のうち、
+    // 4060（CannotOpenDatabase）は「DB 不在」と「ログインに CONNECT 権限がない」の 2 通りの
+    // 原因が同一番号に重なる（Microsoft Learn "Database Engine events and errors" の
+    // 記載——確認日 2026-07-05——は原因を区別しない）。両者は提示すべき SQL が異なる
+    // （前者は CREATE DATABASE から必要、後者はログイン作成・権限付与のみで足りる）ため、
+    // 提示 SQL を作る側で両方に対応できる形にする（コードレビューで指摘・確認済み）。
+    private const int CannotOpenDatabaseErrorNumber = 4060;
+
     /// <summary>
     /// 権限不足時の <see cref="SchemaPermissionException"/> を組み立てる（database.md §5.2）。
     /// </summary>
@@ -206,9 +214,29 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             ? "<Windows または SQL ログイン名>"
             : builder.UserID;
 
-        var missingPermission =
-            $"データベース '{databaseName}' に対するスキーマ作成・変更権限（CREATE TABLE 等）が不足しています " +
-            $"(SqlErrorNumber={ex.Number})。";
+        var isCannotOpenDatabase = ex.Number == CannotOpenDatabaseErrorNumber;
+
+        var missingPermission = isCannotOpenDatabase
+            ? $"データベース '{databaseName}' に接続できません——データベースが存在しないか、" +
+              $"ログインに CONNECT 権限がありません (SqlErrorNumber={ex.Number})。"
+            : $"データベース '{databaseName}' に対するスキーマ作成・変更権限（CREATE TABLE 等）が不足しています " +
+              $"(SqlErrorNumber={ex.Number})。";
+
+        // 4060 はデータベース不在の可能性があるため、提示 SQL は「無ければ作成」を先頭に含める
+        // （既存データベースへの接続時に不要な CREATE DATABASE は実行されない——IF NOT EXISTS 相当）。
+        // それ以外（229 権限不足・18456 ログイン失敗）は既存データベースへの到達は確認済みのため、
+        // データベース作成手順を含めない。
+        var createDatabaseStep = isCannotOpenDatabase
+            ? $"""
+              -- SqlErrorNumber 4060 はデータベース不在・CONNECT 権限不足の両方で発生し得るため、
+              -- まずデータベースの存在を確認し、無ければ作成する（既存データベースならこのブロックは何もしない）。
+              IF DB_ID(N'{databaseName}') IS NULL
+              BEGIN
+                  CREATE DATABASE [{databaseName}];
+              END;
+
+              """
+            : string.Empty;
 
         var remediationSql =
             $"""
@@ -216,7 +244,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             -- Windows 統合認証を第一推奨とするため、ログイン作成は既定でこの方式を示す。
             -- SQL 認証を選んだ場合、パスワード部は下記のプレースホルダを埋めて実行すること
             -- （このファイル自体にパスワードの実値を書かない——依頼文としてそのまま流通させるため）。
-            USE [{databaseName}];
+            {createDatabaseStep}USE [{databaseName}];
             IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{loginName}')
             BEGIN
                 CREATE USER [{loginName}] FOR LOGIN [{loginName}];
@@ -438,11 +466,24 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                     AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
                     ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
                     MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                    Message: TruncateMessage(message, query.MessageProjectionLength)));
+                    Message: MessageProjection.Truncate(message, query.MessageProjectionLength)));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
+            throw new TimeoutException($"検索がタイムアウト時間 {query.Timeout} を超過した。");
+        }
+        catch (SqlException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Microsoft.Data.SqlClient は CancellationToken によるキャンセルを OperationCanceledException
+            // ではなく SqlException（メッセージ "Operation cancelled by user" 相当。ロケール依存で
+            // 翻訳される）として送出する（dotnet/SqlClient の公開 Issue #26・#2424 で maintainer が
+            // ".NET Framework と同一の挙動であり、変更予定はない" と明言——確認日 2026-07-05）。
+            // 上の catch (OperationCanceledException) 節だけではこのキャンセル経路を捕捉できないため、
+            // SqlException 側でも同じタイムアウト条件（timeoutCts が発火し、かつ外部キャンセルではない）
+            // を判定し、TimeoutException へ変換する。この節は次の catch (SqlException ex) より
+            // 先に評価されるため、キャンセル起因の SqlException が「対話的検索」の恒久障害として
+            // 誤分類されることを防ぐ。
             throw new TimeoutException($"検索がタイムアウト時間 {query.Timeout} を超過した。");
         }
         catch (SqlException ex)
@@ -452,9 +493,6 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
 
         return results;
     }
-
-    private static string? TruncateMessage(string? message, int projectionLength) =>
-        message is null || message.Length <= projectionLength ? message : message[..projectionLength];
 
     private static string EscapeLikePattern(string value)
     {
@@ -657,7 +695,10 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
     {
         // Microsoft.Data.SqlClient も既定で接続プーリングを行う。SqliteLogStore と平行に、
         // 明示的な破棄経路を用意する（テスト・退避処理でのプール解放を安全にするため）。
-        SqlConnection.ClearPool(new SqlConnection(_connectionString));
+        // ClearPool は未オープンの SqlConnection インスタンスを鍵として渡せば足りるが、
+        // そのインスタンス自体は使い捨てのため確実に破棄する（using で漏れを防ぐ）。
+        using var connection = new SqlConnection(_connectionString);
+        SqlConnection.ClearPool(connection);
         return ValueTask.CompletedTask;
     }
 }

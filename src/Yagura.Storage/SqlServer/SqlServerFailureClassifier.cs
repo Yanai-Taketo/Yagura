@@ -39,6 +39,16 @@ namespace Yagura.Storage.SqlServer;
 /// 由来の <c>-2</c>（コマンドタイムアウト）等を個別に追加する拡張余地を残すが、v0.1 時点で確実に
 /// 出典確認できた上記 7 番号のみを表に含める。
 /// </para>
+/// <para>
+/// <b>4060（CannotOpenDatabase）の Permanent 分類は安全側判断であり、実際には 2 系統の原因が
+/// 同一番号に重なる</b>（コードレビューで指摘・確認済み）: (a) データベース不在（設定・DBA 作業漏れ。
+/// 恒久）、(b) ログインの CONNECT 権限がまだ反映されていない一時的な状態（権限付与直後の
+/// キャッシュ未更新等。理論上は一時的）。両者を SqlException.Number だけで区別する手段がないため、
+/// 上記「未知コードは安全側」と同じ理由で Permanent へ寄せる——(b) を Transient と誤分類し
+/// 無限リトライへ落とす害の方が、(a) を Permanent 扱いして早期に警告する保守的な挙動より大きいと
+/// 判断した。<see cref="SqlServerLogStore.BuildSchemaPermissionException"/> の提示 SQL は
+/// この二重原因を踏まえ、データベース不在の場合の <c>CREATE DATABASE</c> 手順も含める。
+/// </para>
 /// </remarks>
 internal static class SqlServerFailureClassifier
 {
