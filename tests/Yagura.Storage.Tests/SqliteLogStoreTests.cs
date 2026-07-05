@@ -194,6 +194,109 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
         Assert.Equal(batchCount * recordsPerBatch, finalResults.Count);
     }
 
+    // ------------------------------------------------------------------
+    // システムイベント（database.md §2.3。M4-4: architecture.md §4.4 受信断可視化）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task WriteSystemEventAsync_NormalStopKind_PersistsAllColumns()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        var systemEvent = new SystemEvent(
+            Kind: "downtime.normal-stop",
+            StartAt: baseline.AddMinutes(-5),
+            EndAt: baseline,
+            Approximate: false,
+            Details: "test detail");
+
+        await _store.WriteSystemEventAsync(systemEvent);
+
+        var (kind, startAt, endAt, approximate, details) = await ReadSingleSystemEventAsync();
+        Assert.Equal("downtime.normal-stop", kind);
+        Assert.Equal(systemEvent.StartAt.UtcDateTime, startAt, TimeSpan.FromMilliseconds(1));
+        Assert.Equal(systemEvent.EndAt.UtcDateTime, endAt, TimeSpan.FromMilliseconds(1));
+        Assert.False(approximate);
+        Assert.Equal("test detail", details);
+    }
+
+    [Fact]
+    public async Task WriteSystemEventAsync_ApproximateCrashKind_PersistsApproximateTrue()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        var systemEvent = new SystemEvent(
+            Kind: "downtime.crash-approximate",
+            StartAt: baseline.AddHours(-1),
+            EndAt: baseline,
+            Approximate: true);
+
+        await _store.WriteSystemEventAsync(systemEvent);
+
+        var (kind, _, _, approximate, details) = await ReadSingleSystemEventAsync();
+        Assert.Equal("downtime.crash-approximate", kind);
+        Assert.True(approximate);
+        Assert.Null(details);
+    }
+
+    [Fact]
+    public async Task WriteSystemEventAsync_MultipleEvents_AllPersisted()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+
+        await _store.WriteSystemEventAsync(new SystemEvent("downtime.normal-stop", baseline.AddMinutes(-10), baseline.AddMinutes(-9), false));
+        await _store.WriteSystemEventAsync(new SystemEvent("downtime.crash-approximate", baseline.AddMinutes(-5), baseline, true));
+
+        var count = await WithConnectionAsync(async connection =>
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM SystemEvents;";
+            return (long)(await command.ExecuteScalarAsync())!;
+        });
+
+        Assert.Equal(2, count);
+    }
+
+    /// <summary>
+    /// テスト用の読み取り接続を開いて操作し、確実にプールをクリアしてから返す
+    /// （<see cref="SqliteLogStore.DisposeAsync"/> と同じ理由——テスト終了時の
+    /// データベースファイル削除が「別プロセスが使用中」で失敗しないようにするため。
+    /// Microsoft.Data.Sqlite は既定でネイティブ接続をプールし、<c>Dispose</c> 後も
+    /// OS レベルのハンドルを保持し得る）。
+    /// </summary>
+    private async Task<T> WithConnectionAsync<T>(Func<SqliteConnection, Task<T>> action)
+    {
+        var connectionString = new SqliteConnectionStringBuilder { DataSource = _databasePath }.ToString();
+        try
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync();
+            return await action(connection);
+        }
+        finally
+        {
+            using var poolConnection = new SqliteConnection(connectionString);
+            SqliteConnection.ClearPool(poolConnection);
+        }
+    }
+
+    private Task<(string Kind, DateTime StartAt, DateTime EndAt, bool Approximate, string? Details)> ReadSingleSystemEventAsync() =>
+        WithConnectionAsync(async connection =>
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT Kind, StartAt, EndAt, Approximate, Details FROM SystemEvents;";
+            await using var reader = await command.ExecuteReaderAsync();
+
+            Assert.True(await reader.ReadAsync());
+            var result = (
+                reader.GetString(0),
+                DateTime.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind),
+                DateTime.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind),
+                reader.GetInt64(3) != 0,
+                reader.IsDBNull(4) ? null : reader.GetString(4));
+
+            Assert.False(await reader.ReadAsync(), "1 件のみ書き込んだはずが複数件検出された。");
+            return result;
+        });
+
     private static LogRecord CreateParsedRecord(DateTimeOffset receivedAt, string sourceAddress, string message) =>
         new(
             ReceivedAt: receivedAt,

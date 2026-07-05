@@ -135,5 +135,8 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
             TimeSpan timeout,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
+        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 }

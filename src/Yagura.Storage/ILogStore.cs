@@ -43,4 +43,17 @@ public interface ILogStore
         int limit,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// システムイベント（database.md §2.3。受信断区間・保持期間削除の実行記録等）を 1 件書き込む
+    /// （M4-4。architecture.md §4.4「受信断区間の保存…は通常のパイプライン（スプールを含む
+    /// 耐障害経路）を通す——DB 障害中の起動でも記録が失われない」）。
+    /// </summary>
+    /// <remarks>
+    /// M4-4 時点では呼び出し側（ホスト起動時の受信断区間確定）が直接呼ぶ形とし、
+    /// スプール経由の耐障害化は M5 の契約完全化で正式化する（本 Issue の依頼コメント
+    /// 「契約の追加。M5 の契約完全化で正式化される前提でよい」に対応する）。
+    /// </remarks>
+    /// <param name="systemEvent">書き込むシステムイベント。<see cref="SystemEvent.Id"/> は無視され、provider が採番する。</param>
+    Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default);
 }

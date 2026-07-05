@@ -184,29 +184,43 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// Q1/Q2 に残る分を DB へ書き切るのを待たずスプールへ退避する。
     /// </summary>
     /// <remarks>
-    /// 完全な停止順序保証（メタデータ領域へのカウンタ書き込み等）は後続マイルストーンで扱う。
-    /// <see cref="TcpSyslogListener.StopAsync"/> は内部で「リスナ停止 → 各接続の読み取り
-    /// ループ終了待ち（Incomplete 化を含む）」まで完結させるため、ここでは UDP・TCP の
-    /// どちらも同列に await するだけでよい。手順 2 のスプール退避は
-    /// <see cref="ParsingStage.RunAsync"/> / <see cref="PersistenceWriter.RunAsync"/> が
-    /// <c>stoppingToken</c> のキャンセルを検知した時点でそれぞれ担う（§1.3）。
+    /// <see cref="StopListenersAsync"/>（手順 1）と <see cref="DrainConsumersAsync"/>（手順 2）
+    /// をこの順で呼ぶだけの結合メソッド。ホスト側（<see cref="Yagura.Host.IngestionHostedService"/>）
+    /// は M4-4 でメタデータ領域への書き込み（手順 1 直後のカウンタ書き込み・手順 2 完了後の
+    /// 最終値書き込みと正常停止イベント記録）を手順の間に挟む必要があるため、2 メソッドを
+    /// 個別に呼び出す。本メソッドは「間に何も挟まない」呼び出し元（既存テスト等）向けに残す。
     /// </remarks>
     public async Task StopAsync()
     {
-        // 手順 1: 受信ソケットを閉じる。以降の到着分はロスになる（§1.3 手順 1 相当）。
-        // UDP・TCP を並行して停止する（依頼「停止順序: リスナ停止 → 接続クローズ → drain」——
-        // TCP 側の接続クローズは TcpSyslogListener.StopAsync 内で行われる）。
-        await Task.WhenAll(_udpListener.StopAsync(), _tcpListener.StopAsync()).ConfigureAwait(false);
+        await StopListenersAsync().ConfigureAwait(false);
+        await DrainConsumersAsync().ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// 停止手順 1（architecture.md §1.3）: 受信ソケットを閉じる（TCP は接続クローズまで含む）。
+    /// 以降の到着分はロスになる。UDP・TCP を並行して停止する（依頼「停止順序: リスナ停止 →
+    /// 接続クローズ → drain」——TCP 側の接続クローズは <see cref="TcpSyslogListener.StopAsync"/>
+    /// 内で行われる）。
+    /// </summary>
+    public async Task StopListenersAsync()
+    {
+        await Task.WhenAll(_udpListener.StopAsync(), _tcpListener.StopAsync()).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 停止手順 2（architecture.md §1.3）: 消費ループを停止する。<see cref="ParsingStage.RunAsync"/> /
+    /// <see cref="PersistenceWriter.RunAsync"/> は停止要求を検知した時点で、DB を待たず Q1/Q2 の
+    /// 残りをスプールへ退避する。drain コーディネータも同じトークンで停止する（drain 中の
+    /// セグメントは未消化のまま残り、次回起動時に再開される）。<see cref="StopListenersAsync"/>
+    /// の後に呼ぶ想定（受信を止めてから drain する。§1.3 の順序）。
+    /// </summary>
+    public async Task DrainConsumersAsync()
+    {
         if (_consumerStoppingCts is null)
         {
             return;
         }
 
-        // 手順 2: 消費ループを停止する。ParsingStage・PersistenceWriter は停止要求を
-        // 検知した時点で、DB を待たず Q1/Q2 の残りをスプールへ退避する（§1.3）。
-        // drain コーディネータも同じトークンで停止する（drain 中のセグメントは未消化のまま
-        // 残り、次回起動時に再開される）。
         _consumerStoppingCts.Cancel();
 
         var consumerTasks = new List<Task>(3);
