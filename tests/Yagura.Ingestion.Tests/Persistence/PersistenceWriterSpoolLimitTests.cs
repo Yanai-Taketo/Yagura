@@ -112,7 +112,7 @@ public sealed class PersistenceWriterSpoolLimitTests : IDisposable
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default) =>
-            throw new IOException("simulated permanent disk error");
+            throw new LogStoreWriteException(LogStoreFailureKind.Permanent, "simulated permanent disk error");
 
         public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(
             int limit,
@@ -120,7 +120,20 @@ public sealed class PersistenceWriterSpoolLimitTests : IDisposable
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
 
+        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
+            LogQuery query,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
         public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+
+        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
+            DateTimeOffset cutoff,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeleteOlderThanResult(0, cutoff));
+
+        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LogStoreStatistics(0, 0));
     }
 }

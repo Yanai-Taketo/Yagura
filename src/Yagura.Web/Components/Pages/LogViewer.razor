@@ -56,6 +56,10 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        // M5-1 で ILogStore.QueryLatestAsync は QueryAsync(LogQuery) への薄い委譲になった
+        // （database.md §1.2 契約 4 完全化）。本画面はまだ条件絞り込み UI を持たないため、
+        // 引き続き QueryLatestAsync（条件なしの特殊形）を呼ぶ——絞り込み UI は M8 のデザイン
+        // システム反映と合わせて追加する想定。
         _records = await LogStore.QueryLatestAsync(MaxRecords, QueryTimeout);
     }
 

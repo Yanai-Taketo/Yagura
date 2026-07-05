@@ -119,7 +119,7 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
         {
             if (Interlocked.Increment(ref _attemptCount) == 1)
             {
-                throw new IOException("simulated transient disk error");
+                throw new LogStoreWriteException(LogStoreFailureKind.Transient, "simulated transient disk error");
             }
 
             lock (WrittenRecords)
@@ -136,7 +136,20 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
 
+        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
+            LogQuery query,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
         public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+
+        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
+            DateTimeOffset cutoff,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeleteOlderThanResult(0, cutoff));
+
+        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LogStoreStatistics(0, 0));
     }
 }

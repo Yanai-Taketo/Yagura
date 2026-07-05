@@ -50,7 +50,7 @@ public static class YaguraConfigurationLoader
     /// 未知キー検出（§1）の基準集合。additive-only の起点として、キーを追加した際は
     /// 必ずこの一覧と configuration.md §8 の両方を更新すること（conventions.md 参照）。
     /// </summary>
-    private static readonly HashSet<string> KnownKeys = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> KnownKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "Ingestion:Udp:BindAddress",
         "Ingestion:Udp:Port",
@@ -61,6 +61,8 @@ public static class YaguraConfigurationLoader
         "Spool:Enabled",
         "Spool:Directory",
         "Spool:QuotaBytes",
+        "Retention:Days",
+        "Retention:ExecutionTimeOfDay",
     };
 
     /// <summary>
@@ -119,6 +121,10 @@ public static class YaguraConfigurationLoader
         var spoolDirectory = ResolveSpoolDirectory(options, dataRoot, warnings);
         var spoolQuotaBytes = ResolveSpoolQuotaBytes(options, warnings);
 
+        // --- 保持期間: 日数・実行時間帯（§1「既定値で継続」。M5-1） ---
+        var retentionDays = ResolveRetentionDays(options, warnings);
+        var retentionExecutionTimeOfDay = ResolveRetentionExecutionTimeOfDay(options, warnings);
+
         foreach (var warning in warnings)
         {
             logger.LogWarning(
@@ -139,7 +145,9 @@ public static class YaguraConfigurationLoader
             SqliteFileName: sqliteFileName,
             SpoolEnabled: spoolEnabled,
             SpoolDirectory: spoolDirectory,
-            SpoolQuotaBytes: spoolQuotaBytes);
+            SpoolQuotaBytes: spoolQuotaBytes,
+            RetentionDays: retentionDays,
+            RetentionExecutionTimeOfDay: retentionExecutionTimeOfDay);
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
     }
@@ -462,6 +470,63 @@ public static class YaguraConfigurationLoader
             Reason: "正の整数（バイト数）として不正なため既定値を適用"));
 
         return defaultQuotaBytes;
+    }
+
+    /// <summary>
+    /// 保持期間（日数）を解決する（database.md §3・DB-1。§1「既定値で継続」）。
+    /// <b>未設定時の既定は「削除しない」（<c>null</c>）</b>——DB-1（既定日数）は実測後に
+    /// オーナー相談の約束であり、実測前に何らかの日数を既定として自動削除を始めると、
+    /// 利用者が気づかないまま調査対象のログが消える事故になり得る（ゼロ設定ファーストランの
+    /// 環境ほど設定を触らないため、この事故リスクが最も高い）。安全側に倒し、明示的に
+    /// 日数を設定しない限り保持期間削除は動作しない、を本 Issue の設計判断とする。
+    /// </summary>
+    private static int? ResolveRetentionDays(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Retention?.Days;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) && days > 0)
+        {
+            return days;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Retention:Days",
+            InvalidValue: raw,
+            AppliedValue: "(未設定 = 削除しない)",
+            Reason: "正の整数（日数）として不正なため「削除しない」を適用"));
+
+        return null;
+    }
+
+    /// <summary>
+    /// 保持期間削除の定期実行時刻を解決する（database.md §3。§1「既定値で継続」）。
+    /// </summary>
+    private static TimeOnly ResolveRetentionExecutionTimeOfDay(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var defaultTimeOfDay = Yagura.Host.Retention.RetentionSchedulerOptions.DefaultExecutionTimeOfDay;
+
+        var raw = options.Retention?.ExecutionTimeOfDay;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultTimeOfDay;
+        }
+
+        if (TimeOnly.TryParseExact(raw, "HH\\:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var timeOfDay))
+        {
+            return timeOfDay;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Retention:ExecutionTimeOfDay",
+            InvalidValue: raw,
+            AppliedValue: defaultTimeOfDay.ToString("HH:mm", CultureInfo.InvariantCulture),
+            Reason: "HH:mm 形式の時刻として不正なため既定値を適用"));
+
+        return defaultTimeOfDay;
     }
 
     private static int ParsePortOrThrow(string raw, string key, string source)

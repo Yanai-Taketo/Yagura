@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Yagura.Host.Observability;
+using Yagura.Host.Retention;
 using Yagura.Ingestion;
 using Yagura.Storage;
 
@@ -38,22 +39,26 @@ public sealed class IngestionHostedService : IHostedService
     private readonly IngestionPipeline _pipeline;
     private readonly ILogStore _logStore;
     private readonly ObservabilityCoordinator _observability;
+    private readonly RetentionScheduler _retentionScheduler;
     private readonly ILogger<IngestionHostedService> _logger;
 
     public IngestionHostedService(
         IngestionPipeline pipeline,
         ILogStore logStore,
         ObservabilityCoordinator observability,
+        RetentionScheduler retentionScheduler,
         ILogger<IngestionHostedService> logger)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(logStore);
         ArgumentNullException.ThrowIfNull(observability);
+        ArgumentNullException.ThrowIfNull(retentionScheduler);
         ArgumentNullException.ThrowIfNull(logger);
 
         _pipeline = pipeline;
         _logStore = logStore;
         _observability = observability;
+        _retentionScheduler = retentionScheduler;
         _logger = logger;
     }
 
@@ -115,10 +120,19 @@ public sealed class IngestionHostedService : IHostedService
         // メタデータ領域の定期永続化（§4.3・§4.4）はコンシューマ開始後に始める
         // （受信・消費が動き出してからカウンタ・生存時刻の定期観測を始めれば十分なため）。
         _observability.StartPeriodicPersistence();
+
+        // 保持期間削除の定期実行（database.md §3・M5-1）もコンシューマ開始後に始める。
+        // RetentionScheduler は容量枯渇契機の前倒し実行（ICapacityExhaustionHandler）としても
+        // IngestionPipeline へ渡し済みのため、ここでは定期実行ループの開始のみを行う。
+        _retentionScheduler.Start();
+        _logger.LogInformation("Retention delete scheduler started.");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // 保持期間削除の定期実行を止める。
+        await _retentionScheduler.StopAsync().ConfigureAwait(false);
+
         // 定期永続化ループを止める（以降はここで明示的に手順 1・3 の書き込みを行う）。
         await _observability.StopAsync().ConfigureAwait(false);
 

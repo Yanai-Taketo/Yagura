@@ -18,6 +18,10 @@
 /// <param name="SpoolEnabled">スプールの有効/無効（既定 <c>true</c>。opt-out。M4-3）。</param>
 /// <param name="SpoolDirectory">スプールディレクトリの絶対パス（既定はデータルート配下。M4-3）。</param>
 /// <param name="SpoolQuotaBytes">スプールのディスク使用量上限（バイト。M-12 実測確定待ちの暫定既定値。M4-3）。</param>
+/// <param name="RetentionDays">
+/// 保持期間（日数）。<c>null</c> は「削除しない」（database.md DB-1 確定前の暫定既定。M5-1）。
+/// </param>
+/// <param name="RetentionExecutionTimeOfDay">保持期間削除の定期実行の開始時刻（サーバローカル時刻。M5-1）。</param>
 public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
@@ -28,4 +32,6 @@ public sealed record ResolvedYaguraConfiguration(
     string SqliteFileName,
     bool SpoolEnabled,
     string SpoolDirectory,
-    long SpoolQuotaBytes);
+    long SpoolQuotaBytes,
+    int? RetentionDays,
+    TimeOnly RetentionExecutionTimeOfDay);

@@ -206,7 +206,9 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
             var attempt = Interlocked.Increment(ref _attemptCount);
             if (attempt <= failFirstNAttempts)
             {
-                throw new IOException($"simulated transient disk error (attempt {attempt})");
+                throw new LogStoreWriteException(
+                    LogStoreFailureKind.Transient,
+                    $"simulated transient disk error (attempt {attempt})");
             }
 
             lock (WrittenRecords)
@@ -223,7 +225,20 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
 
+        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
+            LogQuery query,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
         public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+
+        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
+            DateTimeOffset cutoff,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeleteOlderThanResult(0, cutoff));
+
+        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LogStoreStatistics(0, 0));
     }
 }
