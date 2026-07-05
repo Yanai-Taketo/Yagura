@@ -41,13 +41,15 @@ public sealed class SpoolDrainCoordinator
     private readonly ILogStore _logStore;
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<SpoolDrainCoordinator> _logger;
+    private readonly ICapacityExhaustionHandler? _capacityExhaustionHandler;
 
     public SpoolDrainCoordinator(
         DiskSpool spool,
         ChannelReader<LogRecord> q2Reader,
         ILogStore logStore,
         IngestionMetrics metrics,
-        ILogger<SpoolDrainCoordinator>? logger = null)
+        ILogger<SpoolDrainCoordinator>? logger = null,
+        ICapacityExhaustionHandler? capacityExhaustionHandler = null)
     {
         ArgumentNullException.ThrowIfNull(spool);
         ArgumentNullException.ThrowIfNull(q2Reader);
@@ -59,6 +61,7 @@ public sealed class SpoolDrainCoordinator
         _logStore = logStore;
         _metrics = metrics;
         _logger = logger ?? NullLogger<SpoolDrainCoordinator>.Instance;
+        _capacityExhaustionHandler = capacityExhaustionHandler;
     }
 
     /// <summary>
@@ -175,8 +178,33 @@ public sealed class SpoolDrainCoordinator
                 using var timeoutCts = new CancellationTokenSource(PipelineConstants.WriteBatchTimeout);
                 await _logStore.WriteBatchAsync(batch, timeoutCts.Token).ConfigureAwait(false);
             }
+            catch (LogStoreWriteException ex)
+            {
+                if (ex.FailureKind == LogStoreFailureKind.CapacityExhausted)
+                {
+                    // 容量枯渇: 保持期間削除の前倒し実行で自走復旧を試みる（database.md §3・§4・§5.3）。
+                    // drain 側で検知した場合も同じハンドラへ通知する——退避元がライブ書き込み
+                    // （PersistenceWriter）か drain かにかかわらず、自走復旧の契機は同一に扱う。
+                    _logger.LogWarning(
+                        ex,
+                        "[capacity-exhausted] 容量枯渇により drain 由来のバッチ書き込みが失敗したため、" +
+                        "セグメント {SegmentPath} を未消化のまま残し、保持期間削除の前倒し実行を試みる（再追記はしない。§3.2.2）。",
+                        segmentPath);
+                    _capacityExhaustionHandler?.OnCapacityExhausted();
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "drain 由来のバッチ書き込みが失敗したため、セグメント {SegmentPath} を未消化のまま残す（再追記はしない。§3.2.2）。",
+                        segmentPath);
+                }
+
+                return false;
+            }
             catch (Exception ex)
             {
+                // provider が LogStoreWriteException を経由せず素の例外を投げた場合の保険的な受け皿。
                 _logger.LogWarning(
                     ex,
                     "drain 由来のバッチ書き込みが失敗したため、セグメント {SegmentPath} を未消化のまま残す（再追記はしない。§3.2.2）。",

@@ -67,13 +67,19 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// を呼ばない（<see cref="DisposeAsync"/> の実装参照）。開いた側（ホスト）が
     /// プロセス終了時に解放する。
     /// </param>
+    /// <param name="capacityExhaustionHandler">
+    /// 容量枯渇（database.md §1.2 契約 3）を契機とした保持期間削除の前倒し実行の挿入点
+    /// （M5-1。<see cref="ICapacityExhaustionHandler"/> 参照）。<c>null</c> は「自走復旧を
+    /// 行わない」構成（保持期間スケジューラ未構成時）を表す。
+    /// </param>
     public IngestionPipeline(
         UdpSyslogListenerOptions udpListenerOptions,
         TcpSyslogListenerOptions tcpListenerOptions,
         ILogStore logStore,
         IIngressGate ingressGate,
         ILoggerFactory? loggerFactory = null,
-        DiskSpool? spool = null)
+        DiskSpool? spool = null,
+        ICapacityExhaustionHandler? capacityExhaustionHandler = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
@@ -117,7 +123,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
             logStore,
             spool,
             _metrics,
-            loggerFactory?.CreateLogger<PersistenceWriter>());
+            loggerFactory?.CreateLogger<PersistenceWriter>(),
+            capacityExhaustionHandler);
 
         // スプールがある場合のみ drain コーディネータを組み立てる（縮退運転時は drain 対象が無い）。
         _drainCoordinator = spool is null
@@ -127,7 +134,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 _q2.Reader,
                 logStore,
                 _metrics,
-                loggerFactory?.CreateLogger<SpoolDrainCoordinator>());
+                loggerFactory?.CreateLogger<SpoolDrainCoordinator>(),
+                capacityExhaustionHandler);
     }
 
     /// <summary>

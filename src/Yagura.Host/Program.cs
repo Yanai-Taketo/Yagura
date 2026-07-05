@@ -181,13 +181,27 @@ public static class Program
             BindAddress = resolvedConfiguration.TcpBindAddress,
             Port = resolvedConfiguration.TcpPort,
         });
+
+        // 保持期間削除スケジューラ（M5-1。database.md §3）。容量枯渇（§1.2 契約 3）を契機とした
+        // 前倒し実行の自走復旧経路（§4・§5.3）でもあるため、ICapacityExhaustionHandler として
+        // IngestionPipeline へ渡す——RetentionDays が未設定（既定「削除しない」）でも、
+        // スケジューラ自体は常に構成し、容量枯渇時の警告発火（保持期間の設定を促す）は行う。
+        builder.Services.AddSingleton(sp => new Yagura.Host.Retention.RetentionScheduler(
+            sp.GetRequiredService<ILogStore>(),
+            new Yagura.Host.Retention.RetentionSchedulerOptions(
+                resolvedConfiguration.RetentionDays,
+                resolvedConfiguration.RetentionExecutionTimeOfDay),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Retention.RetentionScheduler>()));
+
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
             sp.GetRequiredService<TcpSyslogListenerOptions>(),
             sp.GetRequiredService<ILogStore>(),
             new NoopIngressGate(),
             sp.GetRequiredService<ILoggerFactory>(),
-            spool));
+            spool,
+            sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>()));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と

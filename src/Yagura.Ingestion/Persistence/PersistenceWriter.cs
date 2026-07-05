@@ -45,18 +45,27 @@ namespace Yagura.Ingestion.Persistence;
 /// </remarks>
 public sealed class PersistenceWriter
 {
+    // 恒久障害の警告連発を抑制する最小間隔（本 Issue の独自判断。実測確定待ちの暫定値）。
+    // §1.2「恒久障害…警告を強め連発を抑制する」の「連発を抑制する」側の実装。「警告を強める」
+    // 側は LogLevel.Error への格上げ（下記 WriteBatchWithTimeoutAsync 参照）で表現する。
+    private static readonly TimeSpan PermanentFailureWarningSuppressionWindow = TimeSpan.FromMinutes(5);
+
     private readonly ChannelReader<LogRecord> _q2Reader;
     private readonly ILogStore _logStore;
     private readonly DiskSpool? _spool;
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<PersistenceWriter> _logger;
+    private readonly ICapacityExhaustionHandler? _capacityExhaustionHandler;
+
+    private DateTimeOffset? _lastPermanentFailureWarningAt;
 
     public PersistenceWriter(
         ChannelReader<LogRecord> q2Reader,
         ILogStore logStore,
         DiskSpool? spool,
         IngestionMetrics metrics,
-        ILogger<PersistenceWriter>? logger = null)
+        ILogger<PersistenceWriter>? logger = null,
+        ICapacityExhaustionHandler? capacityExhaustionHandler = null)
     {
         ArgumentNullException.ThrowIfNull(q2Reader);
         ArgumentNullException.ThrowIfNull(logStore);
@@ -67,6 +76,7 @@ public sealed class PersistenceWriter
         _spool = spool;
         _metrics = metrics;
         _logger = logger ?? NullLogger<PersistenceWriter>.Instance;
+        _capacityExhaustionHandler = capacityExhaustionHandler;
     }
 
     /// <summary>
@@ -230,12 +240,59 @@ public sealed class PersistenceWriter
 
             await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
         }
+        catch (LogStoreWriteException ex)
+        {
+            // 書き込み例外で消費ループを恒久停止させない——ループが止まるとリスナは受信を
+            // 続けたまま Q2 → Q1 と詰まり、以降の全受信が内部バッファ破棄になる
+            // 「黙った縮退」（architecture.md §1.2 が禁じる状態）に陥る。分類にかかわらず
+            // 当該バッチはスプールへ退避し、ループは継続する（database.md §1.2 契約 3 の
+            // 3 分類は「警告の強さ・自走復旧の要否」の分岐であり、退避自体はどの分類でも
+            // 現行どおり行う——本 Issue の設計判断）。
+            switch (ex.FailureKind)
+            {
+                case LogStoreFailureKind.CapacityExhausted:
+                    // 容量枯渇: 保持期間削除の前倒し実行で自走復旧を試みる
+                    // （database.md §3・§4・§5.3。§3 の譲歩条件の例外）。
+                    _logger.LogWarning(
+                        ex,
+                        "[capacity-exhausted] 容量枯渇によりバッチ書き込みが失敗したため {Count} 件をスプールへ退避し、" +
+                        "保持期間削除の前倒し実行を試みる。",
+                        batch.Count);
+                    _capacityExhaustionHandler?.OnCapacityExhausted();
+                    break;
+
+                case LogStoreFailureKind.Permanent:
+                    // 恒久障害: 警告を強め（Error）、連発は抑制する（設定・スキーマ・権限の問題は
+                    // 再試行しても解消しないため、同じ警告を書き込みバッチのたびに出し続けても
+                    // 運用者への情報価値が薄い——本 Issue の設計判断。§1.2「警告を強め連発を
+                    // 抑制する」）。
+                    if (ShouldEmitPermanentFailureWarning())
+                    {
+                        _logger.LogError(
+                            ex,
+                            "[permanent-failure] 恒久障害によりバッチ書き込みが失敗したため {Count} 件をスプールへ退避する" +
+                            "（設定・スキーマ・権限を確認すること。同種の警告は {SuppressionWindow} の間は再表示を抑制する）。",
+                            batch.Count,
+                            PermanentFailureWarningSuppressionWindow);
+                    }
+
+                    break;
+
+                default:
+                    // 一時障害: 現行どおりの扱い（スプール退避・次バッチで再試行）。
+                    _logger.LogWarning(
+                        ex,
+                        "バッチ書き込みが一時的に失敗したため {Count} 件をスプールへ退避し、消費ループを継続する。",
+                        batch.Count);
+                    break;
+            }
+
+            await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
-            // 書き込み例外（一時的なディスクエラー・ロック等）で消費ループを恒久停止させない——
-            // ループが止まるとリスナは受信を続けたまま Q2 → Q1 と詰まり、以降の全受信が
-            // 内部バッファ破棄になる「黙った縮退」（architecture.md §1.2 が禁じる状態）に陥る。
-            // 当該バッチはスプールへ退避し、ループは継続する。
+            // provider が LogStoreWriteException を経由せず素の例外を投げた場合の保険的な受け皿
+            // （provider 実装の契約違反だが、消費ループを止めない設計原則は変わらない）。
             _logger.LogWarning(
                 ex,
                 "バッチ書き込みが失敗したため {Count} 件をスプールへ退避し、消費ループを継続する。",
@@ -243,6 +300,23 @@ public sealed class PersistenceWriter
 
             await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// 恒久障害の警告を今出すべきか判定する。<see cref="PermanentFailureWarningSuppressionWindow"/>
+    /// 以内に既に出していれば抑制する（連発の抑制。§1.2）。
+    /// </summary>
+    private bool ShouldEmitPermanentFailureWarning()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_lastPermanentFailureWarningAt is { } lastWarningAt &&
+            now - lastWarningAt < PermanentFailureWarningSuppressionWindow)
+        {
+            return false;
+        }
+
+        _lastPermanentFailureWarningAt = now;
+        return true;
     }
 
     /// <summary>

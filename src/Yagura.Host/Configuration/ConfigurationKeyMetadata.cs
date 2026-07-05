@@ -45,11 +45,20 @@ public static class ConfigurationKeyMetadata
         {
             ["Ingestion:Udp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Ingestion:Udp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
+            // TCP キー(M4-1)は UDP と同じ「受信」区分(§8)。本表への登録が M4-1 で漏れており
+            // M5-1 のレビューで追補した(KnownKeys との整合はテストで機械検証される)。
+            ["Ingestion:Tcp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
+            ["Ingestion:Tcp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Viewer:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
             ["Storage:SqliteFileName"] = ConfigurationReloadEffect.RestartRequired,
             ["Spool:Enabled"] = ConfigurationReloadEffect.Immediate,
             ["Spool:Directory"] = ConfigurationReloadEffect.RestartRequired,
             ["Spool:QuotaBytes"] = ConfigurationReloadEffect.Immediate,
+            // 保持期間(M5-1)は §8 表「保持期間 | 即時」の目標どおり宣言する(Spool:Enabled と
+            // 同じ扱い。現時点の実効はスケジューラが起動時にのみ設定を読むため再起動だが、
+            // ライブ再読込(§3)配線時に目標へ揃える)。
+            ["Retention:Days"] = ConfigurationReloadEffect.Immediate,
+            ["Retention:ExecutionTimeOfDay"] = ConfigurationReloadEffect.Immediate,
         };
 
     /// <summary>

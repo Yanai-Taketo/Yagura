@@ -51,4 +51,12 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
 
+  <!--
+    M5-1: KnownKeys(internal)を「全キーが ConfigurationKeyMetadata に登録済み」の
+    機械検証テストから参照するため(M4-1 で TCP キーの登録漏れが実際に起きた再発防止)。
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Yagura.Host.Tests" />
+  </ItemGroup>
+
 </Project>

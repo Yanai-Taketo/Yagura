@@ -32,6 +32,9 @@ public sealed class YaguraConfigurationOptions
     /// <summary>§8「スプール」区分（M4-3）。</summary>
     public SpoolOptions? Spool { get; set; }
 
+    /// <summary>§8「保持期間」区分（M5-1。database.md §3）。</summary>
+    public RetentionOptions? Retention { get; set; }
+
     public sealed class IngestionOptions
     {
         /// <summary>UDP 受信リスナの設定。</summary>
@@ -91,5 +94,22 @@ public sealed class YaguraConfigurationOptions
         /// （M-12 実測確定待ちの暫定値）。
         /// </summary>
         public string? QuotaBytes { get; set; }
+    }
+
+    public sealed class RetentionOptions
+    {
+        /// <summary>
+        /// 保持期間（日数）。JSON キーは <c>Retention:Days</c>。<c>null</c>/未設定は「削除しない」
+        /// （database.md DB-1 の既定値確定前の暫定既定。本 Issue の設計判断——ゼロ設定ファーストランで
+        /// ディスク枯渇の自動復旧経路を持たない代わりに、意図せぬ自動削除で調査対象のログを失う
+        /// 事故を避ける安全側）。
+        /// </summary>
+        public string? Days { get; set; }
+
+        /// <summary>
+        /// 定期実行の開始時刻（サーバのローカル時刻。<c>HH:mm</c> 形式）。未設定時は既定値
+        /// （<see cref="Yagura.Host.Retention.RetentionSchedulerOptions.DefaultExecutionTimeOfDay"/>）を使う。
+        /// </summary>
+        public string? ExecutionTimeOfDay { get; set; }
     }
 }

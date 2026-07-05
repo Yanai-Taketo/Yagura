@@ -146,8 +146,21 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
 
+        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
+            LogQuery query,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
         public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+
+        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
+            DateTimeOffset cutoff,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeleteOlderThanResult(0, cutoff));
+
+        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LogStoreStatistics(0, 0));
     }
 
     private sealed class RecordingLogStore : ILogStore
@@ -172,7 +185,20 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
 
+        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
+            LogQuery query,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+
         public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+
+        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
+            DateTimeOffset cutoff,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeleteOlderThanResult(0, cutoff));
+
+        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LogStoreStatistics(0, 0));
     }
 }
