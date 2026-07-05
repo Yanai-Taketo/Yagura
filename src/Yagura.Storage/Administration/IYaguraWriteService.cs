@@ -17,8 +17,8 @@ namespace Yagura.Storage.Administration;
 /// 昇格・circuit 管理は M8 のスコープであり、まだ実装されていない
 /// （ui.md §4「設定（ウィザード群）」画面の裏側）。本インターフェースは「その時が来たら
 /// 検査が実効化する」ための先置きの規約であり、現時点では
-/// <c>Yagura.Web.ArchitectureTests.ViewerComponentReferenceIsolationTests</c>
-/// （Yagura.Web.Tests）の検査対象が 0 件（違反ゼロで green）であることを意味する。
+/// <c>Yagura.Web.Tests.ArchitectureTests.ViewerComponentReferenceIsolationTests</c>
+/// の検査対象が 0 件（違反ゼロで green）であることを意味する。
 /// </para>
 /// <para>
 /// <b>マーカーインターフェース方式を採った理由</b>: 名前空間規約（例:
