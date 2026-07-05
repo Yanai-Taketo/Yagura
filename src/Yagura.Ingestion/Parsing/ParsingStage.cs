@@ -6,7 +6,7 @@ namespace Yagura.Ingestion.Parsing;
 
 /// <summary>
 /// 解析段の消費ループ（architecture.md §2.1）。Q1 から <see cref="RawDatagram"/> を取り出し、
-/// <see cref="MinimalSyslogParser"/> で解析して Q2 へ投入する。
+/// <see cref="SyslogParser"/> で解析して Q2 へ投入する。
 /// </summary>
 /// <remarks>
 /// Q2 は有限キューだが、解析段 → 永続化段の境界の溢れ時挙動は「新規投入分をスプールへ退避」
@@ -54,7 +54,7 @@ public sealed class ParsingStage
                 return;
             }
 
-            var record = MinimalSyslogParser.Parse(datagram);
+            var record = SyslogParser.Parse(datagram);
 
             // stoppingToken は渡さない: 停止要求後も、Q1 から取り出し済みのレコードは
             // Q2 へ渡し切る（drain のベストエフォート。§1.3）。
