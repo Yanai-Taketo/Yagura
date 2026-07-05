@@ -18,6 +18,9 @@ namespace Yagura.Bench.Reporting;
 /// シナリオ固有の追加測定値（例: スプール発動シナリオの drain 所要時間）。キーは日本語可。
 /// </param>
 /// <param name="Notes">シナリオ実行時の注記（判断・スキップ理由等）。</param>
+/// <param name="HostStdout">本体（Yagura.Host 子プロセス）の全出力（stderr は接頭辞 [stderr] 付き）。
+/// 飽和の形態分析（M-7/M-13: スプール退避が Q2 溢れ由来かタイムアウト由来か——本体の警告ログに
+/// 現れる）と障害調査のための一次情報。Program.cs が .hostlog.txt へも書き出す。</param>
 public sealed record ScenarioReport(
     string ScenarioName,
     string RunId,
@@ -28,4 +31,5 @@ public sealed record ScenarioReport(
     ReconciliationResult Reconciliation,
     TimeSpan ElapsedWallClock,
     IReadOnlyDictionary<string, string> AdditionalMetrics,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<string> HostStdout);

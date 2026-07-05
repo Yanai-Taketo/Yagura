@@ -91,7 +91,8 @@ public static class ScenarioRunner
             reconciliation,
             wallClock.Elapsed,
             new Dictionary<string, string>(),
-            [$"目標レート {options.RatePerSecond} msg/sec を {options.DurationSeconds} 秒間、{options.Transport} で送出した。"]);
+            [$"目標レート {options.RatePerSecond} msg/sec を {options.DurationSeconds} 秒間、{options.Transport} で送出した。"],
+            host.StdoutLines);
     }
 
     /// <summary>破棄ゼロで維持できる持続流量の確認。指定レートで送出し、破棄系カウンタが 0 のままかを報告する。</summary>
@@ -138,7 +139,8 @@ public static class ScenarioRunner
             reconciliation,
             wallClock.Elapsed,
             new Dictionary<string, string> { ["破棄ゼロ維持"] = dropFree.ToString() },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     /// <summary>
@@ -187,7 +189,8 @@ public static class ScenarioRunner
             reconciliation,
             wallClock.Elapsed,
             new Dictionary<string, string> { ["Q1破棄発生"] = q1DropOccurred.ToString() },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     /// <summary>スプール発動 → 追いつきの所要（縮小容量 + バースト送出でスプール発動を誘発し、drain 完了までの時間を計測する）。</summary>
@@ -253,7 +256,8 @@ public static class ScenarioRunner
                 ["drain所要時間"] = drainStopwatch.Elapsed.ToString(),
                 ["スプール容量バイト"] = options.SpoolQuotaBytes.ToString(),
             },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     /// <summary>SQLite / SQL Server 各 provider の書き込み上限。指定 provider へ高レート持続送出し、スプール退避の発生有無から上限接近を報告する。</summary>
@@ -308,7 +312,8 @@ public static class ScenarioRunner
                 ["provider"] = usingSqlServer ? "SqlServer" : "Sqlite",
                 ["上限接近シグナル(スプール退避>0)"] = approachingCeiling.ToString(),
             },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     private static async Task<LoadGeneratorResult> SendAsync(LoadGeneratorOptions options) =>
@@ -399,7 +404,8 @@ public static class ScenarioRunner
         ReconciliationResult reconciliation,
         TimeSpan elapsed,
         Dictionary<string, string> additionalMetrics,
-        List<string> notes) =>
+        List<string> notes,
+        IReadOnlyList<string>? hostStdout = null) =>
         new(
             scenarioName,
             runId,
@@ -410,5 +416,6 @@ public static class ScenarioRunner
             reconciliation,
             elapsed,
             additionalMetrics,
-            notes);
+            notes,
+            hostStdout ?? []);
 }

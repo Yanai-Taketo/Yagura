@@ -44,6 +44,15 @@ public static class Program
         var summary = ReportWriter.ToHumanReadableSummary(report);
         File.WriteAllText(summaryPath, summary);
 
+        // 本体（子プロセス）の全出力も残す——飽和形態の分析（M-7/M-13: スプール退避の契機が
+        // Q2 溢れかタイムアウトかは本体の警告ログにのみ現れる）と障害調査の一次情報。
+        if (report.HostStdout.Count > 0)
+        {
+            var hostLogPath = Path.Combine(options.OutputDirectory, $"{report.ScenarioName}-{timestamp}.hostlog.txt");
+            File.WriteAllLines(hostLogPath, report.HostStdout);
+            Console.WriteLine($"本体ログ: {hostLogPath}");
+        }
+
         Console.WriteLine(summary);
         Console.WriteLine($"JSON: {jsonPath}");
         Console.WriteLine($"サマリ: {summaryPath}");
