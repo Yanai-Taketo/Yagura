@@ -1,0 +1,33 @@
+<!--
+  ベンチハーネス（Issue #60。architecture.md §5.1 M7-1）。製品アセンブリではなく開発ツールの
+  独立プロジェクトとする——architecture.md §1.1 の参照構造（ホスト → 各モジュール、受信・UI →
+  永続化の抽象）を壊さないため、本プロジェクトはテストと同格の「外側」から Yagura.Host /
+  Yagura.Ingestion / Yagura.Storage を参照してよいが、製品側から本プロジェクトへの参照は
+  禁止する（どの src/ プロジェクトからも ProjectReference されない）。
+
+  Yagura.Host への参照理由: 実バイナリ（Yagura.Host.dll）を子プロセスとして起動する
+  （tests/Yagura.E2E.Tests と同じパターン。ProjectReference により本プロジェクトの出力
+  ディレクトリへ Yagura.Host.dll 一式がコピーされ、AppContext.BaseDirectory から解決できる）。
+  Yagura.Storage への参照理由: 検証器が SqliteLogStore/SqlServerLogStore を直接開き、
+  GetStatisticsAsync() で保存件数を突合するため（本体の検索 API を経由せず、DB ファイルへの
+  直接クエリに相当する最短経路）。Yagura.Ingestion への参照理由: RFC 5424 メッセージの組み立て
+  形式を本体の SyslogParser の受理形式と一致させる参考にする（実装は自前だが、既存の
+  ParsingStage 等の定数（PipelineConstants）を参照して Q1/Q2 容量等の文脈をログに残す）。
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Yagura.Bench</RootNamespace>
+    <AssemblyName>Yagura.Bench</AssemblyName>
+    <!-- CLI ツールであり Nullable 警告を無効化する理由はないが、対話的なコマンドライン引数解析は
+         null 分岐が多いため、本プロジェクトに限り NoWarn は追加しない（規約どおり警告ゼロを維持）。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Yagura.Host\Yagura.Host.csproj" />
+    <ProjectReference Include="..\..\src\Yagura.Ingestion\Yagura.Ingestion.csproj" />
+    <ProjectReference Include="..\..\src\Yagura.Storage\Yagura.Storage.csproj" />
+  </ItemGroup>
+
+</Project>

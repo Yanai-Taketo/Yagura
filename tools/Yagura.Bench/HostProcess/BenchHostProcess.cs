@@ -1,0 +1,256 @@
+using System.Diagnostics;
+using System.Text.RegularExpressions;
+
+namespace Yagura.Bench.HostProcess;
+
+/// <summary>
+/// Yagura.Host を子プロセスとして起動・停止するランチャ（Issue #60。§5.1「構成: 負荷生成器 →
+/// 本体 → 検証器」の「本体」に相当）。
+/// </summary>
+/// <remarks>
+/// tests/Yagura.E2E.Tests の起動パターン（<c>dotnet Yagura.Host.dll</c> + 環境変数によるゼロ設定
+/// 上書き + stdout からのポート取得）をそのまま踏襲する——実バイナリでの実測が本ベンチの目的であり、
+/// 単体テスト用のインメモリ結線ではなく実プロセスを対象にする必要があるため。
+/// </remarks>
+public sealed class BenchHostProcess : IAsyncDisposable
+{
+    private const string UdpListenerLogPrefix = "UDP syslog listener started on port";
+    private const string TcpListenerLogPrefix = "TCP syslog listener started on port";
+    private static readonly Regex ViewerListeningPortPattern =
+        new(@"Now listening on:\s*http://\[::\]:(\d+)\s*$", RegexOptions.Compiled);
+    private static readonly Regex ViewerListeningLoopbackPortPattern =
+        new(@"Now listening on:\s*http://(?:127\.0\.0\.1|\[::1\]):(\d+)\s*$", RegexOptions.Compiled);
+
+    private readonly Process _process;
+    private readonly List<string> _stdoutLines = [];
+    private readonly object _stdoutLock = new();
+
+    private BenchHostProcess(Process process)
+    {
+        _process = process;
+    }
+
+    public int UdpPort { get; private set; }
+
+    public int TcpPort { get; private set; }
+
+    public int ViewerHttpPort { get; private set; }
+
+    /// <summary>子プロセスの標準出力全行（デバッグ・障害調査用に保持）。</summary>
+    public IReadOnlyList<string> StdoutLines
+    {
+        get
+        {
+            lock (_stdoutLock)
+            {
+                return _stdoutLines.ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Yagura.Host.dll を子プロセスとして起動し、UDP/TCP/閲覧リスナの起動ログを待って
+    /// 実バインドポートを取得する。
+    /// </summary>
+    /// <param name="dataRoot">データルート（一時ディレクトリを推奨。呼び出し側が生成・削除を管理する）。</param>
+    /// <param name="udpPort">起動時 UDP ポート指定（既定 0 = OS 採番）。</param>
+    /// <param name="tcpPort">起動時 TCP ポート指定（既定 0 = OS 採番）。</param>
+    /// <param name="httpPort">起動時閲覧 HTTP ポート指定（既定 0 = OS 採番）。</param>
+    /// <param name="adminPort">起動時管理 HTTP ポート指定（既定 0 = OS 採番）。</param>
+    /// <param name="startupTimeout">起動ログ待機のタイムアウト（既定 30 秒。E2E テストと同じ既定値）。</param>
+    public static async Task<BenchHostProcess> StartAsync(
+        string dataRoot,
+        int udpPort = 0,
+        int tcpPort = 0,
+        int httpPort = 0,
+        int adminPort = 0,
+        TimeSpan? startupTimeout = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
+        Directory.CreateDirectory(dataRoot);
+
+        var hostDllPath = ResolveYaguraHostDllPath();
+        if (!File.Exists(hostDllPath))
+        {
+            throw new FileNotFoundException($"Yagura.Host.dll が見つからない: {hostDllPath}", hostDllPath);
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add(hostDllPath);
+
+        startInfo.Environment["YAGURA_DATAROOT"] = dataRoot;
+        startInfo.Environment["YAGURA_HTTP_PORT"] = httpPort.ToString();
+        startInfo.Environment["YAGURA_UDP_PORT"] = udpPort.ToString();
+        startInfo.Environment["YAGURA_TCP_PORT"] = tcpPort.ToString();
+        startInfo.Environment["YAGURA_ADMIN_PORT"] = adminPort.ToString();
+
+        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var bench = new BenchHostProcess(process);
+
+        var udpPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcpPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var viewerPortTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is null)
+            {
+                return;
+            }
+
+            lock (bench._stdoutLock)
+            {
+                bench._stdoutLines.Add(e.Data);
+            }
+
+            var udpMatch = Regex.Match(e.Data, $@"{Regex.Escape(UdpListenerLogPrefix)}\s+(\d+)");
+            if (udpMatch.Success && int.TryParse(udpMatch.Groups[1].Value, out var parsedUdpPort))
+            {
+                udpPortTcs.TrySetResult(parsedUdpPort);
+            }
+
+            var tcpMatch = Regex.Match(e.Data, $@"{Regex.Escape(TcpListenerLogPrefix)}\s+(\d+)");
+            if (tcpMatch.Success && int.TryParse(tcpMatch.Groups[1].Value, out var parsedTcpPort))
+            {
+                tcpPortTcs.TrySetResult(parsedTcpPort);
+            }
+
+            // 閲覧リスナは既定(Lan)で全インターフェース bind のため "http://[::]:{port}"、
+            // 明示的に loopback 限定にした場合は "127.0.0.1:"/"[::1]:" 表記になる
+            // （tests/Yagura.E2E.Tests/ZeroConfigFirstRunE2ETests.cs のコメント参照）。両方を見る。
+            var viewerMatch = ViewerListeningPortPattern.Match(e.Data);
+            if (!viewerMatch.Success)
+            {
+                viewerMatch = ViewerListeningLoopbackPortPattern.Match(e.Data);
+            }
+
+            if (viewerMatch.Success && int.TryParse(viewerMatch.Groups[1].Value, out var parsedViewerPort))
+            {
+                viewerPortTcs.TrySetResult(parsedViewerPort);
+            }
+        };
+
+        process.ErrorDataReceived += (_, _) => { };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        var timeout = startupTimeout ?? TimeSpan.FromSeconds(30);
+        bench.UdpPort = await WaitWithTimeoutAsync(udpPortTcs.Task, timeout, "UDP リスナ起動ログ").ConfigureAwait(false);
+        bench.TcpPort = await WaitWithTimeoutAsync(tcpPortTcs.Task, timeout, "TCP リスナ起動ログ").ConfigureAwait(false);
+        bench.ViewerHttpPort = await WaitWithTimeoutAsync(viewerPortTcs.Task, timeout, "閲覧リスナ HTTP listening ログ").ConfigureAwait(false);
+
+        return bench;
+    }
+
+    /// <summary>
+    /// グレースフル停止（<see cref="ConsoleCtrlSender"/> で Ctrl+C を送出し、.NET Generic Host の
+    /// 通常の停止シーケンス——<see cref="Yagura.Host.IngestionHostedService.StopAsync"/> による
+    /// architecture.md §1.3 手順 1〜3（メタデータ領域への最終カウンタ書き込みを含む）——を
+    /// 実行させる）。<see cref="ConsoleCtrlSender"/> のコメント参照: 本ベンチの検証器は
+    /// 停止手順 3 の最終カウンタ書き込みに依存するため、tests/Yagura.E2E.Tests が採用した
+    /// 単純な <c>Kill</c> では実機検証で突合が不成立になった経緯がある。
+    /// Ctrl+C 送出が失敗した場合、または停止がタイムアウトした場合のみ <c>Kill</c> へ
+    /// フォールバックする（フォールバック時は正常停止手順を経ないため、呼び出し側が
+    /// 十分な静定時間を置いていたとしても、直近の定期永続化以降の増分は失われ得る——
+    /// <see cref="GracefulStopSucceeded"/> で呼び出し側がフォールバックの発生を検知できる）。
+    /// </summary>
+    public async Task StopGracefullyAsync(TimeSpan? timeout = null)
+    {
+        if (_process.HasExited)
+        {
+            return;
+        }
+
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(20);
+        var ctrlCSent = ConsoleCtrlSender.TrySendCtrlC(_process.Id);
+
+        if (ctrlCSent)
+        {
+            var exitedGracefully = await WaitForExitAsync(effectiveTimeout).ConfigureAwait(false);
+            if (exitedGracefully)
+            {
+                GracefulStopSucceeded = true;
+                return;
+            }
+        }
+
+        // Ctrl+C 送出自体が失敗した、またはグレースフル停止がタイムアウトした場合の
+        // フォールバック（架構上「正常停止できないなら Kill でよい」という許容——ただし
+        // 本ベンチの突合精度はこの経路では低下し得ることを記録する）。
+        GracefulStopSucceeded = false;
+        if (!_process.HasExited)
+        {
+            _process.Kill(entireProcessTree: true);
+        }
+
+        var killedExited = await WaitForExitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        if (!killedExited)
+        {
+            throw new TimeoutException("Yagura.Host 子プロセスの停止がタイムアウトした（Kill フォールバック後も終了しなかった）。");
+        }
+    }
+
+    /// <summary>
+    /// 直近の <see cref="StopGracefullyAsync"/> がグレースフル停止（Ctrl+C 経由）で完了したか。
+    /// <c>false</c> は Kill フォールバックが発生したことを示す（検証器が突合結果の解釈に使う）。
+    /// </summary>
+    public bool? GracefulStopSucceeded { get; private set; }
+
+    private async Task<bool> WaitForExitAsync(TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (_process.HasExited)
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+        }
+
+        return _process.HasExited;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!_process.HasExited)
+        {
+            try
+            {
+                _process.Kill(entireProcessTree: true);
+                _process.WaitForExit(5000);
+            }
+            catch (InvalidOperationException)
+            {
+                // 既に終了している場合等。
+            }
+        }
+
+        _process.Dispose();
+        await Task.CompletedTask;
+    }
+
+    private static string ResolveYaguraHostDllPath() =>
+        Path.Combine(AppContext.BaseDirectory, "Yagura.Host.dll");
+
+    private static async Task<T> WaitWithTimeoutAsync<T>(Task<T> task, TimeSpan timeout, string description)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeout)).ConfigureAwait(false);
+        if (completed != task)
+        {
+            throw new TimeoutException($"{description} の待機がタイムアウトした（{timeout}）。");
+        }
+
+        return await task.ConfigureAwait(false);
+    }
+}
