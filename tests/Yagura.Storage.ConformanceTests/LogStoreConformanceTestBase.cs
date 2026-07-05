@@ -19,8 +19,19 @@ namespace Yagura.Storage.ConformanceTests;
 /// </para>
 /// <para>
 /// 2. 派生クラスをそのままビルド・実行し、本基底クラスに定義された全テストが緑になることを
-///    確認する（xUnit の継承テストパターン——派生すると基底の [Fact]/[Theory] がすべて
-///    派生クラスに対して実行される）。
+///    確認する（xUnit の継承テストパターン——派生すると基底の [SkippableFact]/[SkippableTheory]
+///    がすべて派生クラスに対して実行される）。
+/// </para>
+/// <para>
+/// <b>[Fact]/[Theory] ではなく [SkippableFact]/[SkippableTheory]（Xunit.SkippableFact）を使う理由</b>:
+/// SQL Server provider（<see cref="Yagura.Storage.SqlServer.SqlServerLogStore"/>。M5-3）は
+/// ローカル開発機に SQL Server が無い環境でテストを動的にスキップする必要がある
+/// （<see cref="SqlServerLogStoreConformanceTests.CreateStoreAsync"/> 参照）。本基底クラスの
+/// <c>[Fact]</c>/<c>[Theory]</c> は派生クラスから個別に上書きできない（C# の属性は継承先メソッドに
+/// 対して差し替えられない）ため、スキップが必要な provider が 1 つでもある以上、
+/// 本基底クラス全体を <c>[SkippableFact]</c>/<c>[SkippableTheory]</c> に統一する。
+/// <see cref="Xunit.SkipException"/> を送出しない限り通常の <c>[Fact]</c>/<c>[Theory]</c> と
+/// 同じに振る舞うため、SQLite 等スキップ不要な provider には影響しない。
 /// </para>
 /// <para>
 /// 3. 全緑になったら、database.md に provider 節（§4・§5 と同格）を追加する PR を提出する
@@ -98,7 +109,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // 契約 1: スキーマ管理（database.md §1.2「スキーマ管理」）
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task InitializeAsync_CalledTwice_IsIdempotent()
     {
         var exception = await Record.ExceptionAsync(() => Store.InitializeAsync());
@@ -106,7 +117,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Null(exception);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task InitializeAsync_CalledTwiceConcurrently_DoesNotThrow()
     {
         var first = Store.InitializeAsync();
@@ -117,7 +128,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Null(exception);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task InitializeAsync_CalledAfterDataWritten_DoesNotDestroyExistingData()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -134,7 +145,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // 契約 2: バッチ挿入（database.md §1.2「バッチ挿入」、architecture.md §7 要求①）
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteBatchAsync_AllColumns_RoundTripThroughRawColumn()
     {
         var receivedAt = DateTimeOffset.UtcNow;
@@ -175,7 +186,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("raw-backed message", summary.Message);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData(ParseStatus.Parsed)]
     [InlineData(ParseStatus.ParseFailed)]
     [InlineData(ParseStatus.Incomplete)]
@@ -197,7 +208,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(parseStatus, results[0].ParseStatus);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteBatchAsync_EmptyBatch_DoesNotThrowAndWritesNothing()
     {
         var statisticsBefore = await Store.GetStatisticsAsync();
@@ -210,7 +221,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(statisticsBefore.RecordCount, statisticsAfter.RecordCount);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteBatchAsync_LargeBatch_AllRecordsPersisted()
     {
         const int batchSize = 1000;
@@ -225,7 +236,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(batchSize, statistics.RecordCount);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteBatchAsync_SameBatchTwice_DoesNotThrowAndDuplicatesAreStored()
     {
         // at-least-once の機械化（database.md §1.2「部分成功の扱い（全再試行で重複になっても
@@ -261,7 +272,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // 発火可能な provider は SqliteCapacityTests のような provider 固有テストで
     // 実発火 → 分類の正しさを検証すること。
 
-    [Fact]
+    [SkippableFact]
     public void LogStoreFailureKind_HasExactlyThreeValues()
     {
         var values = Enum.GetValues<LogStoreFailureKind>();
@@ -276,7 +287,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // 契約 4: 対話的検索（database.md §1.2「対話的検索」）
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_ReceivedAtRange_FiltersToRange()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -297,7 +308,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("in-range", results[0].Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_SourceAddress_FiltersToExactMatch()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -316,7 +327,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("from-2", results[0].Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_Severity_FiltersToExactMatch()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -332,7 +343,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("high-severity", results[0].Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_SearchText_MatchesSubstringCaseInsensitive()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -348,7 +359,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Contains("RESET", results[0].Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_CombinedConditions_AllMustMatch()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -367,7 +378,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Single(results);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_MessageProjectionLength_TruncatesToFirstNCharacters()
     {
         var longMessage = new string('a', 500);
@@ -380,7 +391,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(longMessage[..200], results[0].Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_MessageShorterThanProjectionLength_NotPadded()
     {
         await Store.WriteBatchAsync(new[] { CreateParsedRecord(DateTimeOffset.UtcNow, "10.0.0.1", "short") });
@@ -391,7 +402,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("short", results[0].Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_Limit_RespectsUpperBound()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -405,7 +416,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(2, results.Count);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryAsync_ExternalCancellation_PropagatesAsOperationCanceled()
     {
         await Store.WriteBatchAsync(new[] { CreateParsedRecord(DateTimeOffset.UtcNow, "10.0.0.1", "message") });
@@ -417,7 +428,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
             Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5)), cts.Token));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task QueryLatestAsync_ReturnsRecordsInDescendingOrder()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -440,7 +451,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // 契約 5: 保持期間の削除（database.md §1.2「保持期間の削除」・§3）
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task DeleteOlderThanAsync_CutoffBoundary_DeletesOnlyStrictlyOlderRecords()
     {
         var cutoff = DateTimeOffset.UtcNow;
@@ -462,7 +473,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Contains(remaining, r => r.Message == "newer-than-cutoff");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task DeleteOlderThanAsync_MoreRecordsThanBatchSize_DeletesAllInMultipleBatches()
     {
         var cutoff = DateTimeOffset.UtcNow;
@@ -480,7 +491,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(0, statistics.RecordCount);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task DeleteOlderThanAsync_EmptyDatabase_ReturnsZero()
     {
         var result = await Store.DeleteOlderThanAsync(DateTimeOffset.UtcNow);
@@ -488,7 +499,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(0, result.DeletedCount);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task DeleteOlderThanAsync_NoMatchingRecords_ReturnsZero()
     {
         var cutoff = DateTimeOffset.UtcNow.AddDays(-30);
@@ -503,7 +514,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // 契約 6: 統計（database.md §1.2「統計」）
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task GetStatisticsAsync_EmptyStore_RecordCountIsZero()
     {
         var statistics = await Store.GetStatisticsAsync();
@@ -511,7 +522,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(0, statistics.RecordCount);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetStatisticsAsync_AfterWrite_RecordCountIncreases()
     {
         var before = await Store.GetStatisticsAsync();
@@ -527,7 +538,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(before.RecordCount + 2, after.RecordCount);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetStatisticsAsync_DatabaseSize_HasValueOrExplicitUnavailableReason()
     {
         // database.md §1.2「統計」: サイズは「値があるか、取得不能の明示か」のどちらかであること。
@@ -547,7 +558,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     // システムイベント（database.md §2.3）の往復
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteSystemEventAsync_AllColumns_RoundTrip()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -563,7 +574,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Null(exception);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteSystemEventAsync_ApproximateTrue_DoesNotThrow()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -578,7 +589,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Null(exception);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task WriteSystemEventAsync_DetailsNull_DoesNotThrow()
     {
         var baseline = DateTimeOffset.UtcNow;

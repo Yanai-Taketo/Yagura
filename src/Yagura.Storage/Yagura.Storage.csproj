@@ -9,6 +9,8 @@
     -->
     <PackageReference Include="SQLitePCLRaw.core" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
+    <!-- SQL Server provider（M5-3。Issue #47）。Directory.Packages.props のバージョン検証コメント参照。 -->
+    <PackageReference Include="Microsoft.Data.SqlClient" />
   </ItemGroup>
 
   <ItemGroup>
