@@ -5,8 +5,11 @@ namespace Yagura.Host.Retention;
 /// （database.md §3。configuration.md §8「保持期間」区分）。
 /// </summary>
 /// <param name="RetentionDays">
-/// 保持期間（日数）。<c>null</c> は「削除しない」——既定値（database.md DB-1）は実測後の
-/// オーナー相談待ちのため、未設定時は自動削除を行わない（本 Issue の設計判断。詳細は
+/// 保持期間（日数）。<c>null</c> は「削除しない」。既定値（database.md DB-1）は
+/// 2026-07-05 オーナー決定により 30 日——設定ファイル未設定時は 30 が適用される。
+/// <c>null</c> になるのは、設定ファイルで <c>Retention:Days</c> に不正値（0 以下・
+/// 数値以外）が指定された場合のフォールバック先としてのみである（意図しない自動削除の
+/// 開始を避ける安全側の判断。詳細は
 /// <see cref="Yagura.Host.Configuration.YaguraConfigurationLoader"/> のコメント参照）。
 /// </param>
 /// <param name="ExecutionTimeOfDay">定期実行の開始時刻（サーバのローカル時刻）。</param>

@@ -659,18 +659,34 @@ public static class YaguraConfigurationLoader
 
     /// <summary>
     /// 保持期間（日数）を解決する（database.md §3・DB-1。§1「既定値で継続」）。
-    /// <b>未設定時の既定は「削除しない」（<c>null</c>）</b>——DB-1（既定日数）は実測後に
-    /// オーナー相談の約束であり、実測前に何らかの日数を既定として自動削除を始めると、
-    /// 利用者が気づかないまま調査対象のログが消える事故になり得る（ゼロ設定ファーストランの
-    /// 環境ほど設定を触らないため、この事故リスクが最も高い）。安全側に倒し、明示的に
-    /// 日数を設定しない限り保持期間削除は動作しない、を本 Issue の設計判断とする。
+    /// <b>未設定時の既定は 30 日</b>（2026-07-05 オーナー決定。PR #64 で確定した DB-1 の値。
+    /// 根拠: M7-2 実測でレコード単価 ≈ メッセージ長 + 約 95 B、10 msg/s × 30 日 ≈ 7.8 GB は
+    /// SQL Server Express の 10 GB 上限に収まる。容量超過は保持期間とは独立の監視が受ける
+    /// 設計であり（database.md §3「ディスク空き容量・DB 容量上限への接近は保持期間とは
+    /// 独立に監視・警告する」）、既定を無期限にしないことがゼロ設定ファーストラン環境の
+    /// ディスク枯渇を防ぐ）。
     /// </summary>
+    /// <remarks>
+    /// <b>不正値時のフォールバック先は「削除しない」を維持する</b>（既定 30 日と非対称——
+    /// 本 Issue の設計判断）。理由: 「既定値で継続」（§1）の趣旨は本来「製品既定へ戻す」こと
+    /// だが、保持期間は他の一般キー（例: ポート番号）と異なり、フォールバックの結果が
+    /// 「利用者の意図に反してログが自動的に削除され始める」という不可逆な副作用を持つ。
+    /// 例えば入力ミスで <c>Retention:Days=0</c> や負数を書いた利用者は、削除を望んで
+    /// いない・保持期間の意味を理解せずに設定を触っただけの可能性が高く、この場合に
+    /// 30 日既定へ静かにフォールバックすると「未設定時とは異なる自動削除」が不正な入力
+    /// 一つで有効化されてしまう。一方「削除しない」へのフォールバックは、既定 30 日の
+    /// 環境と比べてディスク消費が増える方向にしか作用せず、その増加は§3 の独立監視
+    /// （容量監視）が受ける設計になっている——安全側（実害が可逆・観測可能な側）を
+    /// 優先する既存の縮小方針（bind アドレス・公開範囲の不正値と同じ流儀）に合わせる。
+    /// </remarks>
     private static int? ResolveRetentionDays(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
     {
+        const int defaultRetentionDays = 30;
+
         var raw = options.Retention?.Days;
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return null;
+            return defaultRetentionDays;
         }
 
         if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) && days > 0)
@@ -682,7 +698,8 @@ public static class YaguraConfigurationLoader
             Key: "Retention:Days",
             InvalidValue: raw,
             AppliedValue: "(未設定 = 削除しない)",
-            Reason: "正の整数（日数）として不正なため「削除しない」を適用"));
+            Reason: "正の整数（日数）として不正なため、意図しない自動削除の開始を避け「削除しない」を適用" +
+                "（既定 30 日への自動フォールバックはしない——本 Issue の設計判断。詳細は本メソッドの remarks 参照）"));
 
         return null;
     }
