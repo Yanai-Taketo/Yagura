@@ -271,6 +271,15 @@ public static class ScenarioRunner
             BenchConfigurationFile.WriteSqlServerConfiguration(dataRoot, options.SqlServerConnectionString!);
         }
 
+        // SQL Server は SQLite(実行ごとに新規の一時データルート)と異なり同一データベースを
+        // 実行間で使い回すため、保存件数は実行前の既存件数との差分で数える必要がある
+        // (CounterReconciler.Reconcile の savedCount 引数の要件)。これを怠った初版は
+        // YAGURA-STG 実測(2026-07-05)で前実行分の累積が混入し、全 SQL Server 実行が
+        // 見かけ上「過剰計上 NG」になった(差分補正後は全実行が損失ゼロで完全成立)。
+        var savedBaseline = usingSqlServer
+            ? await LogStoreProbe.GetSqlServerRecordCountAsync(options.SqlServerConnectionString!).ConfigureAwait(false)
+            : 0;
+
         await using var host = await BenchHostProcess.StartAsync(dataRoot).ConfigureAwait(false);
         var osUdpBaseline = OsUdpStatsProbe.GetCurrentTotalDiscarded();
 
@@ -286,7 +295,7 @@ public static class ScenarioRunner
             PaddingBytes: options.PaddingBytes);
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, sqlServerConnectionString: options.SqlServerConnectionString, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
+        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, sqlServerConnectionString: options.SqlServerConnectionString, transportIsUdp: options.Transport == LoadTransport.Udp, savedBaseline: savedBaseline).ConfigureAwait(false);
         wallClock.Stop();
 
         var approachingCeiling = reconciliation.SpoolEvacuatedCount > 0;
@@ -339,7 +348,8 @@ public static class ScenarioRunner
         LoadGeneratorResult loadResult,
         long osUdpBaselineDiscarded = 0,
         string? sqlServerConnectionString = null,
-        bool transportIsUdp = true)
+        bool transportIsUdp = true,
+        long savedBaseline = 0)
     {
         // スプール drain が残っている場合は完了を待つ（突合式は drain 完了後でないと
         // 「スプール退避」と「保存件数」の間で二重計上のように見えるため。
@@ -366,7 +376,10 @@ public static class ScenarioRunner
         long savedCount;
         if (!string.IsNullOrWhiteSpace(sqlServerConnectionString))
         {
-            savedCount = await LogStoreProbe.GetSqlServerRecordCountAsync(sqlServerConnectionString).ConfigureAwait(false);
+            // 実行前の既存件数(savedBaseline)との差分で「本実行で保存された件数」を数える
+            // (SQL Server は実行間で同一データベースを使い回すため。RunProviderWriteCeilingAsync
+            // のコメント参照)。
+            savedCount = await LogStoreProbe.GetSqlServerRecordCountAsync(sqlServerConnectionString).ConfigureAwait(false) - savedBaseline;
         }
         else
         {

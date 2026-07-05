@@ -1,0 +1,92 @@
+{
+  "ScenarioName": "ProviderWriteCeiling",
+  "RunId": "efcc2767b7cc",
+  "StartedAt": "2026-07-05T13:52:34.1203816+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26200",
+    "OsArchitecture": "X64",
+    "ProcessorName": "Intel64 Family 15 Model 107 Stepping 1, GenuineIntel",
+    "LogicalProcessorCount": 8,
+    "TotalPhysicalMemoryBytes": 8569397248,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=62GiB, free=24GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "YAGURA-STG"
+  },
+  "LoadGeneratorOptions": {
+    "Transport": 1,
+    "Pattern": 0,
+    "TargetHost": "127.0.0.1",
+    "TargetPort": 58227,
+    "RunId": "efcc2767b7cc",
+    "RatePerSecond": 2000,
+    "DurationSeconds": 15,
+    "BurstCount": 0,
+    "SenderSocketCount": 4,
+    "PaddingBytes": 0
+  },
+  "LoadResult": {
+    "RunId": "efcc2767b7cc",
+    "AttemptedCount": 29984,
+    "SucceededCount": 29984,
+    "FailedCount": 0,
+    "Elapsed": "00:00:15.0074069",
+    "SenderSocketCount": 4,
+    "SentCount": 29984
+  },
+  "Reconciliation": {
+    "SentCount": 29984,
+    "SavedCount": 45880,
+    "AccountedLossCount": 0,
+    "SpoolEvacuatedCount": 0,
+    "OsUdpDatagramsDiscardedDelta": 0,
+    "DerivedOsBufferLossCount": 0,
+    "Difference": -15896,
+    "IsReconciled": false,
+    "Counters": {
+      "InternalBufferDropped": 0,
+      "TcpConnectionRejected": 0,
+      "SpoolEvacuated": 0,
+      "SpoolWriteFailed": 0,
+      "SpoolDiscarded": 0,
+      "PersistenceFailed": 0,
+      "FlowControlDropped": 0
+    }
+  },
+  "ElapsedWallClock": "00:00:21.0867500",
+  "AdditionalMetrics": {
+    "provider": "SqlServer",
+    "\u4E0A\u9650\u63A5\u8FD1\u30B7\u30B0\u30CA\u30EB(\u30B9\u30D7\u30FC\u30EB\u9000\u907F\u003E0)": "False"
+  },
+  "Notes": [
+    "provider: SQL Server\u3002\u76EE\u6A19\u30EC\u30FC\u30C8 2000 msg/sec \u3092 15 \u79D2\u9593\u9001\u51FA\u3057\u305F\u3002",
+    "\u30B9\u30D7\u30FC\u30EB\u9000\u907F\u306F\u767A\u751F\u3057\u306A\u304B\u3063\u305F\u2014\u2014\u3053\u306E\u30EC\u30FC\u30C8\u306F provider \u304C\u6B63\u5473\u51E6\u7406\u3067\u304D\u3066\u3044\u308B\u7BC4\u56F2\u5185\u3002"
+  ],
+  "HostStdout": [
+    "info: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[63]",
+    "      User profile is available. Using \u0027C:\\Users\\Yagura\\AppData\\Local\\ASP.NET\\DataProtection-Keys\u0027 as key repository and Windows DPAPI to encrypt keys at rest.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      UDP syslog listener started on port 53265.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      TCP syslog listener started on port 58227.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline consumers (parsing/persistence) started.",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Retention delete scheduler started.",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::]:58228",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://127.0.0.1:58226",
+    "info: Microsoft.Hosting.Lifetime[14]",
+    "      Now listening on: http://[::1]:58226",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application started. Press Ctrl\u002BC to shut down.",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Hosting environment: Production",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Content root path: C:\\YaguraBench",
+    "info: Microsoft.Hosting.Lifetime[0]",
+    "      Application is shutting down...",
+    "info: Yagura.Host.IngestionHostedService[0]",
+    "      Ingestion pipeline stopped."
+  ]
+}
