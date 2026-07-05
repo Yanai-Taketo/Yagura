@@ -58,6 +58,49 @@ public sealed class BenchHostProcess : IAsyncDisposable
     /// <param name="httpPort">起動時閲覧 HTTP ポート指定（既定 0 = OS 採番）。</param>
     /// <param name="adminPort">起動時管理 HTTP ポート指定（既定 0 = OS 採番）。</param>
     /// <param name="startupTimeout">起動ログ待機のタイムアウト（既定 30 秒。E2E テストと同じ既定値）。</param>
+    /// <summary>
+    /// 子プロセス起動に使う dotnet 実行ファイルのパスを解決する。
+    /// </summary>
+    /// <remarks>
+    /// 固定文字列 <c>"dotnet"</c>（PATH 依存）では、dotnet が PATH に登録されていない環境からの
+    /// CLI 実行が <c>Win32Exception</c>（ファイルが見つからない）で失敗する（本開発機で実際に
+    /// 発生——`dotnet test` 経由の VSTest ホスト下では PATH が通っており顕在化しなかった）。
+    /// 解決順序: (1) <c>DOTNET_HOST_PATH</c> 環境変数（dotnet SDK/ホストが子コンテキストへ
+    /// 設定する公式変数）、(2) 自プロセスが dotnet ホストで実行されている場合はその実体
+    /// （<see cref="Environment.ProcessPath"/>）、(3) 素の <c>"dotnet"</c>（PATH 解決に委ねる）。
+    /// </remarks>
+    private static string ResolveDotnetExecutablePath()
+    {
+        var hostPath = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+        if (!string.IsNullOrWhiteSpace(hostPath) && File.Exists(hostPath))
+        {
+            return hostPath;
+        }
+
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(processPath))
+        {
+            var fileName = Path.GetFileNameWithoutExtension(processPath);
+            if (string.Equals(fileName, "dotnet", StringComparison.OrdinalIgnoreCase))
+            {
+                return processPath;
+            }
+
+            // apphost（Yagura.Bench.exe 等）で実行されている場合、同じランタイムを持つ
+            // dotnet.exe はランタイムディレクトリの祖先（<dotnet root>）に居る。
+            // RuntimeEnvironment のランタイムパス（<dotnet root>/shared/<fw>/<ver>/）から遡る。
+            var runtimeDirectory = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+            var dotnetRoot = Path.GetFullPath(Path.Combine(runtimeDirectory, "..", "..", ".."));
+            var candidate = Path.Combine(dotnetRoot, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return "dotnet";
+    }
+
     public static async Task<BenchHostProcess> StartAsync(
         string dataRoot,
         int udpPort = 0,
@@ -77,7 +120,7 @@ public sealed class BenchHostProcess : IAsyncDisposable
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = "dotnet",
+            FileName = ResolveDotnetExecutablePath(),
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

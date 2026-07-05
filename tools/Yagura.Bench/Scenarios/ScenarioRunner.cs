@@ -12,9 +12,11 @@ namespace Yagura.Bench.Scenarios;
 public static class ScenarioRunner
 {
     /// <summary>
-    /// メタデータ領域の定期永続化間隔（既定 10 秒。ObservabilityConstants.MetadataPersistInterval）
-    /// より確実に長い静定時間。負荷停止後、この時間を空けてから正常停止することで、
-    /// メタデータ領域に最終カウンタが反映された状態で子プロセスを止められる。
+    /// 負荷停止後、Q2 の消費・DB 書き込みが落ち着くのを待つ静定時間。最終カウンタの正確性は
+    /// この待機ではなく<b>グレースフル停止</b>（停止手順 3 の最終カウンタ書き込み。
+    /// <see cref="ConsoleCtrlSender"/>）が保証する——本値は定期永続化間隔（既定 10 秒）より
+    /// 短く、Kill フォールバック時（グレースフル停止が使えない環境）の取りこぼしをカバーしない
+    /// （その場合は StopAndReconcileAsync が警告を出す）。
     /// </summary>
     private static readonly TimeSpan MetadataSettleMargin = TimeSpan.FromSeconds(5);
 
