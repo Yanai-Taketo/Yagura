@@ -149,7 +149,18 @@ public sealed class PromotionWizardServiceTests : IDisposable
         using var document = JsonDocument.Parse(File.ReadAllBytes(configPath));
         var storage = document.RootElement.GetProperty("Storage");
         Assert.Equal("sqlserver", storage.GetProperty("Provider").GetString());
-        Assert.Contains("secret!", storage.GetProperty("SqlServer").GetProperty("ConnectionString").GetString());
+
+        // 接続文字列は常に DPAPI 暗号化表現（dpapi:<Base64>）で保存される——設定ファイルに
+        // 平文パスワードは書かれない（configuration.md §2。ADR-0004 決定 5）。
+        var storedConnectionString = storage.GetProperty("SqlServer").GetProperty("ConnectionString").GetString();
+        Assert.NotNull(storedConnectionString);
+        Assert.StartsWith("dpapi:", storedConnectionString, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret!", storedConnectionString, StringComparison.Ordinal);
+        // ファイル全体にも平文パスワードが現れないこと。
+        Assert.DoesNotContain("secret!", File.ReadAllText(configPath), StringComparison.Ordinal);
+        // 復号すると入力した接続文字列に戻る（同一プロセス内 round-trip——DPAPI はマシン依存のため）。
+        Assert.True(DpapiConnectionStringProtector.TryUnprotect(storedConnectionString, out var decrypted));
+        Assert.Equal("Server=db;User Id=sa;Password=secret!", decrypted);
 
         // 監査（2000 番台 ID 2003）: 接続文字列は記録しない。
         var recorded = Assert.Single(_audit.RecordedEvents);

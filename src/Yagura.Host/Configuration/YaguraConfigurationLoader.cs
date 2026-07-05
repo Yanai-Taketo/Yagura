@@ -569,6 +569,16 @@ public static class YaguraConfigurationLoader
     /// に乗せるが、Reason 文言で「SQL Server を意図していたのに SQLite で動作している」という
     /// 事故（気づかれないと本番想定の環境が組み込み DB のまま運用され続ける）を明示する。
     /// </para>
+    /// <para>
+    /// <b>DPAPI 暗号化表現の復号（configuration.md §2。ADR-0004 決定 5）</b>:
+    /// <c>dpapi:</c> 接頭辞付きの値は <see cref="DpapiConnectionStringProtector"/> で復号して
+    /// 使用する。<b>復号失敗（改ざん・別マシンへの設定コピー）は「接続文字列不備」と同じ
+    /// SQLite への縮小 + 強い警告</b>とする（起動を止めない——上記 (1)(2) と同じ判断。
+    /// 復号失敗は SQL Server provider を構築する前の設定検証段階の問題であり、上記 (3) の
+    /// 整理にも合流する）。接頭辞のない平文は従来どおり受理し（手編集ユーザーを壊さない。
+    /// 2026-07-06 オーナー決定: 平文 → 暗号化への自動書き戻しはしない）、資格情報入りの場合のみ
+    /// <see cref="SqlServerConnectionStringCredentialGuard"/> の検出で警告する。
+    /// </para>
     /// </remarks>
     private static (StorageProvider Provider, string? SqlServerConnectionString) ResolveStorageProvider(
         YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
@@ -604,6 +614,45 @@ public static class YaguraConfigurationLoader
                     "設計判断——database.md §1「ログを失わない」原則の適用）"));
 
             return (StorageProvider.Sqlite, null);
+        }
+
+        // --- DPAPI 暗号化表現（dpapi:<Base64>。configuration.md §2。ADR-0004 決定 5） ---
+        if (DpapiConnectionStringProtector.IsProtected(connectionString))
+        {
+            if (DpapiConnectionStringProtector.TryUnprotect(connectionString, out var decrypted))
+            {
+                return (StorageProvider.SqlServer, decrypted);
+            }
+
+            // 復号失敗（改ざん・別マシンからの yagura.json コピー——DPAPI machine スコープの
+            // マシン束縛による）は「接続文字列不備」（M5-3 の未設定時）と同じ縮小側継続とする。
+            // 警告に元の値は載せない（暗号文とはいえ資格情報由来の値を警告経路に流さない）。
+            warnings.Add(new ConfigurationWarning(
+                Key: "Storage:SqlServer:ConnectionString",
+                InvalidValue: "(dpapi: 暗号化表現——復号失敗。値は記録しない)",
+                AppliedValue: "sqlite への縮小",
+                Reason: "DPAPI 暗号化された接続文字列を復号できないため、起動を継続するために" +
+                    "組み込み SQLite へ縮小しました。原因は値の改ざん・破損、または他のマシンで" +
+                    "暗号化された設定ファイルのコピーです（DPAPI machine スコープの暗号化データは" +
+                    "当該マシンでのみ復号可能——configuration.md §2）。SQL Server での運用を再開するには" +
+                    "昇格ウィザードで接続文字列を再入力してください（本縮小は受信を止めないための" +
+                    "設計判断——database.md §1「ログを失わない」原則の適用）"));
+
+            return (StorageProvider.Sqlite, null);
+        }
+
+        // --- 平文の接続文字列（手編集経路）は従来どおり受理する（2026-07-06 オーナー決定: ---
+        // --- 自動書き換えはしない）。資格情報入りの平文のみ警告する（configuration.md §2） ---
+        if (SqlServerConnectionStringCredentialGuard.ContainsPlaintextCredential(connectionString))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Storage:SqlServer:ConnectionString",
+                InvalidValue: "(平文の SQL 認証資格情報を含む——値は記録しない)",
+                AppliedValue: "(平文のまま受理して継続)",
+                Reason: "接続文字列に平文のパスワードが含まれています（ADR-0004 決定 5「設定ファイルに" +
+                    "平文で置かない」）。動作は継続しますが、昇格ウィザードで接続文字列を再入力すると" +
+                    "DPAPI 暗号化表現（dpapi:）で保存し直せます。設定ファイルの自動書き換えは行いません" +
+                    "（利用者のファイルを勝手に変更しない——configuration.md §2）"));
         }
 
         return (StorageProvider.SqlServer, connectionString);

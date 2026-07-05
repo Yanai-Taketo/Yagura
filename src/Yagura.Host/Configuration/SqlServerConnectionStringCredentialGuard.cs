@@ -1,41 +1,38 @@
 ﻿namespace Yagura.Host.Configuration;
 
 /// <summary>
-/// <c>Storage:SqlServer:ConnectionString</c> 内の平文資格情報検出の挿入点（Issue #47。
-/// configuration.md §2「DB 接続資格情報は設定ファイルに平文で置かない」の DPAPI 暗号化は
-/// <b>本クラスでは実装しない</b>——検出の枠組みと呼び出し規約のみを用意する）。
+/// <c>Storage:SqlServer:ConnectionString</c> 内の平文資格情報の検出（M5-3 / Issue #47 で
+/// 検出の枠組みを挿入、DPAPI 暗号化の実装と同時に <see cref="YaguraConfigurationLoader"/> へ
+/// 配線した。configuration.md §2）。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>スコープ（Issue #47 の依頼どおり）</b>: 「資格情報の DPAPI 暗号化は挿入点のみ」——
-/// 実際の DPAPI 暗号化・復号（<c>System.Security.Cryptography.ProtectedData</c>、
-/// <c>DataProtectionScope.LocalMachine</c>。ADR-0004 決定 5）は後続 Issue で実装する。
-/// 本クラスは (1) 接続文字列に平文パスワードが含まれるかどうかの判定、(2) 判定結果を
-/// 呼び出し側（<see cref="YaguraConfigurationLoader"/>・将来のウィザード保存経路）が
-/// どう扱うべきかの規約、の 2 点のみを定義する。
+/// <b>役割分担</b>: 実際の DPAPI 暗号化・復号は <see cref="DpapiConnectionStringProtector"/>
+/// （<c>System.Security.Cryptography.ProtectedData</c>、<c>DataProtectionScope.LocalMachine</c> +
+/// 固有 entropy。ADR-0004 決定 5）が担う。本クラスは (1) 接続文字列に平文パスワードが
+/// 含まれるかどうかの判定、(2) 判定結果を呼び出し側がどう扱うべきかの規約、の 2 点を定義する。
 /// </para>
 /// <para>
 /// <b>検出方法</b>: <see cref="Microsoft.Data.SqlClient.SqlConnectionStringBuilder"/> で
 /// パースし、<c>IntegratedSecurity</c> が偽かつ <c>Password</c>（または <c>Pwd</c>）キーに
-/// 非空の値がある場合を「平文資格情報あり」とする。DPAPI 暗号化表現（未実装）は将来、
-/// 接続文字列全体または <c>Password</c> 値のみを Base64 等でラップした専用プレフィックス
-/// （例: <c>dpapi:</c>）を持つ想定とし、本クラスはそのプレフィックスを持つ値を
-/// 「既に暗号化済み」として平文検出の対象から除外する準備をコメントで明示する。
+/// 非空の値がある場合を「平文資格情報あり」とする。DPAPI 暗号化表現
+/// （<see cref="DpapiConnectionStringProtector.Prefix"/> 付き）は「既に暗号化済み」として
+/// 平文検出の対象から除外する。
 /// </para>
 /// <para>
-/// <b>本クラスが呼ばれていない現状</b>: <see cref="YaguraConfigurationLoader"/> は
-/// 現時点でこのクラスを呼び出していない（起動時・再読み込み時の自動書き換え——
-/// configuration.md §2「手編集で平文パスワードが書かれた場合、起動時および設定の
-/// 再読み込み時に検出して暗号化表現へ書き換える」——は本 Issue の範囲外）。
-/// 呼び出し配線は DPAPI 実装 Issue と同時に行う。
+/// <b>検出後の扱い（configuration.md §2。2026-07-06 オーナー決定）</b>: 手編集で書かれた
+/// 平文の接続文字列は従来どおり<b>受理する</b>（手編集ユーザーを壊さない）。資格情報入りの
+/// 平文には強い警告を出し続けるが、<b>設定ファイルの自動書き換え（平文 → 暗号化への書き戻し）は
+/// 行わない</b>——利用者のファイルを勝手に変更しない方針。暗号化表現への移行はウィザード
+/// （昇格）経由の再入力で行う。
 /// </para>
 /// </remarks>
 internal static class SqlServerConnectionStringCredentialGuard
 {
     /// <summary>
-    /// 将来の DPAPI 暗号化表現を示すプレフィックス（未実装。予約のみ）。
+    /// DPAPI 暗号化表現を示すプレフィックス（実体は <see cref="DpapiConnectionStringProtector.Prefix"/>）。
     /// </summary>
-    internal const string EncryptedValuePrefix = "dpapi:";
+    internal const string EncryptedValuePrefix = DpapiConnectionStringProtector.Prefix;
 
     /// <summary>
     /// 接続文字列に平文の SQL 認証パスワードが含まれるかどうかを判定する。
@@ -50,7 +47,8 @@ internal static class SqlServerConnectionStringCredentialGuard
 
         if (connectionString.StartsWith(EncryptedValuePrefix, StringComparison.Ordinal))
         {
-            // 将来の暗号化表現（未実装）はここで除外する準備——実装時に復号経路を追加する。
+            // 暗号化表現は「既に暗号化済み」として平文検出の対象から除外する
+            // （復号経路は YaguraConfigurationLoader → DpapiConnectionStringProtector）。
             return false;
         }
 
