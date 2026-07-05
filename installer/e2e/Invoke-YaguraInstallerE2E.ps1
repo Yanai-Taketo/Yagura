@@ -412,6 +412,23 @@ try {
                 }
                 return ('token {0} visible on {1} after {2} datagram(s) to udp/{3}' -f $token, $ViewerBaseUrl, $script:SendCount, $UdpPort)
             })
+
+            # 対話機能の成立検証(PR #79 の実バグの再発防止): 閲覧 UI の照合は prerender HTML
+            # だけでも通ってしまうため、circuit 確立に必須のフレームワークスクリプトが実際に
+            # 配信されることを別ステップで確認する。blazor.web.js が 404 の場合、画面は表示
+            # されるが対話機能(テーマ切替・検索操作)が全て沈黙する——UI を RCL に置く構成で
+            # SDK の RequiresAspNetWebAssets 条件から漏れて実際に起きた(修正 = Yagura.Host.csproj)。
+            [void](Invoke-E2EStep -Name 'verify-interactive-framework-script' -Action {
+                $url = ('{0}/_framework/blazor.web.js' -f $ViewerBaseUrl.TrimEnd('/'))
+                $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 15
+                if ($response.StatusCode -ne 200) {
+                    throw ('blazor.web.js returned HTTP {0} (expected 200) - interactive circuit cannot start' -f $response.StatusCode)
+                }
+                if ($response.Content.Length -lt 1024) {
+                    throw ('blazor.web.js is suspiciously small ({0} bytes) - possible empty/stub response' -f $response.Content.Length)
+                }
+                return ('blazor.web.js served: HTTP 200, {0} bytes' -f $response.Content.Length)
+            })
         }
 
         # -------------------------------------------------------------------
