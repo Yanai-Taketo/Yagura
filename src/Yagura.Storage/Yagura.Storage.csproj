@@ -11,4 +11,14 @@
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      スプールのフレーム形式（長さプレフィックス + CRC-32）・破損末尾検出は internal 実装
+      （SpoolRecordSerializer・SpoolSegmentReader・Crc32）の単体テストで直接検証する
+      （DiskSpool 経由のブラックボックステストだけでなく、フレーム境界の異常系を
+      ピンポイントに再現するため）。M4-3 で追加。
+    -->
+    <InternalsVisibleTo Include="Yagura.Storage.Tests" />
+  </ItemGroup>
+
 </Project>

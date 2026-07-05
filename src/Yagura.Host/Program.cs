@@ -11,6 +11,7 @@ using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
+using Yagura.Storage.Spool;
 using Yagura.Web;
 
 namespace Yagura.Host;
@@ -74,6 +75,32 @@ public static class Program
 
         var resolvedConfiguration = configurationLoadResult.Configuration;
         var databasePath = Path.Combine(dataRoot, resolvedConfiguration.SqliteFileName);
+
+        // architecture.md §1.2 起動手順 1「スプール領域を開く（前回退避分の存在確認を含む）」。
+        // 受信開始（IngestionHostedService.StartAsync）より先に行う必要があるため、DI 登録前の
+        // ここで同期的に開く。開けなかった場合はスプールなし縮退運転として続行する
+        // （受信は止めない。§1.2「起動失敗（= 受信断の固定化）よりも、可視化された縮退の方が
+        // 『ログを失わない』原則への害が小さい」）。opt-out で無効化されている場合も
+        // 縮退運転と同じ扱い（スプールなしでパイプラインを構成する）でよいが、利用者が明示的に
+        // 無効化した場合は「縮退」ではなく意図した構成のため、警告・メトリクスは出さない。
+        // 警告ログ自体は EventLog プロバイダ登録（後述）を経た後の DI ロガーで出す必要があるため、
+        // ここでは開けたかどうかの結果のみを保持し、実際の警告は app.Build() 後に出す。
+        DiskSpool? spool = null;
+        Exception? spoolOpenFailure = null;
+        var spoolDegraded = false;
+
+        if (resolvedConfiguration.SpoolEnabled)
+        {
+            spool = DiskSpool.TryOpen(
+                new DiskSpoolOptions
+                {
+                    Directory = resolvedConfiguration.SpoolDirectory,
+                    QuotaBytes = resolvedConfiguration.SpoolQuotaBytes,
+                },
+                out spoolOpenFailure);
+
+            spoolDegraded = spool is null;
+        }
 
         var builder = WebApplication.CreateBuilder(args);
 
@@ -159,12 +186,34 @@ public static class Program
             sp.GetRequiredService<TcpSyslogListenerOptions>(),
             sp.GetRequiredService<ILogStore>(),
             new NoopIngressGate(),
-            sp.GetRequiredService<ILoggerFactory>()));
+            sp.GetRequiredService<ILoggerFactory>(),
+            spool));
         builder.Services.AddHostedService<IngestionHostedService>();
 
         builder.Services.AddYaguraWebViewer();
 
         var app = builder.Build();
+
+        if (spoolDegraded)
+        {
+            // §1.2「縮退はイベントログへの警告（§4.6）とメトリクスで強く可視化し、黙って
+            // opt-out 相当に落ちることを許さない」。app.Build() 後の DI ロガーを使うことで、
+            // この警告は EventLog プロバイダ（既定 Warning 以上を書き出す。本ファイル上部の
+            // AddEventLog 参照）にも到達する。メトリクス側の可視化は、spool が null のまま
+            // IngestionPipeline に渡ることで、縮退中の Q2 溢れ・書込失敗が実際に発生した
+            // 時点で「永続化失敗」カウンタへ計上される形で行われる（ParsingStage・
+            // PersistenceWriter 側の実装参照）。
+            var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Startup");
+            // 先頭の [spool-degraded-mode] はロケール非依存の機械照合用トークン。日本語本文は
+            // リダイレクトされた子プロセス stdout のコードページ次第で化け得るため(en-US 環境の
+            // CP437 等)、E2E テストはこの ASCII トークンで照合する。恒久的なイベント ID 体系は
+            // security.md §4.3 の監査記録実装時に整備する。
+            startupLogger.LogWarning(
+                spoolOpenFailure,
+                "[spool-degraded-mode] スプール領域 {SpoolDirectory} を開けなかったため、スプールなし縮退運転で起動します。" +
+                "縮退中は Q2 溢れ・書き込み失敗分が破棄され、永続化失敗カウンタへ計上されます。",
+                resolvedConfiguration.SpoolDirectory);
+        }
 
         // MapRazorComponents の既定エンドポイントは antiforgery メタデータを持つため、
         // 対応する UseAntiforgery ミドルウェアが無いと 500 になる（書き込みフォームを
@@ -189,6 +238,15 @@ public static class Program
         // host/hosted-services）。本 E2E テスト（tests/Yagura.E2E.Tests）の起動ログ順で
         // 実際に「UDP listener started」ログが「Now listening on:」より先に出ることも
         // 実証している。
-        await app.RunAsync().ConfigureAwait(false);
+        try
+        {
+            await app.RunAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // DiskSpool はここ（Program）が所有者として開いたため、ここで解放する
+            // （IngestionPipeline は借用しているだけで dispose しない）。
+            spool?.Dispose();
+        }
     }
 }

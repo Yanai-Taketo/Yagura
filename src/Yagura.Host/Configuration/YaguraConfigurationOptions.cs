@@ -3,8 +3,9 @@
 /// <summary>
 /// 設定ファイル（既定 <c>yagura.json</c>。<see cref="YaguraConfigurationLoader"/> 参照）の
 /// JSON 構造にそのままバインドする POCO。configuration.md §8 の設定スキーマ一覧のうち、
-/// 現時点で実在する項目（受信・UI・永続化の一部）のみをモデル化する（additive-only の起点。
-/// §8 の他区分——流量制御・スプール・保持期間・通知——は当該機能の実装時に追加する）。
+/// 現時点で実在する項目（受信・UI・永続化の一部・スプール）のみをモデル化する
+/// （additive-only の起点。§8 の他区分——流量制御・保持期間・通知——は当該機能の
+/// 実装時に追加する）。
 /// </summary>
 /// <remarks>
 /// 本クラスは「ファイルに書かれていた生の値」を保持する検証前の中間表現である。
@@ -27,6 +28,9 @@ public sealed class YaguraConfigurationOptions
 
     /// <summary>§8「永続化」区分のうち組み込み DB の置き場所。データルート自体は §2 参照。</summary>
     public StorageOptions? Storage { get; set; }
+
+    /// <summary>§8「スプール」区分（M4-3）。</summary>
+    public SpoolOptions? Spool { get; set; }
 
     public sealed class IngestionOptions
     {
@@ -68,5 +72,24 @@ public sealed class YaguraConfigurationOptions
         /// 不正として既定値へフォールバックする（データルート脱出を防ぐ。§1「既定値で継続」）。
         /// </summary>
         public string? SqliteFileName { get; set; }
+    }
+
+    public sealed class SpoolOptions
+    {
+        /// <summary>
+        /// スプールの有効/無効（既定 <c>true</c>。opt-out。configuration.md §8「スプール」区分）。
+        /// </summary>
+        public string? Enabled { get; set; }
+
+        /// <summary>
+        /// スプールディレクトリの絶対パス（既定はデータルート配下。configuration.md §2）。
+        /// </summary>
+        public string? Directory { get; set; }
+
+        /// <summary>
+        /// ディスク使用量上限（バイト）。既定は <see cref="Yagura.Storage.Spool.SpoolConstants.DefaultQuotaBytes"/>
+        /// （M-12 実測確定待ちの暫定値）。
+        /// </summary>
+        public string? QuotaBytes { get; set; }
     }
 }

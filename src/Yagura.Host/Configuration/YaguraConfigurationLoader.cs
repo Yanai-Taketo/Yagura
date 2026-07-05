@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
+using Yagura.Storage.Spool;
 
 namespace Yagura.Host.Configuration;
 
@@ -57,6 +58,9 @@ public static class YaguraConfigurationLoader
         "Ingestion:Tcp:Port",
         "Viewer:HttpPort",
         "Storage:SqliteFileName",
+        "Spool:Enabled",
+        "Spool:Directory",
+        "Spool:QuotaBytes",
     };
 
     /// <summary>
@@ -110,6 +114,11 @@ public static class YaguraConfigurationLoader
         // --- 永続化: SQLite ファイル名（§1「既定値で継続」） ---
         var sqliteFileName = ResolveSqliteFileName(options, warnings);
 
+        // --- スプール: 有効/無効・置き場所・上限（§1「既定値で継続」。M4-3） ---
+        var spoolEnabled = ResolveSpoolEnabled(options, warnings);
+        var spoolDirectory = ResolveSpoolDirectory(options, dataRoot, warnings);
+        var spoolQuotaBytes = ResolveSpoolQuotaBytes(options, warnings);
+
         foreach (var warning in warnings)
         {
             logger.LogWarning(
@@ -127,7 +136,10 @@ public static class YaguraConfigurationLoader
             TcpBindAddress: tcpBindAddress,
             TcpPort: tcpPort,
             HttpPort: httpPort,
-            SqliteFileName: sqliteFileName);
+            SqliteFileName: sqliteFileName,
+            SpoolEnabled: spoolEnabled,
+            SpoolDirectory: spoolDirectory,
+            SpoolQuotaBytes: spoolQuotaBytes);
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
     }
@@ -362,6 +374,94 @@ public static class YaguraConfigurationLoader
             Reason: "ファイル名として不正な文字を含むため既定値を適用"));
 
         return defaultFileName;
+    }
+
+    /// <summary>
+    /// スプールの有効/無効を解決する（既定 <c>true</c>。opt-out。configuration.md §8
+    /// 「スプール」区分。§1「既定値で継続」——受信の成立に不可欠なキーではない）。
+    /// </summary>
+    private static bool ResolveSpoolEnabled(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        const bool defaultEnabled = true;
+
+        var raw = options.Spool?.Enabled;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultEnabled;
+        }
+
+        if (bool.TryParse(raw, out var enabled))
+        {
+            return enabled;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Spool:Enabled",
+            InvalidValue: raw,
+            AppliedValue: defaultEnabled.ToString(CultureInfo.InvariantCulture),
+            Reason: "真偽値として不正なため既定値（有効）を適用"));
+
+        return defaultEnabled;
+    }
+
+    /// <summary>
+    /// スプールディレクトリを解決する（既定はデータルート配下の <c>spool</c>。
+    /// configuration.md §2「スプールと組み込み DB の置き場所はそれぞれ設定で変更できる」）。
+    /// パス区切り文字自体は許容する（絶対パスの指定を妨げないため。<see cref="Path.GetFullPath"/>
+    /// で解決できない値のみ不正として扱う）。
+    /// </summary>
+    private static string ResolveSpoolDirectory(YaguraConfigurationOptions options, string dataRoot, List<ConfigurationWarning> warnings)
+    {
+        var defaultDirectory = Path.Combine(dataRoot, "spool");
+
+        var raw = options.Spool?.Directory;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultDirectory;
+        }
+
+        try
+        {
+            return Path.GetFullPath(raw);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Spool:Directory",
+                InvalidValue: raw,
+                AppliedValue: defaultDirectory,
+                Reason: "パスとして不正なため既定値（データルート配下）を適用"));
+
+            return defaultDirectory;
+        }
+    }
+
+    /// <summary>
+    /// スプールのディスク使用量上限（バイト）を解決する（既定は
+    /// <see cref="SpoolConstants.DefaultQuotaBytes"/>。M-12 実測確定待ちの暫定値）。
+    /// </summary>
+    private static long ResolveSpoolQuotaBytes(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var defaultQuotaBytes = SpoolConstants.DefaultQuotaBytes;
+
+        var raw = options.Spool?.QuotaBytes;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultQuotaBytes;
+        }
+
+        if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var quotaBytes) && quotaBytes > 0)
+        {
+            return quotaBytes;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Spool:QuotaBytes",
+            InvalidValue: raw,
+            AppliedValue: defaultQuotaBytes.ToString(CultureInfo.InvariantCulture),
+            Reason: "正の整数（バイト数）として不正なため既定値を適用"));
+
+        return defaultQuotaBytes;
     }
 
     private static int ParsePortOrThrow(string raw, string key, string source)
