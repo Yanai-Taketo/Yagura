@@ -30,14 +30,6 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InitializeAsync_CalledTwice_DoesNotThrow()
-    {
-        var exception = await Record.ExceptionAsync(() => _store.InitializeAsync());
-
-        Assert.Null(exception);
-    }
-
-    [Fact]
     public async Task WriteBatchAsync_ThenQueryLatest_ReturnsRecordsInDescendingOrderWithoutRawOrStructuredData()
     {
         var baseline = DateTimeOffset.UtcNow;
@@ -130,21 +122,6 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
             await connection.DisposeAsync();
             SqliteConnection.ClearPool(connection);
         }
-    }
-
-    [Fact]
-    public async Task QueryLatestAsync_LimitIsRespected()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        var records = Enumerable.Range(0, 5)
-            .Select(i => CreateParsedRecord(baseline.AddSeconds(-i), $"10.0.0.{i}", $"message-{i}"))
-            .ToArray();
-
-        await _store.WriteBatchAsync(records);
-
-        var results = await _store.QueryLatestAsync(limit: 2, timeout: TimeSpan.FromSeconds(5));
-
-        Assert.Equal(2, results.Count);
     }
 
     [Fact]
@@ -337,79 +314,14 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
     }
 
     // ------------------------------------------------------------------
-    // 対話的検索の完全化（database.md §1.2 契約 4。M5-1）
+    // 対話的検索: SQLite 固有の検証（database.md §1.2 契約 4。M5-1・M5-2）
     // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task QueryAsync_ReceivedAtRange_FiltersToRange()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        var records = new[]
-        {
-            CreateParsedRecord(baseline.AddMinutes(-10), "10.0.0.1", "too-old"),
-            CreateParsedRecord(baseline.AddMinutes(-5), "10.0.0.2", "in-range"),
-            CreateParsedRecord(baseline, "10.0.0.3", "too-new"),
-        };
-        await _store.WriteBatchAsync(records);
-
-        var results = await _store.QueryAsync(new LogQuery(
-            Limit: 10,
-            Timeout: TimeSpan.FromSeconds(5),
-            ReceivedAtFrom: baseline.AddMinutes(-6),
-            ReceivedAtTo: baseline.AddMinutes(-1)));
-
-        Assert.Single(results);
-        Assert.Equal("in-range", results[0].Message);
-    }
-
-    [Fact]
-    public async Task QueryAsync_SourceAddress_FiltersToExactMatch()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        await _store.WriteBatchAsync(new[]
-        {
-            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "from-1"),
-            CreateParsedRecord(baseline, "10.0.0.2", "from-2"),
-        });
-
-        var results = await _store.QueryAsync(new LogQuery(
-            Limit: 10,
-            Timeout: TimeSpan.FromSeconds(5),
-            SourceAddress: "10.0.0.2"));
-
-        Assert.Single(results);
-        Assert.Equal("from-2", results[0].Message);
-    }
-
-    [Fact]
-    public async Task QueryAsync_Severity_FiltersToExactMatch()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        var low = CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "low-severity") with { Severity = 3 };
-        var high = CreateParsedRecord(baseline, "10.0.0.1", "high-severity") with { Severity = 7 };
-        await _store.WriteBatchAsync(new[] { low, high });
-
-        var results = await _store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), Severity: 7));
-
-        Assert.Single(results);
-        Assert.Equal("high-severity", results[0].Message);
-    }
-
-    [Fact]
-    public async Task QueryAsync_SearchText_MatchesSubstringCaseInsensitive()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        await _store.WriteBatchAsync(new[]
-        {
-            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "Connection RESET by peer"),
-            CreateParsedRecord(baseline, "10.0.0.1", "normal heartbeat"),
-        });
-
-        var results = await _store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), SearchText: "reset"));
-
-        Assert.Single(results);
-        Assert.Contains("RESET", results[0].Message);
-    }
+    //
+    // 条件・組み合わせ・射影・上限・キャンセル伝播の機械検証は
+    // Yagura.Storage.ConformanceTests/LogStoreConformanceTestBase に集約した
+    // （M5-2 database.md §1.3。provider 非依存の契約検証は適合スイートを正とし、
+    // 純粋に重複する検証は本ファイルから削除した）。ここには SQLite の LIKE 演算子の
+    // ワイルドカードエスケープという実装固有の検証のみ残す。
 
     [Fact]
     public async Task QueryAsync_SearchText_WithWildcardCharacters_TreatedLiterally()
@@ -427,137 +339,13 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
         Assert.Equal("100% cpu usage", results[0].Message);
     }
 
-    [Fact]
-    public async Task QueryAsync_CombinedConditions_AllMustMatch()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        var matching = CreateParsedRecord(baseline, "10.0.0.5", "disk failure detected") with { Severity = 2 };
-        var wrongSource = CreateParsedRecord(baseline, "10.0.0.6", "disk failure detected") with { Severity = 2 };
-        var wrongSeverity = CreateParsedRecord(baseline, "10.0.0.5", "disk failure detected") with { Severity = 6 };
-        await _store.WriteBatchAsync(new[] { matching, wrongSource, wrongSeverity });
-
-        var results = await _store.QueryAsync(new LogQuery(
-            Limit: 10,
-            Timeout: TimeSpan.FromSeconds(5),
-            SourceAddress: "10.0.0.5",
-            Severity: 2,
-            SearchText: "disk failure"));
-
-        Assert.Single(results);
-    }
-
-    [Fact]
-    public async Task QueryAsync_MessageProjectionLength_TruncatesToFirstNCharacters()
-    {
-        var longMessage = new string('a', 500);
-        await _store.WriteBatchAsync(new[] { CreateParsedRecord(DateTimeOffset.UtcNow, "10.0.0.1", longMessage) });
-
-        var results = await _store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), MessageProjectionLength: 200));
-
-        Assert.Single(results);
-        Assert.Equal(200, results[0].Message!.Length);
-        Assert.Equal(longMessage[..200], results[0].Message);
-    }
-
-    [Fact]
-    public async Task QueryAsync_MessageShorterThanProjectionLength_NotPadded()
-    {
-        await _store.WriteBatchAsync(new[] { CreateParsedRecord(DateTimeOffset.UtcNow, "10.0.0.1", "short") });
-
-        var results = await _store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5)));
-
-        Assert.Single(results);
-        Assert.Equal("short", results[0].Message);
-    }
-
-    [Fact]
-    public async Task QueryAsync_ExternalCancellation_ThrowsOperationCanceledNotTimeout()
-    {
-        // タイムアウト発火の実時間競合（極小タイムアウト vs クエリ実行速度）はタイマー分解能
-        // 依存で flaky になるため、時間競合そのものはテストしない。ここでは決定的に検証できる
-        // 「外部キャンセルは TimeoutException へ変換されない」（実装の when 句の弁別。
-        // 呼び出し側が『打ち切られた』と『利用者がやめた』を区別できる契約）を固定化する。
-        // タイムアウト→TimeoutException 変換の分岐自体は QueryLatestAsync 時代から同一構造で、
-        // 網羅は分岐のコードレビューに委ねる。
-        await _store.WriteBatchAsync(new[] { CreateParsedRecord(DateTimeOffset.UtcNow, "10.0.0.1", "message") });
-
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            _store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5)), cts.Token));
-    }
-
-    [Fact]
-    public async Task QueryLatestAsync_DelegatesToQueryAsync_NoConditions()
-    {
-        var baseline = DateTimeOffset.UtcNow;
-        await _store.WriteBatchAsync(new[]
-        {
-            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "first"),
-            CreateParsedRecord(baseline, "10.0.0.2", "second"),
-        });
-
-        var results = await _store.QueryLatestAsync(limit: 10, timeout: TimeSpan.FromSeconds(5));
-
-        Assert.Equal(2, results.Count);
-        Assert.Equal("second", results[0].Message);
-    }
-
     // ------------------------------------------------------------------
-    // 保持期間削除（database.md §1.2 契約 5・§3。M5-1）
+    // 保持期間削除: SQLite 固有の検証（database.md §1.2 契約 5・§3。M5-1・M5-2）
     // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task DeleteOlderThanAsync_CutoffBoundary_DeletesOnlyStrictlyOlderRecords()
-    {
-        var cutoff = DateTimeOffset.UtcNow;
-        await _store.WriteBatchAsync(new[]
-        {
-            CreateParsedRecord(cutoff.AddSeconds(-1), "10.0.0.1", "older-than-cutoff"),
-            CreateParsedRecord(cutoff, "10.0.0.2", "exactly-at-cutoff"),
-            CreateParsedRecord(cutoff.AddSeconds(1), "10.0.0.3", "newer-than-cutoff"),
-        });
-
-        var result = await _store.DeleteOlderThanAsync(cutoff);
-
-        Assert.Equal(1, result.DeletedCount);
-
-        var remaining = await _store.QueryLatestAsync(limit: 10, timeout: TimeSpan.FromSeconds(5));
-        Assert.Equal(2, remaining.Count);
-        Assert.DoesNotContain(remaining, r => r.Message == "older-than-cutoff");
-        Assert.Contains(remaining, r => r.Message == "exactly-at-cutoff");
-        Assert.Contains(remaining, r => r.Message == "newer-than-cutoff");
-    }
-
-    [Fact]
-    public async Task DeleteOlderThanAsync_MoreRecordsThanBatchSize_DeletesAllInMultipleBatches()
-    {
-        var cutoff = DateTimeOffset.UtcNow;
-        var totalRecords = RetentionConstants.DeleteBatchMaxSize + 250;
-        var records = Enumerable.Range(0, totalRecords)
-            .Select(i => CreateParsedRecord(cutoff.AddSeconds(-1 - i), "10.0.0.1", $"old-{i}"))
-            .ToArray();
-        await _store.WriteBatchAsync(records);
-
-        var result = await _store.DeleteOlderThanAsync(cutoff);
-
-        Assert.Equal(totalRecords, result.DeletedCount);
-
-        var remainingCount = await ExecuteScalarOnVerificationConnectionAsync("SELECT COUNT(*) FROM LogRecords;");
-        Assert.Equal(0L, remainingCount);
-    }
-
-    [Fact]
-    public async Task DeleteOlderThanAsync_NoMatchingRecords_ReturnsZero()
-    {
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-30);
-        await _store.WriteBatchAsync(new[] { CreateParsedRecord(DateTimeOffset.UtcNow, "10.0.0.1", "recent") });
-
-        var result = await _store.DeleteOlderThanAsync(cutoff);
-
-        Assert.Equal(0, result.DeletedCount);
-    }
+    //
+    // cutoff 境界・分割実行・削除件数・空 DB の機械検証は適合スイートに集約した
+    // （上記と同じ理由。M5-2）。ここには接続分離での並行実行（WAL 固有の性質）と、
+    // 「本メソッド自体はシステムイベントを書かない」という実装判断の検証を残す。
 
     [Fact]
     public async Task DeleteOlderThanAsync_ConcurrentWithWrites_BothCompleteWithoutError()
@@ -603,11 +391,17 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
     }
 
     // ------------------------------------------------------------------
-    // 統計（database.md §1.2 契約 6。M5-1）
+    // 統計: SQLite 固有の検証（database.md §1.2 契約 6。M5-1・M5-2）
     // ------------------------------------------------------------------
+    //
+    // 件数の正確さ・空 DB での 0 件・「値があるか取得不能の明示か」の機械検証は
+    // 適合スイートに集約した（M5-2）。ここには SQLite が DatabaseSizeBytes を
+    // 常に非 null の正数値として返すという実装固有の性質（page_count * page_size に
+    // よる算出。§5.3 の SQL Server 必須要件とは異なり SQLite には「取得不能」の
+    // 逃げ道自体が実質発生しない）と、WAL ファイルサイズの観測を残す。
 
     [Fact]
-    public async Task GetStatisticsAsync_ReturnsRecordCountAndPositiveDatabaseSize()
+    public async Task GetStatisticsAsync_DatabaseSizeIsAlwaysPositiveNumber()
     {
         await _store.WriteBatchAsync(new[]
         {
@@ -617,18 +411,9 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
 
         var statistics = await _store.GetStatisticsAsync();
 
-        Assert.Equal(2, statistics.RecordCount);
         Assert.NotNull(statistics.DatabaseSizeBytes);
         Assert.True(statistics.DatabaseSizeBytes > 0);
         Assert.Null(statistics.DatabaseSizeUnavailableReason);
-    }
-
-    [Fact]
-    public async Task GetStatisticsAsync_EmptyDatabase_RecordCountIsZero()
-    {
-        var statistics = await _store.GetStatisticsAsync();
-
-        Assert.Equal(0, statistics.RecordCount);
     }
 
     [Fact]

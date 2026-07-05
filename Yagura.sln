@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yagura.Web.Tests", "tests\Y
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yagura.E2E.Tests", "tests\Yagura.E2E.Tests\Yagura.E2E.Tests.csproj", "{20774A99-A0D6-415B-A7AC-77136CF78846}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yagura.Storage.ConformanceTests", "tests\Yagura.Storage.ConformanceTests\Yagura.Storage.ConformanceTests.csproj", "{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -143,6 +145,18 @@ Global
 		{20774A99-A0D6-415B-A7AC-77136CF78846}.Release|x64.Build.0 = Release|Any CPU
 		{20774A99-A0D6-415B-A7AC-77136CF78846}.Release|x86.ActiveCfg = Release|Any CPU
 		{20774A99-A0D6-415B-A7AC-77136CF78846}.Release|x86.Build.0 = Release|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Debug|x64.Build.0 = Debug|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Debug|x86.Build.0 = Debug|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Release|x64.ActiveCfg = Release|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Release|x64.Build.0 = Release|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Release|x86.ActiveCfg = Release|Any CPU
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -157,5 +171,6 @@ Global
 		{CBA0688E-1F81-4197-88E4-F56128E865C7} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{E68395F5-874E-4F2F-ABB1-77011C7AB4E2} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{20774A99-A0D6-415B-A7AC-77136CF78846} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{AB7A003B-A0EF-4573-A552-CF50D8C3E86D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
