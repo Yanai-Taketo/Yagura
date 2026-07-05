@@ -1,3 +1,4 @@
+using Yagura.Bench.Baseline;
 using Yagura.Bench.Reporting;
 using Yagura.Bench.Scenarios;
 
@@ -67,6 +68,32 @@ public static class Program
         Console.WriteLine(summary);
         Console.WriteLine($"JSON: {jsonPath}");
         Console.WriteLine($"サマリ: {summaryPath}");
+
+        // --compare-baseline 指定時は基準比較を行う（Issue #62。architecture.md §5.2「CI の回帰判定
+        // は基準比とする」）。絶対値の合否（突合成立）はここでも従来どおり評価するが、基準比較が
+        // 追加の不合格条件になる——両方が独立した終了コードを持つ（2 = 突合不成立、3 = 基準比較 NG）。
+        if (options.CompareBaselinePath is not null)
+        {
+            BaselineFile baselineFile;
+            try
+            {
+                baselineFile = BaselineComparator.LoadBaselineFile(options.CompareBaselinePath);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"基準値ファイルの読み込みに失敗した: {ex.Message}");
+                return 1;
+            }
+
+            var comparison = BaselineComparator.Compare(report, baselineFile);
+            Console.WriteLine();
+            Console.WriteLine(comparison.ToHumanReadableSummary());
+
+            if (!comparison.Passed)
+            {
+                return 3;
+            }
+        }
 
         // 突合不成立は「損失がどれかのカウンタに計上される」という architecture.md §4.1 の
         // 原則が破れたことを意味するため、終了コードで検知可能にする（CI 等での自動判定に使える。

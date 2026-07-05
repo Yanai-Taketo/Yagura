@@ -68,3 +68,44 @@ jobs:
 
       - name: Test
         run: dotnet test --configuration Release --no-build
+
+      # CI 回帰ベンチ（M7-3。Issue #62。architecture.md §5.2）。
+      #
+      # 代表シナリオの短縮版を 2 本走らせ、tools/Yagura.Bench/baselines/ci-baseline.json の
+      # 基準値と比較する（絶対値の合否は行わない——§5.2「CI の回帰判定は基準比とする」）。
+      # レートは開発機ではなく CI ランナー（windows-latest）の性能を前提に控えめに設定する
+      # （目安 5k/s。ランナー性能は開発機と別物のため）。追加時間の目安は 2〜3 分
+      # （SustainedZeroDrop 10 秒 + ProviderWriteCeiling(SQLite) 8 秒の負荷時間本体 + 起動/停止/
+      # ビルド出力コピー等のオーバーヘッド）。
+      #
+      # 基準値ファイルの toleranceRatio=0.5 は M-5（architecture.md §9。CI 環境の揺らぎの実測）が
+      # 完了するまでの暫定値であり、CI を複数回実行して揺らぎを実測した後に本体が正式な帯へ
+      # 更新する（tools/Yagura.Bench/baselines/ci-baseline.json の _meta 参照）。
+      #
+      # グレースフル停止（Ctrl+C 経由。ConsoleCtrlSender）は CI のようなコンソールを持たない
+      # 実行環境では機能しない可能性がある。その場合は Yagura.Bench.HostProcess.BenchHostProcess が
+      # Kill にフォールバックする——本回帰ベンチが使う 2 シナリオはいずれも「送信数 = 保存件数」の
+      # 単純な等式（破棄・退避ゼロ想定）であり、drain 完了後に停止する設計のため、Kill
+      # フォールバックが発生してもカウンタの取りこぼしは判定に影響しない（M7-1 の煙テストで
+      # 確認済みの前例と同じ考え方）。
+      - name: Regression bench (SustainedZeroDrop)
+        run: >
+          dotnet tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll
+          SustainedZeroDrop --transport udp --rate 5000 --duration 10
+          --output-dir bench-results
+          --compare-baseline tools/Yagura.Bench/baselines/ci-baseline.json
+
+      - name: Regression bench (ProviderWriteCeiling / SQLite)
+        run: >
+          dotnet tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll
+          ProviderWriteCeiling --rate 3000 --duration 8
+          --output-dir bench-results
+          --compare-baseline tools/Yagura.Bench/baselines/ci-baseline.json
+
+      - name: Upload regression bench results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-bench-results
+          path: bench-results/
+          if-no-files-found: ignore
