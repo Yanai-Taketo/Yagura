@@ -1,0 +1,150 @@
+@namespace Yagura.Web.Components.Common
+@using System.Globalization
+
+@*
+    時間軸チャートの共通コンポーネント（ui.md §3.1・§5.3。M8-3）:
+    受信量の推移（棒）と受信断区間（帯の重ね描き——architecture.md §4.4「検索・ダッシュボードで
+    通常のログと同じ時間軸上に可視化する」）を 1 つの時間軸で描く。
+
+    - 外部チャートライブラリは追加しない（ADR-0003 決定 1 の npm/CDN 非依存と同じ向き。
+      本 PR の制約——足りない表現は簡易 SVG/CSS で）。単純な棒 + 帯であり、手書き SVG の
+      範囲で十分に表現できる
+    - 色は CSS クラス経由でテーマ由来の CSS 変数のみを参照する（yagura-components.css。
+      hex 直書きなし——ui.md §3.2 受け入れ条件①）
+    - 受信断区間は色 + 凡例文言のセットで示す（色だけで意味を伝えない——ui.md §2.1・§8）。
+      クラッシュ由来の近似断点は縞パターンで区別し、凡例にも文言を出す
+*@
+<div class="yagura-timeline-chart">
+    <svg class="yagura-timeline-svg"
+         viewBox="0 0 @SvgWidth @SvgHeight"
+         preserveAspectRatio="none"
+         role="img"
+         aria-label="@AriaLabel">
+        @foreach (var outage in EffectiveOutages)
+        {
+            <rect x="@Fmt(outage.X)" y="0" width="@Fmt(outage.Width)" height="@PlotHeight"
+                  class="@(outage.Approximate ? "yagura-timeline-outage yagura-timeline-outage-approximate" : "yagura-timeline-outage")" />
+        }
+        @foreach (var bar in Bars)
+        {
+            <rect x="@Fmt(bar.X)" y="@Fmt(bar.Y)" width="@Fmt(bar.Width)" height="@Fmt(bar.Height)"
+                  class="yagura-timeline-bar" />
+        }
+        <line x1="0" y1="@PlotHeight" x2="@SvgWidth" y2="@PlotHeight" class="yagura-timeline-axis" />
+    </svg>
+    <div class="yagura-timeline-labels">
+        <YaguraTimestamp Value="@RangeStart" TimeZone="@TimeZone" />
+        <span class="yagura-timeline-max">@MaxLabel</span>
+        <YaguraTimestamp Value="@RangeEnd" TimeZone="@TimeZone" />
+    </div>
+    @if (TotalCount == 0)
+    {
+        <MudText Typo="Typo.caption" Class="yagura-timeline-note">@UiText.TimelineNoData</MudText>
+    }
+    @if (EffectiveOutages.Count > 0)
+    {
+        <div class="yagura-timeline-legend">
+            <span class="yagura-timeline-legend-swatch" aria-hidden="true"></span>
+            <MudText Typo="Typo.caption" Inline="true">@UiText.MissingDataOutage</MudText>
+        </div>
+    }
+</div>
+
+@code {
+    // viewBox は固定の論理座標系（preserveAspectRatio="none" で横幅いっぱいに伸縮する。
+    // px 実寸は CSS 側——共通コンポーネント内部スタイル）。
+    private const double SvgWidth = 600;
+    private const double SvgHeight = 120;
+    private const double PlotHeight = 110; // 下端 10 は棒の高さ 0 でも軸線が見える余白
+
+    /// <summary>時間軸の開始（UTC）。</summary>
+    [Parameter, EditorRequired]
+    public DateTimeOffset RangeStart { get; set; }
+
+    /// <summary>時間軸の終了（UTC）。</summary>
+    [Parameter, EditorRequired]
+    public DateTimeOffset RangeEnd { get; set; }
+
+    /// <summary>区切りごとの受信件数（時間順。区切り幅は利用側が決める）。</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<YaguraTimelineBucket>? Buckets { get; set; }
+
+    /// <summary>時間軸上に重ねる受信断区間（任意。architecture.md §4.4）。</summary>
+    [Parameter]
+    public IReadOnlyList<YaguraTimelineInterval>? Outages { get; set; }
+
+    /// <summary>時刻表示のタイムゾーン差し替え口（テスト用。既定はサーバ OS タイムゾーン）。</summary>
+    [Parameter]
+    public TimeZoneInfo? TimeZone { get; set; }
+
+    private double RangeTicks => Math.Max(1, (RangeEnd - RangeStart).Ticks);
+
+    private int TotalCount => Buckets?.Sum(b => b.Count) ?? 0;
+
+    private int MaxCount => Buckets is { Count: > 0 } ? Math.Max(1, Buckets.Max(b => b.Count)) : 1;
+
+    private string MaxLabel => string.Create(
+        CultureInfo.InvariantCulture, $"最大 {(Buckets is { Count: > 0 } ? Buckets.Max(b => b.Count) : 0)} 件/区切り");
+
+    private string AriaLabel => string.Create(
+        CultureInfo.InvariantCulture,
+        $"受信量の推移。期間内の合計 {TotalCount} 件。受信できなかった時間帯 {EffectiveOutages.Count} 区間。");
+
+    private double ToX(DateTimeOffset instant)
+    {
+        var ratio = (instant - RangeStart).Ticks / RangeTicks;
+        return Math.Clamp(ratio, 0, 1) * SvgWidth;
+    }
+
+    private IReadOnlyList<(double X, double Y, double Width, double Height)> Bars
+    {
+        get
+        {
+            if (Buckets is not { Count: > 0 })
+            {
+                return [];
+            }
+
+            var bars = new List<(double, double, double, double)>(Buckets.Count);
+            foreach (var bucket in Buckets)
+            {
+                var x = ToX(bucket.Start);
+                var width = Math.Max(1, ToX(bucket.End) - x - 1); // 1 は棒間の隙間
+                var height = bucket.Count <= 0 ? 0 : Math.Max(2, (double)bucket.Count / MaxCount * (PlotHeight - 10));
+                bars.Add((x, PlotHeight - height, width, height));
+            }
+
+            return bars;
+        }
+    }
+
+    private IReadOnlyList<(double X, double Width, bool Approximate)> EffectiveOutages
+    {
+        get
+        {
+            if (Outages is not { Count: > 0 })
+            {
+                return [];
+            }
+
+            var rects = new List<(double, double, bool)>(Outages.Count);
+            foreach (var outage in Outages)
+            {
+                // 範囲外の区間は描かない（重なり分だけを切り出す）。
+                if (outage.End <= RangeStart || outage.Start >= RangeEnd)
+                {
+                    continue;
+                }
+
+                var x = ToX(outage.Start);
+                var width = Math.Max(2, ToX(outage.End) - x); // 一瞬の断でも視認できる最小幅
+                rects.Add((x, width, outage.Approximate));
+            }
+
+            return rects;
+        }
+    }
+
+    // SVG 属性値の数値はロケール非依存で出す（小数点がカンマになる文化圏対策）。
+    private static string Fmt(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+}

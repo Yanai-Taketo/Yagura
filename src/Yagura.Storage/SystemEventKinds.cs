@@ -1,0 +1,28 @@
+namespace Yagura.Storage;
+
+/// <summary>
+/// システムイベント（database.md §2.3）の Kind 値のうち、複数モジュールが参照するもの。
+/// </summary>
+/// <remarks>
+/// 受信断 2 種の値の発行元は Yagura.Host（<c>ObservabilityConstants</c>——同名の const が
+/// 本クラスを別名参照する）だが、閲覧 UI（M8-3 の状態画面・検索画面）が表示の平易語対応
+/// （ui.md §7）のために同じ値を参照する必要があり、Web → Host の参照は持てない参照構造
+/// （architecture.md §1.1）のため、値の置き場を横断契約側（Yagura.Storage——SystemEvent 型と
+/// 同居）に置く。保持期間削除の Kind は <see cref="RetentionConstants.SystemEventKindRetentionDelete"/>
+/// を正とする（M5-1 から存在する定数の置き場を変えない）。
+/// </remarks>
+public static class SystemEventKinds
+{
+    /// <summary>正常停止による受信断区間（architecture.md §4.4「正常停止」）。</summary>
+    public const string DowntimeNormalStop = "downtime.normal-stop";
+
+    /// <summary>クラッシュ由来の近似断点による受信断区間（architecture.md §4.4「クラッシュ」）。</summary>
+    public const string DowntimeCrashApproximate = "downtime.crash-approximate";
+
+    /// <summary>保持期間削除の実行記録（database.md §3。値の正は RetentionConstants）。</summary>
+    public const string RetentionDelete = RetentionConstants.SystemEventKindRetentionDelete;
+
+    /// <summary>受信断系の Kind か（状態画面の履歴の仕分けに使う。M8-3）。</summary>
+    public static bool IsDowntime(string kind) =>
+        kind is DowntimeNormalStop or DowntimeCrashApproximate;
+}

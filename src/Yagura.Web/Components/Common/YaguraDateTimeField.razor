@@ -1,0 +1,71 @@
+@namespace Yagura.Web.Components.Common
+@using System.Globalization
+
+@*
+    日時入力（ui.md §3.1 フォーム規約に従う具体入力部品。M8-3——
+    「他の入力種別は画面実装時に §3.2 の手順で追加」の追加分）。
+    ラベル・必須表記・エラー表示は YaguraFormField（共通枠）が担う。
+
+    入力本体はネイティブ <input type="datetime-local"> とする（ブラウザ標準の日時 UI に乗り、
+    キーボード完遂（ui.md §8）もネイティブ挙動で成立する。値の解釈——どのタイムゾーンの
+    時刻か——は利用側の責務。検索画面はサーバのタイムゾーンとして解釈し、その旨をラベルに
+    明示する——ui.md §6 の契約の入力側）。
+*@
+<YaguraFormField Label="@Label"
+                 Required="@Required"
+                 ErrorText="@ErrorText"
+                 HelpText="@HelpText"
+                 InputId="@_inputId">
+    <input id="@_inputId"
+           type="datetime-local"
+           class="yagura-select yagura-datetime"
+           value="@FormattedValue"
+           @onchange="HandleChangeAsync" />
+</YaguraFormField>
+
+@code {
+    private const string WireFormat = "yyyy-MM-ddTHH:mm";
+    private readonly string _inputId = $"yagura-field-{Guid.NewGuid():N}";
+
+    /// <summary>項目のラベル（入力の上に表示。タイムゾーンの明示は利用側がラベルに含める）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>入力値（タイムゾーン情報を持たない「壁時計の時刻」。解釈は利用側の責務）。</summary>
+    [Parameter]
+    public DateTime? Value { get; set; }
+
+    /// <summary>入力値の変更通知（@bind-Value で双方向バインドできる）。</summary>
+    [Parameter]
+    public EventCallback<DateTime?> ValueChanged { get; set; }
+
+    /// <summary>必須項目か（「必須」表記。ui.md §3.1）。</summary>
+    [Parameter]
+    public bool Required { get; set; }
+
+    /// <summary>検証エラー文言（項目直下に文言で表示。ui.md §3.1）。</summary>
+    [Parameter]
+    public string? ErrorText { get; set; }
+
+    /// <summary>補足説明（任意）。</summary>
+    [Parameter]
+    public string? HelpText { get; set; }
+
+    private string FormattedValue =>
+        Value?.ToString(WireFormat, CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private Task HandleChangeAsync(ChangeEventArgs e)
+    {
+        var raw = e.Value as string;
+
+        if (string.IsNullOrEmpty(raw))
+        {
+            return ValueChanged.InvokeAsync(null);
+        }
+
+        // datetime-local の値は "yyyy-MM-ddTHH:mm"（ブラウザにより秒付き "…:ss" もあり得る）。
+        return DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? ValueChanged.InvokeAsync(parsed)
+            : ValueChanged.InvokeAsync(null);
+    }
+}

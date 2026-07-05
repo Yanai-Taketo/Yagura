@@ -1,0 +1,419 @@
+@page "/search"
+@using System.Globalization
+@inject ILogStore LogStore
+@inject IYaguraSystemStatusReader StatusReader
+
+@*
+    ログ検索（ui.md §4。M8-3。Issue #70）:
+    - 絞り込みの強制はしない（architecture.md §6——条件なしで最新から閲覧できる。
+      初期表示は条件なしの検索を自動実行する = イベントビューア相当の操作感）
+    - 防御は出力の制限で行う: 結果上限 10,000 件・射影 200 文字・タイムアウト 30 秒
+      （M-10 の仮値）+ 一覧のページング（YaguraTable 内蔵）
+    - 受信断区間の時間軸表示（architecture.md §4.4）と保持地平の明示（database.md §2.3——
+      保持期間より古い範囲は「削除済み」を明示し、その範囲の受信断区間は保持地平の明示と
+      セットでのみ見せる。ui.md §5.3）
+    - 詳細表示は個別取得（architecture.md §6「全文は詳細表示で個別取得する」——
+      ILogStore.FindByIdAsync。M8-3 で追加した読み取り口）
+*@
+<PageTitle>Yagura — @UiText.NavSearch</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">@UiText.NavSearch</MudText>
+
+<div class="mb-4">
+    <YaguraCard>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraDateTimeField Label="@FromLabel" @bind-Value="_from" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraDateTimeField Label="@ToLabel" @bind-Value="_to" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraTextField Label="@UiText.SearchFieldSource" @bind-Value="_sourceAddress" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraSelectField Label="@UiText.SearchFieldSeverity"
+                                   Options="@SeverityOptions"
+                                   @bind-Value="_severityValue" />
+            </MudItem>
+            <MudItem xs="12" md="9">
+                <YaguraTextField Label="@UiText.SearchFieldText" @bind-Value="_searchText" />
+            </MudItem>
+            <MudItem xs="12" md="3" Class="d-flex align-end">
+                @* 主ボタンは 1 ビューに 1 つ（ui.md §3.1）——本画面ではこの検索ボタンのみ。 *@
+                <YaguraButton Role="YaguraButtonRole.Primary" OnClick="RunSearchAsync" Disabled="@_searching">
+                    @UiText.SearchButton
+                </YaguraButton>
+            </MudItem>
+        </MudGrid>
+    </YaguraCard>
+</div>
+
+@if (_retentionHorizon is { } horizon && SearchReachesBeyondHorizon(horizon))
+{
+    @* 保持地平の明示（database.md §2.3・ui.md §5.3）: 検索範囲が保持期間より古い場合。 *@
+    <YaguraMissingDataNotice Kind="YaguraMissingDataKind.RetentionHorizon"
+                             PeriodStart="@FromUtc"
+                             PeriodEnd="@horizon" />
+}
+
+@if (_results is not null && _results.Count > 0)
+{
+    <div class="mt-4 mb-4">
+        <YaguraCard>
+            @* 受信断区間の時間軸表示（architecture.md §4.4——結果と同じ時間軸上に区間を重ねる） *@
+            <YaguraTimelineChart RangeStart="@_chartRangeStart"
+                                 RangeEnd="@_chartRangeEnd"
+                                 Buckets="@_chartBuckets"
+                                 Outages="@_chartOutages" />
+        </YaguraCard>
+    </div>
+}
+
+@foreach (var outage in _visibleOutages)
+{
+    <YaguraMissingDataNotice Kind="@(outage.Approximate ? YaguraMissingDataKind.ReceptionOutageApproximate : YaguraMissingDataKind.ReceptionOutage)"
+                             PeriodStart="@outage.StartAt"
+                             PeriodEnd="@outage.EndAt" />
+}
+
+<div class="mt-4">
+    @if (_results is null)
+    {
+        <MudText Typo="Typo.body2">読み込み中です。</MudText>
+    }
+    else if (_results.Count == 0)
+    {
+        @if (HasAnyCondition)
+        {
+            <YaguraEmptyState Title="@UiText.SearchNoResultsTitle"
+                              NextAction="@NoResultsAction" />
+        }
+        else
+        {
+            @* 条件なしで 0 件 = まだ 1 件も受信していない（30 分動線の続き。ui.md §3.1 空状態） *@
+            <YaguraEmptyState Title="@UiText.NoLogsEmptyTitle"
+                              Description="@UiText.NoLogsEmptyNextAction">
+                <NextAction>
+                    <div class="d-flex flex-column gap-2">
+                        @foreach (var listener in _listeners)
+                        {
+                            <YaguraCopyField Label="@ListenerLabel(listener)"
+                                             Value="@listener.Port.ToString(CultureInfo.InvariantCulture)" />
+                        }
+                    </div>
+                </NextAction>
+            </YaguraEmptyState>
+        }
+    }
+    else
+    {
+        <YaguraTable TItem="LogRecordSummary"
+                     Items="@_results"
+                     OnRowSelected="ShowDetailAsync"
+                     TruncatedAtLimit="@(_results.Count >= SearchLimit)">
+            <HeaderContent>
+                <MudTh>受信時刻</MudTh>
+                <MudTh>@UiText.SourceColumnAddress</MudTh>
+                <MudTh>重大度</MudTh>
+                <MudTh>分類（ファシリティ）</MudTh>
+                <MudTh>メッセージ</MudTh>
+            </HeaderContent>
+            <RowTemplate Context="record">
+                <MudTd DataLabel="受信時刻"><YaguraTimestamp Value="@record.ReceivedAt" /></MudTd>
+                <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@record.SourceAddress</span></MudTd>
+                <MudTd DataLabel="重大度">@(record.Severity?.ToString(CultureInfo.InvariantCulture) ?? "—")</MudTd>
+                <MudTd DataLabel="分類（ファシリティ）">@(record.Facility?.ToString(CultureInfo.InvariantCulture) ?? "—")</MudTd>
+                <MudTd DataLabel="メッセージ">@SummaryMessage(record)</MudTd>
+            </RowTemplate>
+        </YaguraTable>
+    }
+</div>
+
+@if (_detailRequested)
+{
+    <div class="mt-4">
+        <YaguraCard Title="@UiText.DetailTitle">
+            @if (_detail is null)
+            {
+                <MudText Typo="Typo.body2">@UiText.DetailNotFound</MudText>
+            }
+            else
+            {
+                <MudGrid Spacing="1">
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption">@UiText.DetailReceivedAt</MudText>
+                        <MudText Typo="Typo.body2"><YaguraTimestamp Value="@_detail.ReceivedAt" /></MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption">@UiText.DetailDeviceTimestamp</MudText>
+                        <MudText Typo="Typo.body2">
+                            @if (_detail.DeviceTimestamp is { } deviceTimestamp)
+                            {
+                                <YaguraTimestamp Value="@deviceTimestamp" />
+                            }
+                            else
+                            {
+                                @:—
+                            }
+                        </MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption">@UiText.SourceColumnAddress</MudText>
+                        <MudText Typo="Typo.body2">
+                            <span class="yagura-monospace">@_detail.SourceAddress:@_detail.SourcePort</span>（@_detail.Protocol）
+                        </MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudText Typo="Typo.caption">重大度 / 分類（ファシリティ）</MudText>
+                        <MudText Typo="Typo.body2">
+                            @(_detail.Severity?.ToString(CultureInfo.InvariantCulture) ?? "—") /
+                            @(_detail.Facility?.ToString(CultureInfo.InvariantCulture) ?? "—")
+                        </MudText>
+                    </MudItem>
+                    @if (_detail.Hostname is not null || _detail.AppName is not null)
+                    {
+                        <MudItem xs="12" sm="6">
+                            <MudText Typo="Typo.caption">ホスト名 / アプリ名</MudText>
+                            <MudText Typo="Typo.body2">@(_detail.Hostname ?? "—") / @(_detail.AppName ?? "—")</MudText>
+                        </MudItem>
+                    }
+                    @if (_detail.ParseStatus != ParseStatus.Parsed)
+                    {
+                        <MudItem xs="12">
+                            <YaguraSystemNotice Severity="YaguraNoticeSeverity.Info"
+                                                Message="@(_detail.ParseStatus == ParseStatus.Incomplete ? UiText.IncompleteLabel : UiText.ParseFailedLabel)" />
+                        </MudItem>
+                    }
+                    @if (_detail.Message is not null)
+                    {
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.caption">メッセージ</MudText>
+                            <pre class="yagura-detail-message yagura-monospace">@_detail.Message</pre>
+                        </MudItem>
+                    }
+                    @if (_detail.StructuredData is not null)
+                    {
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.caption">構造化データ</MudText>
+                            <pre class="yagura-detail-message yagura-monospace">@_detail.StructuredData</pre>
+                        </MudItem>
+                    }
+                    @if (_detail.Raw is not null)
+                    {
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.caption">@UiText.DetailRaw</MudText>
+                            <pre class="yagura-detail-message yagura-monospace">@RawAsText(_detail.Raw)</pre>
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+            <div class="mt-2">
+                <YaguraButton OnClick="CloseDetail">@UiText.DetailClose</YaguraButton>
+            </div>
+        </YaguraCard>
+    </div>
+}
+
+@code {
+    // M-10 の仮値（architecture.md §6: 結果上限 10,000 件・射影 200 文字・タイムアウト 30 秒）。
+    private const int SearchLimit = 10_000;
+    private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DetailTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan OutageQueryTimeout = TimeSpan.FromSeconds(5);
+    private const int OutageQueryLimit = 100;
+    private const int ChartBucketCount = 24;
+
+    private static readonly IReadOnlyList<YaguraSelectOption> SeverityOptions =
+        Enumerable.Range(0, UiText.SeverityOptionLabels.Count)
+            .Select(i => new YaguraSelectOption(i.ToString(CultureInfo.InvariantCulture), UiText.SeverityOptionLabels[i]))
+            .ToList();
+
+    private DateTime? _from;
+    private DateTime? _to;
+    private string? _sourceAddress;
+    private string? _severityValue;
+    private string? _searchText;
+    private bool _searching;
+
+    private IReadOnlyList<LogRecordSummary>? _results;
+    private IReadOnlyList<SystemEvent> _visibleOutages = [];
+    private DateTimeOffset _chartRangeStart;
+    private DateTimeOffset _chartRangeEnd;
+    private IReadOnlyList<YaguraTimelineBucket> _chartBuckets = [];
+    private IReadOnlyList<YaguraTimelineInterval> _chartOutages = [];
+
+    private bool _detailRequested;
+    private LogRecord? _detail;
+
+    private DateTimeOffset? _retentionHorizon;
+    private IReadOnlyList<YaguraListenerEndpoint> _listeners = [];
+
+    // 入力の解釈はサーバのタイムゾーン（ui.md §6 の契約の入力側。ラベルに明示する）。
+    private static string ServerOffsetLabel =>
+        YaguraTimeFormatter.FormatOffset(TimeZoneInfo.Local.GetUtcOffset(DateTimeOffset.UtcNow));
+
+    private static string FromLabel =>
+        string.Format(CultureInfo.InvariantCulture, UiText.SearchFieldFromFormat, ServerOffsetLabel);
+
+    private static string ToLabel =>
+        string.Format(CultureInfo.InvariantCulture, UiText.SearchFieldToFormat, ServerOffsetLabel);
+
+    private DateTimeOffset? FromUtc => ToServerInstant(_from);
+    private DateTimeOffset? ToUtc => ToServerInstant(_to);
+
+    private bool HasAnyCondition =>
+        _from is not null || _to is not null ||
+        !string.IsNullOrWhiteSpace(_sourceAddress) ||
+        _severityValue is not null ||
+        !string.IsNullOrWhiteSpace(_searchText);
+
+    private static RenderFragment NoResultsAction => builder =>
+        builder.AddContent(0, UiText.SearchNoResultsNextAction);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var status = StatusReader.ReadCurrent();
+        _listeners = status.Listeners;
+        _retentionHorizon = status.RetentionDays is { } days
+            ? DateTimeOffset.UtcNow - TimeSpan.FromDays(days)
+            : null;
+
+        // 絞り込みの強制はしない——初期表示は条件なしの検索を自動実行する（architecture.md §6）。
+        await RunSearchAsync();
+    }
+
+    private async Task RunSearchAsync()
+    {
+        _searching = true;
+        _detailRequested = false;
+        _detail = null;
+
+        try
+        {
+            var severity = _severityValue is { } value
+                ? int.Parse(value, CultureInfo.InvariantCulture)
+                : (int?)null;
+
+            var results = await LogStore.QueryAsync(new LogQuery(
+                Limit: SearchLimit,
+                Timeout: SearchTimeout,
+                ReceivedAtFrom: FromUtc,
+                ReceivedAtTo: ToUtc,
+                SourceAddress: string.IsNullOrWhiteSpace(_sourceAddress) ? null : _sourceAddress.Trim(),
+                Severity: severity,
+                SearchText: string.IsNullOrWhiteSpace(_searchText) ? null : _searchText));
+            _results = results;
+
+            await LoadOutagesAndChartAsync(results);
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private async Task LoadOutagesAndChartAsync(IReadOnlyList<LogRecordSummary> results)
+    {
+        // 時間軸の範囲: 指定範囲を優先し、未指定側は結果（または現在時刻）から補う。
+        var now = DateTimeOffset.UtcNow;
+        _chartRangeEnd = ToUtc ?? now;
+        _chartRangeStart = FromUtc
+            ?? (results.Count > 0 ? results.Min(r => r.ReceivedAt) : _chartRangeEnd - TimeSpan.FromHours(1));
+
+        if (_chartRangeStart >= _chartRangeEnd)
+        {
+            _chartRangeStart = _chartRangeEnd - TimeSpan.FromMinutes(1);
+        }
+
+        var outages = await LogStore.QuerySystemEventsAsync(
+            from: _chartRangeStart,
+            to: _chartRangeEnd,
+            limit: OutageQueryLimit,
+            timeout: OutageQueryTimeout);
+        var downtime = outages.Where(e => SystemEventKinds.IsDowntime(e.Kind)).ToList();
+
+        // 保持地平より古い受信断区間は、保持地平の明示とセットでのみ見せる（ui.md §5.3 の
+        // 誤読防止）。本画面は保持地平の通知を検索範囲が古い場合に必ず出すため（上部）、
+        // 区間自体はそのまま列挙してよい——ただし通知の並び順で保持地平が先に立つ。
+        _visibleOutages = downtime;
+        _chartOutages = downtime
+            .Select(e => new YaguraTimelineInterval(e.StartAt, e.EndAt, e.Approximate))
+            .ToList();
+
+        _chartBuckets = BuildBuckets(results, _chartRangeStart, _chartRangeEnd);
+    }
+
+    private static IReadOnlyList<YaguraTimelineBucket> BuildBuckets(
+        IReadOnlyList<LogRecordSummary> records,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeEnd)
+    {
+        var width = (rangeEnd - rangeStart) / ChartBucketCount;
+        if (width <= TimeSpan.Zero)
+        {
+            return [];
+        }
+
+        var counts = new int[ChartBucketCount];
+        foreach (var record in records)
+        {
+            var index = (int)((record.ReceivedAt - rangeStart) / width);
+            if (index >= 0 && index < counts.Length)
+            {
+                counts[index]++;
+            }
+            else if (index == counts.Length)
+            {
+                // 上端ちょうど（ReceivedAt == rangeEnd）は最終区切りに含める。
+                counts[^1]++;
+            }
+        }
+
+        var buckets = new List<YaguraTimelineBucket>(counts.Length);
+        for (var i = 0; i < counts.Length; i++)
+        {
+            var start = rangeStart + i * width;
+            var end = i == counts.Length - 1 ? rangeEnd : start + width;
+            buckets.Add(new YaguraTimelineBucket(start, end, counts[i]));
+        }
+
+        return buckets;
+    }
+
+    private async Task ShowDetailAsync(LogRecordSummary summary)
+    {
+        _detailRequested = true;
+        _detail = await LogStore.FindByIdAsync(summary.Id, DetailTimeout);
+    }
+
+    private void CloseDetail()
+    {
+        _detailRequested = false;
+        _detail = null;
+    }
+
+    private bool SearchReachesBeyondHorizon(DateTimeOffset horizon) =>
+        // 下限なし（無限に過去へ届く）または下限が保持地平より古い場合に明示する。
+        FromUtc is null || FromUtc < horizon;
+
+    private static string ListenerLabel(YaguraListenerEndpoint listener) =>
+        string.Format(CultureInfo.InvariantCulture, UiText.ListenerPortLabelFormat, listener.ProtocolName);
+
+    private DateTimeOffset? ToServerInstant(DateTime? wallClock) =>
+        wallClock is { } value
+            ? new DateTimeOffset(value, TimeZoneInfo.Local.GetUtcOffset(value))
+            : null;
+
+    private static string SummaryMessage(LogRecordSummary record) => record.ParseStatus switch
+    {
+        ParseStatus.ParseFailed => UiText.ParseFailedLabel,
+        ParseStatus.Incomplete => UiText.IncompleteLabel,
+        _ => record.Message ?? string.Empty,
+    };
+
+    private static string RawAsText(byte[] raw) =>
+        // 不正 UTF-8 を含み得るため置換文字で無害化して表示する（保存自体はバイト列のまま——
+        // database.md §2.1。ここは表示のみ）。
+        System.Text.Encoding.UTF8.GetString(raw);
+}

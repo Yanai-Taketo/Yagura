@@ -21,11 +21,14 @@ public static class ObservabilityConstants
 
     /// <summary>
     /// システムイベントの Kind: 受信断（正常停止起因）。database.md §2.3。
+    /// M8-3 で値の正を <see cref="Yagura.Storage.SystemEventKinds"/>（横断契約側）へ移した
+    /// ——閲覧 UI が同じ値を参照するため（同クラスの remarks 参照）。本定数は既存参照の互換用の別名。
     /// </summary>
-    public const string SystemEventKindDowntimeNormalStop = "downtime.normal-stop";
+    public const string SystemEventKindDowntimeNormalStop = Yagura.Storage.SystemEventKinds.DowntimeNormalStop;
 
     /// <summary>
     /// システムイベントの Kind: 受信断（クラッシュ近似断点）。database.md §2.3。
+    /// （値の正は <see cref="Yagura.Storage.SystemEventKinds"/>——上と同じ理由の別名。）
     /// </summary>
-    public const string SystemEventKindDowntimeCrashApproximate = "downtime.crash-approximate";
+    public const string SystemEventKindDowntimeCrashApproximate = Yagura.Storage.SystemEventKinds.DowntimeCrashApproximate;
 }

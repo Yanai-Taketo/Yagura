@@ -494,6 +494,206 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         return results;
     }
 
+    /// <inheritdoc />
+    public async Task<LogRecord?> FindByIdAsync(
+        long id,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeout.Ticks);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        try
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                SELECT Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
+                       DeviceTimestamp, Facility, Severity, Hostname, AppName, ProcId, MsgId,
+                       StructuredData, Message, Raw
+                FROM dbo.LogRecords
+                WHERE Id = @id;
+                """;
+            command.Parameters.Add("@id", System.Data.SqlDbType.BigInt).Value = id;
+
+            await using var reader = await command.ExecuteReaderAsync(linkedCts.Token).ConfigureAwait(false);
+
+            if (!await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            return new LogRecord(
+                Id: reader.GetInt64(0),
+                ReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
+                SourceAddress: reader.GetString(2),
+                SourcePort: reader.GetInt32(3),
+                Protocol: (Protocol)reader.GetInt32(4),
+                ParseStatus: (ParseStatus)reader.GetInt32(5),
+                DeviceTimestamp: reader.IsDBNull(6) ? null : DateTime.SpecifyKind(reader.GetDateTime(6), DateTimeKind.Utc),
+                Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
+                AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
+                ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
+                MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
+                StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
+                Message: reader.IsDBNull(14) ? null : reader.GetString(14),
+                Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15));
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"詳細取得がタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqlException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // キャンセルが SqlException として現れる経路（QueryAsync の同型 catch のコメント参照）。
+            throw new TimeoutException($"詳細取得がタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqlException ex)
+        {
+            throw ex.ToLogStoreWriteException("詳細表示の個別取得");
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeout.Ticks);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        var results = new List<SystemEvent>();
+
+        try
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            var whereClauses = new List<string>();
+
+            // 区間の重なり判定（ILogStore の契約参照）: 範囲に少しでも掛かる区間を返す。
+            if (from is { } fromValue)
+            {
+                whereClauses.Add("EndAt >= @from");
+                command.Parameters.Add("@from", System.Data.SqlDbType.DateTime2).Value = fromValue.UtcDateTime;
+            }
+
+            if (to is { } toValue)
+            {
+                whereClauses.Add("StartAt <= @to");
+                command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = toValue.UtcDateTime;
+            }
+
+            var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+
+            command.CommandText =
+                $"""
+                SELECT TOP (@limit) Id, Kind, StartAt, EndAt, Approximate, Details
+                FROM dbo.SystemEvents
+                {whereSql}
+                ORDER BY StartAt DESC;
+                """;
+            command.Parameters.Add("@limit", System.Data.SqlDbType.Int).Value = limit;
+
+            await using var reader = await command.ExecuteReaderAsync(linkedCts.Token).ConfigureAwait(false);
+
+            while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
+            {
+                results.Add(new SystemEvent(
+                    Id: reader.GetInt64(0),
+                    Kind: reader.GetString(1),
+                    StartAt: DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
+                    EndAt: DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc),
+                    Approximate: reader.GetBoolean(4),
+                    Details: reader.IsDBNull(5) ? null : reader.GetString(5)));
+            }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"システムイベントの読み出しがタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqlException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"システムイベントの読み出しがタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqlException ex)
+        {
+            throw ex.ToLogStoreWriteException("システムイベントの読み出し");
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeout.Ticks);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        var results = new List<SourceActivity>();
+
+        try
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            // 最終受信時刻の古い順（無音の疑いが強い順。UI-4——ILogStore の契約参照）。
+            command.CommandText =
+                """
+                SELECT TOP (@limit) SourceAddress, MAX(ReceivedAt) AS LastReceivedAt, COUNT_BIG(*) AS RecordCount
+                FROM dbo.LogRecords
+                GROUP BY SourceAddress
+                ORDER BY LastReceivedAt ASC;
+                """;
+            command.Parameters.Add("@limit", System.Data.SqlDbType.Int).Value = limit;
+
+            await using var reader = await command.ExecuteReaderAsync(linkedCts.Token).ConfigureAwait(false);
+
+            while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
+            {
+                results.Add(new SourceActivity(
+                    SourceAddress: reader.GetString(0),
+                    LastReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
+                    RecordCount: reader.GetInt64(2)));
+            }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"送信元別集計がタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqlException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"送信元別集計がタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqlException ex)
+        {
+            throw ex.ToLogStoreWriteException("送信元別の受信状況の集計");
+        }
+
+        return results;
+    }
+
     private static string EscapeLikePattern(string value)
     {
         var builder = new System.Text.StringBuilder(value.Length);

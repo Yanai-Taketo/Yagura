@@ -98,3 +98,110 @@
 .yagura-empty-state-description {
     color: var(--mud-palette-text-secondary);
 }
+
+/* ---- カード（YaguraCard / YaguraStatCard。ui.md §3.1。M8-3） ---- */
+
+/* 角丸 8px はテーマの 1 値（4px）では表現できないため、カード共通コンポーネントの
+   実装内部で適用する（ui.md §2.3 の確定方式の実装位置） */
+.yagura-card {
+    border-radius: 8px;
+}
+
+/* ダイアログ面の角丸 8px（ui.md §2.3。M8-3）。ダイアログはポータル描画（呼び出し元の
+   DOM の外）のため部品側のラッパクラスでは面（.mud-dialog）に届かない——ダイアログ段の
+   形状規約として本スタイルシート（共通コンポーネントの内部スタイル置き場）で適用する。
+   ダイアログを開けるのは共通コンポーネント（YaguraConfirmDialog 等）のみ（ui.md §1）で
+   あり、ページ固有スタイルには当たらない */
+.mud-dialog {
+    border-radius: 8px;
+}
+
+.yagura-stat-card-label,
+.yagura-stat-card-supplement {
+    color: var(--mud-palette-text-secondary);
+}
+
+/* ---- 時間軸チャート（YaguraTimelineChart。ui.md §3.1・§5.3。M8-3） ---- */
+
+.yagura-timeline-svg {
+    display: block;
+    width: 100%;
+    height: 120px;
+}
+
+.yagura-timeline-bar {
+    fill: var(--mud-palette-primary);
+}
+
+/* 受信断区間の帯（state-error 系。透過で棒と重ね読みできるようにする——色 + 凡例文言の
+   セットで意味を伝える。ui.md §2.1・§8） */
+.yagura-timeline-outage {
+    fill: var(--mud-palette-error);
+    opacity: 0.3;
+}
+
+/* クラッシュ由来の近似断点（境界がおおよそ——薄くして正確な区間と見分けられるようにする） */
+.yagura-timeline-outage-approximate {
+    opacity: 0.15;
+}
+
+.yagura-timeline-axis {
+    stroke: var(--mud-palette-lines-default);
+    stroke-width: 1;
+}
+
+.yagura-timeline-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 4px;
+    font-size: 12px; /* 注釈段（ui.md §2.2） */
+    color: var(--mud-palette-text-secondary);
+}
+
+.yagura-timeline-note {
+    color: var(--mud-palette-text-secondary);
+}
+
+.yagura-timeline-legend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.yagura-timeline-legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    background-color: var(--mud-palette-error);
+    opacity: 0.3;
+}
+
+/* ---- 選択・日時入力（YaguraSelectField / YaguraDateTimeField。ui.md §3.1。M8-3） ----
+   ネイティブ要素の見た目をトークン由来の CSS 変数のみで整える（角丸 4px = 入力の段。§2.3） */
+
+.yagura-select {
+    width: 100%;
+    padding: 8px;
+    font-size: 14px; /* 本文・既定段（ui.md §2.2） */
+    line-height: 1.5;
+    color: var(--mud-palette-text-primary);
+    background-color: var(--mud-palette-surface);
+    border: 1px solid var(--mud-palette-lines-inputs);
+    border-radius: 4px;
+}
+
+.yagura-select:focus-visible {
+    outline: 2px solid var(--mud-palette-primary); /* フォーカスリングを消さない（ui.md §8） */
+    outline-offset: 1px;
+}
+
+/* ---- ログ詳細（検索画面の詳細表示。M8-3） ---- */
+
+.yagura-detail-message {
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+    font-size: 14px;
+}

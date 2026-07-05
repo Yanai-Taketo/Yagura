@@ -1,0 +1,373 @@
+@page "/"
+@using System.Globalization
+@inject ILogStore LogStore
+@inject IYaguraSystemStatusReader StatusReader
+@implements IAsyncDisposable
+
+@*
+    ダッシュボード（ui.md §4。M8-3。Issue #70）: 健康状態の一目確認（状態帯は全画面共通の
+    骨格 = MainLayout 側に常設——ui.md §5.1「ダッシュボード最上部（および全画面の状態帯）」を
+    共通骨格 1 箇所で満たし、二重表示を避ける）・受信量の推移・送信元別の受信状況
+    （UI-4 無音化検出——最終受信時刻の古い順）・スプール/カウンタの現在値・保持期間の常時明示
+    （database.md §3）。
+
+    - 更新間隔は UI-2 の仮値（10 秒。重い集計——送信元別・受信量推移——は 60 秒ごと）
+    - ステール警告（YaguraStaleGuard）を組み込み、circuit 生存中に更新だけが止まった局面の
+      文言出し分け（ui.md §5.2 の確定文言）は本画面が引き受ける
+    - データ取得はホスト側の既存読み取り口（ILogStore・IYaguraSystemStatusReader）のみ。
+      受信量推移は既存の検索 API（QueryAsync）からの導出であり、取得上限で打ち切られた場合は
+      その旨を注記する（導出の限界を隠さない）
+*@
+<PageTitle>Yagura — @UiText.NavDashboard</PageTitle>
+
+<div class="d-flex align-center flex-wrap gap-4 mb-4">
+    <MudText Typo="Typo.h5">@UiText.NavDashboard</MudText>
+    <MudSpacer />
+    <YaguraStaleGuard @ref="_staleGuard" UpdateInterval="@UpdateInterval" />
+    @if (_retentionDays is { } retentionDays)
+    {
+        <YaguraRetentionNotice RetentionDays="@retentionDays" />
+    }
+    else
+    {
+        <MudText Typo="Typo.caption" role="note">@UiText.RetentionDisabledNotice</MudText>
+    }
+</div>
+
+@if (_updateStalled)
+{
+    <div class="mb-4">
+        <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
+                            Message="@UiText.StaleWhileConnectedNotice" />
+    </div>
+}
+
+@if (_spoolEvacuationOngoing)
+{
+    @* 一時保管への退避中の常時表示（ui.md §5.4——色 + アイコン + 補足文言をセットで） *@
+    <div class="mb-4">
+        <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
+                            Message="@UiText.SpoolEvacuationNotice" />
+    </div>
+}
+
+<MudGrid Spacing="3" Class="mb-1">
+    <MudItem xs="12" sm="6" md="3">
+        <YaguraStatCard Label="@UiText.StatSpoolUsage" Value="@SpoolUsageValue" Supplement="@SpoolUsageSupplement" />
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <YaguraStatCard Label="@UiText.StatSpoolEvacuated" Value="@FormatCount(_spoolEvacuatedTotal)" />
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <YaguraStatCard Label="@UiText.StatLossTotal" Value="@FormatCount(_lossTotal)" />
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <YaguraStatCard Label="@UiText.StatStoredRecords" Value="@StoredRecordsValue" />
+    </MudItem>
+</MudGrid>
+<div class="mb-4">
+    <MudLink Href="/status" Typo="Typo.caption">@UiText.StatLinkToStatus</MudLink>
+</div>
+
+<div class="mb-4">
+    <YaguraCard Title="@UiText.VolumeChartTitle">
+        <YaguraTimelineChart RangeStart="@_chartRangeStart"
+                             RangeEnd="@_chartRangeEnd"
+                             Buckets="@_chartBuckets"
+                             Outages="@_chartOutages" />
+        @if (_volumeTruncatedCount is { } truncated)
+        {
+            <MudText Typo="Typo.caption" role="note">
+                @string.Format(CultureInfo.InvariantCulture, UiText.VolumeChartTruncatedFormat, truncated)
+            </MudText>
+        }
+    </YaguraCard>
+</div>
+
+<div id="sources" class="mb-4">
+    <YaguraCard Title="@UiText.SourcesTitle">
+        @if (_sources is null)
+        {
+            <MudText Typo="Typo.body2">読み込み中です。</MudText>
+        }
+        else if (_sources.Count == 0)
+        {
+            @* ログ未着の空状態: 受信先情報をコピーできる形で示す（ui.md §3.1 空状態規約） *@
+            <YaguraEmptyState Title="@UiText.NoLogsEmptyTitle"
+                              Description="@UiText.NoLogsEmptyNextAction">
+                <NextAction>
+                    <div class="d-flex flex-column gap-2">
+                        @foreach (var listener in _listeners)
+                        {
+                            <YaguraCopyField Label="@ListenerLabel(listener)"
+                                             Value="@listener.Port.ToString(CultureInfo.InvariantCulture)" />
+                        }
+                    </div>
+                </NextAction>
+            </YaguraEmptyState>
+        }
+        else
+        {
+            <YaguraTable TItem="SourceActivity" Items="@_sources" RowsPerPage="20">
+                <HeaderContent>
+                    <MudTh>@UiText.SourceColumnAddress</MudTh>
+                    <MudTh>@UiText.SourceColumnLastReceived</MudTh>
+                    <MudTh>@UiText.SourceColumnSilence</MudTh>
+                    <MudTh>@UiText.SourceColumnCount</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="source">
+                    <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@source.SourceAddress</span></MudTd>
+                    <MudTd DataLabel="@UiText.SourceColumnLastReceived"><YaguraTimestamp Value="@source.LastReceivedAt" /></MudTd>
+                    <MudTd DataLabel="@UiText.SourceColumnSilence">@FormatSilence(source.LastReceivedAt)</MudTd>
+                    <MudTd DataLabel="@UiText.SourceColumnCount">@FormatCount(source.RecordCount)</MudTd>
+                </RowTemplate>
+            </YaguraTable>
+            @if (_sources.Count >= SourceLimit)
+            {
+                <MudText Typo="Typo.caption" role="note">
+                    @string.Format(CultureInfo.InvariantCulture, UiText.SourcesTruncatedFormat, _sources.Count)
+                </MudText>
+            }
+        }
+    </YaguraCard>
+</div>
+
+@code {
+    // 更新間隔は UI-2 の仮値（ui.md §5.2——ステール閾値の基準もこの値。実利用で確定する）。
+    private static readonly TimeSpan UpdateInterval = TimeSpan.FromSeconds(10);
+
+    // 送信元別・受信量推移の再集計はライトな更新より低頻度にする（GROUP BY・範囲検索が
+    // 保存先へ与える負荷を抑える——architecture.md §6 の資源分離の向き）。
+    private const int HeavyRefreshEveryTicks = 6; // 10 秒 × 6 = 60 秒
+
+    // 内部クエリの防御値（M-10 の検索仮値より短いタイムアウト——画面の定期更新が保存先を
+    // 長時間占有しないため。仮値）。
+    private static readonly TimeSpan InternalQueryTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ChartWindow = TimeSpan.FromMinutes(60);
+    private static readonly TimeSpan ChartBucketWidth = TimeSpan.FromMinutes(5);
+    private const int ChartQueryLimit = 10_000;
+    private const int SourceLimit = 1_000;
+    private const int OutageQueryLimit = 100;
+
+    private YaguraStaleGuard? _staleGuard;
+    private PeriodicTimer? _timer;
+    private Task? _refreshLoop;
+
+    private bool _updateStalled;
+    private bool _spoolEvacuationOngoing;
+    private int? _retentionDays;
+    private IReadOnlyList<YaguraListenerEndpoint> _listeners = [];
+    private long _spoolEvacuatedTotal;
+    private long _lossTotal;
+    private YaguraSpoolReading? _spool;
+    private bool _spoolDegraded;
+    private long? _storedRecords;
+
+    private DateTimeOffset _chartRangeStart;
+    private DateTimeOffset _chartRangeEnd;
+    private IReadOnlyList<YaguraTimelineBucket> _chartBuckets = [];
+    private IReadOnlyList<YaguraTimelineInterval> _chartOutages = [];
+    private int? _volumeTruncatedCount;
+    private IReadOnlyList<SourceActivity>? _sources;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 初期表示（prerender を含む）で全セクションを一度組み立てる。
+        var now = DateTimeOffset.UtcNow;
+        RefreshLightSections(now);
+        await RefreshHeavySectionsAsync(now);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // 対話モード確立後の定期更新（prerender では動かない）。
+        _timer = new PeriodicTimer(UpdateInterval);
+        _refreshLoop = RunRefreshLoopAsync(_timer);
+    }
+
+    private async Task RunRefreshLoopAsync(PeriodicTimer timer)
+    {
+        var tick = 0;
+        try
+        {
+            while (await timer.WaitForNextTickAsync())
+            {
+                tick++;
+                try
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    RefreshLightSections(now);
+
+                    if (tick % HeavyRefreshEveryTicks == 0)
+                    {
+                        await RefreshHeavySectionsAsync(now);
+                    }
+
+                    _updateStalled = false;
+
+                    if (_staleGuard is not null)
+                    {
+                        await _staleGuard.NotifyUpdatedAsync(now);
+                    }
+                }
+                catch (Exception)
+                {
+                    // circuit は生きているのに更新に失敗した局面（保存先障害・読み取り例外等）。
+                    // 文言の出し分け（ui.md §5.2 の確定文言）は本画面の責務——警告を表示して
+                    // 次の周期で再試行する（circuit 喪失時の警告は YaguraStaleGuard の
+                    // クライアント側 JS が自律表示する）。
+                    _updateStalled = true;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Dispose による停止。
+        }
+    }
+
+    /// <summary>軽い更新（同期の観測値のみ。毎周期）。</summary>
+    private void RefreshLightSections(DateTimeOffset now)
+    {
+        var status = StatusReader.ReadCurrent();
+        _retentionDays = status.RetentionDays;
+        _listeners = status.Listeners;
+        _spool = status.Spool;
+        _spoolDegraded = status.SpoolDegraded;
+        _spoolEvacuationOngoing = status.Health.Reasons.Contains(YaguraHealthReason.SpoolEvacuationObserved);
+        _spoolEvacuatedTotal = status.Counters
+            .Where(c => c.InstrumentName == "yagura.ingestion.spool.evacuated")
+            .Sum(c => c.Value);
+        _lossTotal = status.Counters.Where(c => c.IsLoss).Sum(c => c.Value);
+    }
+
+    /// <summary>重い更新（保存先への読み取り。初期表示 + 低頻度周期）。</summary>
+    private async Task RefreshHeavySectionsAsync(DateTimeOffset now)
+    {
+        _chartRangeEnd = now;
+        _chartRangeStart = now - ChartWindow;
+
+        // 受信量推移: 既存の検索 API からの導出（軽量射影 1 文字 = 転送量の最小化。
+        // 取得上限に達した場合は注記を出す——導出の限界を隠さない）。
+        var records = await LogStore.QueryAsync(
+            new LogQuery(
+                Limit: ChartQueryLimit,
+                Timeout: InternalQueryTimeout,
+                ReceivedAtFrom: _chartRangeStart,
+                ReceivedAtTo: _chartRangeEnd,
+                MessageProjectionLength: 1));
+        _volumeTruncatedCount = records.Count >= ChartQueryLimit ? records.Count : null;
+        _chartBuckets = BuildBuckets(records, _chartRangeStart, _chartRangeEnd);
+
+        // 受信断区間の重ね描き（architecture.md §4.4——ダッシュボードの時間軸にも出す）。
+        var outages = await LogStore.QuerySystemEventsAsync(
+            from: _chartRangeStart,
+            to: _chartRangeEnd,
+            limit: OutageQueryLimit,
+            timeout: InternalQueryTimeout);
+        _chartOutages = outages
+            .Where(e => SystemEventKinds.IsDowntime(e.Kind))
+            .Select(e => new YaguraTimelineInterval(e.StartAt, e.EndAt, e.Approximate))
+            .ToList();
+
+        // 送信元別の受信状況（UI-4 無音化検出——最終受信時刻の古い順。集計は provider 側）。
+        _sources = await LogStore.QuerySourceActivityAsync(SourceLimit, InternalQueryTimeout);
+
+        // 保存済み件数（統計契約。database.md §1.2 契約 6）。
+        var statistics = await LogStore.GetStatisticsAsync();
+        _storedRecords = statistics.RecordCount;
+    }
+
+    private static IReadOnlyList<YaguraTimelineBucket> BuildBuckets(
+        IReadOnlyList<LogRecordSummary> records,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeEnd)
+    {
+        var bucketCount = (int)Math.Ceiling((rangeEnd - rangeStart) / ChartBucketWidth);
+        var counts = new int[Math.Max(1, bucketCount)];
+
+        foreach (var record in records)
+        {
+            var index = (int)((record.ReceivedAt - rangeStart) / ChartBucketWidth);
+            if (index >= 0 && index < counts.Length)
+            {
+                counts[index]++;
+            }
+        }
+
+        var buckets = new List<YaguraTimelineBucket>(counts.Length);
+        for (var i = 0; i < counts.Length; i++)
+        {
+            var start = rangeStart + i * ChartBucketWidth;
+            var end = i == counts.Length - 1 ? rangeEnd : start + ChartBucketWidth;
+            buckets.Add(new YaguraTimelineBucket(start, end, counts[i]));
+        }
+
+        return buckets;
+    }
+
+    private string SpoolUsageValue => _spool is { } spool
+        ? spool.UsageRatio.ToString("P0", CultureInfo.InvariantCulture)
+        : UiText.StatSpoolUnavailable;
+
+    private string? SpoolUsageSupplement => _spool is { } spool
+        ? string.Create(CultureInfo.InvariantCulture, $"{FormatBytes(spool.CurrentUsageBytes)} / {FormatBytes(spool.QuotaBytes)}")
+        : (_spoolDegraded ? UiText.HealthReasonSpoolDegraded : null);
+
+    private string StoredRecordsValue => _storedRecords is { } records ? FormatCount(records) : "—";
+
+    private static string ListenerLabel(YaguraListenerEndpoint listener) =>
+        string.Format(CultureInfo.InvariantCulture, UiText.ListenerPortLabelFormat, listener.ProtocolName);
+
+    private static string FormatCount(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024L * 1024 * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024 * 1024):0.#} GB"),
+        >= 1024L * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024):0.#} MB"),
+        >= 1024L => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1024.0:0.#} KB"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{bytes} B"),
+    };
+
+    /// <summary>最後に受信してからの経過時間（無音時間）の表示。</summary>
+    private static string FormatSilence(DateTimeOffset lastReceivedAt)
+    {
+        var elapsed = DateTimeOffset.UtcNow - lastReceivedAt;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        return elapsed switch
+        {
+            { TotalDays: >= 1 } => string.Create(CultureInfo.InvariantCulture, $"{(int)elapsed.TotalDays} 日 {elapsed.Hours} 時間"),
+            { TotalHours: >= 1 } => string.Create(CultureInfo.InvariantCulture, $"{(int)elapsed.TotalHours} 時間 {elapsed.Minutes} 分"),
+            { TotalMinutes: >= 1 } => string.Create(CultureInfo.InvariantCulture, $"{(int)elapsed.TotalMinutes} 分"),
+            _ => "1 分未満",
+        };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _timer?.Dispose();
+
+        if (_refreshLoop is not null)
+        {
+            try
+            {
+                await _refreshLoop;
+            }
+            catch (Exception)
+            {
+                // 破棄時の後片付け——更新ループの失敗はここでは伝播させない。
+            }
+        }
+    }
+}

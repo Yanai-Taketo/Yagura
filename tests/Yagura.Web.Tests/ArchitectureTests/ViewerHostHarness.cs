@@ -55,6 +55,7 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddSingleton<ILogStore>(_ => new NoopLogStore());
         builder.Services.AddSingleton<WebGuardMetrics>();
         builder.Services.AddSingleton<IAuditRecorder, NoopAuditRecorder>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Observability.IYaguraSystemStatusReader, NoopStatusReader>();
 
         // 閲覧・管理の両方を同一ホストにマップする(Program.cs と同じ構造。ポートによる
         // 到達可否の分離は実行時の ListenerPortGuardMiddleware が担うため、エンドポイント表
@@ -120,6 +121,27 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
 
         public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
             => throw new NotSupportedException("本ハーネスはルーティング表の列挙専用であり、実データ操作は対象外。");
+
+        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<LogRecord?>(null);
+
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult((IReadOnlyList<SystemEvent>)new List<SystemEvent>());
+
+        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult((IReadOnlyList<SourceActivity>)new List<SourceActivity>());
+    }
+
+    private sealed class NoopStatusReader : Yagura.Abstractions.Observability.IYaguraSystemStatusReader
+    {
+        public Yagura.Abstractions.Observability.YaguraSystemStatusSnapshot ReadCurrent() => new(
+            TakenAt: DateTimeOffset.UtcNow,
+            Counters: [],
+            Spool: null,
+            SpoolDegraded: false,
+            Health: Yagura.Abstractions.Observability.YaguraHealthReading.Ok,
+            RetentionDays: 30,
+            Listeners: []);
     }
 
     private sealed class NoopAuditRecorder : IAuditRecorder

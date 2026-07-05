@@ -1,0 +1,204 @@
+@page "/status"
+@using System.Globalization
+@inject ILogStore LogStore
+@inject IYaguraSystemStatusReader StatusReader
+
+@*
+    システム状態（ui.md §4。M8-3。Issue #70）: 全カウンタ・ゲージの一覧・通知履歴・受信断履歴。
+    - カウンタは平易語（ui.md §7 用語対応表）と識別子（開発用語側のキー = 計器名）を併記する
+      ——試用報告と設計文書を機械的に突合できるようにする準備（コピー様式は UI-7 で確定）
+    - OS 受信破棄ゲージは値を表示しない（M8-3 の設計判断——検証済み環境で受信・破棄を一切
+      計上しないことが実測確定しており、常に 0 の値の表示は「取りこぼしゼロ」の誤解の源。
+      代わりに常時可視の説明を掲示する。判断記録: ui.md §5.5・architecture.md §4.2・D-6）
+    - 受信断履歴・動作記録はシステムイベント（database.md §2.3）の読み出し
+*@
+<PageTitle>Yagura — @UiText.NavStatus</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">@UiText.NavStatus</MudText>
+
+<div class="mb-4">
+    <YaguraCard Title="@UiText.GaugesTitle">
+        <MudGrid Spacing="3">
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraStatCard Label="@UiText.StatSpoolUsage" Value="@SpoolUsageValue" Supplement="@SpoolUsageSupplement" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraStatCard Label="@UiText.StatStoredRecords" Value="@StoredRecordsValue" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <YaguraStatCard Label="@UiText.GaugeDatabaseSize" Value="@DatabaseSizeValue" Supplement="@DatabaseSizeSupplement" />
+            </MudItem>
+        </MudGrid>
+        @if (_spoolDegraded)
+        {
+            <div class="mt-2">
+                <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
+                                    Message="@UiText.HealthReasonSpoolDegraded" />
+            </div>
+        }
+    </YaguraCard>
+</div>
+
+<div class="mb-4">
+    <YaguraCard Title="@UiText.CountersTitle">
+        <YaguraTable TItem="YaguraCounterReading" Items="@_counters" RowsPerPage="20">
+            <HeaderContent>
+                <MudTh>@UiText.CounterColumnName</MudTh>
+                <MudTh>@UiText.CounterColumnId</MudTh>
+                <MudTh>@UiText.CounterColumnValue</MudTh>
+            </HeaderContent>
+            <RowTemplate Context="counter">
+                <MudTd DataLabel="@UiText.CounterColumnName">@DisplayNameOf(counter.InstrumentName)</MudTd>
+                <MudTd DataLabel="@UiText.CounterColumnId"><span class="yagura-monospace">@counter.InstrumentName</span></MudTd>
+                <MudTd DataLabel="@UiText.CounterColumnValue">@counter.Value.ToString("N0", CultureInfo.InvariantCulture)</MudTd>
+            </RowTemplate>
+        </YaguraTable>
+        @* OS 受信破棄ゲージの常時可視の説明（値の非表示 + 説明——本 PR の設計判断。ui.md §5.5） *@
+        <div class="mt-2">
+            <YaguraSystemNotice Severity="YaguraNoticeSeverity.Info"
+                                Message="@UiText.OsUdpGaugeExplanation"
+                                Supplement="@UiText.OsUdpGaugeExplanationSupplement" />
+        </div>
+    </YaguraCard>
+</div>
+
+<div class="mb-4">
+    <YaguraCard Title="@UiText.OutageHistoryTitle">
+        @if (_outageEvents is null)
+        {
+            <MudText Typo="Typo.body2">読み込み中です。</MudText>
+        }
+        else if (_outageEvents.Count == 0)
+        {
+            <MudText Typo="Typo.body2">@UiText.HistoryEmpty</MudText>
+        }
+        else
+        {
+            <YaguraTable TItem="SystemEvent" Items="@_outageEvents" RowsPerPage="20">
+                <HeaderContent>
+                    <MudTh>@UiText.HistoryColumnKind</MudTh>
+                    <MudTh>@UiText.HistoryColumnStart</MudTh>
+                    <MudTh>@UiText.HistoryColumnEnd</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="outage">
+                    <MudTd DataLabel="@UiText.HistoryColumnKind">@OutageKindLabel(outage)</MudTd>
+                    <MudTd DataLabel="@UiText.HistoryColumnStart"><YaguraTimestamp Value="@outage.StartAt" /></MudTd>
+                    <MudTd DataLabel="@UiText.HistoryColumnEnd"><YaguraTimestamp Value="@outage.EndAt" /></MudTd>
+                </RowTemplate>
+            </YaguraTable>
+        }
+    </YaguraCard>
+</div>
+
+<div class="mb-4">
+    <YaguraCard Title="@UiText.EventHistoryTitle">
+        <MudText Typo="Typo.caption" Class="mb-2" role="note">@UiText.EventLogNote</MudText>
+        @if (_otherEvents is null)
+        {
+            <MudText Typo="Typo.body2">読み込み中です。</MudText>
+        }
+        else if (_otherEvents.Count == 0)
+        {
+            <MudText Typo="Typo.body2">@UiText.HistoryEmpty</MudText>
+        }
+        else
+        {
+            <YaguraTable TItem="SystemEvent" Items="@_otherEvents" RowsPerPage="20">
+                <HeaderContent>
+                    <MudTh>@UiText.HistoryColumnKind</MudTh>
+                    <MudTh>@UiText.HistoryColumnStart</MudTh>
+                    <MudTh>@UiText.HistoryColumnDetails</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="systemEvent">
+                    <MudTd DataLabel="@UiText.HistoryColumnKind">@EventKindLabel(systemEvent.Kind)</MudTd>
+                    <MudTd DataLabel="@UiText.HistoryColumnStart"><YaguraTimestamp Value="@systemEvent.StartAt" /></MudTd>
+                    <MudTd DataLabel="@UiText.HistoryColumnDetails">@(systemEvent.Details ?? "—")</MudTd>
+                </RowTemplate>
+            </YaguraTable>
+        }
+    </YaguraCard>
+</div>
+
+@code {
+    private static readonly TimeSpan InternalQueryTimeout = TimeSpan.FromSeconds(5);
+    private const int HistoryLimit = 200;
+
+    private IReadOnlyList<YaguraCounterReading> _counters = [];
+    private YaguraSpoolReading? _spool;
+    private bool _spoolDegraded;
+    private long? _storedRecords;
+    private long? _databaseSizeBytes;
+    private string? _databaseSizeUnavailableReason;
+    private IReadOnlyList<SystemEvent>? _outageEvents;
+    private IReadOnlyList<SystemEvent>? _otherEvents;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var status = StatusReader.ReadCurrent();
+        _counters = status.Counters;
+        _spool = status.Spool;
+        _spoolDegraded = status.SpoolDegraded;
+
+        var statistics = await LogStore.GetStatisticsAsync();
+        _storedRecords = statistics.RecordCount;
+        _databaseSizeBytes = statistics.DatabaseSizeBytes;
+        _databaseSizeUnavailableReason = statistics.DatabaseSizeUnavailableReason;
+
+        var events = await LogStore.QuerySystemEventsAsync(
+            from: null,
+            to: null,
+            limit: HistoryLimit,
+            timeout: InternalQueryTimeout);
+        _outageEvents = events.Where(e => SystemEventKinds.IsDowntime(e.Kind)).ToList();
+        _otherEvents = events.Where(e => !SystemEventKinds.IsDowntime(e.Kind)).ToList();
+    }
+
+    /// <summary>計器名 → 平易語（ui.md §7.2 用語対応表と 1 対 1。未登録は隠さず明示する）。</summary>
+    private static string DisplayNameOf(string instrumentName) => instrumentName switch
+    {
+        "yagura.ingestion.internal_buffer.dropped" => UiText.CounterInternalBufferDropped,
+        "yagura.ingestion.tcp_connection.rejected" => UiText.CounterTcpConnectionRejected,
+        "yagura.ingestion.spool.evacuated" => UiText.CounterSpoolEvacuated,
+        "yagura.ingestion.spool.write_failed" => UiText.CounterSpoolWriteFailed,
+        "yagura.ingestion.spool.discarded" => UiText.CounterSpoolDiscarded,
+        "yagura.ingestion.persistence.failed" => UiText.CounterPersistenceFailed,
+        "yagura.ingestion.flow_control.dropped" => UiText.CounterFlowControlDropped,
+        _ => UiText.CounterUnknown,
+    };
+
+    private static string OutageKindLabel(SystemEvent outage) =>
+        outage.Kind == SystemEventKinds.DowntimeCrashApproximate || outage.Approximate
+            ? UiText.OutageKindCrashApproximate
+            : UiText.OutageKindNormalStop;
+
+    private static string EventKindLabel(string kind) => kind switch
+    {
+        SystemEventKinds.RetentionDelete => UiText.EventKindRetentionDelete,
+        _ => string.Format(CultureInfo.InvariantCulture, UiText.EventKindUnknownFormat, kind),
+    };
+
+    private string SpoolUsageValue => _spool is { } spool
+        ? spool.UsageRatio.ToString("P0", CultureInfo.InvariantCulture)
+        : UiText.StatSpoolUnavailable;
+
+    private string? SpoolUsageSupplement => _spool is { } spool
+        ? string.Create(CultureInfo.InvariantCulture, $"{FormatBytes(spool.CurrentUsageBytes)} / {FormatBytes(spool.QuotaBytes)}")
+        : null;
+
+    private string StoredRecordsValue =>
+        _storedRecords is { } records ? records.ToString("N0", CultureInfo.InvariantCulture) : "—";
+
+    private string DatabaseSizeValue => _databaseSizeBytes is { } size
+        ? FormatBytes(size)
+        : UiText.GaugeDatabaseSizeUnavailable;
+
+    private string? DatabaseSizeSupplement => _databaseSizeUnavailableReason;
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024L * 1024 * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024 * 1024):0.#} GB"),
+        >= 1024L * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024):0.#} MB"),
+        >= 1024L => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1024.0:0.#} KB"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{bytes} B"),
+    };
+}
