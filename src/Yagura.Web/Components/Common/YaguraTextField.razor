@@ -1,0 +1,66 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    1 行テキスト入力（ui.md §3.1 フォーム規約に従う具体入力部品。M8-2）。
+    ラベル・必須表記・エラー表示は YaguraFormField（共通枠）が担い、本部品は入力本体のみを
+    MudTextField で実装する（MudBlazor の低レベル API を共通コンポーネント内部に閉じ込める
+    ——ui.md §1）。MudTextField 自体のフローティングラベルは使わない（ラベルは入力の上、の
+    規約を YaguraFormField 側で満たす）。
+*@
+<YaguraFormField Label="@Label"
+                 Required="@Required"
+                 ErrorText="@ErrorText"
+                 HelpText="@HelpText"
+                 InputId="@_inputId">
+    <MudTextField T="string"
+                  Value="@Value"
+                  ValueChanged="@ValueChanged"
+                  Immediate="@Immediate"
+                  Placeholder="@Placeholder"
+                  Disabled="@Disabled"
+                  Required="@Required"
+                  Error="@(!string.IsNullOrEmpty(ErrorText))"
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  InputId="@_inputId"
+                  aria-required="@(Required ? "true" : null)" />
+</YaguraFormField>
+
+@code {
+    private readonly string _inputId = $"yagura-field-{Guid.NewGuid():N}";
+
+    /// <summary>項目のラベル（入力の上に表示）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>入力値。</summary>
+    [Parameter]
+    public string? Value { get; set; }
+
+    /// <summary>入力値の変更通知（@bind-Value で双方向バインドできる）。</summary>
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>必須項目か（「必須」表記。ui.md §3.1）。</summary>
+    [Parameter]
+    public bool Required { get; set; }
+
+    /// <summary>検証エラー文言（項目直下に文言で表示。ui.md §3.1）。</summary>
+    [Parameter]
+    public string? ErrorText { get; set; }
+
+    /// <summary>補足説明（任意）。</summary>
+    [Parameter]
+    public string? HelpText { get; set; }
+
+    /// <summary>プレースホルダ（任意。ラベルの代替にはしない）。</summary>
+    [Parameter]
+    public string? Placeholder { get; set; }
+
+    /// <summary>入力のたびに ValueChanged を発火するか（既定: フォーカス喪失時）。</summary>
+    [Parameter]
+    public bool Immediate { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+}

@@ -1,0 +1,50 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    空状態の共通コンポーネント（ui.md §3.1 空状態規約。M8-2）。
+    「データがない」画面は無地ではなく、次に取るべき行動（NextAction）を必ず示す——
+    NextAction は必須パラメータとして構造で強制する。
+    ログ未着の空状態（受信先 IP・ポートのコピー可能表示 + 切り分け文書 CF-D5 への導線）は、
+    利用側画面（M8-3 ダッシュボード・検索）が YaguraCopyField と導線リンクを NextAction に
+    組み合わせて構成する（インストーラが閉じた 30 分動線の続きを空状態画面が引き受ける）。
+*@
+<div class="yagura-empty-state d-flex flex-column align-center justify-center pa-8" role="status">
+    <MudIcon Icon="@(Icon ?? Icons.Material.Outlined.Inbox)" Size="Size.Large" aria-hidden="true" />
+    <MudText Typo="Typo.h6" Class="mt-2">@Title</MudText>
+    @if (!string.IsNullOrEmpty(Description))
+    {
+        <MudText Typo="Typo.body2" Class="mt-1 yagura-empty-state-description">@Description</MudText>
+    }
+    <div class="yagura-empty-state-action mt-4">
+        @NextAction
+    </div>
+</div>
+
+@code {
+    /// <summary>空状態の見出し（例: 「まだログがありません」）。</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>補足説明（任意）。</summary>
+    [Parameter]
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// 次に取るべき行動（必須。ui.md §3.1——無地の空状態を構造上作れないようにする）。
+    /// </summary>
+    [Parameter, EditorRequired]
+    public RenderFragment? NextAction { get; set; }
+
+    /// <summary>アイコン（任意。既定は受信箱）。</summary>
+    [Parameter]
+    public string? Icon { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (NextAction is null)
+        {
+            throw new InvalidOperationException(
+                "空状態には次に取るべき行動（NextAction)が必須です(ui.md §3.1 空状態規約)。");
+        }
+    }
+}

@@ -107,6 +107,29 @@ public sealed class ViewerEndpointAllowlistTests
         "|^_content/MudBlazor/MudBlazor\\.min\\.js(\\.[0-9a-z]+)?\\.map(\\.(gz|br))?$",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// Yagura.Web 自身の静的アセット（M8-2 で追加）の制約付き許可パターン。対象は 2 ファイルのみ:
+    /// 共通コンポーネントの内部スタイル（css/yagura-components.css。ui.md §2.1「独自の CSS 変数の
+    /// 併設は共通コンポーネントの実装内部に限る」の実装位置）と、ステール警告の自律監視 JS
+    /// （js/stale-guard.js。ui.md §5.2 が設計上確定した ADR-0003 決定 1 の例外）。
+    /// フィンガープリント・圧縮変種を許容する理由は <see cref="MudBlazorStaticAssetRoutePattern"/> と同じ。
+    /// これ以外の自前アセットを追加する PR は、本パターン（と本コメント）の更新を同じ PR に含める。
+    /// </summary>
+    /// <remarks>
+    /// <c>_content/Yagura.Web/</c> プレフィックスを任意一致にしている理由（実機確認済み。2026-07-06）:
+    /// 本番経路（Yagura.Host のマニフェスト <c>Yagura.Host.staticwebassets.endpoints.json</c>）では
+    /// RCL 規約どおり <c>_content/Yagura.Web/css/yagura-components.css</c> 等で配信される
+    /// （YaguraWebApp.razor の link href と一致することをマニフェスト実ファイルで確認）。一方、
+    /// 本ハーネスが使う RCL 単位のマニフェスト（<see cref="ViewerHostHarness"/> 参照）では
+    /// Yagura.Web 自身がアプリ扱いになり、自前アセットはルート相対
+    /// （<c>css/yagura-components.css</c>）で列挙される。両形を許容し、どちらの形でも
+    /// 「既知 2 ファイル + 変種のみ・GET/HEAD のみ」の制約は同一に保つ。
+    /// </remarks>
+    private static readonly Regex YaguraWebStaticAssetRoutePattern = new(
+        "^(_content/Yagura\\.Web/)?css/yagura-components(\\.[0-9a-z]+)?\\.css(\\.(gz|br))?$" +
+        "|^(_content/Yagura\\.Web/)?js/stale-guard(\\.[0-9a-z]+)?\\.js(\\.(gz|br))?$",
+        RegexOptions.Compiled);
+
     [Fact]
     public async Task ViewerAllowlist_MatchesAllRegisteredViewerEndpoints()
     {
@@ -138,15 +161,24 @@ public sealed class ViewerEndpointAllowlistTests
             .Where(IsStaticAssetRoute)
             .ToList();
 
-        // css と js が最低 1 経路ずつ現れること(検出対象が空集合のまま green になる
+        // 既知アセットが最低 1 経路ずつ現れること(検出対象が空集合のまま green になる
         // 空虚な真を避ける——本クラスの他テストと同じ注意)。
         Assert.Contains(staticAssetEndpoints, e => NormalizeRoute(e) == "_content/MudBlazor/MudBlazor.min.css");
         Assert.Contains(staticAssetEndpoints, e => NormalizeRoute(e) == "_content/MudBlazor/MudBlazor.min.js");
 
+        // M8-2 で追加した Yagura.Web 自前アセット 2 ファイル(共通コンポーネント CSS +
+        // ステール警告 JS)も配信面に現れること(ルート形はハーネスではルート相対——
+        // YaguraWebStaticAssetRoutePattern の remarks 参照)。
+        Assert.Contains(staticAssetEndpoints, e => NormalizeRoute(e).EndsWith("css/yagura-components.css", StringComparison.Ordinal));
+        Assert.Contains(staticAssetEndpoints, e => NormalizeRoute(e).EndsWith("js/stale-guard.js", StringComparison.Ordinal));
+
         foreach (var endpoint in staticAssetEndpoints)
         {
             var route = NormalizeRoute(endpoint);
-            Assert.Matches(MudBlazorStaticAssetRoutePattern, route);
+            Assert.True(
+                MudBlazorStaticAssetRoutePattern.IsMatch(route) || YaguraWebStaticAssetRoutePattern.IsMatch(route),
+                $"許可パターン外の静的アセット経路が閲覧リスナに追加されている: {route}(L-5。" +
+                "追加する場合は本テストの許可パターンの更新を同じ PR に含める)");
 
             var methods = GetMethods(endpoint);
             Assert.NotNull(methods);
@@ -156,10 +188,17 @@ public sealed class ViewerEndpointAllowlistTests
 
     /// <summary>
     /// 静的アセット経路の判定（<c>_content/</c> 配下——Razor Class Library / NuGet 同梱
-    /// アセットの規約プレフィックス）。固定許可リストとパターン許可リストの分割点。
+    /// アセットの規約プレフィックス——または Yagura.Web 自前アセットのルート相対形。
+    /// 後者はハーネスの RCL 単位マニフェストでのみ現れる——
+    /// <see cref="YaguraWebStaticAssetRoutePattern"/> の remarks 参照）。
+    /// 固定許可リストとパターン許可リストの分割点。
     /// </summary>
-    private static bool IsStaticAssetRoute(RouteEndpoint endpoint) =>
-        NormalizeRoute(endpoint).StartsWith("_content/", StringComparison.Ordinal);
+    private static bool IsStaticAssetRoute(RouteEndpoint endpoint)
+    {
+        var route = NormalizeRoute(endpoint);
+        return route.StartsWith("_content/", StringComparison.Ordinal) ||
+               YaguraWebStaticAssetRoutePattern.IsMatch(route);
+    }
 
     private static string NormalizeRoute(RouteEndpoint endpoint) =>
         (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/');

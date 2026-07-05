@@ -39,6 +39,11 @@ public static class YaguraWebViewerExtensions
         // エンドポイントは追加しない（ルート登録は下の MapYaguraWebViewer に集約されたまま）。
         services.AddMudServices();
 
+        // 通知（トースト）の共通経路（M8-2。ui.md §3.1 通知規約）。ページは ISnackbar を
+        // 直接使わず本経路を使う（低レベル API をページに散乱させない——ui.md §1）。
+        // ISnackbar（AddMudServices が Scoped 登録）に合わせて Scoped。
+        services.AddScoped<Components.Common.IYaguraNotifier, Components.Common.YaguraSnackbarNotifier>();
+
         return services;
     }
 

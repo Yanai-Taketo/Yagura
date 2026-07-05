@@ -1,0 +1,74 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    状態帯（ヘルスバー。ui.md §3.1 状態帯・§5.1。M8-2）:
+    ダッシュボード最上部・全画面共通ヘッダに置く「稼働中 / 警告あり / 異常あり」の 3 状態 +
+    一言サマリ。状態は色だけで伝えない——アイコン + 見出し文言を必ず伴う（ui.md §2.1・§8）。
+
+    - 判定（観測窓内の増分・ゲージ状態。窓幅等は UI-6）はサーバ側の観測性が担い、
+      本部品は判定結果の表示のみを引き受ける
+    - 「稼働中」はポートの待ち受けを意味し、ログが現に届いていることは意味しない——
+      全送信元合算の最終受信時刻（LastReceivedAt）を併記し、送信元別の受信状況への導線
+      （SourcesLinkHref）を置く（ui.md §5.1）
+    - 一過性事象で状態帯が復帰しても発生の事実は通知履歴・受信断履歴（状態画面）に残る
+      ——状態帯は「今」を、履歴は「起きたこと」を担う
+*@
+<MudAlert Severity="@AlertSeverity"
+          Variant="Variant.Filled"
+          Dense="true"
+          Elevation="0"
+          Class="yagura-status-band"
+          role="status"
+          aria-live="polite">
+    <span class="yagura-status-band-title">@Title</span><span>——@SummaryText</span>
+    @if (LastReceivedAt is not null)
+    {
+        <span class="yagura-status-band-received ml-4">@UiText.StatusBandLastReceivedLabel:
+            <YaguraTimestamp Value="@LastReceivedAt.Value" TimeZone="@TimeZone" /></span>
+    }
+    @if (!string.IsNullOrEmpty(SourcesLinkHref))
+    {
+        <a class="yagura-status-band-link ml-4" href="@SourcesLinkHref">@UiText.StatusBandSourcesLinkText</a>
+    }
+</MudAlert>
+
+@code {
+    /// <summary>現在状態（観測窓内の判定結果。判定自体はサーバ側観測性の管轄）。</summary>
+    [Parameter, EditorRequired]
+    public YaguraStatusKind Status { get; set; }
+
+    /// <summary>
+    /// 一言サマリ。null なら状態別の既定文言（Ok は ui.md §5.1 の確定文言——観測できる範囲に
+    /// 限って言い切る）。Warning / Error は事象の要約を利用側が渡す。
+    /// </summary>
+    [Parameter]
+    public string? Summary { get; set; }
+
+    /// <summary>全送信元合算の最終受信時刻（ui.md §5.1 の併記要件）。</summary>
+    [Parameter]
+    public DateTimeOffset? LastReceivedAt { get; set; }
+
+    /// <summary>送信元別の受信状況への導線（ui.md §5.1。無音化検出の入口——UI-4）。</summary>
+    [Parameter]
+    public string? SourcesLinkHref { get; set; }
+
+    /// <summary>時刻表示のタイムゾーン差し替え口（テスト用。既定はサーバ OS タイムゾーン）。</summary>
+    [Parameter]
+    public TimeZoneInfo? TimeZone { get; set; }
+
+    private Severity AlertSeverity => Status switch
+    {
+        YaguraStatusKind.Warning => MudBlazor.Severity.Warning,
+        YaguraStatusKind.Error => MudBlazor.Severity.Error,
+        _ => MudBlazor.Severity.Success,
+    };
+
+    private string Title => Status switch
+    {
+        YaguraStatusKind.Warning => UiText.StatusBandWarningTitle,
+        YaguraStatusKind.Error => UiText.StatusBandErrorTitle,
+        _ => UiText.StatusBandOkTitle,
+    };
+
+    private string SummaryText => Summary ?? (Status == YaguraStatusKind.Ok ? UiText.StatusBandOkSummary : string.Empty);
+}

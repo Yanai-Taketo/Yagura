@@ -1,0 +1,100 @@
+/*
+  共通コンポーネントの内部スタイル（M8-2）。
+
+  ui.md §2.1「独自の CSS 変数の併設は共通コンポーネントの実装内部に限る」の実装位置。
+  ページ固有 CSS ではない（§11 台帳の対象外）——本ファイルは共通コンポーネント
+  （Components/Common/）専用であり、ページはクラスを直接使わない。
+
+  規約:
+  - 色はすべてテーマ由来の CSS 変数（--mud-palette-*）を参照する（hex 直書き禁止——
+    ui.md §3.2 受け入れ条件①）
+  - サイズはトークンの段階のみ: フォント 12/14/16/20/28px、余白 4px 基準スケール
+    （4/8/12/16/24/32）、角丸 4/8px（ui.md §2.2・§2.3）
+*/
+
+/* 等幅表示（ログ本文・生データ・受信先アドレス等。ui.md §2.2 の等幅スタックを
+   共通コンポーネント実装内部で適用する——MudBlazor Typography に対応枠がないため） */
+.yagura-monospace {
+    font-family: Consolas, "Courier New", monospace;
+}
+
+/* ---- 状態帯（YaguraStatusBand。ui.md §3.1・§5.1） ---- */
+
+.yagura-status-band-title {
+    font-weight: 600;
+}
+
+/* 状態帯の導線リンク: 塗り面上では周囲の文字色（ContrastText）を継承する
+   （primary 色のリンクでは塗り面とのコントラストを保証できない。下線で識別する） */
+.yagura-status-band-link {
+    color: inherit;
+    text-decoration: underline;
+}
+
+/* ---- ステール警告（YaguraStaleGuard。ui.md §5.2） ---- */
+
+/* 画面全体に重ねる警告。既定は非表示で、クライアント側 JS（stale-guard.js）が
+   閾値超過時に .yagura-stale-visible を付与して表示する（サーバ描画に依存しない）。 */
+.yagura-stale-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2000; /* MudBlazor の overlay/dialog 層より前面（暗所の大型モニタで遠目に分かること） */
+    align-items: center;
+    justify-content: center;
+    background-color: var(--mud-palette-overlay-dark);
+}
+
+.yagura-stale-overlay.yagura-stale-visible {
+    display: flex;
+}
+
+.yagura-stale-overlay-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 32px;
+    border-radius: 8px; /* ダイアログ段の角丸（ui.md §2.3） */
+    background-color: var(--mud-palette-error);
+    color: var(--mud-palette-error-text);
+    text-align: center;
+}
+
+.yagura-stale-overlay-title {
+    margin: 0;
+    font-size: 20px; /* 画面見出し段（ui.md §2.2） */
+    line-height: 1.5;
+    font-weight: 600;
+}
+
+.yagura-stale-overlay-body {
+    margin: 0;
+    font-size: 16px; /* 強調段（ui.md §2.2） */
+    line-height: 1.5;
+}
+
+/* ---- フォーム（YaguraFormField。ui.md §3.1） ---- */
+
+/* ラベルは入力の上（ブロック要素化で縦積みを保証する） */
+.yagura-form-field-label {
+    display: block;
+}
+
+.yagura-form-field-help {
+    color: var(--mud-palette-text-secondary);
+}
+
+/* ---- テーブル（YaguraTable。ui.md §3.1） ---- */
+
+/* 行末の「詳細を表示」ボタン列（キーボード到達経路——ui.md §8）は最小幅に抑える */
+.yagura-table-detail-column {
+    width: 48px;
+    text-align: right;
+}
+
+/* ---- 空状態（YaguraEmptyState。ui.md §3.1） ---- */
+
+.yagura-empty-state-description {
+    color: var(--mud-palette-text-secondary);
+}

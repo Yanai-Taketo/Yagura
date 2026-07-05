@@ -1,0 +1,82 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    確認ダイアログ（ui.md §3.1。M8-2）: 取り消せない操作は「何が起きるかの要約 + 明示的な
+    確認ボタン」で構成し、既定フォーカスは安全側（キャンセル）に置く。
+    Esc で閉じられる（キャンセル扱い）——ShowAsync が CloseOnEscapeKey を常に有効化する。
+    フォーカスの呼び出し元復帰は MudBlazor のダイアログ機構が担う（ui.md §8）。
+
+    ダイアログ面の角丸 8px（ui.md §2.3）はカード/ダイアログ共通コンポーネント（M8-3）の
+    実装内部で適用予定——本ダイアログもその適用対象に含める。
+*@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Title</MudText>
+    </TitleContent>
+    <DialogContent>
+        @* 何が起きるかの要約（色だけに頼らない——文言で伝える。ui.md §8） *@
+        <MudText>@Summary</MudText>
+    </DialogContent>
+    <DialogActions>
+        @* 既定フォーカスは安全側（キャンセル）: autofocus 属性で明示する（ui.md §3.1）。 *@
+        <MudButton OnClick="Cancel" Variant="Variant.Outlined" autofocus>@UiText.ConfirmDialogCancel</MudButton>
+        <MudButton OnClick="Confirm"
+                   Variant="Variant.Filled"
+                   Color="@(Destructive ? Color.Error : Color.Primary)">@ConfirmLabel</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>ダイアログの見出し（何を確認するのか）。</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>何が起きるかの要約（ui.md §3.1——取り消せない操作の内容を文言で示す）。</summary>
+    [Parameter, EditorRequired]
+    public string Summary { get; set; } = string.Empty;
+
+    /// <summary>明示的な確認ボタンの文言（「削除する」等、操作を言い切る動詞形を推奨）。</summary>
+    [Parameter, EditorRequired]
+    public string ConfirmLabel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 破壊的操作か（true なら確認ボタンを state-error 系にする。ui.md §3.1 ボタン規約）。
+    /// </summary>
+    [Parameter]
+    public bool Destructive { get; set; } = true;
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(true));
+
+    private void Cancel() => MudDialog.Cancel();
+
+    /// <summary>
+    /// 確認ダイアログを表示し、確認されたかを返す（確認 = true / キャンセル・Esc・背景クリック = false）。
+    /// </summary>
+    public static async Task<bool> ShowAsync(
+        IDialogService dialogService,
+        string title,
+        string summary,
+        string confirmLabel,
+        bool destructive = true)
+    {
+        ArgumentNullException.ThrowIfNull(dialogService);
+
+        var parameters = new DialogParameters<YaguraConfirmDialog>
+        {
+            { d => d.Title, title },
+            { d => d.Summary, summary },
+            { d => d.ConfirmLabel, confirmLabel },
+            { d => d.Destructive, destructive },
+        };
+
+        // Esc で閉じられること（ui.md §8）を常に保証する。
+        var options = new DialogOptions { CloseOnEscapeKey = true };
+
+        var dialog = await dialogService.ShowAsync<YaguraConfirmDialog>(title, parameters, options);
+        var result = await dialog.Result;
+        return result is { Canceled: false };
+    }
+}

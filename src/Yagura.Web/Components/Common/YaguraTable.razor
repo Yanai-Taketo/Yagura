@@ -1,0 +1,88 @@
+@namespace Yagura.Web.Components.Common
+@typeparam TItem
+
+@*
+    一覧テーブルの共通コンポーネント（ui.md §3.1 テーブル規約。M8-2）。
+
+    - 軽量射影列のみ表示する（architecture.md §6）——列は利用側が定義するが、行データ型に
+      射影型（LogRecordSummary 等）を使うことをレビュー観点とする
+    - ページングを必須で内蔵する（結果上限件数の一括レンダリングを行わない——転送量の防御 =
+      射影、描画量の防御 = ページングの 2 本立て）
+    - 行クリックで詳細へ（OnRowSelected）。キーボード操作の完遂（ui.md §8）のため、
+      OnRowSelected 指定時は行末に「詳細を表示」ボタン列を自動で追加する（フォーカス可能な
+      到達経路をマウスなしでも保証する）
+    - 打ち切り（結果上限到達）は表の末尾に件数と共に明示する（TruncatedAtLimit）
+*@
+<MudTable T="TItem"
+          Items="@Items"
+          Hover="true"
+          Dense="true"
+          Elevation="1"
+          RowsPerPage="@RowsPerPage"
+          OnRowClick="HandleRowClick"
+          Class="yagura-table">
+    <HeaderContent>
+        @HeaderContent
+        @if (OnRowSelected.HasDelegate)
+        {
+            <MudTh Class="yagura-table-detail-column"></MudTh>
+        }
+    </HeaderContent>
+    <RowTemplate>
+        @RowTemplate?.Invoke(context)
+        @if (OnRowSelected.HasDelegate)
+        {
+            <MudTd Class="yagura-table-detail-column">
+                <MudIconButton Icon="@Icons.Material.Filled.ChevronRight"
+                               Size="Size.Small"
+                               aria-label="@UiText.TableRowDetailLabel"
+                               OnClick="() => OnRowSelected.InvokeAsync(context)" />
+            </MudTd>
+        }
+    </RowTemplate>
+    <PagerContent>
+        <MudTablePager RowsPerPageString="@UiText.TableRowsPerPage"
+                       InfoFormat="@UiText.TablePagerInfoFormat" />
+    </PagerContent>
+</MudTable>
+@if (TruncatedAtLimit)
+{
+    <YaguraMissingDataNotice Kind="YaguraMissingDataKind.SearchTruncated"
+                             DisplayedCount="@(Items?.Count() ?? 0)" />
+}
+
+@code {
+    /// <summary>表示する行データ（軽量射影の一覧。結果上限で打ち切り済みのもの）。</summary>
+    [Parameter, EditorRequired]
+    public IEnumerable<TItem>? Items { get; set; }
+
+    /// <summary>ヘッダ行（MudTh の並び。利用側が列を定義する）。</summary>
+    [Parameter, EditorRequired]
+    public RenderFragment? HeaderContent { get; set; }
+
+    /// <summary>データ行（MudTd の並び。ヘッダと同じ列数にする）。</summary>
+    [Parameter, EditorRequired]
+    public RenderFragment<TItem>? RowTemplate { get; set; }
+
+    /// <summary>
+    /// 行の選択（詳細表示への遷移）。指定すると行クリックに加え、キーボードで到達できる
+    /// 「詳細を表示」ボタン列が行末に付く（ui.md §8 キーボード完遂）。
+    /// </summary>
+    [Parameter]
+    public EventCallback<TItem> OnRowSelected { get; set; }
+
+    /// <summary>
+    /// 結果上限による打ち切りが起きたか（true なら表の末尾に件数と共に明示する。ui.md §3.1・§5.3）。
+    /// </summary>
+    [Parameter]
+    public bool TruncatedAtLimit { get; set; }
+
+    /// <summary>1 ページの表示件数（描画量の防御。既定 50）。</summary>
+    [Parameter]
+    public int RowsPerPage { get; set; } = 50;
+
+    private Task HandleRowClick(TableRowClickEventArgs<TItem> args) =>
+        args.Item is not null && OnRowSelected.HasDelegate
+            ? OnRowSelected.InvokeAsync(args.Item)
+            : Task.CompletedTask;
+}

@@ -1,0 +1,48 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    設定・システム由来の警告と案内（ui.md §5.4。M8-2）。
+    - 警告（state-warning）: 一時保管への退避中・上限接近・縮退運転（色 + アイコン + 補足文言を
+      セットで常時表示——「一時保管」という言葉の無害さを色と文言で補う）
+    - 情報（state-info）: 昇格案内等の案内
+    本部品は操作ボタンを持たない——閲覧画面の通知にはサーバ状態を変更する操作を置かない
+    （ui.md §5.4・§4 の不変条件）。操作を含む管理リスナ側の表示面は設定画面（M8-4）が
+    管理側の部品として実装する。
+    ChildContent にはフォールバックの 3 点（キー名・不正値・適用値）一覧など、画面固有の
+    詳細を渡せる（configuration.md §1 の引き受け——表示は設定画面と状態画面の両方。M8-3/M8-4）。
+*@
+<MudAlert Severity="@AlertSeverity"
+          Variant="Variant.Outlined"
+          Class="yagura-system-notice"
+          role="status">
+    <MudText Typo="Typo.body1">@Message</MudText>
+    @if (!string.IsNullOrEmpty(Supplement))
+    {
+        <MudText Typo="Typo.body2" Class="yagura-system-notice-supplement">@Supplement</MudText>
+    }
+    @ChildContent
+</MudAlert>
+
+@code {
+    /// <summary>区分（警告 / 情報。state-error は状態帯・トーストの管轄）。</summary>
+    [Parameter, EditorRequired]
+    public YaguraNoticeSeverity Severity { get; set; }
+
+    /// <summary>本文（利用者の言葉で書く——ui.md §7。例: UiText.SpoolEvacuationNotice）。</summary>
+    [Parameter, EditorRequired]
+    public string Message { get; set; } = string.Empty;
+
+    /// <summary>補足文言（任意。次に取る手順等）。</summary>
+    [Parameter]
+    public string? Supplement { get; set; }
+
+    /// <summary>画面固有の詳細（任意。フォールバック 3 点の一覧等）。</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private Severity AlertSeverity => Severity switch
+    {
+        YaguraNoticeSeverity.Warning => MudBlazor.Severity.Warning,
+        _ => MudBlazor.Severity.Info,
+    };
+}
