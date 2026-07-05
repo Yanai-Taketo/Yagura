@@ -1,24 +1,26 @@
 {
   "_meta": {
-    "status": "provisional-tolerance-pending-ci-measurement",
+    "status": "confirmed-initial-m5-2026-07-06",
     "lastUpdated": "2026-07-06",
-    "recordedFrom": "ローカル開発機実測（暫定）: tools/Yagura.Bench/results/2026-07-06-dev-machine-ci-baseline/ の 2 実行（Windows 11 ARM64 開発機。merge コミット dad574c 時点のコードで CI と同一パラメータを実測）。CI 実測で確定したら、当該 CI run の URL（https://github.com/<owner>/<repo>/actions/runs/<id>）をここに記載する。",
-    "updateProcedureReference": "docs/development/conventions.md の『CI 回帰ベンチの基準値更新』節を参照。引き下げ方向の更新には理由の分類（実行環境の変更 / 機能追加による意図的なトレードオフ）を明示すること。toleranceRatio=0.5（基準比 50% 劣化まで許容）は M-5（architecture.md §9）が CI 実測で確定するまでの暫定値——windows-latest ランナーの揺らぎを複数回実測してから正式な帯へ差し替える。baselineThroughputPerSecond / baselineSavedCount も暫定（recordedFrom のとおり開発機実測であり、CI ランナー実測値ではない）——ランナー性能は開発機と別物のため、この仮値のままでは初回 CI 実行が実測不足で不合格になる可能性がある。CI 実測後の最初の更新 PR で recordedFrom を CI run URL に差し替え、_meta.status を『確定』に更新すること。"
+    "recordedFrom": "CI 実測（windows-latest）: https://github.com/Yanai-Taketo/Yagura/actions/runs/28745534803 の attempt 1〜6（同一コミットの再実行 6 回。attempt 4 は SustainedZeroDrop の旧暫定帯超過で fail し ProviderWriteCeiling ステップが未実行のため、ProviderWriteCeiling は 5 標本）。一次データ: tools/Yagura.Bench/results/2026-07-06-ci-windows-latest-m5/",
+    "updateProcedureReference": "docs/development/conventions.md の『CI 回帰ベンチの基準値更新』節を参照。引き下げ方向の更新には理由の分類（実行環境の変更 / 機能追加による意図的なトレードオフ）を明示すること。M-5 初回実測（2026-07-06。上記 recordedFrom）による確定内容: (1) ProviderWriteCeiling が blocking 判定を担う——保存件数の振れ幅 0.1% 未満（23,972〜23,988）と安定しており、toleranceRatio=0.15（基準比 85% 未満で不合格）は観測分散の約 150 倍の余裕を持ちつつ実回帰（15% 超の劣化）を検出できる。(2) SustainedZeroDrop は enforceRatio=false（比判定は情報表示のみ）——windows-latest は UDP 5k msg/sec の持続受信を安定維持できず、保存件数が双峰性（6 回中 3 回で Q1 破棄 3,503〜28,355 件 = 保存率 0.43〜0.93）を示し、意味のある許容帯を引けないため。突合成立（requireReconciled）は両シナリオとも無条件の不変条件（6 回全実行で成立を確認済み——Q1 破棄が起きた実行でも損失は全てカウンタに計上された）。"
   },
   "scenarios": {
     "SustainedZeroDrop": {
       "scenarioKey": "SustainedZeroDrop",
-      "baselineThroughputPerSecond": 4980.1,
-      "baselineSavedCount": 49962,
+      "baselineThroughputPerSecond": 4984.3,
+      "baselineSavedCount": 49959,
       "toleranceRatio": 0.5,
-      "requireReconciled": true
+      "requireReconciled": true,
+      "enforceRatio": false
     },
     "ProviderWriteCeiling": {
       "scenarioKey": "ProviderWriteCeiling",
-      "baselineThroughputPerSecond": 2987.9,
-      "baselineSavedCount": 23984,
-      "toleranceRatio": 0.5,
-      "requireReconciled": true
+      "baselineThroughputPerSecond": 2988.2,
+      "baselineSavedCount": 23978,
+      "toleranceRatio": 0.15,
+      "requireReconciled": true,
+      "enforceRatio": true
     }
   }
 }

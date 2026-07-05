@@ -62,20 +62,26 @@ public static class BaselineComparator
 
         var minAcceptableRatio = 1.0 - entry.ToleranceRatio;
 
-        var failures = new List<string>();
+        var ratioDegradations = new List<string>();
         if (throughputRatio < minAcceptableRatio)
         {
-            failures.Add(
+            ratioDegradations.Add(
                 $"スループットが基準比 {throughputRatio:P1}（許容下限 {minAcceptableRatio:P1}）を下回った " +
                 $"(実測 {actualThroughput:F1} msg/sec, 基準 {entry.BaselineThroughputPerSecond:F1} msg/sec)。");
         }
 
         if (savedCountRatio < minAcceptableRatio)
         {
-            failures.Add(
+            ratioDegradations.Add(
                 $"保存件数が基準比 {savedCountRatio:P1}（許容下限 {minAcceptableRatio:P1}）を下回った " +
                 $"(実測 {actualSavedCount}, 基準 {entry.BaselineSavedCount})。");
         }
+
+        // 比判定を情報表示に降格しているシナリオ（entry.EnforceRatio = false。M-5 実測で
+        // CI ランナー上の分布が双峰性を示したもの——BaselineEntry の doc 参照）では、
+        // 比の劣化は不合格にせず情報として残す。突合成立の不変条件は降格の対象外。
+        var failures = entry.EnforceRatio ? new List<string>(ratioDegradations) : [];
+        var informationalNotes = entry.EnforceRatio ? [] : ratioDegradations;
 
         if (entry.RequireReconciled && !report.Reconciliation.IsReconciled)
         {
@@ -93,11 +99,17 @@ public static class BaselineComparator
             BaselineSavedCount: entry.BaselineSavedCount,
             SavedCountRatio: savedCountRatio,
             ToleranceRatio: entry.ToleranceRatio,
-            IsReconciled: report.Reconciliation.IsReconciled);
+            IsReconciled: report.Reconciliation.IsReconciled,
+            InformationalNotes: informationalNotes.Count == 0 ? null : string.Join(" ", informationalNotes));
     }
 }
 
 /// <summary>基準比較の結果。</summary>
+/// <remarks>
+/// <paramref name="InformationalNotes"/> は比判定を情報表示に降格しているシナリオ
+/// （<see cref="BaselineEntry.EnforceRatio"/> = false）で、比の劣化が観測されたときのみ非 null。
+/// 合否（<paramref name="Passed"/>）には影響しない。
+/// </remarks>
 public sealed record BaselineComparisonResult(
     string ScenarioKey,
     bool Passed,
@@ -109,7 +121,8 @@ public sealed record BaselineComparisonResult(
     long BaselineSavedCount,
     double SavedCountRatio,
     double ToleranceRatio,
-    bool IsReconciled)
+    bool IsReconciled,
+    string? InformationalNotes = null)
 {
     /// <summary>人間可読の 1 行〜数行サマリ。</summary>
     public string ToHumanReadableSummary()
@@ -126,6 +139,11 @@ public sealed record BaselineComparisonResult(
         if (FailureReason is not null)
         {
             lines.Add($"不合格理由: {FailureReason}");
+        }
+
+        if (InformationalNotes is not null)
+        {
+            lines.Add($"情報（合否に影響しない。基準値ファイルの enforceRatio=false）: {InformationalNotes}");
         }
 
         return string.Join(Environment.NewLine, lines);
