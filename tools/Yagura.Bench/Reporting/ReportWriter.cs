@@ -59,9 +59,15 @@ public static class ReportWriter
         sb.AppendLine(CultureInfo.InvariantCulture, $"  永続化失敗: {r.Counters.PersistenceFailed}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"  流量制御破棄: {r.Counters.FlowControlDropped}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"参考: スプール退避（累積。drain完了後は保存件数に含まれる）: {r.SpoolEvacuatedCount}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"OS統計差分（OSソケットバッファでの破棄。§4.2）: {r.OsUdpDatagramsDiscardedDelta}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"差分（0 が期待値）: {r.Difference}");
-        sb.AppendLine(CultureInfo.InvariantCulture, $"判定: {(r.IsReconciled ? "OK（突合成立）" : "NG（突合不成立——不足または過剰）")}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"参考: OS UDP 統計カウンタ差分（自己宛送信は現れない——非ゼロは他プロセスの背景ノイズ）: {r.OsUdpDatagramsDiscardedDelta}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"OS ソケットバッファ破棄（導出値 = 送信数 - 保存 - アプリ内カウンタ。UDP のみ）: {r.DerivedOsBufferLossCount}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"差分（アプリ内計上との残差）: {r.Difference}");
+        var verdict = r.IsReconciled
+            ? r.DerivedOsBufferLossCount > 0
+                ? $"OK（全損失を帰属できた——うち OS バッファ破棄（導出値）{r.DerivedOsBufferLossCount} 件）"
+                : "OK（突合成立——完全一致）"
+            : "NG（突合不成立——過剰計上、または TCP での計上漏れ疑い）";
+        sb.AppendLine(CultureInfo.InvariantCulture, $"判定: {verdict}");
         sb.AppendLine();
 
         if (report.AdditionalMetrics.Count > 0)

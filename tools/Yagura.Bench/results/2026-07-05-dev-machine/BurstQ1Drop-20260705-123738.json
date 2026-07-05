@@ -1,0 +1,62 @@
+{
+  "ScenarioName": "BurstQ1Drop",
+  "RunId": "be3d5910451a",
+  "StartedAt": "2026-07-05T12:37:38.9111126+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26200",
+    "OsArchitecture": "Arm64",
+    "ProcessorName": "ARMv8 (64-bit) Family 8 Model 1 Revision 201, Qualcomm Technologies Inc",
+    "LogicalProcessorCount": 10,
+    "TotalPhysicalMemoryBytes": 16756006912,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=236GiB, free=90GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "DESKTOP-U2VTV9C"
+  },
+  "LoadGeneratorOptions": {
+    "Transport": 0,
+    "Pattern": 1,
+    "TargetHost": "127.0.0.1",
+    "TargetPort": 58394,
+    "RunId": "be3d5910451a",
+    "RatePerSecond": 0,
+    "DurationSeconds": 0,
+    "BurstCount": 1000,
+    "SenderSocketCount": 8,
+    "PaddingBytes": 0
+  },
+  "LoadResult": {
+    "RunId": "be3d5910451a",
+    "AttemptedCount": 1000,
+    "SucceededCount": 1000,
+    "FailedCount": 0,
+    "Elapsed": "00:00:00.0210092",
+    "SenderSocketCount": 8,
+    "SentCount": 1000
+  },
+  "Reconciliation": {
+    "SentCount": 1000,
+    "SavedCount": 678,
+    "AccountedLossCount": 0,
+    "SpoolEvacuatedCount": 0,
+    "OsUdpDatagramsDiscardedDelta": 0,
+    "Difference": 322,
+    "IsReconciled": false,
+    "Counters": {
+      "InternalBufferDropped": 0,
+      "TcpConnectionRejected": 0,
+      "SpoolEvacuated": 0,
+      "SpoolWriteFailed": 0,
+      "SpoolDiscarded": 0,
+      "PersistenceFailed": 0,
+      "FlowControlDropped": 0
+    }
+  },
+  "ElapsedWallClock": "00:00:05.6287260",
+  "AdditionalMetrics": {
+    "Q1\u7834\u68C4\u767A\u751F": "False"
+  },
+  "Notes": [
+    "1000 \u901A\u3092\u53EF\u80FD\u306A\u9650\u308A\u9AD8\u901F\u3067\u4E00\u6589\u9001\u51FA\u3057\u305F\uFF08\u9001\u4FE1\u5074 socket \u6570 8\uFF09\u3002",
+    "Q1\uFF08\u5185\u90E8\u30D0\u30C3\u30D5\u30A1\uFF09\u7834\u68C4\u306F\u767A\u751F\u3057\u306A\u304B\u3063\u305F\uFF08\u3053\u306E\u30D0\u30FC\u30B9\u30C8\u898F\u6A21\u3067\u306F Q1 \u5BB9\u91CF\u5185\u306B\u53CE\u307E\u3063\u305F\uFF09\u3002"
+  ]
+}
