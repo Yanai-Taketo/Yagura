@@ -49,6 +49,22 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+
+    <!--
+      M8-1 追補(実機で発見した実バグの修正): Blazor のフレームワークスクリプト
+      (_framework/blazor.web.js)は Microsoft.AspNetCore.App.Internal.Assets パック由来の
+      静的 Web アセットとして配信されるが、Sdk.Web がこのパックを参照する条件は
+      「プロジェクト自身が .razor コンテンツを持つこと」である(SDK 10.0.301 の
+      Microsoft.NET.Sdk.Web.ProjectSystem.targets 103 行目:
+      RequiresAspNetWebAssets は @(Content) 内の .razor 有無で決まる。実ファイルで確認、
+      2026-07-06)。Yagura.Host は UI を全て RCL(Yagura.Web)に置き .razor を持たないため
+      この条件が false になり、blazor.web.js がマニフェスト・publish 出力から欠落して
+      閲覧 UI の対話機能(circuit)が全配布形態で成立しなかった(実機で 404 を確認)。
+      SDK の条件式は事前設定値を尊重するため、本プロパティを明示 true にして
+      フレームワークスクリプトのアセットを配信対象へ含める(素の Blazor テンプレートとの
+      差分比較 + 修正後の実機 200 応答・circuit 確立で検証済み)。
+    -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
   <!--
