@@ -10,6 +10,17 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // 隠しモード: Ctrl+C 送出ヘルパー(BenchHostProcess.StopGracefullyAsync が self-invoke する)。
+        // コンソールの切り離し(FreeConsole)を伴う Ctrl+C 送出をベンチ本体プロセスで行うと、
+        // 実コンソールからの対話実行時に本体のコンソールハンドルが壊れ、以後の Console 出力が
+        // 未処理例外でクラッシュする(exit 0xE0434352。オーナー実機 + ローカル再現で確認。
+        // AttachConsole での再接続 + ストリーム再バインドでも解消しなかった)。使い捨ての
+        // ヘルパープロセスに隔離すれば、本体のコンソールには一切触れずに送出できる。
+        if (args.Length == 2 && args[0] == "__send-ctrlc" && int.TryParse(args[1], out var targetPid))
+        {
+            return HostProcess.ConsoleCtrlSender.TrySendCtrlC(targetPid) ? 0 : 1;
+        }
+
         ScenarioOptions options;
         try
         {
@@ -43,6 +54,15 @@ public static class Program
         ReportWriter.WriteJsonFile(report, jsonPath);
         var summary = ReportWriter.ToHumanReadableSummary(report);
         File.WriteAllText(summaryPath, summary);
+
+        // 本体（子プロセス）の全出力も残す——飽和形態の分析（M-7/M-13: スプール退避の契機が
+        // Q2 溢れかタイムアウトかは本体の警告ログにのみ現れる）と障害調査の一次情報。
+        if (report.HostStdout.Count > 0)
+        {
+            var hostLogPath = Path.Combine(options.OutputDirectory, $"{report.ScenarioName}-{timestamp}.hostlog.txt");
+            File.WriteAllLines(hostLogPath, report.HostStdout);
+            Console.WriteLine($"本体ログ: {hostLogPath}");
+        }
 
         Console.WriteLine(summary);
         Console.WriteLine($"JSON: {jsonPath}");

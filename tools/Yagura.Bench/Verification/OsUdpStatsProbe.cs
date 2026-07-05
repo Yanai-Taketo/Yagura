@@ -3,29 +3,28 @@ using System.Net.NetworkInformation;
 namespace Yagura.Bench.Verification;
 
 /// <summary>
-/// OS レベル UDP 取りこぼしの観測（Issue #60「保存件数 + 全カウンタ + OS 統計の突合」。
-/// architecture.md §4.2）。
+/// OS の UDP 統計カウンタの参考観測（Issue #60。**突合式には使わない**——下記の実機検証結果参照）。
 /// </summary>
 /// <remarks>
 /// <para>
-/// バーストシナリオ（多数のソケットから瞬時に大量送出する）では、アプリの Q1 に届く前に
-/// OS の UDP 受信バッファ自体が溢れることがある——この破棄はアプリ内カウンタ
-/// （<see cref="Yagura.Ingestion.Diagnostics.IngestionMetrics"/> の 7 種）のいずれにも現れない
-/// （§4.1「サーバで観測できるのは OS バッファ以降のみ」）。architecture.md §4.2 は
-/// <c>IPGlobalProperties.GetUdpIPv4Statistics()</c>/<c>GetUdpIPv6Statistics()</c> の
-/// <c>IncomingDatagramsDiscarded</c> をこの観測手段として採用済み——本プローブは同じ API を
-/// <b>ベンチプロセス自身から</b>読む（システム全体統計であり、プロセスを問わず同じ値が返る
-/// ため、本体プロセスのインスタンスを介さずに直接読める。§4.2「システム全体統計であり…
-/// 同居プロセスの破棄も含む」——ベンチはループバック専有を前提とするため、この前提の下では
-/// 本体プロセスの破棄とみなしてよい）。
+/// <b>当初の想定と実機検証で判明した限界（M7-2。2026-07-05 実機確認）</b>: 当初は architecture.md
+/// §4.2 の <c>IncomingDatagramsDiscarded</c> を「OS ソケットバッファでの破棄」の観測手段として
+/// 突合式へ組み込んでいた。しかし実測で、**Windows は自己宛 UDP（loopback 宛・自ホストの実 IP 宛の
+/// いずれも）をこの統計のカウント経路の外で配送する**ことが判明した——バースト実測で約 1000 件の
+/// OS バッファ破棄が発生している状況（送信 2000・アプリ受信 1006・Q1 破棄 0）でも
+/// <c>IncomingDatagrams</c>（受信総数）を含む UDP 統計全カウンタの増分が 0 だった。対照実験として
+/// 自ホストの LAN IP 宛送信 100 通でも増分 0（アドレスによらず自己宛は同じバイパス経路）。
+/// このため自己宛送信であるベンチのトラフィックには本統計は原理的に使えず、突合式に入れると
+/// 他プロセス由来の背景ノイズ（実測で +1 の混入を観測）だけを取り込む。
 /// </para>
 /// <para>
-/// <b>ベンチでの必要性</b>: 本体のメタデータ領域（<see cref="Yagura.Host.Observability.MetadataStore"/>）は
-/// この OS 統計ゲージを永続化しない（§4.3 のメタデータ領域はアプリ内カウンタ 7 種のみが対象。
-/// OS 統計は「プロセス起動時からの差分」ゲージであり再起動をまたぐ累積という概念を持たないため
-/// ——<see cref="Yagura.Ingestion.Diagnostics.IngestionCounterSnapshot"/> の doc コメント参照）。
-/// そのためベンチは<b>実行開始前後で自ら差分を取る</b>必要がある——本体プロセス起動直後の
-/// ベースライン値と、検証時点の値の差分を「本ベンチ実行中に発生した OS レベル破棄」とみなす。
+/// <b>現在の役割</b>: 参考値の記録のみ（非ゼロ = ベンチ実行中に外部由来トラフィックの破棄が
+/// 起きた、の意味）。OS ソケットバッファでの破棄そのものは、閉じた系の引き算
+/// （<see cref="CounterReconciler"/> の <c>DerivedOsBufferLossCount</c>——送信数はベンチ自前の
+/// 正確な計上、OS バッファ以降は全カウンタで観測済みのため、残差が OS バッファ破棄に一意に
+/// 帰属できる）で導出する。製品側 §4.2 のゲージ（外部送信元からの実運用トラフィックが対象）の
+/// 有効性はこの発見と両立するが、「自己宛は現れない」という覆域の限界を architecture.md §4.2 に
+/// 追記した。
 /// </para>
 /// </remarks>
 public static class OsUdpStatsProbe

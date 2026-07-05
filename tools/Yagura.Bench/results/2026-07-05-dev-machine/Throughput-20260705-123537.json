@@ -1,0 +1,59 @@
+{
+  "ScenarioName": "Throughput",
+  "RunId": "5bcd23f77f4b",
+  "StartedAt": "2026-07-05T12:35:37.5672335+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26200",
+    "OsArchitecture": "Arm64",
+    "ProcessorName": "ARMv8 (64-bit) Family 8 Model 1 Revision 201, Qualcomm Technologies Inc",
+    "LogicalProcessorCount": 10,
+    "TotalPhysicalMemoryBytes": 16756006912,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=236GiB, free=90GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "DESKTOP-U2VTV9C"
+  },
+  "LoadGeneratorOptions": {
+    "Transport": 1,
+    "Pattern": 0,
+    "TargetHost": "127.0.0.1",
+    "TargetPort": 59204,
+    "RunId": "5bcd23f77f4b",
+    "RatePerSecond": 15000,
+    "DurationSeconds": 10,
+    "BurstCount": 0,
+    "SenderSocketCount": 4,
+    "PaddingBytes": 0
+  },
+  "LoadResult": {
+    "RunId": "5bcd23f77f4b",
+    "AttemptedCount": 149955,
+    "SucceededCount": 149955,
+    "FailedCount": 0,
+    "Elapsed": "00:00:10.0134289",
+    "SenderSocketCount": 4,
+    "SentCount": 149955
+  },
+  "Reconciliation": {
+    "SentCount": 149955,
+    "SavedCount": 149955,
+    "AccountedLossCount": 0,
+    "SpoolEvacuatedCount": 0,
+    "OsUdpDatagramsDiscardedDelta": 0,
+    "Difference": 0,
+    "IsReconciled": true,
+    "Counters": {
+      "InternalBufferDropped": 0,
+      "TcpConnectionRejected": 0,
+      "SpoolEvacuated": 0,
+      "SpoolWriteFailed": 0,
+      "SpoolDiscarded": 0,
+      "PersistenceFailed": 0,
+      "FlowControlDropped": 0
+    }
+  },
+  "ElapsedWallClock": "00:00:15.6484717",
+  "AdditionalMetrics": {},
+  "Notes": [
+    "\u76EE\u6A19\u30EC\u30FC\u30C8 15000 msg/sec \u3092 10 \u79D2\u9593\u3001Tcp \u3067\u9001\u51FA\u3057\u305F\u3002"
+  ]
+}

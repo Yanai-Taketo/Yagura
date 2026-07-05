@@ -180,16 +180,58 @@ public sealed class BenchHostProcess : IAsyncDisposable
             }
         };
 
-        process.ErrorDataReceived += (_, _) => { };
+        // stderr も採取する(接頭辞で stdout と区別)。オーナー実機での SQL Server 実測時、
+        // 起動タイムアウトの原因(provider 初期化の失敗)が子プロセスの出力ごと闇に消えて
+        // 診断不能になった実障害への対処——起動失敗の一次情報は必ず拾う。
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is null)
+            {
+                return;
+            }
+
+            lock (bench._stdoutLock)
+            {
+                bench._stdoutLines.Add($"[stderr] {e.Data}");
+            }
+        };
 
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
         var timeout = startupTimeout ?? TimeSpan.FromSeconds(30);
-        bench.UdpPort = await WaitWithTimeoutAsync(udpPortTcs.Task, timeout, "UDP リスナ起動ログ").ConfigureAwait(false);
-        bench.TcpPort = await WaitWithTimeoutAsync(tcpPortTcs.Task, timeout, "TCP リスナ起動ログ").ConfigureAwait(false);
-        bench.ViewerHttpPort = await WaitWithTimeoutAsync(viewerPortTcs.Task, timeout, "閲覧リスナ HTTP listening ログ").ConfigureAwait(false);
+        try
+        {
+            bench.UdpPort = await WaitWithTimeoutAsync(udpPortTcs.Task, timeout, "UDP リスナ起動ログ").ConfigureAwait(false);
+            bench.TcpPort = await WaitWithTimeoutAsync(tcpPortTcs.Task, timeout, "TCP リスナ起動ログ").ConfigureAwait(false);
+            bench.ViewerHttpPort = await WaitWithTimeoutAsync(viewerPortTcs.Task, timeout, "閲覧リスナ HTTP listening ログ").ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            // 起動待機のタイムアウトは「子プロセス側で何かが起きた」の症状にすぎない。
+            // 一次情報(子プロセスの stdout/stderr の末尾・終了コード)を例外に含めて、
+            // 実機での診断を一目で可能にする(オーナー実機の SQL Server 初期化失敗が
+            // 診断不能だった実障害への対処)。プロセスは取り残さず必ず止める。
+            var exitNote = process.HasExited
+                ? $"子プロセスは既に終了している(exit code {process.ExitCode})。"
+                : "子プロセスはまだ実行中(このあと Kill する)。";
+
+            string[] outputTail;
+            lock (bench._stdoutLock)
+            {
+                outputTail = bench._stdoutLines.TakeLast(40).ToArray();
+            }
+
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            throw new TimeoutException(
+                $"{ex.Message}\n{exitNote}\n--- 子プロセス出力(末尾 {outputTail.Length} 行) ---\n{string.Join("\n", outputTail)}",
+                ex);
+        }
 
         return bench;
     }
@@ -214,7 +256,7 @@ public sealed class BenchHostProcess : IAsyncDisposable
         }
 
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(20);
-        var ctrlCSent = ConsoleCtrlSender.TrySendCtrlC(_process.Id);
+        var ctrlCSent = TrySendCtrlCViaHelper(_process.Id);
 
         if (ctrlCSent)
         {
@@ -247,6 +289,62 @@ public sealed class BenchHostProcess : IAsyncDisposable
     /// <c>false</c> は Kill フォールバックが発生したことを示す（検証器が突合結果の解釈に使う）。
     /// </summary>
     public bool? GracefulStopSucceeded { get; private set; }
+
+    /// <summary>
+    /// Ctrl+C 送出を使い捨てのヘルパープロセス（自分自身の dll を <c>__send-ctrlc</c> モードで
+    /// 起動）に隔離して実行する。
+    /// </summary>
+    /// <remarks>
+    /// 送出処理（<see cref="ConsoleCtrlSender"/>）は <c>FreeConsole</c> で呼び出しプロセスの
+    /// コンソールを失う。これをベンチ本体プロセスで行うと、実コンソールからの対話実行時に
+    /// 以後の <c>Console.WriteLine</c> が未処理例外でクラッシュする実障害が起きた
+    /// （exit 0xE0434352。オーナー実機 + ローカル再現で確認。再アタッチによる修復は環境ごとに
+    /// 副作用が異なり安定しなかった）。使い捨てプロセスに隔離すれば本体のコンソール状態には
+    /// 一切影響しない。ヘルパーの exit code 0 = 送出成功（<see cref="ConsoleCtrlSender.TrySendCtrlC"/>
+    /// の戻り値）。
+    /// </remarks>
+    private static bool TrySendCtrlCViaHelper(int targetProcessId)
+    {
+        var benchDllPath = Path.Combine(AppContext.BaseDirectory, "Yagura.Bench.dll");
+        if (!File.Exists(benchDllPath))
+        {
+            return false;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = ResolveDotnetExecutablePath(),
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add(benchDllPath);
+        startInfo.ArgumentList.Add("__send-ctrlc");
+        startInfo.ArgumentList.Add(targetProcessId.ToString());
+
+        try
+        {
+            using var helper = Process.Start(startInfo);
+            if (helper is null)
+            {
+                return false;
+            }
+
+            if (!helper.WaitForExit(10_000))
+            {
+                helper.Kill(entireProcessTree: true);
+                return false;
+            }
+
+            return helper.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // ヘルパーの起動自体に失敗した場合は Kill フォールバックに委ねる。
+            return false;
+        }
+    }
 
     private async Task<bool> WaitForExitAsync(TimeSpan timeout)
     {

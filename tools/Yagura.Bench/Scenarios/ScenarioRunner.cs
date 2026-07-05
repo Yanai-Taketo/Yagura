@@ -78,7 +78,7 @@ public static class ScenarioRunner
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
 
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline).ConfigureAwait(false);
+        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
         wallClock.Stop();
 
         return BuildReport(
@@ -91,7 +91,8 @@ public static class ScenarioRunner
             reconciliation,
             wallClock.Elapsed,
             new Dictionary<string, string>(),
-            [$"目標レート {options.RatePerSecond} msg/sec を {options.DurationSeconds} 秒間、{options.Transport} で送出した。"]);
+            [$"目標レート {options.RatePerSecond} msg/sec を {options.DurationSeconds} 秒間、{options.Transport} で送出した。"],
+            host.StdoutLines);
     }
 
     /// <summary>破棄ゼロで維持できる持続流量の確認。指定レートで送出し、破棄系カウンタが 0 のままかを報告する。</summary>
@@ -114,10 +115,12 @@ public static class ScenarioRunner
             PaddingBytes: options.PaddingBytes);
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline).ConfigureAwait(false);
+        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
         wallClock.Stop();
 
-        var dropFree = reconciliation.AccountedLossCount == 0;
+        // 「破棄ゼロ」はアプリ内カウンタに加えて OS バッファ破棄（導出値）もゼロであることを
+        // 要求する（M7-2 設計変更: 自己宛 UDP は OS 統計に現れないため、導出値が観測手段）。
+        var dropFree = reconciliation.AccountedLossCount == 0 && reconciliation.DerivedOsBufferLossCount == 0;
         var notes = new List<string>
         {
             $"目標レート {options.RatePerSecond} msg/sec を {options.DurationSeconds} 秒間送出した。",
@@ -136,7 +139,8 @@ public static class ScenarioRunner
             reconciliation,
             wallClock.Elapsed,
             new Dictionary<string, string> { ["破棄ゼロ維持"] = dropFree.ToString() },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     /// <summary>
@@ -170,6 +174,9 @@ public static class ScenarioRunner
             q1DropOccurred
                 ? $"Q1（内部バッファ）破棄が {reconciliation.Counters.InternalBufferDropped} 件発生した。architecture.md §3.1 の前提（バースト時に限られる）どおりの挙動。"
                 : "Q1（内部バッファ）破棄は発生しなかった（このバースト規模では Q1 容量内に収まった）。",
+            reconciliation.DerivedOsBufferLossCount > 0
+                ? $"OS ソケットバッファでの破棄（導出値）が {reconciliation.DerivedOsBufferLossCount} 件発生した——Q1 に届く前の OS レベルの損失。受信バッファ拡大（M-2）の効果測定の入力になる。"
+                : "OS ソケットバッファでの破棄（導出値）は発生しなかった。",
         };
 
         return BuildReport(
@@ -182,7 +189,8 @@ public static class ScenarioRunner
             reconciliation,
             wallClock.Elapsed,
             new Dictionary<string, string> { ["Q1破棄発生"] = q1DropOccurred.ToString() },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     /// <summary>スプール発動 → 追いつきの所要（縮小容量 + バースト送出でスプール発動を誘発し、drain 完了までの時間を計測する）。</summary>
@@ -248,7 +256,8 @@ public static class ScenarioRunner
                 ["drain所要時間"] = drainStopwatch.Elapsed.ToString(),
                 ["スプール容量バイト"] = options.SpoolQuotaBytes.ToString(),
             },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     /// <summary>SQLite / SQL Server 各 provider の書き込み上限。指定 provider へ高レート持続送出し、スプール退避の発生有無から上限接近を報告する。</summary>
@@ -277,7 +286,7 @@ public static class ScenarioRunner
             PaddingBytes: options.PaddingBytes);
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, sqlServerConnectionString: options.SqlServerConnectionString).ConfigureAwait(false);
+        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, sqlServerConnectionString: options.SqlServerConnectionString, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
         wallClock.Stop();
 
         var approachingCeiling = reconciliation.SpoolEvacuatedCount > 0;
@@ -303,7 +312,8 @@ public static class ScenarioRunner
                 ["provider"] = usingSqlServer ? "SqlServer" : "Sqlite",
                 ["上限接近シグナル(スプール退避>0)"] = approachingCeiling.ToString(),
             },
-            notes);
+            notes,
+            host.StdoutLines);
     }
 
     private static async Task<LoadGeneratorResult> SendAsync(LoadGeneratorOptions options) =>
@@ -328,7 +338,8 @@ public static class ScenarioRunner
         string dataRoot,
         LoadGeneratorResult loadResult,
         long osUdpBaselineDiscarded = 0,
-        string? sqlServerConnectionString = null)
+        string? sqlServerConnectionString = null,
+        bool transportIsUdp = true)
     {
         // スプール drain が残っている場合は完了を待つ（突合式は drain 完了後でないと
         // 「スプール退避」と「保存件数」の間で二重計上のように見えるため。
@@ -363,7 +374,12 @@ public static class ScenarioRunner
             savedCount = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath).ConfigureAwait(false);
         }
 
-        var reconciliation = CounterReconciler.Reconcile(loadResult.SentCount, savedCount, counters, osUdpDelta);
+        var reconciliation = CounterReconciler.Reconcile(
+            loadResult.SentCount,
+            savedCount,
+            counters,
+            osUdpDelta,
+            transportIsUdp: transportIsUdp);
 
         if (host.GracefulStopSucceeded == false)
         {
@@ -388,7 +404,8 @@ public static class ScenarioRunner
         ReconciliationResult reconciliation,
         TimeSpan elapsed,
         Dictionary<string, string> additionalMetrics,
-        List<string> notes) =>
+        List<string> notes,
+        IReadOnlyList<string>? hostStdout = null) =>
         new(
             scenarioName,
             runId,
@@ -399,5 +416,6 @@ public static class ScenarioRunner
             reconciliation,
             elapsed,
             additionalMetrics,
-            notes);
+            notes,
+            hostStdout ?? []);
 }
