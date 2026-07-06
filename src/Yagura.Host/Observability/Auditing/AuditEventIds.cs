@@ -5,7 +5,8 @@ namespace Yagura.Host.Observability.Auditing;
 /// <summary>
 /// Windows イベントログの監査系イベント ID 採番表（security.md §4.3。SEC-5。
 /// 2000 番台 = 管理操作の監査（レベル: 情報）/ 3000 番台 = 拒否・セキュリティ事象（レベル: 警告）。
-/// M6-2（Issue #52）で 3001 を、M8-4（Issue #71）で 2001〜2004・3002 を採番）。
+/// M6-2（Issue #52）で 3001 を、M8-4（Issue #71）で 2001〜2004・3002 を、
+/// ADR-0008 実装で 2005 を採番）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -29,6 +30,9 @@ public static class AuditEventIds
 
     /// <summary>circuit の個別切断（管理操作）。レベルは情報。</summary>
     public static readonly EventId CircuitDisconnected = new(2004, "CircuitDisconnected");
+
+    /// <summary>フォワーダ配布キットの生成（ADR-0008）。レベルは情報。</summary>
+    public static readonly EventId ForwarderKitGenerated = new(2005, "ForwarderKitGenerated");
 
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 

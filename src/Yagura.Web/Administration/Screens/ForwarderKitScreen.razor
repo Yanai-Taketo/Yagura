@@ -1,0 +1,201 @@
+@page "/admin/forwarder-kit"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Web.ForwarderKit
+@inject INicCandidateSource NicCandidateSource
+@inject NavigationManager Navigation
+
+@*
+    フォワーダ配布キット生成画面（ADR-0008。管理リスナ帰属はレイアウトが担う）。
+
+    - 宛先: NIC 候補のラジオリスト + 手入力。既定選択なし（設計条件 1——到達可能性の判断責任は
+      管理者に残る。候補はループバック・リンクローカル/APIPA・無効 NIC を除外済み——
+      NicCandidateFilter・SystemNicCandidateSource）
+    - チャネル: System / Application 初期オン、Security 初期オフのオプトイン（設計条件 2）
+    - 生成: サーバ側で最終検証（ForwarderKitRequest.TryCreate）を必ず経由するため、本画面の
+      検証はユーザー体験のための早期フィードバックに過ぎない（不正値でも生成 GET へは
+      到達しうるが、その場合は 400 で弾かれる——YaguraAdminExtensions.MapForwarderKitDownload）
+*@
+<PageTitle>@UiText.ForwarderKitTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.ForwarderKitTitle</MudText>
+<MudText Class="mt-2">@UiText.ForwarderKitIntro</MudText>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6">@UiText.ForwarderKitDestinationTitle</MudText>
+    <MudText Typo="Typo.caption" Class="mb-2">@UiText.ForwarderKitDestinationNote</MudText>
+
+    @if (_candidates.Count == 0)
+    {
+        <MudText Typo="Typo.caption" Class="mb-2">@UiText.ForwarderKitNoCandidates</MudText>
+    }
+    else
+    {
+        <div role="radiogroup" aria-label="@UiText.ForwarderKitDestinationTitle">
+            @foreach (var candidate in _candidates)
+            {
+                <label class="yagura-checkbox-row d-block mb-1">
+                    <input type="radio"
+                           name="forwarder-kit-destination"
+                           value="@candidate.Address"
+                           checked="@(_selectedMode == DestinationMode.Candidate && _selectedAddress == candidate.Address)"
+                           @onchange="() => SelectCandidate(candidate.Address)" />
+                    <span class="yagura-monospace">@candidate.Address</span>
+                    <MudText Typo="Typo.caption" Color="Color.Default" Inline="true" Class="ml-2">@candidate.Description</MudText>
+                </label>
+            }
+        </div>
+    }
+
+    <label class="yagura-checkbox-row d-block mb-1 mt-2">
+        <input type="radio"
+               name="forwarder-kit-destination"
+               value="manual"
+               checked="@(_selectedMode == DestinationMode.Manual)"
+               @onchange="SelectManual" />
+        @UiText.ForwarderKitManualEntryOption
+    </label>
+
+    @if (_selectedMode == DestinationMode.Manual)
+    {
+        <YaguraTextField Label="@UiText.ForwarderKitManualEntryLabel"
+                         Required="true"
+                         @bind-Value="_manualHost" />
+    }
+
+    <YaguraTextField Label="@UiText.ForwarderKitPortLabel"
+                     Required="true"
+                     @bind-Value="_portText" />
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6">@UiText.ForwarderKitChannelsTitle</MudText>
+
+    <YaguraCheckboxField Label="@UiText.ForwarderKitChannelSystem" @bind-Value="_channelSystem" />
+    <YaguraCheckboxField Label="@UiText.ForwarderKitChannelApplication" @bind-Value="_channelApplication" />
+    <YaguraCheckboxField Label="@UiText.ForwarderKitChannelSecurity" @bind-Value="_channelSecurity" />
+
+    @if (_channelSecurity)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Warning" role="alert">@UiText.ForwarderKitSecurityChannelWarning</MudText>
+    }
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6">@UiText.ForwarderKitContentsTitle</MudText>
+    <ul>
+        <li>fluent-bit-yagura.conf</li>
+        <li>install.ps1</li>
+        <li>uninstall.ps1</li>
+        <li>winevt-severity.lua</li>
+        <li>README.md</li>
+        <li>GENERATED.txt</li>
+    </ul>
+    <MudText>@string.Format(UiText.ForwarderKitVerifiedVersionFormat, ForwarderKitConstraints.VerifiedFluentBitVersion)</MudText>
+    <MudText Typo="Typo.caption">@UiText.ForwarderKitMsiNotIncludedNote</MudText>
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    @if (_errorText is not null)
+    {
+        <MudText Class="mb-2" Color="Color.Error" role="alert">@_errorText</MudText>
+    }
+    <YaguraButton Role="YaguraButtonRole.Primary" OnClick="GenerateAsync">@UiText.ForwarderKitGenerateButton</YaguraButton>
+</MudPaper>
+
+@code {
+    private enum DestinationMode
+    {
+        None,
+        Candidate,
+        Manual,
+    }
+
+    private IReadOnlyList<NicCandidate> _candidates = [];
+    private DestinationMode _selectedMode = DestinationMode.None;
+    private string? _selectedAddress;
+    private string? _manualHost;
+    private string _portText = ForwarderKitConstraints.DefaultPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private bool _channelSystem = true;
+    private bool _channelApplication = true;
+    private bool _channelSecurity;
+    private string? _errorText;
+
+    protected override void OnInitialized()
+    {
+        _candidates = NicCandidateSource.GetCandidates();
+    }
+
+    private void SelectCandidate(string address)
+    {
+        _selectedMode = DestinationMode.Candidate;
+        _selectedAddress = address;
+    }
+
+    private void SelectManual()
+    {
+        _selectedMode = DestinationMode.Manual;
+    }
+
+    private void GenerateAsync()
+    {
+        _errorText = null;
+
+        var host = _selectedMode switch
+        {
+            DestinationMode.Candidate => _selectedAddress,
+            DestinationMode.Manual => _manualHost?.Trim(),
+            _ => null,
+        };
+
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            _errorText = UiText.ForwarderKitErrorDestinationRequired;
+            return;
+        }
+
+        if (!ForwarderKitConstraints.HostRegex.IsMatch(host))
+        {
+            _errorText = UiText.ForwarderKitErrorDestinationInvalid;
+            return;
+        }
+
+        if (!int.TryParse(_portText, out var port) ||
+            port < ForwarderKitConstraints.MinPort || port > ForwarderKitConstraints.MaxPort)
+        {
+            _errorText = UiText.ForwarderKitErrorPortRange;
+            return;
+        }
+
+        var channels = SelectedChannels();
+        if (channels.Count == 0)
+        {
+            _errorText = UiText.ForwarderKitErrorChannelsRequired;
+            return;
+        }
+
+        var query = $"host={Uri.EscapeDataString(host)}&port={port}&channels={Uri.EscapeDataString(string.Join(",", channels))}";
+        Navigation.NavigateTo($"/admin/forwarder-kit/download?{query}", forceLoad: true);
+    }
+
+    private List<string> SelectedChannels()
+    {
+        var channels = new List<string>();
+        if (_channelSystem)
+        {
+            channels.Add("System");
+        }
+
+        if (_channelApplication)
+        {
+            channels.Add("Application");
+        }
+
+        if (_channelSecurity)
+        {
+            channels.Add("Security");
+        }
+
+        return channels;
+    }
+}

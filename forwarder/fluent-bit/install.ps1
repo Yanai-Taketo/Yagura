@@ -8,17 +8,32 @@
 # manual admin execution. ASCII-only on purpose: avoids PowerShell 5.1
 # BOM/encoding traps across distribution channels.
 #
+# Two kit forms (ADR-0008):
+#   - Static kit (this repo's forwarder/fluent-bit/): the conf template still
+#     contains the @@YAGURA_HOST@@ placeholder, so -YaguraHost is required
+#     and this script performs the substitution below.
+#   - Generated kit (Yagura admin UI, /admin/forwarder-kit): the conf is
+#     already substituted server-side before packaging, so it has no
+#     placeholders left. -YaguraHost is not needed in that case; if passed
+#     anyway it is ignored with a warning (the kit is already destination-
+#     bound and re-substituting would silently discard the server's values).
+#
 # Usage:
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -YaguraPort 514 -Channels "System,Application"
+#   powershell -NoProfile -File install.ps1                                   (pre-configured kit)
 #
 # Exit codes: 0 = success, 1 = failure, 3010 = success but reboot required (from msiexec).
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    # No [Parameter(Mandatory = $true)]: PowerShell does not apply validation
+    # attributes (ValidatePattern) to an unspecified default value, so an
+    # empty default coexists with ValidatePattern below. Whether a value is
+    # actually required is decided at runtime (see step 2) based on whether
+    # the conf template still has the @@YAGURA_HOST@@ placeholder.
     [ValidatePattern('^[A-Za-z0-9\.\-:]+$')]
-    [string]$YaguraHost,
+    [string]$YaguraHost = "",
 
     [ValidateRange(1, 65535)]
     [int]$YaguraPort = 514,
@@ -95,14 +110,36 @@ if (-not (Test-Path $configDir)) {
 }
 
 $conf = [IO.File]::ReadAllText($confTemplate)
-$conf = $conf.Replace("@@YAGURA_HOST@@", $YaguraHost)
-$conf = $conf.Replace("@@YAGURA_PORT@@", [string]$YaguraPort)
-$conf = $conf.Replace("@@CHANNELS@@", $Channels)
+$isPreConfigured = -not $conf.Contains("@@YAGURA_HOST@@")
+
+if ($isPreConfigured) {
+    # Generated kit (ADR-0008): the destination is already baked in by the
+    # Yagura admin UI. Deploy as-is without touching the other placeholders
+    # either (@@YAGURA_PORT@@ / @@CHANNELS@@ are substituted together
+    # server-side; a template with no host placeholder is never partially
+    # substituted).
+    if (-not [string]::IsNullOrEmpty($YaguraHost)) {
+        Log "WARN: -YaguraHost was specified but this is a pre-configured kit (destination already baked in); the parameter is ignored."
+    }
+    Log "Pre-configured kit detected (no @@YAGURA_HOST@@ placeholder); deploying the bundled config as-is."
+} else {
+    if ([string]::IsNullOrEmpty($YaguraHost)) {
+        Fail "-YaguraHost is required for this kit (the bundled config still has the @@YAGURA_HOST@@ placeholder)."
+    }
+    $conf = $conf.Replace("@@YAGURA_HOST@@", $YaguraHost)
+    $conf = $conf.Replace("@@YAGURA_PORT@@", [string]$YaguraPort)
+    $conf = $conf.Replace("@@CHANNELS@@", $Channels)
+}
+
 # UTF-8 without BOM: Fluent Bit's config parser does not expect a BOM.
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText($confTarget, $conf, $utf8NoBom)
 Copy-Item -Path $luaTemplate -Destination (Join-Path $configDir "winevt-severity.lua") -Force
-Log ("Config deployed to " + $configDir + " (target: " + $YaguraHost + ":" + $YaguraPort + " udp, channels: " + $Channels + ")")
+if ($isPreConfigured) {
+    Log ("Config deployed to " + $configDir + " (pre-configured kit; destination baked in by the template)")
+} else {
+    Log ("Config deployed to " + $configDir + " (target: " + $YaguraHost + ":" + $YaguraPort + " udp, channels: " + $Channels + ")")
+}
 
 # --- 3. Validate config before touching the service -------------------------
 $dryRun = Start-Process -FilePath $fluentBitExe `

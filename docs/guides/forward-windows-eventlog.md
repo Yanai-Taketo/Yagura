@@ -6,6 +6,11 @@ Yagura へ syslog(RFC 5424 / UDP)転送する手順。
 Intune / SCCM(Configuration Manager)/ GPO スタートアップスクリプト等の企業配布基盤で無人 push できる。
 手動での導入にも使える。
 
+**管理 UI(`/admin/forwarder-kit`)から、このサーバの宛先を設定済みのキットを生成できる(v0.2。
+[ADR-0008](../adr/0008-forwarder-kit-generation.md))。** 生成したキットは `install.ps1` を
+パラメータなしで実行できる(宛先の手入力による誤記を避けられる)。以下の手順は、生成 UI を
+使わずキットを手動で組み立てる場合の**正の手順**として引き続き維持する。
+
 ## キットの内容
 
 | ファイル | 役割 |

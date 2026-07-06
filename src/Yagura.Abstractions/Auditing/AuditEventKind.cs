@@ -55,4 +55,10 @@ public enum AuditEventKind
     /// 「origin 検証拒否」。イベント ID 3002。M8-4）。
     /// </summary>
     CircuitOriginRejected,
+
+    /// <summary>
+    /// 管理操作: フォワーダ配布キットの生成（ADR-0008 設計条件 6。イベント ID 2005）。
+    /// 記録内容は生成日時・宛先（ホスト・ポート）・収集チャネル。秘密情報は含まない。
+    /// </summary>
+    ForwarderKitGenerated,
 }

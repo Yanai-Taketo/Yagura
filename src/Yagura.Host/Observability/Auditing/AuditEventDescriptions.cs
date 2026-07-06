@@ -38,6 +38,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.PromotionExecuted => "本番昇格を実行",
         AuditEventKind.CircuitDisconnected => "circuit を切断",
         AuditEventKind.CircuitOriginRejected => "circuit 確立要求の origin 検証で拒否",
+        AuditEventKind.ForwarderKitGenerated => "フォワーダ配布キットを生成",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }
