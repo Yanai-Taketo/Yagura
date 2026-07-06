@@ -845,4 +845,79 @@ public static class UiText
     /// <summary>切断要求の不成立（対象が既に終了している等）。</summary>
     public const string CircuitDisconnectNotAccepted =
         "切断できませんでした。対象の接続が既に終了しているか、切断を受け付けられない状態です。";
+
+    // ---- フォワーダキット生成画面（ADR-0008。/admin/forwarder-kit） ----
+
+    /// <summary>画面見出し・ナビリンク文言。</summary>
+    public const string ForwarderKitTitle = "フォワーダ配布キットの生成";
+
+    /// <summary>画面の説明文（何をする画面か）。</summary>
+    public const string ForwarderKitIntro =
+        "Windows イベントログを転送する Fluent Bit 配布キットを、このサーバの宛先を設定済みの状態で生成します。" +
+        "生成した ZIP は install.ps1 をパラメータなしで実行できます。";
+
+    /// <summary>宛先選択の見出し。</summary>
+    public const string ForwarderKitDestinationTitle = "宛先";
+
+    /// <summary>
+    /// 候補への既定選択なしの注記（ADR-0008 設計条件 1——到達可能性の判断責任は管理者に残る）。
+    /// </summary>
+    public const string ForwarderKitDestinationNote =
+        "既定の選択はありません。端末から到達できるアドレスかどうかの判断は管理者に委ねられます" +
+        "（ループバック・リンクローカル・無効な NIC は候補から除外済み）。";
+
+    /// <summary>候補が 1 件もない場合の案内。</summary>
+    public const string ForwarderKitNoCandidates = "候補となるアドレスが見つかりませんでした。手入力で指定してください。";
+
+    /// <summary>手入力の選択肢ラベル。</summary>
+    public const string ForwarderKitManualEntryOption = "手入力";
+
+    /// <summary>手入力欄のラベル。</summary>
+    public const string ForwarderKitManualEntryLabel = "宛先ホスト（IP アドレスまたはホスト名）";
+
+    /// <summary>ポート入力のラベル。</summary>
+    public const string ForwarderKitPortLabel = "ポート";
+
+    /// <summary>チャネル選択の見出し。</summary>
+    public const string ForwarderKitChannelsTitle = "収集チャネル";
+
+    /// <summary>チャネル: System。</summary>
+    public const string ForwarderKitChannelSystem = "System";
+
+    /// <summary>チャネル: Application。</summary>
+    public const string ForwarderKitChannelApplication = "Application";
+
+    /// <summary>チャネル: Security。</summary>
+    public const string ForwarderKitChannelSecurity = "Security";
+
+    /// <summary>
+    /// Security チャネル有効化時の警告（ADR-0008 設計条件 2——機微情報・量の注意）。
+    /// </summary>
+    public const string ForwarderKitSecurityChannelWarning =
+        "Security チャネルは機微情報を含み、イベント量も多くなります。組織のポリシーで明示的に判断してから有効化してください。";
+
+    /// <summary>生成される ZIP の内容一覧の見出し。</summary>
+    public const string ForwarderKitContentsTitle = "生成される ZIP の内容";
+
+    /// <summary>検証済み Fluent Bit 版の表示（{0} に版番号が入る）。</summary>
+    public const string ForwarderKitVerifiedVersionFormat = "検証済み Fluent Bit 版: {0}";
+
+    /// <summary>MSI 非同梱の注記。</summary>
+    public const string ForwarderKitMsiNotIncludedNote =
+        "MSI は含まれません。README の手順に従って packages.fluentbit.io から取得し、SHA256 で検証してください。";
+
+    /// <summary>生成ボタン。</summary>
+    public const string ForwarderKitGenerateButton = "キットを生成してダウンロード";
+
+    /// <summary>宛先未選択時のエラー。</summary>
+    public const string ForwarderKitErrorDestinationRequired = "宛先を選択または入力してください。";
+
+    /// <summary>宛先の文字種エラー。</summary>
+    public const string ForwarderKitErrorDestinationInvalid = "宛先に使える文字は英数字・ピリオド・ハイフン・コロンのみです。";
+
+    /// <summary>ポート範囲エラー。</summary>
+    public const string ForwarderKitErrorPortRange = "ポートは 1〜65535 の範囲で指定してください。";
+
+    /// <summary>チャネル未選択エラー。</summary>
+    public const string ForwarderKitErrorChannelsRequired = "収集チャネルを 1 つ以上選択してください。";
 }

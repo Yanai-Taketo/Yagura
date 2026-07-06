@@ -22,4 +22,30 @@
     <InternalsVisibleTo Include="Yagura.Web.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      フォワーダ配布キット生成（ADR-0008 委任 #1）: forwarder/fluent-bit/ 配下のファイルを
+      単一ソースとしてビルド時に埋め込む（コピーを別に持たない）。ForwarderKitBuilder が
+      GetManifestResourceStream で読み出す。LogicalName は実装側の参照名を固定するため
+      明示指定する（既定の LogicalName はプロジェクト既定名前空間 + Link パスから機械生成され、
+      Link のディレクトリ区切りをそのまま辿ると壊れやすいため——実装側と一致させる単一の
+      正としてここで固定する）。
+    -->
+    <EmbeddedResource Include="..\..\forwarder\fluent-bit\fluent-bit-yagura.conf"
+                       Link="ForwarderKit\fluent-bit-yagura.conf"
+                       LogicalName="Yagura.Web.ForwarderKit.Templates.fluent-bit-yagura.conf" />
+    <EmbeddedResource Include="..\..\forwarder\fluent-bit\winevt-severity.lua"
+                       Link="ForwarderKit\winevt-severity.lua"
+                       LogicalName="Yagura.Web.ForwarderKit.Templates.winevt-severity.lua" />
+    <EmbeddedResource Include="..\..\forwarder\fluent-bit\install.ps1"
+                       Link="ForwarderKit\install.ps1"
+                       LogicalName="Yagura.Web.ForwarderKit.Templates.install.ps1" />
+    <EmbeddedResource Include="..\..\forwarder\fluent-bit\uninstall.ps1"
+                       Link="ForwarderKit\uninstall.ps1"
+                       LogicalName="Yagura.Web.ForwarderKit.Templates.uninstall.ps1" />
+    <EmbeddedResource Include="..\..\forwarder\fluent-bit\README.generated.md"
+                       Link="ForwarderKit\README.generated.md"
+                       LogicalName="Yagura.Web.ForwarderKit.Templates.README.generated.md" />
+  </ItemGroup>
+
 </Project>

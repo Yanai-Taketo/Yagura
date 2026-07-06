@@ -231,14 +231,21 @@ public sealed class ViewerEndpointAllowlistTests
         Assert.All(adminEndpointRoutes, adminRoute =>
             Assert.DoesNotContain(ViewerAllowlist, e => e.RoutePattern == adminRoute));
 
-        // 逆方向: 管理画面 4 ページ(M8-4。Yagura.Web.Administration.Screens 配下)が実際に
-        // Admin メタデータ付きで存在することも確認する（「管理系が 0 件だから許可リストに
-        // 含まれない」という空虚な真になっていないことの保証。MapYaguraAdmin の名前空間
-        // 由来の機械的付与——convention——が実際に効いていることの検証でもある）。
+        // 逆方向: 管理画面 5 ページ(M8-4 の 4 ページ + ADR-0008 の /admin/forwarder-kit。
+        // Yagura.Web.Administration.Screens 配下)が実際に Admin メタデータ付きで存在することも
+        // 確認する（「管理系が 0 件だから許可リストに含まれない」という空虚な真になっていない
+        // ことの保証。MapYaguraAdmin の名前空間由来の機械的付与——convention——が実際に
+        // 効いていることの検証でもある）。
         Assert.Contains("/admin", adminEndpointRoutes);
         Assert.Contains("/admin/setup", adminEndpointRoutes);
         Assert.Contains("/admin/promotion", adminEndpointRoutes);
         Assert.Contains("/admin/circuits", adminEndpointRoutes);
+        Assert.Contains("/admin/forwarder-kit", adminEndpointRoutes);
+
+        // /admin/forwarder-kit/download は Razor Components のページではなく素の MapGet
+        // であり、名前空間由来の自動付与の対象外——YaguraAdminExtensions.MapForwarderKitDownload
+        // が明示的に Admin メタデータを付与していることを確認する（ADR-0008 設計条件 7）。
+        Assert.Contains("/admin/forwarder-kit/download", adminEndpointRoutes);
     }
 
     [Fact]

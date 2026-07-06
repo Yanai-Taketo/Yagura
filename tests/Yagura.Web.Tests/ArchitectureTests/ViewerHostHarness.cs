@@ -92,6 +92,25 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             .ToList();
 
     /// <summary>
+    /// 実際に bind した loopback アドレス(OS 採番ポート込み)。ForwarderKitDownloadEndpointTests
+    /// のように実 HTTP 応答(ステータス・ヘッダ・ボディ)を検証する場合に使う
+    /// (<c>IServerAddressesFeature</c> は <c>StartAsync</c> 後にのみ確定値を持つ——
+    /// ASP.NET Core の実装上の制約であり、本ハーネスの <see cref="StartAsync"/> が
+    /// 既に <c>app.StartAsync()</c> を経ているため確定済みの値が返る)。
+    /// </summary>
+    public Uri GetBaseAddress()
+    {
+        var addressesFeature = _app.Services
+            .GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
+            .Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>();
+
+        var address = addressesFeature?.Addresses.FirstOrDefault()
+            ?? throw new InvalidOperationException("bind 済みアドレスが取得できない。");
+
+        return new Uri(address);
+    }
+
+    /// <summary>
     /// 閲覧許可リストの対象となるエンドポイント(<see cref="ListenerPortGuardEndpointMetadata.Admin"/>
     /// を持たないもの)。
     /// </summary>

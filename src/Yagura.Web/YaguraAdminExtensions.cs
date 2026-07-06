@@ -1,9 +1,13 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Components.Endpoints;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Yagura.Abstractions.Administration;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Circuits;
+using Yagura.Web.ForwarderKit;
 
 namespace Yagura.Web;
 
@@ -48,6 +52,7 @@ public static class YaguraAdminExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<ICircuitManagementService, Administration.CircuitManagementService>();
+        services.TryAddSingleton<INicCandidateSource, SystemNicCandidateSource>();
 
         return services;
     }
@@ -98,8 +103,79 @@ public static class YaguraAdminExtensions
             }
         });
 
+        MapForwarderKitDownload(endpoints);
+
         return endpoints;
     }
+
+    /// <summary>
+    /// フォワーダ配布キットのダウンロードエンドポイント（ADR-0008 設計条件 7・委任 #1〜#3・#5）。
+    /// Razor Components のページではなく素の <c>MapGet</c> であるため、
+    /// <see cref="ListenerPortGuardEndpointMetadata.Admin"/> は名前空間規約
+    /// （<see cref="AdminScreenNamespacePrefix"/> 由来の自動付与）の対象外——ここで明示的に
+    /// 付与する（管理系ルートの帰属宣言を本クラスに集約するという remarks の方針どおり）。
+    /// </summary>
+    /// <remarks>
+    /// 生成は ZIP をメモリ上で組み立てるのみで、外部ネットワークへアクセスせず、ディスクへ
+    /// 一時ファイルも書かない（<see cref="ForwarderKitBuilder"/> の remarks 参照）。
+    /// 検証失敗は 400、成功時は <c>application/zip</c> で応答する。生成操作は監査記録
+    /// （2000 番台 ID 2005。ADR-0008 設計条件 6）の対象とする。
+    /// </remarks>
+    private static void MapForwarderKitDownload(IEndpointRouteBuilder endpoints)
+    {
+        var endpoint = endpoints.MapGet("/admin/forwarder-kit/download", async (
+            HttpContext context,
+            string? host,
+            int? port,
+            string? channels,
+            IAuditRecorder auditRecorder,
+            TimeProvider timeProvider) =>
+        {
+            if (!ForwarderKitRequest.TryCreate(
+                    host,
+                    port ?? ForwarderKitConstraints.DefaultPort,
+                    channels,
+                    out var request,
+                    out var error))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsync(FormatValidationError(error!.Value)).ConfigureAwait(false);
+                return;
+            }
+
+            var generatedAt = timeProvider.GetLocalNow();
+            var zipBytes = ForwarderKitBuilder.Build(request!, generatedAt);
+
+            // CancellationToken.None: クライアント切断（RequestAborted）で監査記録自体を
+            // 打ち切らない——生成した事実は応答の成否に関わらず記録する
+            // （ListenerPortGuardMiddleware と同じ判断。ADR-0004 決定 7）。
+            await auditRecorder.RecordAsync(
+                new AuditEvent(
+                    OccurredAt: timeProvider.GetUtcNow(),
+                    Kind: AuditEventKind.ForwarderKitGenerated,
+                    RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
+                    RemotePort: context.Connection.RemotePort,
+                    Detail: $"host={request!.Host} port={request.Port} channels={request.ChannelsValue}"),
+                CancellationToken.None).ConfigureAwait(false);
+
+            var fileName = $"yagura-forwarder-kit-{generatedAt:yyyyMMdd}.zip";
+            context.Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
+            context.Response.ContentType = "application/zip";
+            await context.Response.Body.WriteAsync(zipBytes).ConfigureAwait(false);
+        });
+
+        endpoint.WithMetadata(ListenerPortGuardEndpointMetadata.Admin);
+    }
+
+    /// <summary>検証エラーの応答文言（管理者向け・機械可読なキーワードを含む簡潔な英語文）。</summary>
+    private static string FormatValidationError(ForwarderKitValidationError error) => error switch
+    {
+        ForwarderKitValidationError.HostRequired => "host is required.",
+        ForwarderKitValidationError.HostInvalid => "host contains characters outside the allowed set.",
+        ForwarderKitValidationError.PortOutOfRange => "port must be between 1 and 65535.",
+        ForwarderKitValidationError.ChannelsInvalid => "channels must be a comma-separated subset of System, Application, Security.",
+        _ => "invalid request.",
+    };
 
     /// <summary>
     /// <see cref="ListenerPortGuardMiddleware"/> をパイプラインに組み込む。
