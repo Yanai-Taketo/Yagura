@@ -117,7 +117,8 @@
                     <MudTh>@UiText.SourceColumnActions</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="source">
-                    <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@source.SourceAddress</span></MudTd>
+                    @* 逆引きホスト名の併記(ADR-0007。ui.md §4) *@
+                    <MudTd DataLabel="@UiText.SourceColumnAddress"><YaguraSourceAddress Address="@source.SourceAddress" /></MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnLastReceived"><YaguraTimestamp Value="@source.LastReceivedAt" /></MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnSilence">@FormatSilence(source.LastReceivedAt)</MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnCount">@FormatCount(source.RecordCount)</MudTd>
