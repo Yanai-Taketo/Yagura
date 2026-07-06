@@ -1,6 +1,6 @@
 # ADR-0008: フォワーダ配布キットの動的生成(管理 UI)
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-06(起案)/ 2026-07-07(ペルソナレビュー第 1 巡の反映)
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)(スコープ)/ [ADR-0004](0004-security-model.md)(管理面の分離・監査)/ PR #99・#101(静的キットと実機検証の証跡)/ [利用者ガイド: Windows イベントログを Yagura へ転送する](../guides/forward-windows-eventlog.md)
