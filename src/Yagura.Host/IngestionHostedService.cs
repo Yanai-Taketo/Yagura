@@ -74,6 +74,17 @@ public sealed class IngestionHostedService : IHostedService
         // UDP・TCP は同時に開始する（M4-1 依頼「起動順序: UDP と同時（受信先行の一部）」）。
         var receiveStartedAt = DateTimeOffset.UtcNow;
         await _pipeline.StartListenerAsync(cancellationToken).ConfigureAwait(false);
+
+        // 以下 2 行の英語文面は意図的に維持する（日本語化の対象外）。tools/Yagura.Bench の
+        // BenchHostProcess と tests/Yagura.E2E.Tests 配下 5 ファイル（ZeroConfigFirstRunE2ETests・
+        // ListenerSeparationE2ETests・SpoolDegradedStartupE2ETests・LoopbackBindingRegressionTests・
+        // ListenerGuardAuditE2ETests）が、子プロセスの標準出力からこの英語文面
+        // （"UDP/TCP syslog listener started on port"）を正規表現・文字列一致で読み取り、
+        // 実バインドポートを取得する起動待ちマーカーとして使っている（grep で実体確認済み。
+        // 2026-07-06）。Console と Windows イベントログは同じ ILogger 呼び出しを共有する配線
+        // （Program.cs のコメント参照）のため、ここだけ文面を分離することはコンソール出力側の
+        // 契約を保ったまま行えない。将来分離したい場合は Console 向け・イベントログ向けを
+        // 別々の Log 呼び出しにする設計変更が必要（本 PR のスコープ外）。
         _logger.LogInformation("UDP syslog listener started on port {Port}.", _pipeline.BoundPort);
         _logger.LogInformation("TCP syslog listener started on port {Port}.", _pipeline.TcpBoundPort);
 
@@ -115,7 +126,7 @@ public sealed class IngestionHostedService : IHostedService
         await _logStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         _pipeline.StartConsumers();
-        _logger.LogInformation("Ingestion pipeline consumers (parsing/persistence) started.");
+        _logger.LogInformation("受信パイプラインの消費ループ（解析・永続化）を開始しました。");
 
         // メタデータ領域の定期永続化（§4.3・§4.4）はコンシューマ開始後に始める
         // （受信・消費が動き出してからカウンタ・生存時刻の定期観測を始めれば十分なため）。
@@ -125,7 +136,7 @@ public sealed class IngestionHostedService : IHostedService
         // RetentionScheduler は容量枯渇契機の前倒し実行（ICapacityExhaustionHandler）としても
         // IngestionPipeline へ渡し済みのため、ここでは定期実行ループの開始のみを行う。
         _retentionScheduler.Start();
-        _logger.LogInformation("Retention delete scheduler started.");
+        _logger.LogInformation("保持期間削除の定期実行を開始しました。");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -148,6 +159,6 @@ public sealed class IngestionHostedService : IHostedService
         // 手順 3（§1.3）: カウンタを最終値で永続化し、正常停止イベントを記録して終了する。
         _observability.WriteStopStep3(DateTimeOffset.UtcNow, fallbackReceiveSocketClosedAt: receiveSocketClosedAt);
 
-        _logger.LogInformation("Ingestion pipeline stopped.");
+        _logger.LogInformation("受信パイプラインを停止しました。");
     }
 }
