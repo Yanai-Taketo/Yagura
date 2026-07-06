@@ -205,3 +205,108 @@
     margin: 0;
     font-size: 14px;
 }
+
+/* ---- ログ詳細オーバーレイ: 色帯ヘッダー（YaguraSeverityBand。案 A。2026-07-06） ----
+   帯の淡い背景はテーマ由来の RGB 変数から低透過度で作る（ライト/ダーク両対応・hex 直書きなし）。
+   ダイアログはポータル描画のため、面いっぱいの帯にするには DialogContent の既定パディングを
+   打ち消す必要がある（.yagura-detail-dialog スコープで負マージン）。 */
+
+.yagura-sev-band {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 0.5px solid var(--mud-palette-lines-default);
+}
+
+.yagura-sev-band--error {
+    background-color: rgba(var(--mud-palette-error-rgb), 0.10);
+}
+
+.yagura-sev-band--error .yagura-sev-band-label,
+.yagura-sev-band--error .yagura-sev-band-icon {
+    color: var(--mud-palette-error);
+}
+
+.yagura-sev-band--warning {
+    background-color: rgba(var(--mud-palette-warning-rgb), 0.12);
+}
+
+.yagura-sev-band--warning .yagura-sev-band-label,
+.yagura-sev-band--warning .yagura-sev-band-icon {
+    color: var(--mud-palette-warning);
+}
+
+.yagura-sev-band--normal {
+    background-color: var(--mud-palette-background-gray);
+}
+
+.yagura-sev-band--normal .yagura-sev-band-label,
+.yagura-sev-band--normal .yagura-sev-band-icon {
+    color: var(--mud-palette-text-primary);
+}
+
+.yagura-sev-band-label {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+/* ファシリティは補助（番号本質・名前補助）。帯の主役ではないため囲みチップで一段控えめに。 */
+.yagura-sev-band-facility {
+    font-size: 12px;
+    color: var(--mud-palette-text-secondary);
+    border: 0.5px solid var(--mud-palette-lines-default);
+    border-radius: 20px;
+    padding: 1px 8px;
+}
+
+/* 色帯をダイアログの面いっぱいに広げる（DialogContent の既定パディング分を打ち消す）。 */
+.yagura-detail-dialog .mud-dialog-content {
+    padding-top: 0;
+}
+
+.yagura-detail-dialog .yagura-sev-band {
+    margin: 0 -24px 16px;
+}
+
+/* ---- ブロック版コピー部品（YaguraCopyBlock。ログ本文・生データ） ---- */
+
+.yagura-copy-block {
+    margin-bottom: 12px;
+}
+
+.yagura-copy-block-label {
+    color: var(--mud-palette-text-secondary);
+}
+
+.yagura-copy-block-value {
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--mud-palette-text-primary);
+    background-color: var(--mud-palette-background-gray);
+    border: 0.5px solid var(--mud-palette-lines-default);
+    border-radius: 8px; /* カード/枠の段（ui.md §2.3） */
+    padding: 10px 12px;
+}
+
+/* 生データ等の 2 次情報は一段控えめに（本文より薄い文字色・小さめ）。 */
+.yagura-copy-block-muted {
+    font-size: 12px;
+    color: var(--mud-palette-text-secondary);
+}
+
+/* ---- ログ詳細オーバーレイ: メタ情報 2 列（時刻・送信元など。案 A） ---- */
+
+.yagura-detail-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 24px;
+    margin-bottom: 12px;
+}
+
+.yagura-detail-meta-label {
+    color: var(--mud-palette-text-secondary);
+}

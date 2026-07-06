@@ -1,0 +1,60 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    ログ詳細オーバーレイの色帯ヘッダー（案 A。2026-07-06 オーナー選択）。
+    重大度に応じた色 + アイコン + 短形ラベルを帯で表示し、ファシリティを補助チップで併記する。
+    「開いた瞬間に何のログか」を伝える。色の対応は YaguraSeverityChip と同一（ui.md §4）:
+    0〜3 = state-error / 4 = state-warning / 5〜7 = 通常（中立の帯）。
+    帯の淡い背景色はテーマ由来の RGB 変数（--mud-palette-{error|warning}-rgb）から低透過度で
+    作るため、ライト / ダークの両テーマで破綻しない（hex 直書きなし。ui.md §2.1 実装形態）。
+*@
+<div class="yagura-sev-band @BandClass">
+    <div class="d-flex align-center gap-2">
+        @if (BandIcon is not null)
+        {
+            <MudIcon Icon="@BandIcon" Size="Size.Small" Class="yagura-sev-band-icon" />
+        }
+        <span class="yagura-sev-band-label">@SeverityText</span>
+        @if (FacilityText is not null)
+        {
+            <span class="yagura-sev-band-facility">@FacilityText</span>
+        }
+    </div>
+    <MudIconButton Icon="@Icons.Material.Filled.Close"
+                   Size="Size.Small"
+                   aria-label="@UiText.DetailClose"
+                   OnClick="OnClose" />
+</div>
+
+@code {
+    /// <summary>重大度（syslog PRI の severity。null は解析不能）。</summary>
+    [Parameter]
+    public int? Severity { get; set; }
+
+    /// <summary>ファシリティ（syslog PRI の facility。null は解析不能）。</summary>
+    [Parameter]
+    public int? Facility { get; set; }
+
+    /// <summary>閉じるボタン押下。</summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    // 帯の色区分。範囲外・null は中立（通常）帯にする（解釈を偽装しない——値そのものは
+    // 本文の重大度表示で生値のまま出す）。
+    private bool IsError => Severity is >= 0 and <= 3;
+    private bool IsWarning => Severity is 4;
+
+    private string BandClass =>
+        IsError ? "yagura-sev-band--error"
+        : IsWarning ? "yagura-sev-band--warning"
+        : "yagura-sev-band--normal";
+
+    private string? BandIcon =>
+        IsError ? Icons.Material.Filled.Error
+        : IsWarning ? Icons.Material.Filled.Warning
+        : Icons.Material.Filled.Info;
+
+    private string SeverityText => UiText.FormatSeverityLong(Severity);
+
+    private string? FacilityText => Facility is null ? null : UiText.FormatFacility(Facility);
+}

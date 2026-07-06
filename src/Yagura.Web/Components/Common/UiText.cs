@@ -133,6 +133,9 @@ public static class UiText
     /// <summary>コピー失敗時の案内（クリップボードが使えない環境向け）。</summary>
     public const string CopyFailed = "コピーできませんでした。値を選択して手動でコピーしてください";
 
+    /// <summary>ブロック版コピー部品（YaguraCopyBlock）のボタン文言。</summary>
+    public const string CopyBlockButton = "コピー";
+
     // ---- 画面名・ナビゲーション（ui.md §4。M8-3） ----
 
     /// <summary>ダッシュボード画面名。</summary>
@@ -309,6 +312,60 @@ public static class UiText
         _ => severity.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
+    // ---- ファシリティ（syslog PRI の facility。ui.md §4。2026-07-06 オーナー指示） ----
+
+    /// <summary>
+    /// ファシリティ番号 → 標準名の対応（RFC 5424 Table 1）。
+    /// <b>16〜23（local0〜local7）は運用側が機器ごとに自由に使う枠</b>であり、標準名は
+    /// 「local0」等の枠名しか与えられない——このため表示は常に<b>番号を主とし名前を補助</b>
+    /// とする（<see cref="FormatFacility"/>。severity と違い運用依存が強く、番号こそが正）。
+    /// 対応表に無い番号（範囲外・未割当）は名前を付けず番号のみ返す（解釈を偽装しない）。
+    /// </summary>
+    private static readonly IReadOnlyDictionary<int, string> FacilityNames = new Dictionary<int, string>
+    {
+        [0] = "カーネル",
+        [1] = "ユーザー",
+        [2] = "メール",
+        [3] = "デーモン",
+        [4] = "認証",
+        [5] = "syslog 内部",
+        [6] = "プリンタ",
+        [7] = "ニュース",
+        [8] = "UUCP",
+        [9] = "cron",
+        [10] = "認証(private)",
+        [11] = "FTP",
+        [12] = "NTP",
+        [13] = "ログ監査",
+        [14] = "ログ警告",
+        [15] = "クロック",
+        [16] = "local0",
+        [17] = "local1",
+        [18] = "local2",
+        [19] = "local3",
+        [20] = "local4",
+        [21] = "local5",
+        [22] = "local6",
+        [23] = "local7",
+    };
+
+    /// <summary>
+    /// ファシリティを「番号: 名前」で整形する（例: <c>3: デーモン</c>）。名前が無い番号は
+    /// 番号のみ（例: <c>99</c>）。<see langword="null"/> は <c>—</c>。番号を主・名前を補助と
+    /// する理由はクラス <see cref="FacilityNames"/> の注記参照。
+    /// </summary>
+    public static string FormatFacility(int? facility)
+    {
+        if (facility is not { } value)
+        {
+            return "—";
+        }
+
+        return FacilityNames.TryGetValue(value, out var name)
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{value}: {name}")
+            : value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     // ---- ダッシュボード → 検索の導線（ui.md §4。無音化検出からの調査動線） ----
 
     /// <summary>送信元別受信状況テーブルの操作列見出し。</summary>
@@ -348,6 +405,12 @@ public static class UiText
 
     /// <summary>詳細: 原文（受信したバイト列そのもの）。</summary>
     public const string DetailRaw = "受信した原文";
+
+    /// <summary>詳細: メッセージ本文（オーバーレイの主役。M8-3 再デザイン）。</summary>
+    public const string DetailMessage = "メッセージ";
+
+    /// <summary>詳細: 構造化データ（RFC 5424 の STRUCTURED-DATA）。</summary>
+    public const string DetailStructuredData = "構造化データ";
 
     // ---- システム状態（ui.md §4。M8-3） ----
 

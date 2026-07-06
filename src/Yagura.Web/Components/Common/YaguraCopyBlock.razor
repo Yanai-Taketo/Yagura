@@ -1,0 +1,64 @@
+@namespace Yagura.Web.Components.Common
+@inject IJSRuntime JSRuntime
+
+@*
+    複数行になり得る値（ログ本文・生データ）を等幅の枠で表示し、右上にコピーボタンを置く
+    ブロック版のコピー部品（ログ詳細オーバーレイの再デザイン。2026-07-06 オーナー指示）。
+    1 行値の YaguraCopyField（ラベル : 値 の横並び）に対し、本部品はラベルを上・値を枠で囲む
+    縦構成——調査で本文・生データをそのまま貼る動線を主役にする。
+
+    クリップボードへの書き込みは標準 API（navigator.clipboard）を IJSRuntime から直接呼ぶ
+    （手書き JS ファイルは追加しない——ADR-0003 決定 1 の範囲内。YaguraCopyField と同方式）。
+*@
+<div class="yagura-copy-block">
+    <div class="d-flex align-center justify-space-between mb-1">
+        <MudText Typo="Typo.caption" Class="yagura-copy-block-label">@Label</MudText>
+        <MudButton Variant="Variant.Text"
+                   Size="Size.Small"
+                   StartIcon="@(_copied ? Icons.Material.Filled.Check : Icons.Material.Outlined.ContentCopy)"
+                   aria-label="@CopyButtonLabel"
+                   OnClick="CopyAsync">@(_copied ? UiText.CopySucceeded : UiText.CopyBlockButton)</MudButton>
+    </div>
+    <pre class="yagura-copy-block-value yagura-monospace @(Muted ? "yagura-copy-block-muted" : null)">@Value</pre>
+    @if (_copyFailed)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Error" role="alert">@UiText.CopyFailed</MudText>
+    }
+</div>
+
+@code {
+    private bool _copied;
+    private bool _copyFailed;
+
+    /// <summary>枠の上に出す見出し（例: 「メッセージ」「生データ (raw)」）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>コピー対象の値（複数行可）。</summary>
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = string.Empty;
+
+    /// <summary>控えめ表示にするか（生データ等の 2 次情報。既定 false = 本文の濃さ）。</summary>
+    [Parameter]
+    public bool Muted { get; set; }
+
+    private string CopyButtonLabel => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        UiText.CopyButtonLabelFormat,
+        Label);
+
+    private async Task CopyAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", Value);
+            _copied = true;
+            _copyFailed = false;
+        }
+        catch (JSException)
+        {
+            _copied = false;
+            _copyFailed = true;
+        }
+    }
+}
