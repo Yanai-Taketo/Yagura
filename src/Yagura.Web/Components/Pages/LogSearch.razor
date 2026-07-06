@@ -41,7 +41,11 @@
             <MudItem xs="12" md="9">
                 <YaguraTextField Label="@UiText.SearchFieldText" @bind-Value="_searchText" />
             </MudItem>
-            <MudItem xs="12" md="3" Class="d-flex align-end">
+            @* 検索ボタンを隣の入力ボックス（本文の検索語）の下端に揃える。フォーム項目枠の
+               下余白（yagura-form-field の mb-4 = 16px）の分だけ align-end の基準が下がるため、
+               ボタン列に同じ 16px の下パディング（pb-4）を与えて押し上げる（2026-07-06 試用の
+               「検索がずれて見える」フィードバック）。 *@
+            <MudItem xs="12" md="3" Class="d-flex align-end pb-4">
                 @* 主ボタンは 1 ビューに 1 つ（ui.md §3.1）——本画面ではこの検索ボタンのみ。 *@
                 <YaguraButton Role="YaguraButtonRole.Primary" OnClick="RunSearchAsync" Disabled="@_searching">
                     @UiText.SearchButton
