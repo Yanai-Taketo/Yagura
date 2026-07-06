@@ -33,6 +33,7 @@
     public int? Port { get; set; }
 
     private string? _reverseName;
+    private bool _disposed;
 
     private string AddressText => Port is { } port
         ? string.Create(CultureInfo.InvariantCulture, $"{Address}:{port}")
@@ -46,9 +47,15 @@
 
     private void OnNamesUpdated() =>
         // 通知は束ね済み（ADR-0007 決定 2 の反映粒度）。circuit の同期コンテキストへ戻して
-        // 差分がある場合のみ再描画する。
+        // 差分がある場合のみ再描画する。購読解除（Dispose）と通知は競合し得るため、
+        // 破棄後に届いた通知は何もしない（破棄済みコンポーネントの StateHasChanged を避ける）。
         _ = InvokeAsync(() =>
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             var updated = ReverseDnsResolver.TryGetDisplayName(Address);
             if (!string.Equals(updated, _reverseName, StringComparison.Ordinal))
             {
@@ -57,6 +64,9 @@
             }
         });
 
-    public void Dispose() =>
+    public void Dispose()
+    {
+        _disposed = true;
         ReverseDnsResolver.NamesUpdated -= OnNamesUpdated;
+    }
 }
