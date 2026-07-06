@@ -277,6 +277,36 @@ public sealed class ViewerPageRenderTests
         Assert.Contains(UiText.StatusBandOkSummary, html, StringComparison.Ordinal);
         Assert.Contains(UiText.StatusBandLastReceivedLabel, html, StringComparison.Ordinal);
         Assert.Contains(UiText.StatusBandSourcesLinkText, html, StringComparison.Ordinal);
+
+        // 閲覧リスナ帰属（既定 = IsAdminListener 未設定）では管理リンクを出さない（安全側。M8-4）。
+        Assert.DoesNotContain("href=\"/admin/setup\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"/admin/promotion\"", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("href=\"/admin/circuits\"", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MainLayout_AdminListener_ShowsAdminLinks()
+    {
+        // 管理リスナ帰属（IsAdminListener == true）の circuit では設定・昇格・接続管理への
+        // 導線を出す（2026-07-06 試用フィードバック「8515 で開いても導線が無い」への対応）。
+        var store = new FakeLogStore();
+        var reader = new FakeStatusReader();
+        var adminContext = new Yagura.Web.Circuits.YaguraCircuitContext { IsAdminListener = true };
+
+        var html = await CommonComponentRenderHarness.RenderAsync<MainLayout>(
+            parameters: null,
+            configureServices: services =>
+            {
+                services.AddSingleton<ILogStore>(store);
+                services.AddSingleton<IYaguraSystemStatusReader>(reader);
+                services.AddScoped(_ => adminContext);
+            },
+            includePopoverProvider: false);
+
+        Assert.Contains("href=\"/admin/setup\"", html, StringComparison.Ordinal);
+        Assert.Contains("href=\"/admin/promotion\"", html, StringComparison.Ordinal);
+        Assert.Contains("href=\"/admin/circuits\"", html, StringComparison.Ordinal);
+        Assert.Contains(UiText.AdminPromotionWizardTitle, html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -306,6 +336,10 @@ public sealed class ViewerPageRenderTests
             {
                 services.AddSingleton<ILogStore>(store);
                 services.AddSingleton<IYaguraSystemStatusReader>(reader);
+                // MainLayout は管理リンクの出し分けに circuit のリスナ帰属を読む（M8-4）。
+                // 既定インスタンス（IsAdminListener 未設定＝閲覧相当）を注入する——管理リンクが
+                // 出ない側の描画になる（管理リスナ帰属の分岐は別テストで固定）。
+                services.AddScoped<Yagura.Web.Circuits.YaguraCircuitContext>();
             },
             // MainLayout はプロバイダ群（MudPopoverProvider 等）を自身が内包するため、
             // ハーネス側のプロバイダ同居を外す（二重登録はエラー）。

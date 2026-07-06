@@ -3,6 +3,7 @@
 @inject IJSRuntime JSRuntime
 @inject ILogStore LogStore
 @inject IYaguraSystemStatusReader StatusReader
+@inject Yagura.Web.Circuits.YaguraCircuitContext CircuitContext
 @implements IAsyncDisposable
 
 @*
@@ -58,6 +59,20 @@
             <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">@UiText.NavDashboard</MudNavLink>
             <MudNavLink Href="/search" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Search">@UiText.NavSearch</MudNavLink>
             <MudNavLink Href="/status" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MonitorHeart">@UiText.NavStatus</MudNavLink>
+            @*
+                管理リンクは管理リスナ（loopback 専用ポート）経由の circuit でのみ出す
+                （閲覧リスナには出さない——安全側。IsAdminListener が null＝判定不能・prerender 中も
+                出さない。到達可否自体は AdminScreenLayout のガードが担保するが、閲覧リスナに
+                管理導線を「見せない」ことでも不要な露出を避ける。2026-07-06 試用フィードバック
+                「8515 で開いても設定・昇格への導線が無くて分かりにくい」への対応）。
+            *@
+            @if (CircuitContext.IsAdminListener == true)
+            {
+                <MudDivider Class="my-2" />
+                <MudNavLink Href="/admin/setup" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Tune">@UiText.AdminSetupWizardTitle</MudNavLink>
+                <MudNavLink Href="/admin/promotion" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Storage">@UiText.AdminPromotionWizardTitle</MudNavLink>
+                <MudNavLink Href="/admin/circuits" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Cable">@UiText.AdminCircuitsTitle</MudNavLink>
+            }
         </MudNavMenu>
     </MudDrawer>
     <MudMainContent Class="pa-4">
