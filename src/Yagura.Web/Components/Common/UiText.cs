@@ -275,8 +275,11 @@ public static class UiText
     /// <summary>検索条件: 期間（終了）。{0} にサーバのタイムゾーンのオフセット表記が入る。</summary>
     public const string SearchFieldToFormat = "期間の終了（サーバ時刻 {0}）";
 
-    /// <summary>検索条件: 送信元アドレス（完全一致。DB-6 確定までの暫定規則）。</summary>
-    public const string SearchFieldSource = "送信元アドレス（完全一致）";
+    /// <summary>
+    /// 検索条件: 送信元アドレス（完全一致。DB-6 確定までの暫定規則）。IP アドレス指定であることを
+    /// ラベルで明示する（逆引きホスト名では検索できない——ADR-0007 決定 2・ui.md §4 の誤解手当て）。
+    /// </summary>
+    public const string SearchFieldSource = "送信元 IP アドレス（完全一致。名前では検索できません）";
 
     /// <summary>検索条件: 重大度（用語対応表: severity → 重大度）。</summary>
     public const string SearchFieldSeverity = "重大度";
@@ -286,6 +289,22 @@ public static class UiText
 
     /// <summary>検索実行ボタン。</summary>
     public const string SearchButton = "検索";
+
+    // ---- 送信元の逆引きホスト名（ADR-0007。ui.md §4） ----
+
+    /// <summary>
+    /// 逆引きホスト名の由来ツールチップ（ui.md §4 の確定文言を正とする。送信元 IP を表示する
+    /// 3 箇所すべてに共通で付与する——`YaguraSourceAddress` が内蔵）。
+    /// </summary>
+    public const string ReverseDnsTooltip =
+        "送信元 IP アドレスから DNS の逆引きで取得した名前です。" +
+        "機器自身が名乗るホスト名（ログに記載）とは別で、食い違うことがあります";
+
+    /// <summary>
+    /// 詳細表示のホスト名 / アプリ名ラベル（ui.md §4——逆引きホスト名との由来の違いを
+    /// 「（ログに記載）」で明示する。用語対応表: syslog HOSTNAME → ホスト名（ログに記載））。
+    /// </summary>
+    public const string DetailHostnameAppLabel = "ホスト名（ログに記載） / アプリ名";
 
     /// <summary>重大度の選択肢（RFC 5424 の 0〜7 に 1 対 1 対応。添字 = severity 値）。</summary>
     public static readonly IReadOnlyList<string> SeverityOptionLabels =
@@ -464,6 +483,18 @@ public static class UiText
 
     /// <summary>カウンタ平易語: 流量制御破棄。</summary>
     public const string CounterFlowControlDropped = "取りこぼし（受信量の制限。現在この機能は無効です）";
+
+    /// <summary>カウンタ平易語: 逆引き解決成功（ADR-0007 決定 6。ui.md §7.2）。</summary>
+    public const string CounterReverseDnsResolved = "逆引きホスト名の取得（成功）";
+
+    /// <summary>カウンタ平易語: 逆引き PTR 未登録（正常系であることを平易語で明示する）。</summary>
+    public const string CounterReverseDnsNotFound = "逆引きホスト名の取得（名前の登録なし——異常ではありません）";
+
+    /// <summary>カウンタ平易語: 逆引き解決失敗（増加が異常のシグナル）。</summary>
+    public const string CounterReverseDnsFailed = "逆引きホスト名の取得（失敗——DNS の応答なし・エラー）";
+
+    /// <summary>カウンタ平易語: 逆引き解決の見送り（キャッシュ上限。増加はキャッシュ運用の逼迫のシグナル）。</summary>
+    public const string CounterReverseDnsSkipped = "逆引きホスト名の取得（見送り——キャッシュが満杯）";
 
     /// <summary>未知の計器名のフォールバック表示（新カウンタ追加時の平易語未登録を隠さない）。</summary>
     public const string CounterUnknown = "（対応表未登録の項目）";

@@ -2,6 +2,7 @@
 @using System.Globalization
 @inject ILogStore LogStore
 @inject IYaguraSystemStatusReader StatusReader
+@inject Yagura.Web.Diagnostics.ReverseDnsMetrics ReverseDnsMetrics
 
 @*
     システム状態（ui.md §4。M8-3。Issue #70）: 全カウンタ・ゲージの一覧・通知履歴・受信断履歴。
@@ -135,7 +136,18 @@
     protected override async Task OnInitializedAsync()
     {
         var status = StatusReader.ReadCurrent();
-        _counters = status.Counters;
+        // 逆引き解決のカウンタ 4 種(ADR-0007 決定 6)は Web 層の観測点のため、ホスト管轄の
+        // 観測値(IYaguraSystemStatusReader)には含まれない——本画面が Web 層の計測点から直接
+        // 読み出して同じ一覧へ併記する(IsLoss = false: 表示補助の観測でありログの取りこぼしでは
+        // ない。再起動をまたぐ永続化もしない——ReverseDnsMetrics の設計コメント参照)。
+        _counters =
+        [
+            .. status.Counters,
+            new YaguraCounterReading(Yagura.Web.Diagnostics.ReverseDnsMetrics.ResolvedInstrumentName, ReverseDnsMetrics.ResolvedTotal, IsLoss: false),
+            new YaguraCounterReading(Yagura.Web.Diagnostics.ReverseDnsMetrics.NotFoundInstrumentName, ReverseDnsMetrics.NotFoundTotal, IsLoss: false),
+            new YaguraCounterReading(Yagura.Web.Diagnostics.ReverseDnsMetrics.FailedInstrumentName, ReverseDnsMetrics.FailedTotal, IsLoss: false),
+            new YaguraCounterReading(Yagura.Web.Diagnostics.ReverseDnsMetrics.SkippedInstrumentName, ReverseDnsMetrics.SkippedTotal, IsLoss: false),
+        ];
         _spool = status.Spool;
         _spoolDegraded = status.SpoolDegraded;
 
@@ -163,6 +175,10 @@
         "yagura.ingestion.spool.discarded" => UiText.CounterSpoolDiscarded,
         "yagura.ingestion.persistence.failed" => UiText.CounterPersistenceFailed,
         "yagura.ingestion.flow_control.dropped" => UiText.CounterFlowControlDropped,
+        Yagura.Web.Diagnostics.ReverseDnsMetrics.ResolvedInstrumentName => UiText.CounterReverseDnsResolved,
+        Yagura.Web.Diagnostics.ReverseDnsMetrics.NotFoundInstrumentName => UiText.CounterReverseDnsNotFound,
+        Yagura.Web.Diagnostics.ReverseDnsMetrics.FailedInstrumentName => UiText.CounterReverseDnsFailed,
+        Yagura.Web.Diagnostics.ReverseDnsMetrics.SkippedInstrumentName => UiText.CounterReverseDnsSkipped,
         _ => UiText.CounterUnknown,
     };
 

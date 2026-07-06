@@ -66,6 +66,19 @@ public static class YaguraWebViewerExtensions
         services.AddScoped<CircuitHandler, YaguraCircuitHandler>();
         services.AddHostedService<CircuitIdleReclaimService>();
 
+        // ---- 送信元の逆引きホスト名（ADR-0007。ui.md §4）----
+        //
+        // - ReverseDnsDisplayOptions は Host が設定読み込み結果（Viewer:ReverseDns:Enabled）から
+        //   構築して先に登録する。未登録のホスト（テストハーネス等）では TryAdd の既定 =
+        //   「無効」に倒す——構成を持たない実行形態が外向き DNS クエリを発しないため（決定 4 の
+        //   縮小側と同じ向き）
+        // - 解決 API の呼び出しは IReverseDnsLookup の実装 1 点に集約する（オフ時・対象帯域外で
+        //   下位 API へ到達しないことの単体テスト固定——security.md §1.1）
+        services.TryAddSingleton(new ReverseDns.ReverseDnsDisplayOptions(Enabled: false));
+        services.TryAddSingleton<ReverseDns.IReverseDnsLookup, ReverseDns.SystemDnsReverseLookup>();
+        services.AddSingleton<Diagnostics.ReverseDnsMetrics>();
+        services.AddSingleton<ReverseDns.IReverseDnsResolver, ReverseDns.ReverseDnsResolver>();
+
         return services;
     }
 

@@ -82,6 +82,19 @@ public sealed class YaguraConfigurationOptions
         /// 不正値は §1「縮小側で継続」——<c>LocalhostOnly</c>（より狭い側）へ縮小する。
         /// </summary>
         public string? PublicAccess { get; set; }
+
+        /// <summary>逆引き（PTR）ホスト名表示の設定（ADR-0007）。</summary>
+        public ReverseDnsOptions? ReverseDns { get; set; }
+
+        public sealed class ReverseDnsOptions
+        {
+            /// <summary>
+            /// 逆引きホスト名表示の有効/無効（既定オン。ADR-0007 決定 4）。
+            /// 不正値は §1「縮小側で継続」——外向き DNS クエリを発生させる機能のため、
+            /// 不正値では発生しない側（無効）へ倒す。
+            /// </summary>
+            public string? Enabled { get; set; }
+        }
     }
 
     public sealed class AdminOptions

@@ -82,6 +82,7 @@ public sealed class ListenerBindPlanTests
             TcpPort: 514,
             HttpPort: 8514,
             ViewerPublicAccess: viewerPublicAccess,
+            ViewerReverseDnsEnabled: true,
             AdminHttpPort: adminHttpPort,
             SqliteFileName: "yagura.db",
             SpoolEnabled: true,
