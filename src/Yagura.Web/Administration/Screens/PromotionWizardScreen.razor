@@ -7,11 +7,15 @@
 @inject YaguraCircuitContext CircuitContext
 
 @*
-    本番昇格（SQLite → SQL Server）ウィザードの骨格（database.md §6.1・ui.md §4。M8-4。Issue #71）。
+    本番昇格（SQLite → SQL Server）ウィザード（database.md §6.1・ui.md §4。M8-4 骨格 = Issue #71、
+    接続組み立て・認証トグル・修復 SQL 提示の UX 完成 = PR #102）。
 
     - 準備（接続検証）と本番（切替実行）を分離する（§6.1。準備は何度でも中断・再開できる）
-    - 接続文字列は資格情報としてサーバのメモリにのみ保持し、無操作 15 分（CF-3 仮値）で破棄
-      （configuration.md §5。破棄後の再開では再入力を求め、確定済みの選択は保持される）
+    - 接続は項目入力を既定とし、接続文字列はサーバ側で組み立てる。直接入力は上級者向けに併存
+    - パスワードは入力方式によらずマスク付き専用欄からのみ入力し、サーバのメモリにのみ保持、
+      無操作 15 分（CF-3 仮値）で破棄（configuration.md §5。パスワードは snapshot に含まれない
+      ため、画面のローカル状態のみが入力経路——破棄後の再開では再入力を求める）
+    - 検証失敗は原因分類ごとの案内 + 修復 SQL（表示のみ。サーバは実行しない——§5.2）
     - 切替の確定前に蓄積ログが参照できなくなる帰結を予告する（§6.1 の予告義務・文言は ui.md §5.4）
     - 切替実行は破壊的操作 = 確認ダイアログ必須（ui.md §3.1）+ 冪等トークン（configuration.md §7）
 *@
@@ -42,13 +46,77 @@ else
 
         @if (_snapshot.CredentialReentryRequired)
         {
-            <MudText Class="mt-2">@UiText.PromotionCredentialReentryRequired</MudText>
+            <MudText Class="mt-2" role="alert">@UiText.PromotionCredentialReentryRequired</MudText>
         }
 
-        <YaguraTextField Label="@UiText.PromotionConnectionStringLabel"
-                         Required="true"
-                         @bind-Value="_connectionString"
-                         ErrorText="@_connectionErrorText" />
+        @* 入力方式の切り替え（項目入力を既定・直接入力は上級者向け——database.md §6.1） *@
+        <div class="mt-4 mb-4">
+            <YaguraButton OnClick="() => SwitchInputMode(PromotionConnectionInputMode.Form)"
+                          Disabled="@(_inputMode == PromotionConnectionInputMode.Form)">
+                @UiText.PromotionInputModeForm
+            </YaguraButton>
+            <YaguraButton OnClick="() => SwitchInputMode(PromotionConnectionInputMode.Raw)"
+                          Disabled="@(_inputMode == PromotionConnectionInputMode.Raw)">
+                @UiText.PromotionInputModeRaw
+            </YaguraButton>
+        </div>
+
+        @if (_inputMode == PromotionConnectionInputMode.Form)
+        {
+            <YaguraTextField Label="@UiText.PromotionServerNameLabel"
+                             Required="true"
+                             Placeholder="@UiText.PromotionServerNamePlaceholder"
+                             @bind-Value="_serverName" />
+            <YaguraTextField Label="@UiText.PromotionDatabaseNameLabel"
+                             Required="true"
+                             @bind-Value="_databaseName" />
+            <YaguraSelectField Label="@UiText.PromotionAuthModeLabel"
+                               Required="true"
+                               AllowEmpty="false"
+                               Options="AuthModeOptions"
+                               Value="@AuthModeValue"
+                               ValueChanged="OnAuthModeChanged" />
+
+            @if (_authenticationMode == PromotionAuthenticationMode.WindowsIntegrated)
+            {
+                @* 接続に使うアカウントの明示（database.md §6.1——SQL Server 側にどの名前で
+                   見えるかを推測させない） *@
+                <MudText Typo="Typo.caption" Class="mb-4">
+                    @string.Format(UiText.PromotionWindowsAccountNoteFormat, _snapshot.ServiceAccountName)
+                </MudText>
+            }
+            else
+            {
+                <YaguraTextField Label="@UiText.PromotionUserNameLabel"
+                                 Required="true"
+                                 @bind-Value="_userName" />
+                <YaguraTextField Label="@UiText.PromotionPasswordLabel"
+                                 Required="true"
+                                 Masked="true"
+                                 HelpText="@UiText.PromotionPasswordHelp"
+                                 @bind-Value="_password" />
+            }
+
+            <YaguraCheckboxField Label="@UiText.PromotionTrustServerCertificateLabel"
+                                 HelpText="@UiText.PromotionTrustServerCertificateHelp"
+                                 @bind-Value="_trustServerCertificate" />
+        }
+        else
+        {
+            <YaguraTextField Label="@UiText.PromotionConnectionStringLabel"
+                             Required="true"
+                             HelpText="@UiText.PromotionRawConnectionStringHelp"
+                             @bind-Value="_rawConnectionString" />
+            <YaguraTextField Label="@UiText.PromotionPasswordLabel"
+                             Masked="true"
+                             HelpText="@UiText.PromotionPasswordHelp"
+                             @bind-Value="_password" />
+        }
+
+        @if (_connectionErrorText is not null)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Error" role="alert">@_connectionErrorText</MudText>
+        }
 
         <div class="mt-4">
             <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ValidateAsync">@UiText.PromotionValidateConnection</YaguraButton>
@@ -56,7 +124,22 @@ else
 
         @if (_validationResult is not null)
         {
-            <MudText Class="mt-2">@_validationResult.Message</MudText>
+            @if (_validationResult.Success)
+            {
+                <MudText Class="mt-2">@UiText.PromotionValidationSucceeded</MudText>
+            }
+            else
+            {
+                @* 原因分類ごとの次の一手（database.md §6.1。分類不能は生メッセージ + 汎用案内のみ） *@
+                <MudText Class="mt-2" role="alert">@FailureGuidance(_validationResult)</MudText>
+                <MudText Typo="Typo.caption" Class="mt-1">@_validationResult.Message</MudText>
+                @if (_validationResult.RemediationSql is string remediationSql)
+                {
+                    <div class="mt-2">
+                        <YaguraCopyBlock Label="@UiText.PromotionRemediationSqlLabel" Value="@remediationSql" />
+                    </div>
+                }
+            }
         }
     </MudPaper>
 
@@ -66,19 +149,38 @@ else
         <MudText Class="mt-2">@UiText.PromotionSwitchWarning</MudText>
 
         <div class="mt-4">
-            <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Evacuate)"
-                          Disabled="@(_snapshot.Disposal == OldDatabaseDisposal.Evacuate)">
+            <YaguraButton OnClick="ShowEvacuationInput"
+                          Disabled="@_showEvacuationInput">
                 @UiText.PromotionDisposalEvacuate
             </YaguraButton>
-            <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Delete)"
+            <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Delete, null)"
                           Disabled="@(_snapshot.Disposal == OldDatabaseDisposal.Delete)">
                 @UiText.PromotionDisposalDelete
             </YaguraButton>
         </div>
 
+        @if (_showEvacuationInput)
+        {
+            @* 退避先の指定（database.md §6.1——退避の選択時は必須・選択内容とともに監査対象） *@
+            <div class="mt-4">
+                <YaguraTextField Label="@UiText.PromotionEvacuationDirectoryLabel"
+                                 Required="true"
+                                 Placeholder="@UiText.PromotionEvacuationDirectoryPlaceholder"
+                                 ErrorText="@_disposalErrorText"
+                                 @bind-Value="_evacuationDirectory" />
+                <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Evacuate, _evacuationDirectory)">
+                    @UiText.PromotionConfirmEvacuation
+                </YaguraButton>
+            </div>
+        }
+
         @if (_snapshot.Disposal is OldDatabaseDisposal chosen)
         {
-            <MudText Class="mt-2">選択中: @(chosen == OldDatabaseDisposal.Evacuate ? UiText.PromotionDisposalEvacuate : UiText.PromotionDisposalDelete)</MudText>
+            <MudText Class="mt-2">
+                選択中: @(chosen == OldDatabaseDisposal.Evacuate
+                    ? $"{UiText.PromotionDisposalEvacuate}（{_snapshot.EvacuationDirectory}）"
+                    : UiText.PromotionDisposalDelete)
+            </MudText>
         }
     </MudPaper>
 
@@ -96,15 +198,42 @@ else
 }
 
 @code {
+    private const string AuthModeWindowsValue = "windows";
+    private const string AuthModeSqlValue = "sql";
+
+    private static readonly IReadOnlyList<YaguraSelectOption> AuthModeOptions =
+    [
+        new(AuthModeWindowsValue, UiText.PromotionAuthModeWindows),
+        new(AuthModeSqlValue, UiText.PromotionAuthModeSql),
+    ];
+
     private PromotionWizardSnapshot? _snapshot;
     private PromotionValidationResult? _validationResult;
     private PromotionApplyResult? _applyResult;
     private string? _resultMessage;
-    private string? _connectionString;
     private string? _connectionErrorText;
+    private string? _disposalErrorText;
+
+    // ---- 接続入力のローカル状態（snapshot から復元。パスワードだけは snapshot に含まれない
+    //      ため常にこの画面のローカル状態が唯一の入力経路——configuration.md §5） ----
+    private PromotionConnectionInputMode _inputMode = PromotionConnectionInputMode.Form;
+    private string? _serverName;
+    private string? _databaseName;
+    private PromotionAuthenticationMode _authenticationMode = PromotionAuthenticationMode.WindowsIntegrated;
+    private string? _userName;
+    private bool _trustServerCertificate;
+    private string? _password;
+    private string? _rawConnectionString;
+
+    // ---- 処分のローカル状態 ----
+    private bool _showEvacuationInput;
+    private string? _evacuationDirectory;
 
     private bool CanExecute =>
         _snapshot is { ConnectionValidated: true, Disposal: not null, ExecuteIdempotencyToken: not null };
+
+    private string AuthModeValue =>
+        _authenticationMode == PromotionAuthenticationMode.WindowsIntegrated ? AuthModeWindowsValue : AuthModeSqlValue;
 
     protected override async Task OnInitializedAsync()
     {
@@ -112,6 +241,24 @@ else
         if (_snapshot.Executed)
         {
             _resultMessage = UiText.WizardApplied;
+        }
+
+        // 進行状態の復元（configuration.md §5——確定済みの入力は再開時に打ち直させない）。
+        _inputMode = _snapshot.InputMode;
+        _rawConnectionString = _snapshot.RawConnectionString;
+        if (_snapshot.Form is PromotionConnectionForm form)
+        {
+            _serverName = form.ServerName;
+            _databaseName = form.DatabaseName;
+            _authenticationMode = form.AuthenticationMode;
+            _userName = form.UserName;
+            _trustServerCertificate = form.TrustServerCertificate;
+        }
+
+        if (_snapshot.Disposal == OldDatabaseDisposal.Evacuate)
+        {
+            _showEvacuationInput = true;
+            _evacuationDirectory = _snapshot.EvacuationDirectory;
         }
     }
 
@@ -122,17 +269,55 @@ else
         _ => UiText.ApplyEffectRestartRequired,
     };
 
+    /// <summary>原因分類ごとの案内文言（database.md §6.1。文言は UiText——ui.md §7.1）。</summary>
+    private static string FailureGuidance(PromotionValidationResult result) => result.FailureKind switch
+    {
+        PromotionConnectionFailureKind.CertificateNotTrusted => UiText.PromotionFailureCertificateGuidance,
+        PromotionConnectionFailureKind.ServerUnreachable => UiText.PromotionFailureUnreachableGuidance,
+        PromotionConnectionFailureKind.LoginFailed => UiText.PromotionFailureLoginGuidance,
+        PromotionConnectionFailureKind.DatabaseNotFound => UiText.PromotionFailureDatabaseNotFoundGuidance,
+        _ => UiText.PromotionFailureUnclassifiedGuidance,
+    };
+
+    private void SwitchInputMode(PromotionConnectionInputMode mode)
+    {
+        _inputMode = mode;
+        _connectionErrorText = null;
+        _validationResult = null;
+    }
+
+    private Task OnAuthModeChanged(string? value)
+    {
+        _authenticationMode = value == AuthModeSqlValue
+            ? PromotionAuthenticationMode.SqlServer
+            : PromotionAuthenticationMode.WindowsIntegrated;
+        return Task.CompletedTask;
+    }
+
     private async Task ValidateAsync()
     {
         try
         {
             _connectionErrorText = null;
+            _validationResult = null;
 
-            // 入力済みの接続文字列を都度設定してから検証する（無操作タイムアウトで破棄済みの
-            // 場合も、この経路が再入力そのものになる）。
-            if (!string.IsNullOrWhiteSpace(_connectionString))
+            // 入力を都度設定してから検証する（無操作タイムアウトで破棄済みの場合も、この経路が
+            // 再入力そのものになる）。パスワードはこの呼び出しの引数でのみ渡る（snapshot・画面
+            // 表示に平文が現れる経路を作らない——configuration.md §5）。
+            if (_inputMode == PromotionConnectionInputMode.Form)
             {
-                _snapshot = await PromotionWizard.SetConnectionStringAsync(_connectionString);
+                var form = new PromotionConnectionForm(
+                    _serverName?.Trim() ?? string.Empty,
+                    _databaseName?.Trim() ?? string.Empty,
+                    _authenticationMode,
+                    string.IsNullOrWhiteSpace(_userName) ? null : _userName.Trim(),
+                    _trustServerCertificate);
+                _snapshot = await PromotionWizard.SetConnectionFormAsync(form, _password);
+            }
+            else
+            {
+                _snapshot = await PromotionWizard.SetRawConnectionStringAsync(
+                    _rawConnectionString ?? string.Empty, _password);
             }
 
             _validationResult = await PromotionWizard.ValidateConnectionAsync(CircuitContext.RemoteAddress);
@@ -144,9 +329,28 @@ else
         }
     }
 
-    private async Task ChooseDisposalAsync(OldDatabaseDisposal disposal)
+    private void ShowEvacuationInput()
     {
-        _snapshot = await PromotionWizard.ChooseOldDatabaseDisposalAsync(disposal);
+        _showEvacuationInput = true;
+        _disposalErrorText = null;
+    }
+
+    private async Task ChooseDisposalAsync(OldDatabaseDisposal disposal, string? evacuationDirectory)
+    {
+        try
+        {
+            _disposalErrorText = null;
+            _snapshot = await PromotionWizard.ChooseOldDatabaseDisposalAsync(disposal, evacuationDirectory);
+
+            if (disposal == OldDatabaseDisposal.Delete)
+            {
+                _showEvacuationInput = false;
+            }
+        }
+        catch (WizardValidationException ex)
+        {
+            _disposalErrorText = ex.Message;
+        }
     }
 
     private async Task ExecuteAsync()

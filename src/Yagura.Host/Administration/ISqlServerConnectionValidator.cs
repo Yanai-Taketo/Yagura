@@ -1,3 +1,5 @@
+using Yagura.Abstractions.Administration;
+
 namespace Yagura.Host.Administration;
 
 /// <summary>
@@ -14,7 +16,7 @@ public interface ISqlServerConnectionValidator
     /// <summary>
     /// 接続文字列で SQL Server への接続を試み、結果を返す。<b>例外を投げない</b>——失敗は
     /// 結果（<see cref="SqlServerConnectionValidationResult.Success"/> = false + 利用者向け
-    /// メッセージ）で返す。メッセージに接続文字列・パスワードを含めてはならない。
+    /// メッセージ + 失敗の分類）で返す。メッセージに接続文字列・パスワードを含めてはならない。
     /// </summary>
     Task<SqlServerConnectionValidationResult> ValidateAsync(
         string connectionString,
@@ -24,4 +26,11 @@ public interface ISqlServerConnectionValidator
 /// <summary>接続検証の結果。</summary>
 /// <param name="Success">接続に成功したか。</param>
 /// <param name="Message">利用者向けの結果メッセージ（秘密情報を含めない）。</param>
-public sealed record SqlServerConnectionValidationResult(bool Success, string Message);
+/// <param name="FailureKind">
+/// 失敗の分類（database.md §6.1 の原因別の次の一手。成功時は
+/// <see cref="PromotionConnectionFailureKind.None"/>）。
+/// </param>
+public sealed record SqlServerConnectionValidationResult(
+    bool Success,
+    string Message,
+    PromotionConnectionFailureKind FailureKind = PromotionConnectionFailureKind.None);

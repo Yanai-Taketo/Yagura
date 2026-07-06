@@ -23,6 +23,7 @@
                   Variant="Variant.Outlined"
                   Margin="Margin.Dense"
                   InputId="@_inputId"
+                  InputType="@(Masked ? InputType.Password : InputType.Text)"
                   aria-required="@(Required ? "true" : null)" />
 </YaguraFormField>
 
@@ -60,6 +61,13 @@
     /// <summary>入力のたびに ValueChanged を発火するか（既定: フォーカス喪失時）。</summary>
     [Parameter]
     public bool Immediate { get; set; }
+
+    /// <summary>
+    /// マスク表示にするか（パスワード等の秘密入力——入力値を画面に表示しない。
+    /// ui.md §3.1。昇格ウィザードの SQL Server 認証で追加）。
+    /// </summary>
+    [Parameter]
+    public bool Masked { get; set; }
 
     [Parameter]
     public bool Disabled { get; set; }

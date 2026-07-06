@@ -630,15 +630,72 @@ public static class UiText
     /// <summary>反映方式の表示: サービス再起動が必要。</summary>
     public const string ApplyEffectRestartRequired = "反映にはサービスの再起動が必要です（再起動中は受信できません）";
 
-    // ---- 本番昇格ウィザード（database.md §6.1。M8-4 骨格） ----
+    // ---- 本番昇格ウィザード（database.md §6.1。M8-4 骨格 + PR #102 の UX 完成） ----
 
-    /// <summary>接続文字列の入力ラベル。</summary>
+    /// <summary>接続の入力方式: 項目で入力（既定——database.md §6.1）。</summary>
+    public const string PromotionInputModeForm = "項目で入力（推奨）";
+
+    /// <summary>接続の入力方式: 接続文字列の直接入力（上級者向け）。</summary>
+    public const string PromotionInputModeRaw = "接続文字列を直接入力（上級者向け）";
+
+    /// <summary>サーバ名の入力ラベル。</summary>
+    public const string PromotionServerNameLabel = "サーバ名";
+
+    /// <summary>サーバ名の入力例（名前付きインスタンス・ポート併記の形を示す）。</summary>
+    public const string PromotionServerNamePlaceholder = @"例: SV01\SQLEXPRESS または 10.0.0.180,1433";
+
+    /// <summary>データベース名の入力ラベル。</summary>
+    public const string PromotionDatabaseNameLabel = "データベース名";
+
+    /// <summary>認証方式の選択ラベル（用語対応表 ui.md §7.2）。</summary>
+    public const string PromotionAuthModeLabel = "認証方式";
+
+    /// <summary>認証方式: Windows 統合認証（既定 = database.md §5.1 の第一推奨）。</summary>
+    public const string PromotionAuthModeWindows = "Windows 統合認証（サービスのアカウントで接続）";
+
+    /// <summary>認証方式: SQL Server 認証。</summary>
+    public const string PromotionAuthModeSql = "SQL Server 認証（ユーザー名とパスワードで接続）";
+
+    /// <summary>
+    /// Windows 統合認証の接続アカウントの明示（{0} = サービス実行アカウント名。SQL Server 側に
+    /// どの名前で見えるかを推測させない——database.md §6.1）。
+    /// </summary>
+    public const string PromotionWindowsAccountNoteFormat =
+        "接続に使うアカウント: {0}（SQL Server 側にはこの名前のログインが必要です）";
+
+    /// <summary>ユーザー名の入力ラベル（SQL Server 認証）。</summary>
+    public const string PromotionUserNameLabel = "ユーザー名";
+
+    /// <summary>パスワードの入力ラベル（SQL Server 認証。マスク表示）。</summary>
+    public const string PromotionPasswordLabel = "パスワード";
+
+    /// <summary>パスワードの取り扱いの説明（configuration.md §5・§2 の統治を利用者の言葉で）。</summary>
+    public const string PromotionPasswordHelp =
+        "パスワードはこの欄でのみ入力します。切り替えの適用時に DPAPI で暗号化して保存され、" +
+        "接続文字列の組み立てだけに使われます。画面や記録に平文では残りません。";
+
+    /// <summary>サーバ証明書の信頼（TrustServerCertificate。用語対応表 ui.md §7.2）。</summary>
+    public const string PromotionTrustServerCertificateLabel = "サーバ証明書を信頼する";
+
+    /// <summary>
+    /// サーバ証明書の信頼の説明（失敗前から読める常設の説明——database.md §6.1。
+    /// なりすまし検知が行われない残存リスクを含む）。
+    /// </summary>
+    public const string PromotionTrustServerCertificateHelp =
+        "証明書の検証を省略します（通信の暗号化は維持されます）。なりすまし検知は行われないため、" +
+        "自己署名証明書を使う閉域環境向けの選択です。";
+
+    /// <summary>接続文字列の入力ラベル（直接入力方式）。</summary>
     public const string PromotionConnectionStringLabel = "SQL Server への接続文字列";
 
-    /// <summary>接続文字列の取り扱いの説明（configuration.md §5 の統治を利用者の言葉で）。</summary>
+    /// <summary>直接入力方式の注意（パスワード系キーの拒否——database.md §6.1）。</summary>
+    public const string PromotionRawConnectionStringHelp =
+        "パスワードは接続文字列に書かず、下のパスワード欄に入力してください（Password / Pwd キーはエラーになります）。";
+
+    /// <summary>パスワードの取り扱いの説明（configuration.md §5 の統治を利用者の言葉で）。</summary>
     public const string PromotionCredentialHandlingNote =
-        "接続文字列はこのウィザードの実行中だけサーバのメモリ上に保持され、完了または中断で破棄されます。" +
-        "15 分間操作がない場合も破棄され、再開時に再入力が必要です。";
+        "パスワードはこのウィザードの実行中だけサーバのメモリ上に保持され、完了または中断で破棄されます。" +
+        "15 分間操作がない場合も破棄され、再開時に再入力が必要です（サーバ名などの入力内容は保持されます）。";
 
     /// <summary>接続検証ボタン（database.md §6.1 準備フェーズ）。</summary>
     public const string PromotionValidateConnection = "接続を検証する";
@@ -646,9 +703,53 @@ public static class UiText
     /// <summary>接続検証成功。</summary>
     public const string PromotionValidationSucceeded = "SQL Server への接続を確認しました。";
 
-    /// <summary>接続文字列の再入力要求（無操作タイムアウト後の再開。configuration.md §5）。</summary>
+    /// <summary>パスワードの再入力要求（無操作タイムアウト後の再開。configuration.md §5）。</summary>
     public const string PromotionCredentialReentryRequired =
-        "操作の間隔が空いたため、接続文字列を破棄しました。再入力してください（確定済みの選択は保存されています）。";
+        "操作の間隔が空いたため、パスワードを破棄しました。再入力してください（確定済みの選択は保存されています）。";
+
+    /// <summary>
+    /// 検証失敗の案内: サーバ証明書が信頼されない（database.md §6.1 分類①。次の一手 =
+    /// 「サーバ証明書を信頼する」の有効化）。
+    /// </summary>
+    public const string PromotionFailureCertificateGuidance =
+        "SQL Server の証明書が信頼されていないため接続できませんでした。自己署名証明書を使っている場合は" +
+        "「サーバ証明書を信頼する」を有効にして、もう一度検証してください。";
+
+    /// <summary>検証失敗の案内: サーバへ到達できない（分類②。修復 SQL なし）。</summary>
+    public const string PromotionFailureUnreachableGuidance =
+        "SQL Server へ到達できませんでした。サーバ名・ポート・ファイアウォールの設定を確認してください。";
+
+    /// <summary>
+    /// 検証失敗の案内: ログイン失敗（分類③。18456 は誤パスワードでも DB 不在でも返るため
+    /// 条件付きの案内——database.md §6.1）。
+    /// </summary>
+    public const string PromotionFailureLoginGuidance =
+        "SQL Server にログインできませんでした。まずユーザー名とパスワード（Windows 統合認証の場合は" +
+        "接続に使うアカウント）を確認してください。ログインが未作成の場合は、下の SQL で作成できます。";
+
+    /// <summary>検証失敗の案内: データベース不在（分類④）。</summary>
+    public const string PromotionFailureDatabaseNotFoundGuidance =
+        "指定したデータベースを開けませんでした。データベースが未作成の場合は、下の SQL で作成できます。";
+
+    /// <summary>検証失敗の案内: 分類できない失敗（生メッセージ + 汎用案内のみ——database.md §6.1）。</summary>
+    public const string PromotionFailureUnclassifiedGuidance =
+        "接続できませんでした。次のエラーメッセージを確認してください。";
+
+    /// <summary>
+    /// 修復 SQL のブロック見出し（用語対応表 ui.md §7.2——このサーバは実行しない・
+    /// SQL Server 側で実行する旨を見出しで伝える）。
+    /// </summary>
+    public const string PromotionRemediationSqlLabel =
+        "解決するための SQL（このサーバは実行しません。SSMS 等で SQL Server 側で実行してください）";
+
+    /// <summary>退避先フォルダの入力ラベル（database.md §6.1——退避の選択時は必須）。</summary>
+    public const string PromotionEvacuationDirectoryLabel = "退避先のフォルダ";
+
+    /// <summary>退避先フォルダの入力例。</summary>
+    public const string PromotionEvacuationDirectoryPlaceholder = @"例: D:\Backup\Yagura";
+
+    /// <summary>退避の選択の確定ボタン（退避先の入力とセットで確定する）。</summary>
+    public const string PromotionConfirmEvacuation = "この退避先で「退避」を選択する";
 
     /// <summary>
     /// 切替確定前の予告（database.md §6.1 の委任を ui.md §5.4 が確定した文言）。

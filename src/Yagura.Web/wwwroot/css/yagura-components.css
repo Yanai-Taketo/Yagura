@@ -219,6 +219,27 @@
     outline-offset: 1px;
 }
 
+/* ---- オン/オフ入力（YaguraCheckboxField。ui.md §3.1。PR #102） ----
+   ラベルはチェックボックスの横（オン/オフ入力の慣習）。色はトークン由来のみ */
+
+.yagura-checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.yagura-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--mud-palette-primary);
+}
+
+.yagura-checkbox:focus-visible {
+    outline: 2px solid var(--mud-palette-primary); /* フォーカスリングを消さない（ui.md §8） */
+    outline-offset: 1px;
+}
+
 /* ---- ログ詳細（検索画面の詳細表示。M8-3） ---- */
 
 .yagura-detail-message {
