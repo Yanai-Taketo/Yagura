@@ -11,7 +11,7 @@
     - ページは MudPaper を直接使わず本部品でカード面を組む（低レベル API をページに
       散乱させない——ui.md §1）。
 *@
-<MudPaper Elevation="1" Class="yagura-card pa-4">
+<MudPaper Elevation="1" Class="@($"yagura-card pa-4 {Class}")">
     @if (!string.IsNullOrEmpty(Title))
     {
         <MudText Typo="Typo.h6" Class="yagura-card-title mb-2">@Title</MudText>
@@ -27,4 +27,11 @@
     /// <summary>カードの内容。</summary>
     [Parameter, EditorRequired]
     public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// 追加の CSS クラス（任意）。色・余白・角丸などトークン管理下の値は本部品が持つため、
+    /// 利用側からの指定はレイアウト系（グリッド内で高さを揃える yagura-card-fill 等）に限る。
+    /// </summary>
+    [Parameter]
+    public string? Class { get; set; }
 }
