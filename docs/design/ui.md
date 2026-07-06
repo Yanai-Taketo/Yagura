@@ -143,6 +143,7 @@
   - **機能オフ時**（`Viewer:ReverseDns:Enabled` = 無効）: DNS クエリを発しないことに加え、**キャッシュ済みの名前の表示も行わない**（「オフ = 逆引き名は出ない」を単純に保つ。ADR-0007 決定 4）
   - **共通コンポーネント化**: 表示は共通コンポーネント `YaguraSourceAddress`（§3.1）に集約する（§1 の低レベル API 散乱禁止・同型 UI 3 箇所の共通化。ADR-0007 のペルソナレビュー（PR #98）が §3.2 の「設計対話」を兼ねた）
   - **実装参照（ADR-0007 実装 PR）**: 解決・キャッシュ = `Yagura.Web.ReverseDns.ReverseDnsResolver`（契約 `IReverseDnsResolver` は `Yagura.Web` 内に配置——Web の外から参照する利用者が存在しないため `Yagura.Abstractions` へは置かない。M6-4 の判断枠組み。キャッシュは `ConcurrentDictionary` + 固定 TTL——BCL は DNS レコードの TTL を取得できない）。下位解決 API の集約点 = `IReverseDnsLookup` / `SystemDnsReverseLookup`（**オフ時・対象帯域外で下位 API へ到達しないことを `ReverseDnsResolverTests` が固定**——security.md §1.1 の受け入れ条件）。カウンタ = `Yagura.Web.Diagnostics.ReverseDnsMetrics`（状態画面が 4 種を平易語と併記して表示する。表示補助の観測でありメタデータ領域への永続化はしない）。数値の仮値は `ReverseDnsResolverLimits.Default`（[UI-10](#12-確定待ち一覧) に記録）
+- **構造化データ（RFC 5424 STRUCTURED-DATA）の一覧接頭表示（2026-07-07 オーナー承認済みデザイン）**: ログ検索一覧のメッセージ列で、構造化データを本文の**直前に原文のまま**（例 `[winevt Channel="System" EventID="7036"]`）淡色・等幅で表示する。**保存・解析は変更しない**（database.md §2.1 の保存契約はそのまま——一覧射影（`LogRecordSummary`）に含めて返す表示層の変更のみ）。**表示上の省略のみ**（単一行・最大 32 文字相当・はみ出しは省略記号——切り詰め・整形をしてデータを変えることはしない。全文は詳細表示の構造化データ欄（`YaguraCopyBlock`）で見られる）。構造化データを持たないレコード（RFC 3164 送信元等）では接頭表示自体を出さない
 
 ## 5. 状態表示の原則
 

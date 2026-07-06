@@ -222,6 +222,50 @@ public sealed class ViewerPageRenderTests
         Assert.Contains(UiText.ParseFailedLabel, html, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task LogSearch_RecordWithStructuredData_ShowsVerbatimPrefixBeforeMessage()
+    {
+        // RFC 5424 構造化データを本文の前に原文のまま接頭表示する（オーナー承認済みデザイン。
+        // database.md §2.1・ui.md §4——保存・解析は変更せず一覧射影 + 表示層のみの変更）。
+        var store = new FakeLogStore
+        {
+            Summaries =
+            [
+                CreateSummary(
+                    1,
+                    Baseline.AddMinutes(-1),
+                    "192.0.2.1",
+                    "sd-message",
+                    structuredData: "[winevt Channel=\"System\" EventID=\"7036\"]"),
+            ],
+        };
+        var reader = new FakeStatusReader { RetentionDays = 30 };
+
+        var html = await RenderPageAsync<LogSearch>(store, reader);
+
+        Assert.Contains("[winevt Channel=\"System\" EventID=\"7036\"]", html, StringComparison.Ordinal);
+        Assert.Contains("yagura-sd-prefix", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LogSearch_RecordWithoutStructuredData_OmitsPrefix()
+    {
+        // RFC 3164 送信元等、構造化データを持たないレコードでは接頭表示自体を出さない。
+        var store = new FakeLogStore
+        {
+            Summaries =
+            [
+                CreateSummary(1, Baseline.AddMinutes(-1), "192.0.2.1", "plain-message", structuredData: null),
+            ],
+        };
+        var reader = new FakeStatusReader { RetentionDays = 30 };
+
+        var html = await RenderPageAsync<LogSearch>(store, reader);
+
+        Assert.Contains("plain-message", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("yagura-sd-prefix", html, StringComparison.Ordinal);
+    }
+
     // ---- システム状態（ui.md §4。OS ゲージ注記 = 本 PR の設計判断） ----
 
     [Fact]
@@ -393,7 +437,8 @@ public sealed class ViewerPageRenderTests
         DateTimeOffset receivedAt,
         string sourceAddress,
         string? message,
-        ParseStatus parseStatus = ParseStatus.Parsed) =>
+        ParseStatus parseStatus = ParseStatus.Parsed,
+        string? structuredData = null) =>
         new(
             Id: id,
             ReceivedAt: receivedAt,
@@ -408,6 +453,7 @@ public sealed class ViewerPageRenderTests
             AppName: "app",
             ProcId: null,
             MsgId: null,
+            StructuredData: structuredData,
             Message: message);
 
     /// <summary>閲覧画面が使う読み取り口のフェイク（データはテストごとにシードする）。</summary>
