@@ -19,7 +19,10 @@
             class="yagura-select"
             value="@(Value ?? string.Empty)"
             @onchange="HandleChangeAsync">
-        <option value="">@UiText.SelectNoneOption</option>
+        @if (AllowEmpty)
+        {
+            <option value="">@UiText.SelectNoneOption</option>
+        }
         @foreach (var option in Options ?? [])
         {
             <option value="@option.Value">@option.Label</option>
@@ -41,6 +44,15 @@
     /// <summary>選択値（未選択 = null。「指定なし」を常に選べる——絞り込みの強制はしない）。</summary>
     [Parameter]
     public string? Value { get; set; }
+
+    /// <summary>
+    /// 「指定なし」の選択肢を出すか（既定 true——絞り込み条件で使う従来の形）。
+    /// <b>false（必須の択一——設定値の選択で使う）にする場合、<see cref="Value"/> には必ず
+    /// 選択肢のいずれかを初期値として与えること</b>——ネイティブ <c>select</c> は空選択肢が
+    /// ないと先頭を表示するため、null のままでは表示と値が食い違う（ui.md §3.1）。
+    /// </summary>
+    [Parameter]
+    public bool AllowEmpty { get; set; } = true;
 
     /// <summary>選択値の変更通知（@bind-Value で双方向バインドできる）。</summary>
     [Parameter]

@@ -1,0 +1,49 @@
+@namespace Yagura.Web.Components.Common
+
+@*
+    オン/オフ入力（ui.md §3.1 フォーム規約に従う具体入力部品。PR #102——
+    昇格ウィザードの「サーバ証明書を信頼する」で追加）。
+
+    入力本体はネイティブ <input type="checkbox"> とする（YaguraSelectField と同じ判断——
+    低レベル API の露出を増やさず、キーボード操作・支援技術対応はネイティブ要素の標準挙動に
+    乗る。ui.md §8）。ラベルはチェックボックスの横（オン/オフ入力の慣習）とし、補足説明は
+    その下に置く。見た目はトークン由来の CSS 変数のみで整える（.yagura-checkbox。
+    yagura-components.css）。
+*@
+<div class="yagura-form-field mb-4">
+    <label class="yagura-checkbox-row" for="@_inputId">
+        <input type="checkbox"
+               id="@_inputId"
+               class="yagura-checkbox"
+               checked="@Value"
+               @onchange="HandleChangeAsync" />
+        <MudText Typo="Typo.subtitle2" Inline="true">@Label</MudText>
+    </label>
+    @if (!string.IsNullOrEmpty(HelpText))
+    {
+        <MudText Typo="Typo.caption" Class="yagura-form-field-help">@HelpText</MudText>
+    }
+</div>
+
+@code {
+    private readonly string _inputId = $"yagura-field-{Guid.NewGuid():N}";
+
+    /// <summary>項目のラベル（チェックボックスの横に表示）。</summary>
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>オンか。</summary>
+    [Parameter]
+    public bool Value { get; set; }
+
+    /// <summary>値の変更通知（@bind-Value で双方向バインドできる）。</summary>
+    [Parameter]
+    public EventCallback<bool> ValueChanged { get; set; }
+
+    /// <summary>補足説明（任意。ラベルの下に表示——選択の帰結を失敗前から読める形にする）。</summary>
+    [Parameter]
+    public string? HelpText { get; set; }
+
+    private Task HandleChangeAsync(ChangeEventArgs e) =>
+        ValueChanged.InvokeAsync(e.Value is bool value && value);
+}

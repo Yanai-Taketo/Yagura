@@ -184,8 +184,15 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
-        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> SetConnectionStringAsync(
+        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> SetConnectionFormAsync(
+            Yagura.Abstractions.Administration.PromotionConnectionForm form,
+            string? password = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> SetRawConnectionStringAsync(
             string connectionString,
+            string? password = null,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
@@ -196,6 +203,7 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
 
         public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
             Yagura.Abstractions.Administration.OldDatabaseDisposal disposal,
+            string? evacuationDirectory = null,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
