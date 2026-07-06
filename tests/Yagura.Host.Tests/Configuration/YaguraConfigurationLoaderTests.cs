@@ -288,6 +288,68 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         Assert.Empty(result.Warnings);
     }
 
+    // ------------------------------------------------------------------
+    // 逆引きホスト名表示の有効/無効(ADR-0007。Viewer:ReverseDns:Enabled)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_ConfigurationFileMissing_ViewerReverseDnsDefaultsToEnabled()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.True(result.Configuration.ViewerReverseDnsEnabled);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Theory]
+    [InlineData("false", false)]
+    [InlineData("False", false)]
+    [InlineData("true", true)]
+    public void Load_ViewerReverseDnsEnabledInFile_IsAccepted(string value, bool expected)
+    {
+        WriteConfigurationFile($$"""{ "Viewer": { "ReverseDns": { "Enabled": "{{value}}" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(expected, result.Configuration.ViewerReverseDnsEnabled);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_ViewerReverseDnsEnabledInvalidValue_FallsBackToDisabledNotProductDefault()
+    {
+        // configuration.md §1「縮小側で継続」の ADR-0007 適用——既定はオン(発生側)だが、
+        // 不正値の縮小先は必ず無効(DNS クエリを発しない側)。Spool:Enabled(既定値で継続 =
+        // 不正値でも有効へ戻す)との違いが本キーの要点。
+        WriteConfigurationFile("""{ "Viewer": { "ReverseDns": { "Enabled": "yes" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.False(result.Configuration.ViewerReverseDnsEnabled);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Viewer:ReverseDns:Enabled", warning.Key);
+        Assert.Equal("yes", warning.InvalidValue);
+        Assert.Equal(bool.FalseString, warning.AppliedValue);
+        Assert.False(string.IsNullOrWhiteSpace(warning.Reason));
+    }
+
+    [Fact]
+    public void Load_ViewerReverseDnsEnabledKey_IsKnown()
+    {
+        // 未知キー扱いになっていないこと(KnownKeys への登録漏れの回帰検知)。
+        WriteConfigurationFile("""{ "Viewer": { "ReverseDns": { "Enabled": "true" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Empty(result.UnknownKeys);
+    }
+
     [Fact]
     public void Load_AdminHttpPortSetInFile_UsesFileValue()
     {
