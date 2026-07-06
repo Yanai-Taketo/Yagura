@@ -4,6 +4,7 @@
 @inject ILogStore LogStore
 @inject IYaguraSystemStatusReader StatusReader
 @inject NavigationManager Navigation
+@inject IScrollManager ScrollManager
 
 @*
     ログ検索（ui.md §4。M8-3。Issue #70）:
@@ -134,7 +135,8 @@
 
 @if (_detailRequested)
 {
-    <div class="mt-4">
+    @* id は詳細表示への自動スクロール(ShowDetailAsync → OnAfterRenderAsync)の対象。 *@
+    <div class="mt-4" id="log-detail">
         <YaguraCard Title="@UiText.DetailTitle">
             @if (_detail is null)
             {
@@ -399,6 +401,35 @@
     {
         _detailRequested = true;
         _detail = await LogStore.FindByIdAsync(summary.Id, DetailTimeout);
+
+        // 詳細は結果テーブルの下に開くため、行数が多いと「押しても何も起きない」ように
+        // 見える(2026-07-06 試用でオーナーが実際に迷った)。描画完了後に詳細へ自動
+        // スクロールする(実行は OnAfterRenderAsync——描画前にスクロールしても要素が無い)。
+        _scrollToDetailPending = true;
+    }
+
+    private bool _scrollToDetailPending;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_scrollToDetailPending)
+        {
+            return;
+        }
+
+        _scrollToDetailPending = false;
+
+        // MudBlazor 同梱の IScrollManager(手書き JS なし——ADR-0003 決定 1 の範囲内)。
+        // prerender では OnAfterRenderAsync 経由の JS interop が使えない環境があるため、
+        // 失敗してもスクロールを諦めるだけで機能(詳細表示自体)は損なわない。
+        try
+        {
+            await ScrollManager.ScrollIntoViewAsync("#log-detail", ScrollBehavior.Smooth);
+        }
+        catch (Exception)
+        {
+            // スクロールは補助動作。失敗を画面へ出さない。
+        }
     }
 
     private void CloseDetail()
