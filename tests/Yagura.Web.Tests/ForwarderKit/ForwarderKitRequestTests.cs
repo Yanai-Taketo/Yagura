@@ -160,4 +160,64 @@ public sealed class ForwarderKitRequestTests
         Assert.Null(error);
         Assert.Equal(["System", "Security"], request!.Channels);
     }
+
+    // ---- MSI オプトイン同梱（ADR-0008 設計条件 9） ----
+
+    [Fact]
+    public void TryCreate_NoMsiBundle_IncludeMsiFalse()
+    {
+        var ok = ForwarderKitRequest.TryCreate("192.0.2.10", 514, "System", null, out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.False(request!.IncludeMsi);
+        Assert.Null(request.MsiBundle);
+    }
+
+    [Fact]
+    public void TryCreate_MsiBundleVersionMatches_Succeeds()
+    {
+        var bundle = CreateBundle(versionMismatch: false, acknowledged: false);
+
+        var ok = ForwarderKitRequest.TryCreate("192.0.2.10", 514, "System", bundle, out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.True(request!.IncludeMsi);
+        Assert.Same(bundle, request.MsiBundle);
+    }
+
+    [Fact]
+    public void TryCreate_MsiBundleVersionMismatchNotAcknowledged_Fails()
+    {
+        var bundle = CreateBundle(versionMismatch: true, acknowledged: false);
+
+        var ok = ForwarderKitRequest.TryCreate("192.0.2.10", 514, "System", bundle, out var request, out var error);
+
+        Assert.False(ok);
+        Assert.Null(request);
+        Assert.Equal(ForwarderKitValidationError.MsiVersionMismatchNotAcknowledged, error);
+    }
+
+    [Fact]
+    public void TryCreate_MsiBundleVersionMismatchAcknowledged_Succeeds()
+    {
+        var bundle = CreateBundle(versionMismatch: true, acknowledged: true);
+
+        var ok = ForwarderKitRequest.TryCreate("192.0.2.10", 514, "System", bundle, out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.True(request!.IncludeMsi);
+    }
+
+    private static ForwarderMsiBundle CreateBundle(bool versionMismatch, bool acknowledged) =>
+        new(
+            FilePath: @"C:\ProgramData\Yagura\forwarder\fluent-bit-4.0.14-win64.msi",
+            FileName: "fluent-bit-4.0.14-win64.msi",
+            ProductVersion: "4.0.14",
+            Sha256: "abc123",
+            OfficialHashMatch: OfficialHashMatchResult.Unverified,
+            VersionMismatch: versionMismatch,
+            VersionMismatchAcknowledged: acknowledged);
 }
