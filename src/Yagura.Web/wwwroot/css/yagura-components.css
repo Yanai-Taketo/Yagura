@@ -131,6 +131,21 @@
 
 .yagura-timeline-bar {
     fill: var(--mud-palette-primary);
+    cursor: default;
+}
+
+/* ホバー中の棒を少し明るくして、どの棒の情報を見ているか分かるようにする
+   （<title> のツールチップと合わせて。2026-07-06） */
+.yagura-timeline-bar:hover {
+    fill: var(--mud-palette-primary-lighten);
+}
+
+/* 中央の操作案内は控えめ・省略可（狭い幅では両端の時刻を優先して省略記号にする） */
+.yagura-timeline-hint {
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* 受信断区間の帯（state-error 系。透過で棒と重ね読みできるようにする——色 + 凡例文言の
