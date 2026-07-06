@@ -1,0 +1,62 @@
+@namespace Yagura.Web.Components.Common
+@using System.Globalization
+@using Yagura.Web.ReverseDns
+@implements IDisposable
+@inject IReverseDnsResolver ReverseDnsResolver
+
+@*
+    送信元アドレスの共通表示（ADR-0007 決定 1・2。ui.md §3.1・§4）:
+    - IP が主（等幅・常に表示）・逆引きホスト名が補助（text-secondary・注釈サイズ・等幅にしない）
+    - 由来のツールチップは表示 3 箇所（検索一覧・検索詳細・ダッシュボード送信元別）共通で
+      本コンポーネントが内蔵する（確定文言 = UiText.ReverseDnsTooltip。ui.md §4 が正）
+    - 描画は解決を待たない: キャッシュ命中分のみ即時表示し、未解決分は束ね通知
+      （IReverseDnsResolver.NamesUpdated）で反映する
+    - 逆引き名が引けない場合（PTR 未登録・打ち切り・対象帯域外・機能オフ）は IP のみ =
+      表示の欠落を異常に見せない
+*@
+<span class="yagura-monospace">@AddressText</span>@if (_reverseName is not null)
+{
+    @* aria-label は由来説明のスクリーンリーダー向け経路(ツールチップはホバー時のみのため。
+       YaguraTable の詳細ボタンと同じ流儀——ui.md §8) *@
+    <MudTooltip Text="@UiText.ReverseDnsTooltip">
+        <span class="yagura-reverse-dns" aria-label="@UiText.ReverseDnsTooltip">@_reverseName</span>
+    </MudTooltip>
+}
+
+@code {
+    /// <summary>送信元アドレス（IP の文字列表現）。</summary>
+    [Parameter, EditorRequired]
+    public string Address { get; set; } = string.Empty;
+
+    /// <summary>送信元ポート（詳細表示用。指定時は「アドレス:ポート」で表示する）。</summary>
+    [Parameter]
+    public int? Port { get; set; }
+
+    private string? _reverseName;
+
+    private string AddressText => Port is { } port
+        ? string.Create(CultureInfo.InvariantCulture, $"{Address}:{port}")
+        : Address;
+
+    protected override void OnInitialized() =>
+        ReverseDnsResolver.NamesUpdated += OnNamesUpdated;
+
+    protected override void OnParametersSet() =>
+        _reverseName = ReverseDnsResolver.TryGetDisplayName(Address);
+
+    private void OnNamesUpdated() =>
+        // 通知は束ね済み（ADR-0007 決定 2 の反映粒度）。circuit の同期コンテキストへ戻して
+        // 差分がある場合のみ再描画する。
+        _ = InvokeAsync(() =>
+        {
+            var updated = ReverseDnsResolver.TryGetDisplayName(Address);
+            if (!string.Equals(updated, _reverseName, StringComparison.Ordinal))
+            {
+                _reverseName = updated;
+                StateHasChanged();
+            }
+        });
+
+    public void Dispose() =>
+        ReverseDnsResolver.NamesUpdated -= OnNamesUpdated;
+}

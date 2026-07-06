@@ -127,7 +127,8 @@
             </HeaderContent>
             <RowTemplate Context="record">
                 <MudTd DataLabel="受信時刻"><YaguraTimestamp Value="@record.ReceivedAt" /></MudTd>
-                <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@record.SourceAddress</span></MudTd>
+                @* 逆引きホスト名の併記(ADR-0007。共通コンポーネント YaguraSourceAddress——ui.md §4) *@
+                <MudTd DataLabel="@UiText.SourceColumnAddress"><YaguraSourceAddress Address="@record.SourceAddress" /></MudTd>
                 <MudTd DataLabel="重大度"><YaguraSeverityChip Severity="@record.Severity" /></MudTd>
                 <MudTd DataLabel="分類（ファシリティ）">@UiText.FormatFacility(record.Facility)</MudTd>
                 <MudTd DataLabel="メッセージ">@SummaryMessage(record)</MudTd>
@@ -178,7 +179,8 @@
                 </div>
                 <div>
                     <MudText Typo="Typo.caption" Class="yagura-detail-meta-label">@UiText.SourceColumnAddress</MudText>
-                    <MudText Typo="Typo.body2"><span class="yagura-monospace">@_detail.SourceAddress:@_detail.SourcePort</span>（@_detail.Protocol）</MudText>
+                    @* 逆引きホスト名の併記(ADR-0007。ui.md §4) *@
+                    <MudText Typo="Typo.body2"><YaguraSourceAddress Address="@_detail.SourceAddress" Port="@_detail.SourcePort" />（@_detail.Protocol）</MudText>
                 </div>
                 <div>
                     <MudText Typo="Typo.caption" Class="yagura-detail-meta-label">@UiText.DetailDeviceTimestamp</MudText>
@@ -194,7 +196,8 @@
                     </MudText>
                 </div>
                 <div>
-                    <MudText Typo="Typo.caption" Class="yagura-detail-meta-label">ホスト名 / アプリ名</MudText>
+                    @* 「(ログに記載)」で逆引きホスト名との由来の違いを明示する(ADR-0007 決定 1) *@
+                    <MudText Typo="Typo.caption" Class="yagura-detail-meta-label">@UiText.DetailHostnameAppLabel</MudText>
                     <MudText Typo="Typo.body2">@(_detail.Hostname ?? "—") / @(_detail.AppName ?? "—")</MudText>
                 </div>
             </div>

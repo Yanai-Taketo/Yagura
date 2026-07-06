@@ -22,6 +22,10 @@
 /// 閲覧リスナの公開範囲（既定 <see cref="Configuration.ViewerPublicAccess.Lan"/>。M6-1）。
 /// 不正値は <see cref="Configuration.ViewerPublicAccess.LocalhostOnly"/> へ縮小済み。
 /// </param>
+/// <param name="ViewerReverseDnsEnabled">
+/// 逆引き（PTR）ホスト名表示の有効/無効（既定オン。ADR-0007 決定 4）。不正値は縮小側
+/// （無効 = DNS クエリを発しない）へ適用済み。
+/// </param>
 /// <param name="AdminHttpPort">
 /// 管理 HTTP リスナのポート（検証済み。M6-1）。bind 先は常に <c>127.0.0.1</c> / <c>::1</c>
 /// 固定（設定で変更不可——configuration.md §1 の不変条件）。
@@ -53,6 +57,7 @@ public sealed record ResolvedYaguraConfiguration(
     int TcpPort,
     int HttpPort,
     ViewerPublicAccess ViewerPublicAccess,
+    bool ViewerReverseDnsEnabled,
     int AdminHttpPort,
     string SqliteFileName,
     bool SpoolEnabled,
