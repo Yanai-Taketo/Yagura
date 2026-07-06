@@ -279,9 +279,13 @@ public sealed class ReverseDnsResolverTests
         using var metrics = new ReverseDnsMetrics();
         using var resolver = CreateResolver(lookup, metrics, limits: TestLimits(maxConcurrentLookups: 1));
 
-        Assert.Null(resolver.TryGetDisplayName("10.0.1.1")); // スロットを占有
+        Assert.Null(resolver.TryGetDisplayName("10.0.1.1")); // スロットを占有（上限計数は同期）
         Assert.Null(resolver.TryGetDisplayName("10.0.1.2")); // 延期（キューに積まない・計上しない）
 
+        // 照会の発行は Task.Yield 越しの非同期のため、並列テスト実行でスレッドプールが
+        // 逼迫していると即時には現れない——発行を待ってから件数を検証する（flake 対策。
+        // 2 件目の延期判定自体は同期カウンタによるため、1 件に収束することは保証される）。
+        await WaitUntilAsync(() => !lookup.Queries.IsEmpty);
         Assert.Single(lookup.Queries);
         Assert.Equal(0, metrics.SkippedTotal);
 
