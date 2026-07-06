@@ -83,8 +83,11 @@
 
     private int MaxCount => Buckets is { Count: > 0 } ? Math.Max(1, Buckets.Max(b => b.Count)) : 1;
 
+    // グラフの縦軸の基準（一番高い棒の件数）。専門語「区切り」を避け、棒 1 本 = 一定時間の
+    // 受信件数であることが伝わる文言にする（2026-07-06 試用の「最大 N 件/区切りの意味が分からない」
+    // フィードバック）。
     private string MaxLabel => string.Create(
-        CultureInfo.InvariantCulture, $"最大 {(Buckets is { Count: > 0 } ? Buckets.Max(b => b.Count) : 0)} 件/区切り");
+        CultureInfo.InvariantCulture, $"棒 1 本が最も高い時間帯で {(Buckets is { Count: > 0 } ? Buckets.Max(b => b.Count) : 0)} 件");
 
     private string AriaLabel => string.Create(
         CultureInfo.InvariantCulture,
