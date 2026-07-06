@@ -1,6 +1,6 @@
 # ADR-0007: 閲覧画面の送信元逆引き（PTR）ホスト名表示
 
-- 状態: proposed
+- 状態: accepted
 - 日付: 2026-07-06
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)（目的——Windows 管理者の既存スキルで運用できること）、[ADR-0002](0002-architecture-principles.md)（決定 2 受信パイプラインの品質原則・決定 4 外部送信の既定無効）、[ADR-0003](0003-ui-policy.md)（決定 5 文言原則）、[ADR-0004](0004-security-model.md)（決定 1 信頼ネットワーク前提）、[ui.md](../design/ui.md) §4・§7、[configuration.md](../design/configuration.md) §8、[security.md](../design/security.md) §1（閲覧リスナの外向き通信の台帳）
