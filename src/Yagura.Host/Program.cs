@@ -361,6 +361,16 @@ public static class Program
         builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(effectiveAdminPort));
         builder.Services.AddYaguraAdmin();
 
+        // フォワーダ配布キットの MSI オプトイン同梱（ADR-0008 設計条件 9・委任 #7）: 配置フォルダは
+        // データルート配下 forwarder（%ProgramData%\Yagura\forwarder）。Web 層はデータルートの
+        // 実パスを直接知らないため（INicCandidateSource と異なり外部設定＝データルートに依存する）、
+        // ISetupWizardService / IPromotionWizardService と同じ結線パターンでここ Host が実パスを
+        // 注入する（architecture.md §1.1 の参照構造）。フォルダの作成・ACL 設定はインストーラ
+        // （WiX）の領分であり、ここでは作成しない（無ければ未検出として扱う——実装 PR の判断）。
+        builder.Services.AddSingleton<Yagura.Web.ForwarderKit.IForwarderMsiSource>(
+            _ => new Yagura.Web.ForwarderKit.SystemForwarderMsiSource(
+                Path.Combine(dataRoot, Yagura.Web.ForwarderKit.ForwarderMsiConstraints.PlacementSubPath)));
+
         // 逆引きホスト名表示の設定（ADR-0007。Viewer:ReverseDns:Enabled——検証・縮小適用済みの
         // 値を Web 層へ渡す。AddYaguraWebViewer の TryAdd 既定（無効）より先に登録すること）。
         builder.Services.AddSingleton(

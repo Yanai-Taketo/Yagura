@@ -7,7 +7,8 @@ namespace Yagura.Web.Tests.Components;
 
 /// <summary>
 /// フォワーダキット生成画面の表示確認（ADR-0008。既定選択なし・Security 初期オフ・
-/// 候補の説明名表示を <see cref="CommonComponentRenderHarness"/> の初期描画で検証する）。
+/// 候補の説明名表示・MSI 同梱の検出状態別表示（設計条件 9）を
+/// <see cref="CommonComponentRenderHarness"/> の初期描画で検証する）。
 /// </summary>
 public sealed class ForwarderKitScreenRenderTests
 {
@@ -71,15 +72,75 @@ public sealed class ForwarderKitScreenRenderTests
         Assert.Contains(UiText.ForwarderKitMsiNotIncludedNote, html);
     }
 
-    private static Task<string> RenderAsync(INicCandidateSource nicCandidateSource) =>
+    [Fact]
+    public async Task InitialRender_MsiNotFound_ShowsPathAndGuidance()
+    {
+        var html = await RenderAsync(
+            new FakeNicCandidateSource([]),
+            new FakeForwarderMsiSource(@"C:\ProgramData\Yagura\forwarder", ForwarderMsiLookup.NotFound()));
+
+        Assert.Contains(@"C:\ProgramData\Yagura\forwarder", html);
+        Assert.Contains(string.Format(UiText.ForwarderKitMsiNotFoundFormat, ForwarderMsiConstraints.FileNamePattern), html);
+        // チェックボックスは出さない。
+        Assert.DoesNotContain(UiText.ForwarderKitMsiIncludeCheckbox, html);
+    }
+
+    [Fact]
+    public async Task InitialRender_MsiSingleDetected_ShowsCheckboxInitiallyUnchecked()
+    {
+        var details = new ForwarderMsiDetails(
+            @"C:\ProgramData\Yagura\forwarder\fluent-bit-4.0.14-win64.msi",
+            "fluent-bit-4.0.14-win64.msi",
+            "4.0.14",
+            "abc123",
+            12345);
+
+        var html = await RenderAsync(
+            new FakeNicCandidateSource([]),
+            new FakeForwarderMsiSource(@"C:\ProgramData\Yagura\forwarder", ForwarderMsiLookup.Single(details)));
+
+        Assert.Contains(UiText.ForwarderKitMsiIncludeCheckbox, html);
+        // チェックボックス自体は表示されるが、オプトインのため初期状態は未チェック
+        // ——チェック時のみ表示される詳細（ファイル名・版・SHA256）は出ていないはず。
+        Assert.DoesNotContain(details.Sha256, html);
+    }
+
+    [Fact]
+    public async Task InitialRender_MsiMultipleDetected_ShowsErrorAndFileList()
+    {
+        var html = await RenderAsync(
+            new FakeNicCandidateSource([]),
+            new FakeForwarderMsiSource(
+                @"C:\ProgramData\Yagura\forwarder",
+                ForwarderMsiLookup.Multiple(["fluent-bit-4.0.14-win64.msi", "fluent-bit-4.0.13-win64.msi"])));
+
+        Assert.Contains(UiText.ForwarderKitMsiMultipleErrorTitle, html);
+        Assert.Contains("fluent-bit-4.0.14-win64.msi", html);
+        Assert.Contains("fluent-bit-4.0.13-win64.msi", html);
+        Assert.DoesNotContain(UiText.ForwarderKitMsiIncludeCheckbox, html);
+    }
+
+    private static Task<string> RenderAsync(
+        INicCandidateSource nicCandidateSource,
+        IForwarderMsiSource? forwarderMsiSource = null) =>
         CommonComponentRenderHarness.RenderAsync<ForwarderKitScreen>(
             configureServices: services =>
             {
                 services.AddSingleton(nicCandidateSource);
+                services.AddSingleton(forwarderMsiSource ?? new FakeForwarderMsiSource(
+                    @"C:\ProgramData\Yagura\forwarder",
+                    ForwarderMsiLookup.NotFound()));
             });
 
     private sealed class FakeNicCandidateSource(IReadOnlyList<NicCandidate> candidates) : INicCandidateSource
     {
         public IReadOnlyList<NicCandidate> GetCandidates() => candidates;
+    }
+
+    private sealed class FakeForwarderMsiSource(string folderPath, ForwarderMsiLookup lookup) : IForwarderMsiSource
+    {
+        public string FolderPath => folderPath;
+
+        public ForwarderMsiLookup Lookup() => lookup;
     }
 }

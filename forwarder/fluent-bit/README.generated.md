@@ -1,6 +1,8 @@
 <!-- このファイルは管理 UI（/admin/forwarder-kit）が生成するキットの README テンプレートです。
      @@YAGURA_HOST@@ / @@YAGURA_PORT@@ / @@CHANNELS@@ / @@GENERATED_AT@@ / @@FLUENTBIT_VERSION@@ /
-     @@YAGURA_VERSION@@ は Yagura.Web.ForwarderKit.ForwarderKitBuilder が生成時に置換します。
+     @@YAGURA_VERSION@@ / @@MSI_SECTION@@ は Yagura.Web.ForwarderKit.ForwarderKitBuilder が
+     生成時に置換します（@@MSI_SECTION@@ は MSI 同梱時 / 非同梱時で内容を出し分けます
+     ——ADR-0008 設計条件 9）。
      手動配布用の静的キットの説明は forwarder/fluent-bit/README.md を参照してください。 -->
 # Yagura フォワーダキット（宛先設定済み）
 
@@ -27,36 +29,7 @@
 
 ## 導入手順
 
-Fluent Bit の MSI 本体は**このキットに同梱されていません**。以下の手順で取得してください。
-
-### 1. Fluent Bit MSI を取得する
-
-[packages.fluentbit.io](https://packages.fluentbit.io/) から、検証済み版 **@@FLUENTBIT_VERSION@@** の
-Windows 64bit MSI を取得します。
-
-```powershell
-Invoke-WebRequest -Uri "https://packages.fluentbit.io/windows/fluent-bit-@@FLUENTBIT_VERSION@@-win64.msi" `
-                  -OutFile ".\fluent-bit-@@FLUENTBIT_VERSION@@-win64.msi"
-```
-
-### 2. SHA256 で取得物を検証する
-
-`packages.fluentbit.io` は版ごとの `.sha256` を配布していない場合があります。その場合は、
-以下のいずれかで取得元の正当性を確認してください。
-
-- Fluent Bit 公式サイト・公式 GitHub リリースページに掲載されたハッシュ値と突合する
-- 社内の信頼できるミラー・パッケージ管理基盤(Chocolatey・社内リポジトリ等)経由で取得する
-
-取得した MSI のハッシュ値は次のコマンドで確認できます。
-
-```powershell
-Get-FileHash ".\fluent-bit-@@FLUENTBIT_VERSION@@-win64.msi" -Algorithm SHA256
-```
-
-**入手元が確認できない MSI は導入しないでください。** `.sha256` が提供されていないことは
-検証を省略してよい理由にはなりません。
-
-### 3. MSI をキットと同じフォルダに置き、サイレント導入を実行する(管理者権限)
+@@MSI_SECTION@@
 
 ```powershell
 powershell -NoProfile -File .\install.ps1
