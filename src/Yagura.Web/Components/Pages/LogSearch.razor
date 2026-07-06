@@ -4,7 +4,6 @@
 @inject ILogStore LogStore
 @inject IYaguraSystemStatusReader StatusReader
 @inject NavigationManager Navigation
-@inject IScrollManager ScrollManager
 
 @*
     ログ検索（ui.md §4。M8-3。Issue #70）:
@@ -133,13 +132,18 @@
     }
 </div>
 
-@if (_detailRequested)
-{
-    @* id は詳細表示への自動スクロール(ShowDetailAsync → OnAfterRenderAsync)の対象。 *@
-    <div class="mt-4" id="log-detail">
-        <YaguraCard Title="@UiText.DetailTitle">
-            @if (_detail is null)
-            {
+@* 詳細はオーバーレイ(モーダルダイアログ)で表示する(2026-07-06 試用フィードバック——
+   結果テーブルの下に開く方式は、行が多いと「押しても何も起きない」ように見えた。
+   オーバーレイなら結果一覧の位置に関わらず必ず前面に出る)。inline の MudDialog を
+   可視状態にバインドする方式(別ダイアログコンポーネント + レコード受け渡しを増やさない)。
+   Esc・背景クリックで閉じる。角丸 8px はダイアログ面の共通スタイルが効く(ui.md §2.3)。 *@
+<MudDialog @bind-Visible="_detailVisible" Options="_detailDialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@UiText.DetailTitle</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_detail is null)
+        {
                 <MudText Typo="Typo.body2">@UiText.DetailNotFound</MudText>
             }
             else
@@ -211,13 +215,12 @@
                         </MudItem>
                     }
                 </MudGrid>
-            }
-            <div class="mt-2">
-                <YaguraButton OnClick="CloseDetail">@UiText.DetailClose</YaguraButton>
-            </div>
-        </YaguraCard>
-    </div>
-}
+        }
+    </DialogContent>
+    <DialogActions>
+        <YaguraButton OnClick="CloseDetail">@UiText.DetailClose</YaguraButton>
+    </DialogActions>
+</MudDialog>
 
 @code {
     // M-10 の仮値（architecture.md §6: 結果上限 10,000 件・射影 200 文字・タイムアウト 30 秒）。
@@ -247,7 +250,6 @@
     private IReadOnlyList<YaguraTimelineBucket> _chartBuckets = [];
     private IReadOnlyList<YaguraTimelineInterval> _chartOutages = [];
 
-    private bool _detailRequested;
     private LogRecord? _detail;
 
     private DateTimeOffset? _retentionHorizon;
@@ -302,7 +304,7 @@
     private async Task RunSearchAsync()
     {
         _searching = true;
-        _detailRequested = false;
+        _detailVisible = false;
         _detail = null;
 
         try
@@ -397,44 +399,25 @@
         return buckets;
     }
 
+    // 詳細オーバーレイ(モーダル)の可視状態と表示オプション。Esc・背景クリックで閉じられる。
+    private bool _detailVisible;
+    private static readonly DialogOptions _detailDialogOptions = new()
+    {
+        CloseOnEscapeKey = true,
+        BackdropClick = true,
+        MaxWidth = MaxWidth.Medium,
+        FullWidth = true,
+    };
+
     private async Task ShowDetailAsync(LogRecordSummary summary)
     {
-        _detailRequested = true;
         _detail = await LogStore.FindByIdAsync(summary.Id, DetailTimeout);
-
-        // 詳細は結果テーブルの下に開くため、行数が多いと「押しても何も起きない」ように
-        // 見える(2026-07-06 試用でオーナーが実際に迷った)。描画完了後に詳細へ自動
-        // スクロールする(実行は OnAfterRenderAsync——描画前にスクロールしても要素が無い)。
-        _scrollToDetailPending = true;
-    }
-
-    private bool _scrollToDetailPending;
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (!_scrollToDetailPending)
-        {
-            return;
-        }
-
-        _scrollToDetailPending = false;
-
-        // MudBlazor 同梱の IScrollManager(手書き JS なし——ADR-0003 決定 1 の範囲内)。
-        // prerender では OnAfterRenderAsync 経由の JS interop が使えない環境があるため、
-        // 失敗してもスクロールを諦めるだけで機能(詳細表示自体)は損なわない。
-        try
-        {
-            await ScrollManager.ScrollIntoViewAsync("#log-detail", ScrollBehavior.Smooth);
-        }
-        catch (Exception)
-        {
-            // スクロールは補助動作。失敗を画面へ出さない。
-        }
+        _detailVisible = true;
     }
 
     private void CloseDetail()
     {
-        _detailRequested = false;
+        _detailVisible = false;
         _detail = null;
     }
 
