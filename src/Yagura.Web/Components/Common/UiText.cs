@@ -906,6 +906,24 @@ public static class UiText
     public const string ForwarderKitMsiNotIncludedNote =
         "MSI は含まれません。README の手順に従って packages.fluentbit.io から取得し、SHA256 で検証してください。";
 
+    /// <summary>生成後の手順(3 ステップ)の見出し。ZIP 単体では完結しないこと(MSI 別途)を
+    /// 生成前に全体像として示す(試用フィードバック 2026-07-07: MSI 取得フローが直感的でない)。</summary>
+    public const string ForwarderKitStepsTitle = "生成後の手順";
+
+    /// <summary>手順 1。</summary>
+    public const string ForwarderKitStep1 = "生成された ZIP を配布用フォルダに展開する";
+
+    /// <summary>手順 2({0} = MSI ファイル名)。</summary>
+    public const string ForwarderKitStep2Format = "Fluent Bit の MSI({0})を取得し、展開したフォルダに置く:";
+
+    /// <summary>手順 2 の補足(ハッシュ確認)。</summary>
+    public const string ForwarderKitStep2HashNote =
+        "取得後は Get-FileHash で SHA256 を確認する(手順は同梱 README にも記載)";
+
+    /// <summary>手順 3。</summary>
+    public const string ForwarderKitStep3 =
+        "各端末で install.ps1 を実行する(宛先設定済みのためパラメータ不要)。Intune / SCCM / GPO での一括配布は同梱 README を参照";
+
     /// <summary>生成ボタン。</summary>
     public const string ForwarderKitGenerateButton = "キットを生成してダウンロード";
 

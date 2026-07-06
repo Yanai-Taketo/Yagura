@@ -57,6 +57,12 @@ public static class ForwarderKitConstraints
     /// </summary>
     public const string VerifiedFluentBitVersion = "4.0.14";
 
+    /// <summary>検証済み版の Windows MSI ファイル名（画面の手順表示・README と同じ導出）。</summary>
+    public static string VerifiedMsiFileName => $"fluent-bit-{VerifiedFluentBitVersion}-win64.msi";
+
+    /// <summary>検証済み版の MSI 取得元 URL（packages.fluentbit.io。生成 README と同じ導出）。</summary>
+    public static string VerifiedMsiDownloadUrl => $"https://packages.fluentbit.io/windows/{VerifiedMsiFileName}";
+
     /// <summary>宛先ホストの検証（コンパイル済み・スレッドセーフ）。</summary>
     public static readonly Regex HostRegex = new(HostPattern, RegexOptions.Compiled);
 

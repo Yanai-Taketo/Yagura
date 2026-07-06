@@ -96,6 +96,21 @@
 </MudPaper>
 
 <MudPaper Elevation="1" Class="pa-4 mt-4">
+    @* 生成後の 3 ステップ(試用フィードバック 2026-07-07)。ZIP 単体では完結しない
+       (MSI は管理者が 1 回だけ取得して同梱する)ことを、ZIP を開く前に全体像として示す。 *@
+    <MudText Typo="Typo.h6">@UiText.ForwarderKitStepsTitle</MudText>
+    <ol class="mt-2">
+        <li>@UiText.ForwarderKitStep1</li>
+        <li>
+            @string.Format(UiText.ForwarderKitStep2Format, ForwarderKitConstraints.VerifiedMsiFileName)
+            <div><span class="yagura-monospace">@ForwarderKitConstraints.VerifiedMsiDownloadUrl</span></div>
+            <MudText Typo="Typo.caption">@UiText.ForwarderKitStep2HashNote</MudText>
+        </li>
+        <li>@UiText.ForwarderKitStep3</li>
+    </ol>
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
     @if (_errorText is not null)
     {
         <MudText Class="mb-2" Color="Color.Error" role="alert">@_errorText</MudText>
