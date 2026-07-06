@@ -332,3 +332,17 @@
 .yagura-detail-meta-label {
     color: var(--mud-palette-text-secondary);
 }
+
+/* ---- 構造化データの接頭表示（ログ検索一覧。RFC 5424 STRUCTURED-DATA を本文の前に
+   原文のまま表示する。オーナー承認済みデザイン。ui.md §4・database.md §2.1）----
+   表示上の省略のみ（データの切り詰め・整形はしない——全文は詳細表示の構造化データ欄で見える）。 */
+.yagura-sd-prefix {
+    display: inline-block;
+    max-width: 32ch;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    color: var(--mud-palette-text-secondary);
+    margin-right: 4px;
+}

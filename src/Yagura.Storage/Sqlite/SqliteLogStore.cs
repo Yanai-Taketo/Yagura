@@ -371,7 +371,8 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
             command.CommandText =
                 $"""
                 SELECT Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
-                       DeviceTimestamp, Facility, Severity, Hostname, AppName, ProcId, MsgId, Message
+                       DeviceTimestamp, Facility, Severity, Hostname, AppName, ProcId, MsgId,
+                       StructuredData, Message
                 FROM LogRecords
                 {whereSql}
                 ORDER BY ReceivedAt DESC
@@ -383,7 +384,7 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                var message = reader.IsDBNull(13) ? null : reader.GetString(13);
+                var message = reader.IsDBNull(14) ? null : reader.GetString(14);
                 results.Add(new LogRecordSummary(
                     Id: reader.GetInt64(0),
                     ReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
@@ -398,6 +399,7 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                     AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
                     ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
                     MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
+                    StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
                     Message: MessageProjection.Truncate(message, query.MessageProjectionLength)));
             }
         }

@@ -16,6 +16,10 @@
       セットでのみ見せる。ui.md §5.3）
     - 詳細表示は個別取得（architecture.md §6「全文は詳細表示で個別取得する」——
       ILogStore.FindByIdAsync。M8-3 で追加した読み取り口）
+    - 構造化データ（RFC 5424 STRUCTURED-DATA）は本文の前に原文のまま接頭表示する
+      （オーナー承認済みデザイン。database.md §2.1・ui.md §4）。表示上の省略のみ
+      （.yagura-sd-prefix。全文は詳細表示の構造化データ欄で見られる）——保存・解析は
+      変更しない。SD を持たないレコード（RFC 3164 送信元等）では接頭表示自体を出さない
 *@
 <PageTitle>Yagura — @UiText.NavSearch</PageTitle>
 
@@ -130,7 +134,13 @@
                 <MudTd DataLabel="@UiText.SourceColumnAddress"><span class="yagura-monospace">@record.SourceAddress</span></MudTd>
                 <MudTd DataLabel="重大度"><YaguraSeverityChip Severity="@record.Severity" /></MudTd>
                 <MudTd DataLabel="分類（ファシリティ）">@UiText.FormatFacility(record.Facility)</MudTd>
-                <MudTd DataLabel="メッセージ">@SummaryMessage(record)</MudTd>
+                <MudTd DataLabel="メッセージ">
+                    @if (record.StructuredData is { } structuredData)
+                    {
+                        <span class="yagura-monospace yagura-sd-prefix">@structuredData</span>
+                    }
+                    @SummaryMessage(record)
+                </MudTd>
             </RowTemplate>
         </YaguraTable>
     }

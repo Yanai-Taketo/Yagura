@@ -30,7 +30,7 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WriteBatchAsync_ThenQueryLatest_ReturnsRecordsInDescendingOrderWithoutRawOrStructuredData()
+    public async Task WriteBatchAsync_ThenQueryLatest_ReturnsRecordsInDescendingOrderWithoutRaw()
     {
         var baseline = DateTimeOffset.UtcNow;
         var records = new[]
@@ -49,11 +49,13 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
         Assert.Equal("second", results[1].Message);
         Assert.Equal("first", results[2].Message);
 
-        // 射影型 (LogRecordSummary) には Raw / StructuredData のプロパティ自体が存在しないこと
+        // 一覧射影は本文の接頭表示のため StructuredData を含む（ui.md §4・database.md §2.1）。
+        Assert.All(results, r => Assert.Equal("[exampleSDID@32473 iut=\"3\"]", r.StructuredData));
+
+        // 射影型 (LogRecordSummary) には Raw のプロパティ自体が存在しないこと
         // （コンパイル時に検証されるため、ここでは公開プロパティの網羅を確認する）。
         var summaryProperties = typeof(LogRecordSummary).GetProperties().Select(p => p.Name);
         Assert.DoesNotContain("Raw", summaryProperties);
-        Assert.DoesNotContain("StructuredData", summaryProperties);
     }
 
     [Fact]

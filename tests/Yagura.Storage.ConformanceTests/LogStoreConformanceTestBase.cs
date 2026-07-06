@@ -183,6 +183,7 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("app-a", summary.AppName);
         Assert.Equal("999", summary.ProcId);
         Assert.Equal("msg-x", summary.MsgId);
+        Assert.Equal("[sdid@1 key=\"value\"]", summary.StructuredData);
         Assert.Equal("raw-backed message", summary.Message);
     }
 
@@ -376,6 +377,28 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
             SearchText: "disk failure"));
 
         Assert.Single(results);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_StructuredDataAbsent_SummaryStructuredDataIsNull()
+    {
+        // RFC 3164 送信元等、構造化データを持たないレコード（一覧射影の StructuredData は
+        // null のまま返る——ui.md §4 の接頭表示は SD 無しの行では何も出さない前提）。
+        var record = new LogRecord(
+            ReceivedAt: DateTimeOffset.UtcNow,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.Parsed,
+            StructuredData: null,
+            Message: "no-structured-data");
+
+        await Store.WriteBatchAsync(new[] { record });
+
+        var results = await Store.QueryLatestAsync(limit: 1, timeout: TimeSpan.FromSeconds(5));
+
+        Assert.Single(results);
+        Assert.Null(results[0].StructuredData);
     }
 
     [SkippableFact]

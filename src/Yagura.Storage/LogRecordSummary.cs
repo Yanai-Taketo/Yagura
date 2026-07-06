@@ -2,7 +2,7 @@
 
 /// <summary>
 /// 一覧表示用の軽量射影（database.md §1.2「対話的検索」契約）。
-/// <see cref="LogRecord.Raw"/> と <see cref="LogRecord.StructuredData"/> を含めない。
+/// <see cref="LogRecord.Raw"/> を含めない。
 /// </summary>
 /// <param name="Id">レコード識別子。</param>
 /// <param name="ReceivedAt">サーバが受信した時刻（UTC）。</param>
@@ -17,6 +17,11 @@
 /// <param name="AppName">RFC 5424 APP-NAME。</param>
 /// <param name="ProcId">RFC 5424 PROCID。</param>
 /// <param name="MsgId">RFC 5424 MSGID。</param>
+/// <param name="StructuredData">
+/// RFC 5424 構造化データ（原文のまま。要素分解はしない——database.md §2.1）。
+/// 一覧では本文の直前に原文のまま接頭表示する（ui.md §4）。RFC 3164 送信元等、
+/// 構造化データを持たないレコードでは <c>null</c>。
+/// </param>
 /// <param name="Message">メッセージ本文（全文。M2 時点では先頭 N 文字への切り詰めは行わない）。</param>
 public sealed record LogRecordSummary(
     long Id,
@@ -32,4 +37,5 @@ public sealed record LogRecordSummary(
     string? AppName,
     string? ProcId,
     string? MsgId,
+    string? StructuredData,
     string? Message);
