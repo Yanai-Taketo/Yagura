@@ -96,6 +96,54 @@ public sealed class FileAuditRecorderTests : IDisposable
         Assert.Contains("203.0.113.5", record.Message);
     }
 
+    [Theory]
+    [InlineData(AuditEventKind.ViewerListenerAdminRequestRejected, 3001, "閲覧リスナへの管理操作を拒否")]
+    [InlineData(AuditEventKind.ConfigurationSaved, 2001, "設定変更を適用")]
+    [InlineData(AuditEventKind.PromotionConnectionValidated, 2002, "本番昇格の接続検証を実施")]
+    [InlineData(AuditEventKind.PromotionExecuted, 2003, "本番昇格を実行")]
+    [InlineData(AuditEventKind.CircuitDisconnected, 2004, "circuit を切断")]
+    [InlineData(AuditEventKind.CircuitOriginRejected, 3002, "circuit 確立要求の origin 検証で拒否")]
+    public async Task RecordAsync_EventLogMessage_UsesJapaneseDescriptionAndPreservesEventId(
+        AuditEventKind kind,
+        int expectedEventId,
+        string expectedDescription)
+    {
+        // 2026-07-06 イベントログ日本語化: {Kind} の英語 enum 名がイベントログ本文に漏れず、
+        // 種別ごとの日本語説明に置き換わっていること。イベント ID・種別の対応（additive-only。
+        // security.md §4.3）が本変更で壊れていないことも合わせて固定する。
+        var logger = new FakeLogger();
+        using var metrics = new WebGuardMetrics();
+        var recorder = new FileAuditRecorder(_dataRoot, logger, metrics);
+
+        await recorder.RecordAsync(new AuditEvent(
+            OccurredAt: new DateTimeOffset(2026, 7, 6, 12, 0, 0, TimeSpan.Zero),
+            Kind: kind,
+            RemoteAddress: "203.0.113.5",
+            RemotePort: 54321));
+
+        var record = Assert.Single(logger.Collector.GetSnapshot());
+        Assert.Equal(expectedEventId, record.Id.Id);
+        Assert.Contains(expectedDescription, record.Message);
+        Assert.DoesNotContain(kind.ToString(), record.Message);
+    }
+
+    [Fact]
+    public async Task RecordAsync_AuditFileLine_StillUsesEnglishEnumNameForKind()
+    {
+        // アプリ記録ファイル（JSON Lines）の Kind フィールドは、イベントログ本文の日本語化とは
+        // 独立して英語 enum 名のまま維持する（外部ツールによる機械的解析対象——
+        // AuditEventDescriptions のコメント参照）。
+        var logger = new FakeLogger();
+        using var metrics = new WebGuardMetrics();
+        var recorder = new FileAuditRecorder(_dataRoot, logger, metrics);
+
+        await recorder.RecordAsync(CreateSampleEvent());
+
+        var filePath = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.FileName);
+        var line = Assert.Single(await File.ReadAllLinesAsync(filePath));
+        Assert.Contains("\"Kind\":\"ViewerListenerAdminRequestRejected\"", line);
+    }
+
     [Fact]
     public async Task RecordAsync_FileWriteFails_StillWritesEventLogAndDoesNotThrow()
     {

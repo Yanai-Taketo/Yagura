@@ -151,11 +151,16 @@ public sealed class FileAuditRecorder : IAuditRecorder
     {
         try
         {
+            // イベントログ本文は日本語の説明（AuditEventDescriptions）を使う——{Kind} を
+            // そのまま埋め込むと英語 enum 名（ViewerListenerAdminRequestRejected 等）が
+            // 運用者向けの文面に漏れるため（2026-07-06 イベントログ日本語化）。
+            // アプリ記録ファイル側（AuditFileLine.Kind）は機械可読性を優先し enum 名のまま
+            // 維持するため、本メソッドの変更はイベントログ本文にのみ影響する。
             _logger.Log(
                 ResolveLogLevel(eventId),
                 eventId,
-                "[audit] {Kind}: 接続元={RemoteAddress}:{RemotePort} 試行パス={AttemptedPath} 到達リスナポート={ReachedListenerPort} 要約={Detail}",
-                auditEvent.Kind,
+                "[audit] {Description}: 接続元={RemoteAddress}:{RemotePort} 試行パス={AttemptedPath} 到達リスナポート={ReachedListenerPort} 要約={Detail}",
+                AuditEventDescriptions.Describe(auditEvent.Kind),
                 auditEvent.RemoteAddress ?? "(unknown)",
                 auditEvent.RemotePort,
                 auditEvent.AttemptedPath,
