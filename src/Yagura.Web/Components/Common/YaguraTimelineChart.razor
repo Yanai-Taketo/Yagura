@@ -27,14 +27,21 @@
         }
         @foreach (var bar in Bars)
         {
+            @* 棒ごとにその時間帯と件数を持たせる。SVG の <title> はホバーでネイティブの
+               ツールチップになり、支援技術にも読まれる（手書き JS なし——ADR-0003 決定 1。
+               2026-07-06 試用フィードバック「1 本が何を表すか固定ラベルでは分かりにくい」）。 *@
             <rect x="@Fmt(bar.X)" y="@Fmt(bar.Y)" width="@Fmt(bar.Width)" height="@Fmt(bar.Height)"
-                  class="yagura-timeline-bar" />
+                  class="yagura-timeline-bar">
+                <title>@BarTooltip(bar.Bucket)</title>
+            </rect>
         }
         <line x1="0" y1="@PlotHeight" x2="@SvgWidth" y2="@PlotHeight" class="yagura-timeline-axis" />
     </svg>
     <div class="yagura-timeline-labels">
         <YaguraTimestamp Value="@RangeStart" TimeZone="@TimeZone" />
-        <span class="yagura-timeline-max">@MaxLabel</span>
+        @* 中央の説明は「棒にカーソルを合わせると時間帯と件数が出る」ことの案内に留める
+           （固定の目盛りラベルは撤去——棒ごとのツールチップで正確に伝える）。 *@
+        <span class="yagura-timeline-hint">@UiText.TimelineHoverHint</span>
         <YaguraTimestamp Value="@RangeEnd" TimeZone="@TimeZone" />
     </div>
     @if (TotalCount == 0)
@@ -83,8 +90,20 @@
 
     private int MaxCount => Buckets is { Count: > 0 } ? Math.Max(1, Buckets.Max(b => b.Count)) : 1;
 
-    private string MaxLabel => string.Create(
-        CultureInfo.InvariantCulture, $"最大 {(Buckets is { Count: > 0 } ? Buckets.Max(b => b.Count) : 0)} 件/区切り");
+    // 棒ごとのツールチップ文言（その棒が表す時間帯 + 件数）。時刻はサーバ OS タイムゾーンで
+    // ローカライズする（ui.md §6。TimeZone 差し替え口はテスト用）。
+    // 区切り幅が 1 分未満のとき（短い期間を 24 分割した場合）は分表記だと開始 = 終了に潰れて
+    // 見えるため、秒まで出す（表示期間に応じて粒度を上げる）。
+    private string BarTooltip(YaguraTimelineBucket bucket)
+    {
+        var zone = TimeZone ?? TimeZoneInfo.Local;
+        var start = TimeZoneInfo.ConvertTime(bucket.Start, zone);
+        var end = TimeZoneInfo.ConvertTime(bucket.End, zone);
+        var format = (bucket.End - bucket.Start) < TimeSpan.FromMinutes(1) ? "HH:mm:ss" : "HH:mm";
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{start.ToString(format, CultureInfo.InvariantCulture)} 〜 {end.ToString(format, CultureInfo.InvariantCulture)}  {bucket.Count} 件");
+    }
 
     private string AriaLabel => string.Create(
         CultureInfo.InvariantCulture,
@@ -96,7 +115,7 @@
         return Math.Clamp(ratio, 0, 1) * SvgWidth;
     }
 
-    private IReadOnlyList<(double X, double Y, double Width, double Height)> Bars
+    private IReadOnlyList<(double X, double Y, double Width, double Height, YaguraTimelineBucket Bucket)> Bars
     {
         get
         {
@@ -105,13 +124,13 @@
                 return [];
             }
 
-            var bars = new List<(double, double, double, double)>(Buckets.Count);
+            var bars = new List<(double, double, double, double, YaguraTimelineBucket)>(Buckets.Count);
             foreach (var bucket in Buckets)
             {
                 var x = ToX(bucket.Start);
                 var width = Math.Max(1, ToX(bucket.End) - x - 1); // 1 は棒間の隙間
                 var height = bucket.Count <= 0 ? 0 : Math.Max(2, (double)bucket.Count / MaxCount * (PlotHeight - 10));
-                bars.Add((x, PlotHeight - height, width, height));
+                bars.Add((x, PlotHeight - height, width, height, bucket));
             }
 
             return bars;

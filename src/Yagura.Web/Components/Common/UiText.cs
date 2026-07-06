@@ -197,6 +197,9 @@ public static class UiText
     /// <summary>時間軸チャートで期間内の受信が 0 件の場合の注記。</summary>
     public const string TimelineNoData = "この期間に受信したログはありません";
 
+    /// <summary>時間軸チャート中央の操作案内（棒ホバーで時間帯 + 件数が出る旨。2026-07-06）。</summary>
+    public const string TimelineHoverHint = "棒にカーソルを合わせると、その時間帯と件数が表示されます";
+
     /// <summary>送信元別受信状況カードの見出し（ui.md §5.1 の導線の行き先。UI-4）。</summary>
     public const string SourcesTitle = "送信元別の受信状況（最終受信が古い順）";
 
