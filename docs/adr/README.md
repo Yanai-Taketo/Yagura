@@ -18,9 +18,8 @@
 | [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | accepted |
 | [0005](0005-oss-packaging.md) | OSS 体裁 — README・貢献導線・脆弱性報告窓口 | accepted |
 | [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | accepted |
+| [0007](0007-reverse-dns-display.md) | 閲覧画面の送信元逆引き（PTR）ホスト名表示 | accepted |
 | [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | proposed |
-
-（0007 は別途起案中: 逆引き DNS ホスト名表示。番号のみ確保済み）
 
 ## 起案予定
 

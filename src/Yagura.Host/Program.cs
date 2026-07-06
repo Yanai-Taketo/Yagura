@@ -361,6 +361,11 @@ public static class Program
         builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(effectiveAdminPort));
         builder.Services.AddYaguraAdmin();
 
+        // 逆引きホスト名表示の設定（ADR-0007。Viewer:ReverseDns:Enabled——検証・縮小適用済みの
+        // 値を Web 層へ渡す。AddYaguraWebViewer の TryAdd 既定（無効）より先に登録すること）。
+        builder.Services.AddSingleton(
+            new Yagura.Web.ReverseDns.ReverseDnsDisplayOptions(resolvedConfiguration.ViewerReverseDnsEnabled));
+
         builder.Services.AddYaguraWebViewer();
 
         var app = builder.Build();

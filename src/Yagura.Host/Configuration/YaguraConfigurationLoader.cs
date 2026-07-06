@@ -59,6 +59,7 @@ public static class YaguraConfigurationLoader
         "Ingestion:Tcp:Port",
         "Viewer:HttpPort",
         "Viewer:PublicAccess",
+        "Viewer:ReverseDns:Enabled",
         "Admin:HttpPort",
         "Storage:SqliteFileName",
         "Storage:Provider",
@@ -124,6 +125,9 @@ public static class YaguraConfigurationLoader
         // --- UI: 閲覧リスナの公開範囲（§1「縮小側で継続」。M6-1） ---
         var viewerPublicAccess = ResolveViewerPublicAccess(options, warnings);
 
+        // --- UI: 逆引きホスト名表示の有効/無効（§1「縮小側で継続」。ADR-0007） ---
+        var viewerReverseDnsEnabled = ResolveViewerReverseDnsEnabled(options, warnings);
+
         // --- UI: 管理 HTTP ポート（§1「既定値で継続」。bind 先は常に loopback 固定。M6-1） ---
         var adminHttpPort = ResolveAdminHttpPort(options, warnings);
 
@@ -161,6 +165,7 @@ public static class YaguraConfigurationLoader
             TcpPort: tcpPort,
             HttpPort: httpPort,
             ViewerPublicAccess: viewerPublicAccess,
+            ViewerReverseDnsEnabled: viewerReverseDnsEnabled,
             AdminHttpPort: adminHttpPort,
             SqliteFileName: sqliteFileName,
             SpoolEnabled: spoolEnabled,
@@ -449,6 +454,40 @@ public static class YaguraConfigurationLoader
                 "（configuration.md §1「公開範囲・bind 先の不正値は製品既定へ落とさない」の適用）"));
 
         return ViewerPublicAccess.LocalhostOnly;
+    }
+
+    /// <summary>
+    /// 逆引き（PTR）ホスト名表示の有効/無効を解決する（ADR-0007 決定 4。既定オン）。
+    /// </summary>
+    /// <remarks>
+    /// <b>不正値の扱いは「縮小側で継続」</b>: 本機能は外向きの DNS クエリを発生させるため、
+    /// 既定がオン（発生側）であっても不正値のフォールバック先は必ず無効（発生しない側）とする
+    /// （configuration.md §1 の縮小側原則をセキュリティ 3 項目以外へ適用した初のキー——同 §8）。
+    /// <c>Spool:Enabled</c>（既定値で継続 = 不正値でも有効へ戻す）との違いに注意。
+    /// </remarks>
+    private static bool ResolveViewerReverseDnsEnabled(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        const bool defaultEnabled = true;
+
+        var raw = options.Viewer?.ReverseDns?.Enabled;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultEnabled;
+        }
+
+        if (bool.TryParse(raw, out var enabled))
+        {
+            return enabled;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Viewer:ReverseDns:Enabled",
+            InvalidValue: raw,
+            AppliedValue: bool.FalseString,
+            Reason: "真偽値として不正なため縮小側（無効 = DNS クエリを発しない）を適用" +
+                "（configuration.md §1 の縮小側継続——外向きクエリを発生させる機能は不正値で発生側へ倒さない。ADR-0007 決定 4）"));
+
+        return false;
     }
 
     /// <summary>

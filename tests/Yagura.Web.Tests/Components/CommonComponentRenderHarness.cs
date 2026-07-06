@@ -59,6 +59,15 @@ internal static class CommonComponentRenderHarness
         // （HtmlRenderer には既定登録がないため、固定 URI のテスト実装を与える）。
         services.AddSingleton<NavigationManager>(new TestNavigationManager());
 
+        // 逆引きホスト名表示（ADR-0007。YaguraSourceAddress・SystemStatus が注入する）。
+        // 描画テストは常に無効構成で行い、外向き DNS クエリを発しない（決定 4 の縮小側と同じ向き。
+        // 有効時の解決挙動は ReverseDnsResolverTests が偽実装で検証する）。
+        services.AddSingleton(new Yagura.Web.ReverseDns.ReverseDnsDisplayOptions(Enabled: false));
+        services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsLookup, Yagura.Web.ReverseDns.SystemDnsReverseLookup>();
+        services.AddSingleton<Yagura.Web.Diagnostics.ReverseDnsMetrics>();
+        services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsResolver, Yagura.Web.ReverseDns.ReverseDnsResolver>();
+        services.AddSingleton(TimeProvider.System);
+
         configureServices?.Invoke(services);
 
         await using var provider = services.BuildServiceProvider();

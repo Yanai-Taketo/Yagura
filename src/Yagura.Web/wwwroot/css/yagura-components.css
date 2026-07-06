@@ -18,6 +18,17 @@
     font-family: Consolas, "Courier New", monospace;
 }
 
+/* ---- 送信元アドレス（YaguraSourceAddress。ADR-0007・ui.md §4） ---- */
+
+/* 逆引きホスト名の補助表示: IP が主・名前が補助（text-secondary・注釈 12px・等幅にしない
+   ——IP との視覚区別。ui.md §4）。ブロック表示で IP の下段に置く。 */
+.yagura-reverse-dns {
+    display: block;
+    color: var(--mud-palette-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 /* ---- 状態帯（YaguraStatusBand。ui.md §3.1・§5.1） ---- */
 
 .yagura-status-band-title {
