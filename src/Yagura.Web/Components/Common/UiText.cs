@@ -69,8 +69,14 @@ public static class UiText
     public const string MissingDataOutageApproximateNote =
         "サーバが正常に終了しなかったため、この時間帯の境界はおおよその値です";
 
-    /// <summary>保持地平（ui.md §5.3 の確定文言）。</summary>
-    public const string MissingDataRetentionHorizon = "この範囲は保持期間外（削除済み）です";
+    /// <summary>
+    /// 保持地平（ui.md §5.3）。検索範囲の下限が保持期間より古いときに出す。
+    /// 「表示中の結果そのものが消えた」という誤読（2026-07-06 試用フィードバック——条件なしの
+    /// 初期表示で結果が並んでいる上にこの注記が出ると「消えた?」と読める）を避けるため、
+    /// 削除の対象が<b>保持期間より前の古いログ</b>であることと、<b>残っているログは表示されている</b>
+    /// ことの両方を言い切る。
+    /// </summary>
+    public const string MissingDataRetentionHorizon = "保持期間より前のログは自動的に削除済みです（これより古いログは残っていません）";
 
     /// <summary>
     /// 検索の打ち切り（ui.md §3.1 テーブル規約——件数と共に明示、§5.3——条件を絞る案内と共に）。
@@ -242,6 +248,15 @@ public static class UiText
 
     /// <summary>ダッシュボードの現在値カード: 取りこぼし（累計。破棄系カウンタの合計）。</summary>
     public const string StatLossTotal = "取りこぼし（累計）";
+
+    /// <summary>
+    /// 取りこぼしカードの補足（取りこぼしがある場合のみ表示）。{0} にこの画面を開いてからの増分。
+    /// 累計値は保存件数と並ぶと「大半を捨てている」ように見える（2026-07-06 試用フィードバック——
+    /// 累計 37,529 対 保存 736）。累計はサーバ起動からの running total であること、および
+    /// 「今も増えているか（＝進行中か過去か）」を開いてからの増分で示し、過去の一時的な取りこぼしと
+    /// 現在進行中の取りこぼしを見分けられるようにする。
+    /// </summary>
+    public const string StatLossTotalSupplementFormat = "サーバ起動からの累計。この画面を開いてからは +{0} 件";
 
     /// <summary>ダッシュボードの現在値カード: 保存済みログ件数。</summary>
     public const string StatStoredRecords = "保存済みログ件数";

@@ -59,7 +59,7 @@
         <YaguraStatCard Label="@UiText.StatSpoolEvacuated" Value="@FormatCount(_spoolEvacuatedTotal)" />
     </MudItem>
     <MudItem xs="12" sm="6" md="3">
-        <YaguraStatCard Label="@UiText.StatLossTotal" Value="@FormatCount(_lossTotal)" />
+        <YaguraStatCard Label="@UiText.StatLossTotal" Value="@FormatCount(_lossTotal)" Supplement="@LossSupplement" />
     </MudItem>
     <MudItem xs="12" sm="6" md="3">
         <YaguraStatCard Label="@UiText.StatStoredRecords" Value="@StoredRecordsValue" />
@@ -168,6 +168,9 @@
     private IReadOnlyList<YaguraListenerEndpoint> _listeners = [];
     private long _spoolEvacuatedTotal;
     private long _lossTotal;
+    // この画面を開いた時点の取りこぼし累計（進行中か過去かの見分け——UiText.StatLossTotalSupplementFormat）。
+    // 対話 circuit ごとに新規インスタンスで null 初期化されるため、実質「開いてから」の基準になる。
+    private long? _lossBaselineSinceOpen;
     private YaguraSpoolReading? _spool;
     private bool _spoolDegraded;
     private long? _storedRecords;
@@ -255,6 +258,7 @@
             .Where(c => c.InstrumentName == "yagura.ingestion.spool.evacuated")
             .Sum(c => c.Value);
         _lossTotal = status.Counters.Where(c => c.IsLoss).Sum(c => c.Value);
+        _lossBaselineSinceOpen ??= _lossTotal;
     }
 
     /// <summary>重い更新（保存先への読み取り。初期表示 + 低頻度周期）。</summary>
@@ -331,6 +335,15 @@
         : (_spoolDegraded ? UiText.HealthReasonSpoolDegraded : null);
 
     private string StoredRecordsValue => _storedRecords is { } records ? FormatCount(records) : "—";
+
+    /// <summary>
+    /// 取りこぼしカードの補足。取りこぼしが 0 のときは付けない（カードを静かに保つ）。
+    /// 取りこぼしがある場合のみ「累計であること」と「開いてからの増分（進行中か過去かの手がかり）」を示す。
+    /// </summary>
+    private string? LossSupplement => _lossTotal > 0
+        ? string.Format(CultureInfo.InvariantCulture, UiText.StatLossTotalSupplementFormat,
+            FormatCount(_lossTotal - (_lossBaselineSinceOpen ?? _lossTotal)))
+        : null;
 
     private static string ListenerLabel(YaguraListenerEndpoint listener) =>
         string.Format(CultureInfo.InvariantCulture, UiText.ListenerPortLabelFormat, listener.ProtocolName);

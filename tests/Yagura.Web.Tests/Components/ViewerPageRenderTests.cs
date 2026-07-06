@@ -105,6 +105,49 @@ public sealed class ViewerPageRenderTests
         Assert.Contains(UiText.RetentionDisabledNotice, html, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Dashboard_WithLoss_ShowsLossCardSupplement()
+    {
+        // 取りこぼしがある場合、累計値だけでなく「サーバ起動からの累計」であることと
+        // 開いてからの増分を補足で示す（2026-07-06 試用フィードバック——累計と保存件数が
+        // 並ぶと「大半を捨てている」ように読める誤解の緩和）。
+        var store = new FakeLogStore();
+        var reader = new FakeStatusReader
+        {
+            RetentionDays = 30,
+            Counters =
+            [
+                new YaguraCounterReading("yagura.ingestion.internal_buffer.dropped", 37_529, IsLoss: true),
+                new YaguraCounterReading("yagura.ingestion.spool.evacuated", 130, IsLoss: false),
+            ],
+        };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        // 累計値そのものは大表示
+        Assert.Contains("37,529", html, StringComparison.Ordinal);
+        // 「累計であること」を補足で明示（進行中か過去かの手がかり）
+        Assert.Contains("サーバ起動からの累計", html, StringComparison.Ordinal);
+        // 単一描画では基準 = 現在値のため増分は 0（＝今は増えていない、の読み）
+        Assert.Contains("この画面を開いてからは +0 件", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dashboard_NoLoss_OmitsLossCardSupplement()
+    {
+        // 取りこぼし 0 のときはカードを静かに保つ（補足を付けない）。
+        var store = new FakeLogStore();
+        var reader = new FakeStatusReader
+        {
+            RetentionDays = 30,
+            Counters = [new YaguraCounterReading("yagura.ingestion.internal_buffer.dropped", 0, IsLoss: true)],
+        };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        Assert.DoesNotContain("サーバ起動からの累計", html, StringComparison.Ordinal);
+    }
+
     // ---- ログ検索（ui.md §4・§5.3。architecture.md §4.4・§6） ----
 
     [Fact]
