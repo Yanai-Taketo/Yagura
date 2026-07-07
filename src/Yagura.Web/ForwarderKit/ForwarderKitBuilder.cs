@@ -64,17 +64,17 @@ public static class ForwarderKitBuilder
         // 「GENERATED.txt を除く全エントリのハッシュ」と定義することで自己参照を断ち切る
         // （設計条件 9 の要求「自己参照を避ける実装をコメントで明示」への対応）。
         //
-        // 注意: ZipArchiveEntry の LastWriteTime は明示指定しない限り作成時刻（DOS 日時形式・
-        // 2 秒粒度）が入るため、本メソッド内の 2 回の BuildArchive 呼び出し（ハッシュ計算用・
-        // 最終成果物用）は同一呼び出し内の数ミリ秒差に収まり実質的に同一時刻とみなせる
-        // （Kit-SHA256 算出の前提となる「GENERATED.txt を除く内容が両者で一致する」を
-        // 満たす。日をまたぐ・秒境界をまたぐ再現性を厳密に求める用途ではないため許容する）。
-        var kitShaSourceBytes = BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request);
+        // 各 ZIP エントリの LastWriteTime は generatedAt に固定する（BuildArchive → WriteEntry）。
+        // 未指定だと ZipArchiveEntry は作成時のウォールクロック（DOS 日時形式・2 秒粒度）を書き込むため、
+        // 生成タイミング次第で「GENERATED.txt を除く内容」のバイト列が変わり、Kit-SHA256 が
+        // 同一入力でも揺れてしまう（ハッシュ計算用・最終成果物用の 2 回の BuildArchive が 2 秒境界を
+        // またぐと不一致になる）。generatedAt へ固定することで同一入力→同一 Kit-SHA256 を保証する。
+        var kitShaSourceBytes = BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request, generatedAt);
         var kitSha256 = Convert.ToHexStringLower(SHA256.HashData(kitShaSourceBytes));
 
         var generatedTxt = BuildGeneratedTxt(request, generatedAt, kitSha256);
 
-        return BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request, generatedTxt);
+        return BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request, generatedAt, generatedTxt);
     }
 
     /// <summary>
@@ -101,25 +101,26 @@ public static class ForwarderKitBuilder
         string readme,
         byte[]? msiBytes,
         ForwarderKitRequest request,
+        DateTimeOffset generatedAt,
         string? generatedTxt = null)
     {
         using var memoryStream = new MemoryStream();
         using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, leaveOpen: true))
         {
-            WriteEntry(archive, EntryNames.Conf, conf);
-            WriteEntry(archive, EntryNames.InstallScript, installScript);
-            WriteEntry(archive, EntryNames.UninstallScript, uninstallScript);
-            WriteEntry(archive, EntryNames.LuaFilter, luaFilter);
-            WriteEntry(archive, EntryNames.Readme, readme);
+            WriteEntry(archive, EntryNames.Conf, conf, generatedAt);
+            WriteEntry(archive, EntryNames.InstallScript, installScript, generatedAt);
+            WriteEntry(archive, EntryNames.UninstallScript, uninstallScript, generatedAt);
+            WriteEntry(archive, EntryNames.LuaFilter, luaFilter, generatedAt);
+            WriteEntry(archive, EntryNames.Readme, readme, generatedAt);
 
             if (msiBytes is not null && request.MsiBundle is { } bundle)
             {
-                WriteBinaryEntry(archive, bundle.FileName, msiBytes);
+                WriteBinaryEntry(archive, bundle.FileName, msiBytes, generatedAt);
             }
 
             if (generatedTxt is not null)
             {
-                WriteEntry(archive, EntryNames.Generated, generatedTxt);
+                WriteEntry(archive, EntryNames.Generated, generatedTxt, generatedAt);
             }
         }
 
@@ -283,9 +284,12 @@ public static class ForwarderKitBuilder
         return reader.ReadToEnd();
     }
 
-    private static void WriteEntry(ZipArchive archive, string entryName, string content)
+    private static void WriteEntry(ZipArchive archive, string entryName, string content, DateTimeOffset generatedAt)
     {
         var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        // LastWriteTime を generatedAt へ固定（未指定だとウォールクロックが入り Kit-SHA256 が
+        // 非決定的になる——Build のコメント参照）。
+        entry.LastWriteTime = generatedAt;
         using var entryStream = entry.Open();
         // BOM なし UTF-8: install.ps1 の設定書き出しと同じ判断（Fluent Bit のパーサが
         // BOM を想定しない）。README・GENERATED.txt も一貫して BOM なしにする。
@@ -293,9 +297,11 @@ public static class ForwarderKitBuilder
         writer.Write(content);
     }
 
-    private static void WriteBinaryEntry(ZipArchive archive, string entryName, byte[] content)
+    private static void WriteBinaryEntry(ZipArchive archive, string entryName, byte[] content, DateTimeOffset generatedAt)
     {
         var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        // LastWriteTime を generatedAt へ固定（WriteEntry と同じ理由）。
+        entry.LastWriteTime = generatedAt;
         using var entryStream = entry.Open();
         entryStream.Write(content);
     }
