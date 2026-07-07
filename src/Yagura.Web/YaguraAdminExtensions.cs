@@ -109,7 +109,7 @@ public static class YaguraAdminExtensions
     }
 
     /// <summary>
-    /// フォワーダ配布キットのダウンロードエンドポイント（ADR-0008 設計条件 7・委任 #1〜#3・#5）。
+    /// フォワーダ配布キットのダウンロードエンドポイント（ADR-0008 設計条件 7・9・委任 #1〜#3・#5・#7）。
     /// Razor Components のページではなく素の <c>MapGet</c> であるため、
     /// <see cref="ListenerPortGuardEndpointMetadata.Admin"/> は名前空間規約
     /// （<see cref="AdminScreenNamespacePrefix"/> 由来の自動付与）の対象外——ここで明示的に
@@ -117,9 +117,13 @@ public static class YaguraAdminExtensions
     /// </summary>
     /// <remarks>
     /// 生成は ZIP をメモリ上で組み立てるのみで、外部ネットワークへアクセスせず、ディスクへ
-    /// 一時ファイルも書かない（<see cref="ForwarderKitBuilder"/> の remarks 参照）。
-    /// 検証失敗は 400、成功時は <c>application/zip</c> で応答する。生成操作は監査記録
-    /// （2000 番台 ID 2005。ADR-0008 設計条件 6）の対象とする。
+    /// 一時ファイルも書かない（<see cref="ForwarderKitBuilder"/> の remarks 参照。MSI 同梱時は
+    /// 配置済みファイルを読み取って封入するのみ）。検証失敗は 400、成功時は
+    /// <c>application/zip</c> で応答する。生成操作は監査記録（2000 番台 ID 2005。
+    /// ADR-0008 設計条件 6・9）の対象とする。<c>includeMsi=true</c> のとき、配置フォルダが
+    /// 単一検出でなければ 400（画面の二段階確認を通っていない版不一致は
+    /// <see cref="ForwarderKitRequest.TryCreate(string?, int, string?, ForwarderMsiBundle?, out ForwarderKitRequest?, out ForwarderKitValidationError?)"/>
+    /// 側の最終防御で 400 になる）。
     /// </remarks>
     private static void MapForwarderKitDownload(IEndpointRouteBuilder endpoints)
     {
@@ -128,13 +132,44 @@ public static class YaguraAdminExtensions
             string? host,
             int? port,
             string? channels,
+            bool? includeMsi,
+            bool? msiVersionMismatchAcknowledged,
             IAuditRecorder auditRecorder,
-            TimeProvider timeProvider) =>
+            TimeProvider timeProvider,
+            IForwarderMsiSource msiSource) =>
         {
+            ForwarderMsiBundle? msiBundle = null;
+
+            if (includeMsi == true)
+            {
+                var lookup = msiSource.Lookup();
+                if (lookup.State != ForwarderMsiLookupState.Single)
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await context.Response.WriteAsync(FormatMsiLookupError(lookup.State)).ConfigureAwait(false);
+                    return;
+                }
+
+                var details = lookup.Details!;
+                var effectiveVersion = ForwarderMsiFilter.ResolveEffectiveVersion(details.ProductVersion, details.FileName);
+                var versionMismatch = !ForwarderMsiFilter.MatchesVerifiedVersion(effectiveVersion, ForwarderKitConstraints.VerifiedFluentBitVersion);
+                var officialHashMatch = ForwarderMsiFilter.MatchesOfficialHash(details.Sha256, ForwarderMsiConstraints.OfficialSha256ForVerifiedVersion);
+
+                msiBundle = new ForwarderMsiBundle(
+                    details.FilePath,
+                    details.FileName,
+                    effectiveVersion,
+                    details.Sha256,
+                    officialHashMatch,
+                    versionMismatch,
+                    msiVersionMismatchAcknowledged == true);
+            }
+
             if (!ForwarderKitRequest.TryCreate(
                     host,
                     port ?? ForwarderKitConstraints.DefaultPort,
                     channels,
+                    msiBundle,
                     out var request,
                     out var error))
             {
@@ -155,10 +190,10 @@ public static class YaguraAdminExtensions
                     Kind: AuditEventKind.ForwarderKitGenerated,
                     RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
                     RemotePort: context.Connection.RemotePort,
-                    Detail: $"host={request!.Host} port={request.Port} channels={request.ChannelsValue}"),
+                    Detail: FormatAuditDetail(request!)),
                 CancellationToken.None).ConfigureAwait(false);
 
-            var fileName = $"yagura-forwarder-kit-{generatedAt:yyyyMMdd}.zip";
+            var fileName = ForwarderKitBuilder.BuildFileName(request!, generatedAt);
             context.Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
             context.Response.ContentType = "application/zip";
             await context.Response.Body.WriteAsync(zipBytes).ConfigureAwait(false);
@@ -174,8 +209,46 @@ public static class YaguraAdminExtensions
         ForwarderKitValidationError.HostInvalid => "host contains characters outside the allowed set.",
         ForwarderKitValidationError.PortOutOfRange => "port must be between 1 and 65535.",
         ForwarderKitValidationError.ChannelsInvalid => "channels must be a comma-separated subset of System, Application, Security.",
+        ForwarderKitValidationError.MsiVersionMismatchNotAcknowledged =>
+            "msi version differs from the verified version and was not acknowledged.",
         _ => "invalid request.",
     };
+
+    /// <summary>MSI 配置フォルダの検出状態が単一でない場合の応答文言（ADR-0008 設計条件 9）。</summary>
+    private static string FormatMsiLookupError(ForwarderMsiLookupState state) => state switch
+    {
+        ForwarderMsiLookupState.NotFound => "includeMsi=true was requested, but no MSI was found in the placement folder.",
+        ForwarderMsiLookupState.Multiple => "includeMsi=true was requested, but multiple MSIs were found in the placement folder.",
+        _ => "invalid msi state.",
+    };
+
+    /// <summary>
+    /// 監査 Detail の構造化文字列（ADR-0008 設計条件 6・9・委任 #5）。既存の host/port/channels に
+    /// 加え、MSI 同梱時は msiVersion・msiSha256・officialHashMatch・versionMismatchAcknowledged を
+    /// 記録する（秘密情報は含めない——値は来歴情報のみ）。
+    /// </summary>
+    private static string FormatAuditDetail(ForwarderKitRequest request)
+    {
+        var detail = $"host={request.Host} port={request.Port} channels={request.ChannelsValue} msiBundled={(request.IncludeMsi ? "true" : "false")}";
+
+        if (request.MsiBundle is { } bundle)
+        {
+            var officialMatchValue = bundle.OfficialHashMatch switch
+            {
+                OfficialHashMatchResult.Match => "yes",
+                OfficialHashMatchResult.Mismatch => "no",
+                _ => "unverified",
+            };
+
+            detail +=
+                $" msiVersion={bundle.ProductVersion ?? "unknown"}" +
+                $" msiSha256={bundle.Sha256}" +
+                $" officialHashMatch={officialMatchValue}" +
+                $" versionMismatchAcknowledged={(bundle.VersionMismatchAcknowledged ? "true" : "false")}";
+        }
+
+        return detail;
+    }
 
     /// <summary>
     /// <see cref="ListenerPortGuardMiddleware"/> をパイプラインに組み込む。

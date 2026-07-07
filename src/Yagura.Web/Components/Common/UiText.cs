@@ -920,4 +920,63 @@ public static class UiText
 
     /// <summary>チャネル未選択エラー。</summary>
     public const string ForwarderKitErrorChannelsRequired = "収集チャネルを 1 つ以上選択してください。";
+
+    // ---- MSI オプトイン同梱（ADR-0008 設計条件 9） ----
+
+    /// <summary>MSI 同梱セクションの見出し。</summary>
+    public const string ForwarderKitMsiSectionTitle = "MSI の同梱（任意）";
+
+    /// <summary>配置フォルダのフルパス表示の形式。{0} にフルパスが入る。</summary>
+    public const string ForwarderKitMsiFolderPathFormat = "配置フォルダ: {0}";
+
+    /// <summary>MSI 未検出時の案内の形式。{0} に期待ファイル名パターンが入る。</summary>
+    public const string ForwarderKitMsiNotFoundFormat =
+        "MSI 未検出。ここに {0} を配置すると、生成する ZIP に MSI を同梱できます（任意）。";
+
+    /// <summary>MSI 同梱チェックボックスのラベル。</summary>
+    public const string ForwarderKitMsiIncludeCheckbox = "MSI を同梱する";
+
+    /// <summary>検出 MSI のファイル名表示の形式。{0} にファイル名が入る。</summary>
+    public const string ForwarderKitMsiDetectedFileNameFormat = "検出したファイル: {0}";
+
+    /// <summary>検出 MSI の版表示の形式。{0} に版が入る（取得不能時は不明）。</summary>
+    public const string ForwarderKitMsiDetectedVersionFormat = "版: {0}";
+
+    /// <summary>版取得不能時の表示。</summary>
+    public const string ForwarderKitMsiVersionUnknown = "不明（ファイル名から推定した値を補助的に使用）";
+
+    /// <summary>検出 MSI の SHA256 表示の形式。{0} にハッシュ値が入る。</summary>
+    public const string ForwarderKitMsiSha256Format = "SHA256: {0}";
+
+    /// <summary>公式ハッシュとの照合結果: 一致。</summary>
+    public const string ForwarderKitMsiOfficialHashMatch = "公式配布 SHA256 と一致しました。";
+
+    /// <summary>公式ハッシュとの照合結果: 不一致。</summary>
+    public const string ForwarderKitMsiOfficialHashMismatch =
+        "公式配布 SHA256 と一致しませんでした。取得元・改ざんの有無を確認してください。";
+
+    /// <summary>公式ハッシュとの照合結果: 未確認（Yagura に公式ハッシュ未設定）。</summary>
+    public const string ForwarderKitMsiOfficialHashUnverified =
+        "公式配布 SHA256 との照合は未実施です（Yagura に公式ハッシュが未設定のため）。";
+
+    /// <summary>版不一致の警告の形式。{0} に検出版、{1} に検証済み版が入る。</summary>
+    public const string ForwarderKitMsiVersionMismatchWarningFormat =
+        "検出した MSI の版（{0}）は検証済み版（{1}）と異なります。動作未検証の組み合わせになる可能性があります。";
+
+    /// <summary>版不一致時の二段階確認チェックボックスのラベル（設計条件 9）。</summary>
+    public const string ForwarderKitMsiVersionMismatchAcknowledge =
+        "版が異なることを理解した上で、この MSI を同梱します";
+
+    /// <summary>複数 MSI 検出時のエラー見出し。</summary>
+    public const string ForwarderKitMsiMultipleErrorTitle = "複数の MSI が見つかりました。1 つだけ残してください。";
+
+    /// <summary>複数 MSI 検出時、検出一覧の見出し。</summary>
+    public const string ForwarderKitMsiMultipleListTitle = "検出したファイル:";
+
+    /// <summary>同梱選択時の ZIP サイズ予告。</summary>
+    public const string ForwarderKitMsiSizeNotice = "MSI を同梱すると、生成する ZIP のサイズは 20 MB を超える見込みです。";
+
+    /// <summary>版不一致の確認未了エラー（生成ボタン押下時）。</summary>
+    public const string ForwarderKitErrorMsiVersionMismatchNotAcknowledged =
+        "MSI の版が検証済み版と異なります。同梱するには確認チェックを入れてください。";
 }

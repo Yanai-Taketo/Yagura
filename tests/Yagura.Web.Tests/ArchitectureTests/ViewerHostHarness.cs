@@ -40,7 +40,13 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         _app = app;
     }
 
-    public static async Task<ViewerHostHarness> StartAsync()
+    /// <param name="forwarderMsiSource">
+    /// <see cref="Yagura.Web.ForwarderKit.IForwarderMsiSource"/> の差し替え（ADR-0008 設計条件 9。
+    /// 既定 <see langword="null"/> は常に未検出を返す <see cref="StubForwarderMsiSource"/>）。
+    /// <c>ForwarderKitDownloadEndpointTests</c> の includeMsi 系ケースが使う。
+    /// </param>
+    public static async Task<ViewerHostHarness> StartAsync(
+        Yagura.Web.ForwarderKit.IForwarderMsiSource? forwarderMsiSource = null)
     {
         var builder = WebApplication.CreateBuilder();
 
@@ -63,6 +69,12 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddYaguraAdmin();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService, StubSetupWizardService>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService, StubPromotionWizardService>();
+
+        // ADR-0008 設計条件 9: フォワーダキット生成画面・ダウンロードエンドポイントが要求する
+        // IForwarderMsiSource（Program.cs と同じくデータルート配下 forwarder を注入する結線だが、
+        // 本ハーネスはルーティング表の機械列挙・実 HTTP 応答検証が目的のため既定は未検出扱いの
+        // スタブとする——実処理は ForwarderMsiFilterTests / ForwarderKitBuilderTests が検証する）。
+        builder.Services.AddSingleton(forwarderMsiSource ?? new StubForwarderMsiSource());
 
         // 閲覧・管理の両方を同一ホストにマップする(Program.cs と同じ構造。ポートによる
         // 到達可否の分離は実行時の ListenerPortGuardMiddleware が担うため、エンドポイント表
@@ -173,6 +185,19 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     private sealed class NoopAuditRecorder : IAuditRecorder
     {
         public Task RecordAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// <see cref="Yagura.Web.ForwarderKit.IForwarderMsiSource"/> の既定スタブ（ADR-0008 設計条件 9）:
+    /// 常に未検出を返す。<see cref="ForwarderKitDownloadEndpointTests"/> の includeMsi 系ケースは
+    /// 個別に差し替えたインスタンスを DI へ追加登録して使う。
+    /// </summary>
+    private sealed class StubForwarderMsiSource : Yagura.Web.ForwarderKit.IForwarderMsiSource
+    {
+        public string FolderPath => @"C:\ProgramData\Yagura\forwarder";
+
+        public Yagura.Web.ForwarderKit.ForwarderMsiLookup Lookup() =>
+            Yagura.Web.ForwarderKit.ForwarderMsiLookup.NotFound();
     }
 
     /// <summary>

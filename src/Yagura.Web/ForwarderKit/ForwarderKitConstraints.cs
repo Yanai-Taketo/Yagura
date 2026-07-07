@@ -63,3 +63,41 @@ public static class ForwarderKitConstraints
     /// <summary>収集チャネル文字列全体の検証（個々のチャネル名は <see cref="KnownChannels"/> で判定）。</summary>
     public static readonly Regex ChannelsRegex = new(ChannelsPattern, RegexOptions.Compiled);
 }
+
+/// <summary>
+/// MSI オプトイン同梱（ADR-0008 設計条件 9・委任 #7）の定数。配置フォルダ・ファイル名パターン・
+/// 公式配布 SHA256 の器を <see cref="ForwarderKitConstraints"/> とは別クラスに分離する
+/// ——設計条件 9 は既存の設計条件 1〜8 とは別の改訂（2026-07-07 amendment）で追加された事項であり、
+/// 将来 security.md へ実装細部を一本化する際（ADR-0008 改訂履歴 1 の申し送り）に本クラス単位で
+/// 移動しやすくする狙いもある。
+/// </summary>
+public static class ForwarderMsiConstraints
+{
+    /// <summary>
+    /// 配置フォルダのデータルートからの相対パス（<c>%ProgramData%\Yagura\forwarder\</c>。
+    /// ADR-0008 設計条件 9）。フォルダの作成・ACL 設定はインストーラ（WiX）の領分であり、
+    /// 本アプリはここを読み取るのみ（フォルダが無ければ未検出として扱う）。
+    /// </summary>
+    public const string PlacementSubPath = "forwarder";
+
+    /// <summary>
+    /// MSI ファイル名パターン（ADR-0008 設計条件 9）。実際の判定は
+    /// <see cref="ForwarderMsiFilter.IsCandidateFileName"/>（正規表現をコンパイル済みで保持）。
+    /// ここでは人が読める表記として残す。
+    /// </summary>
+    public const string FileNamePattern = "fluent-bit-*-win64.msi";
+
+    /// <summary>
+    /// 検証済み Fluent Bit 版（<see cref="ForwarderKitConstraints.VerifiedFluentBitVersion"/>）に
+    /// 対応する公式配布 MSI の SHA256（16 進小文字）。
+    /// </summary>
+    /// <remarks>
+    /// <b>実装 PR で確定するまでのプレースホルダ</b>: 値は <see langword="null"/>（未設定）とする。
+    /// 偽のハッシュ値をハードコードすると「一致した」という誤った安心を生むため、確定した
+    /// 公式ハッシュを live 検証できるまでは <see langword="null"/> のまま保つ——未設定時は
+    /// <see cref="ForwarderMsiFilter.MatchesOfficialHash"/> が
+    /// <see cref="OfficialHashMatchResult.Unverified"/> を返し、生成画面・README で
+    /// 「公式ハッシュとの照合は未実施」の旨を出す（安全側。ADR-0008 設計条件 9）。
+    /// </remarks>
+    public const string? OfficialSha256ForVerifiedVersion = null;
+}

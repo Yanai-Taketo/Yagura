@@ -1,19 +1,21 @@
 using System.IO.Compression;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// フォワーダ配布キット（ZIP）の組み立て（ADR-0008 設計条件 3・4・7・8）。
+/// フォワーダ配布キット（ZIP）の組み立て（ADR-0008 設計条件 3・4・7・8・9）。
 /// </summary>
 /// <remarks>
 /// <para>
 /// テンプレートはビルド時に埋め込んだリソース（<c>Yagura.Web.csproj</c> の
 /// <c>EmbeddedResource</c>。<c>forwarder/fluent-bit/</c> を単一ソースとする——ADR-0008 委任 #1）
 /// から読み出す。生成は <b>メモリ上の <see cref="MemoryStream"/> 上で完結し、ディスクへ
-/// 一時ファイルを書かない</b>（設計条件 7）。外部ネットワークへのアクセスも行わない（設計条件 7）。
-/// 生成物に秘密情報は含めない（設計条件 8——入る値は宛先ホスト・ポート・チャネル名のみ）。
+/// 一時ファイルを書かない</b>（設計条件 7。MSI 同梱時も配置済みファイルを読み取って封入するのみ）。
+/// 外部ネットワークへのアクセスも行わない（設計条件 7）。生成物に秘密情報は含めない
+/// （設計条件 8——入る値は宛先ホスト・ポート・チャネル名・（同梱時のみ）MSI の来歴情報）。
 /// </para>
 /// </remarks>
 public static class ForwarderKitBuilder
@@ -49,17 +51,77 @@ public static class ForwarderKitBuilder
 
         var conf = SubstituteConf(confTemplate, request);
         var readme = SubstituteReadme(readmeTemplate, request, generatedAt);
-        var generatedTxt = BuildGeneratedTxt(request, generatedAt);
+        var msiBytes = request.MsiBundle is { } bundle ? File.ReadAllBytes(bundle.FilePath) : null;
 
+        // Kit-SHA256 の自己参照回避（ADR-0008 設計条件 9）: GENERATED.txt 自身に「ZIP 全体の
+        // SHA256」を書き込む必要があるが、その値は GENERATED.txt の内容が確定しないと計算できず、
+        // GENERATED.txt の内容（Kit-SHA256 の値）が確定しないと ZIP 全体のハッシュも計算できない
+        // ——という循環が生じる。これを避けるため 2 段階で組み立てる:
+        //   1. GENERATED.txt を含まない全エントリ（conf・install.ps1・uninstall.ps1・Lua・
+        //      README・(同梱時)MSI）だけで ZIP を組み立て、その全体バイト列の SHA256 を
+        //      「Kit-SHA256」として採用する。
+        //   2. その値を書き込んだ GENERATED.txt を追加した最終 ZIP を組み立て直す。
+        // 「GENERATED.txt を除く全エントリのハッシュ」と定義することで自己参照を断ち切る
+        // （設計条件 9 の要求「自己参照を避ける実装をコメントで明示」への対応）。
+        //
+        // 各 ZIP エントリの LastWriteTime は generatedAt に固定する（BuildArchive → WriteEntry）。
+        // 未指定だと ZipArchiveEntry は作成時のウォールクロック（DOS 日時形式・2 秒粒度）を書き込むため、
+        // 生成タイミング次第で「GENERATED.txt を除く内容」のバイト列が変わり、Kit-SHA256 が
+        // 同一入力でも揺れてしまう（ハッシュ計算用・最終成果物用の 2 回の BuildArchive が 2 秒境界を
+        // またぐと不一致になる）。generatedAt へ固定することで同一入力→同一 Kit-SHA256 を保証する。
+        var kitShaSourceBytes = BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request, generatedAt);
+        var kitSha256 = Convert.ToHexStringLower(SHA256.HashData(kitShaSourceBytes));
+
+        var generatedTxt = BuildGeneratedTxt(request, generatedAt, kitSha256);
+
+        return BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request, generatedAt, generatedTxt);
+    }
+
+    /// <summary>
+    /// 同梱有無を反映したファイル名（例 <c>yagura-forwarder-kit-20260707-with-msi.zip</c> /
+    /// <c>-no-msi.zip</c>。ADR-0008 設計条件 9「開かずに棚卸しできるようにする」）。
+    /// </summary>
+    public static string BuildFileName(ForwarderKitRequest request, DateTimeOffset generatedAt)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var suffix = request.IncludeMsi ? "with-msi" : "no-msi";
+        return $"yagura-forwarder-kit-{generatedAt:yyyyMMdd}-{suffix}.zip";
+    }
+
+    /// <summary>
+    /// ZIP 本体を組み立てる（<paramref name="generatedTxt"/> が <see langword="null"/> の間は
+    /// Kit-SHA256 計算用の GENERATED.txt 抜きアーカイブ、非 null なら最終アーカイブ）。
+    /// </summary>
+    private static byte[] BuildArchive(
+        string conf,
+        string installScript,
+        string uninstallScript,
+        string luaFilter,
+        string readme,
+        byte[]? msiBytes,
+        ForwarderKitRequest request,
+        DateTimeOffset generatedAt,
+        string? generatedTxt = null)
+    {
         using var memoryStream = new MemoryStream();
         using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, leaveOpen: true))
         {
-            WriteEntry(archive, EntryNames.Conf, conf);
-            WriteEntry(archive, EntryNames.InstallScript, installScript);
-            WriteEntry(archive, EntryNames.UninstallScript, uninstallScript);
-            WriteEntry(archive, EntryNames.LuaFilter, luaFilter);
-            WriteEntry(archive, EntryNames.Readme, readme);
-            WriteEntry(archive, EntryNames.Generated, generatedTxt);
+            WriteEntry(archive, EntryNames.Conf, conf, generatedAt);
+            WriteEntry(archive, EntryNames.InstallScript, installScript, generatedAt);
+            WriteEntry(archive, EntryNames.UninstallScript, uninstallScript, generatedAt);
+            WriteEntry(archive, EntryNames.LuaFilter, luaFilter, generatedAt);
+            WriteEntry(archive, EntryNames.Readme, readme, generatedAt);
+
+            if (msiBytes is not null && request.MsiBundle is { } bundle)
+            {
+                WriteBinaryEntry(archive, bundle.FileName, msiBytes, generatedAt);
+            }
+
+            if (generatedTxt is not null)
+            {
+                WriteEntry(archive, EntryNames.Generated, generatedTxt, generatedAt);
+            }
         }
 
         return memoryStream.ToArray();
@@ -71,8 +133,9 @@ public static class ForwarderKitBuilder
             .Replace("@@YAGURA_PORT@@", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Replace("@@CHANNELS@@", request.ChannelsValue);
 
-    private static string SubstituteReadme(string template, ForwarderKitRequest request, DateTimeOffset generatedAt) =>
-        template
+    private static string SubstituteReadme(string template, ForwarderKitRequest request, DateTimeOffset generatedAt)
+    {
+        var substituted = template
             .Replace("@@YAGURA_HOST@@", request.Host)
             .Replace("@@YAGURA_PORT@@", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Replace("@@CHANNELS@@", request.ChannelsValue)
@@ -80,7 +143,86 @@ public static class ForwarderKitBuilder
             .Replace("@@FLUENTBIT_VERSION@@", ForwarderKitConstraints.VerifiedFluentBitVersion)
             .Replace("@@YAGURA_VERSION@@", YaguraVersion);
 
-    private static string BuildGeneratedTxt(ForwarderKitRequest request, DateTimeOffset generatedAt)
+        // MSI 同梱時 / 非同梱時で案内を出し分ける（ADR-0008 委任 #7・README.generated.md の
+        // @@MSI_SECTION@@ プレースホルダ。プレースホルダ方式で Builder が差し込む）。
+        return substituted.Replace("@@MSI_SECTION@@", BuildMsiReadmeSection(request));
+    }
+
+    /// <summary>
+    /// README の MSI セクション（同梱時: 同梱済みである旨 + 来歴 + 免責。非同梱時: 既存の
+    /// 取得手順案内をそのまま維持——ADR-0008 設計条件 9「既定（非同梱）の全条件は同梱時も維持する」）。
+    /// </summary>
+    private static string BuildMsiReadmeSection(ForwarderKitRequest request)
+    {
+        if (request.MsiBundle is not { } bundle)
+        {
+            return
+                """
+                Fluent Bit の MSI 本体は**このキットに同梱されていません**。以下の手順で取得してください。
+
+                ### 1. Fluent Bit MSI を取得する
+
+                [packages.fluentbit.io](https://packages.fluentbit.io/) から、検証済み版 **@@FLUENTBIT_VERSION@@** の
+                Windows 64bit MSI を取得します。
+
+                ```powershell
+                Invoke-WebRequest -Uri "https://packages.fluentbit.io/windows/fluent-bit-@@FLUENTBIT_VERSION@@-win64.msi" `
+                                  -OutFile ".\fluent-bit-@@FLUENTBIT_VERSION@@-win64.msi"
+                ```
+
+                ### 2. SHA256 で取得物を検証する
+
+                `packages.fluentbit.io` は版ごとの `.sha256` を配布していない場合があります。その場合は、
+                以下のいずれかで取得元の正当性を確認してください。
+
+                - Fluent Bit 公式サイト・公式 GitHub リリースページに掲載されたハッシュ値と突合する
+                - 社内の信頼できるミラー・パッケージ管理基盤(Chocolatey・社内リポジトリ等)経由で取得する
+
+                取得した MSI のハッシュ値は次のコマンドで確認できます。
+
+                ```powershell
+                Get-FileHash ".\fluent-bit-@@FLUENTBIT_VERSION@@-win64.msi" -Algorithm SHA256
+                ```
+
+                **入手元が確認できない MSI は導入しないでください。** `.sha256` が提供されていないことは
+                検証を省略してよい理由にはなりません。
+
+                ### 3. MSI をキットと同じフォルダに置き、サイレント導入を実行する(管理者権限)
+                """
+                    .Replace("@@FLUENTBIT_VERSION@@", ForwarderKitConstraints.VerifiedFluentBitVersion);
+        }
+
+        var officialHashLine = bundle.OfficialHashMatch switch
+        {
+            OfficialHashMatchResult.Match => "公式配布 SHA256 と**一致**しました。",
+            OfficialHashMatchResult.Mismatch => "**公式配布 SHA256 と一致しませんでした。取得元・改ざんの有無を確認してください。**",
+            _ => "公式配布 SHA256 との照合は未実施です（Yagura に公式ハッシュが未設定）。",
+        };
+
+        var versionLine = bundle.VersionMismatch
+            ? $"**注意: 同梱 MSI の版（{bundle.ProductVersion ?? "不明"}）は検証済み版（{ForwarderKitConstraints.VerifiedFluentBitVersion}）と異なります。** " +
+              "管理者が生成画面で明示確認のうえ同梱されています。"
+            : $"版: {bundle.ProductVersion ?? "不明"}（検証済み版 {ForwarderKitConstraints.VerifiedFluentBitVersion} と一致）。";
+
+        return
+            $"""
+            **MSI は同梱済みです。`install.ps1` をそのまま実行できます（追加の取得手順は不要です）。**
+            同梱 MSI は既にキットと同じフォルダにあります。
+
+            - ファイル名: `{bundle.FileName}`
+            - {versionLine}
+            - SHA256: `{bundle.Sha256}`
+            - {officialHashLine}
+
+            **免責**: 同梱 MSI について Yagura は取得元・真正性・脆弱性対応の責任を負いません。
+            Yagura は管理者が配置したファイルを梱包し、その来歴（ファイル名・版・SHA256）を
+            記録するのみです。
+
+            ### MSI をキットと同じフォルダに置き、サイレント導入を実行する(管理者権限)
+            """;
+    }
+
+    private static string BuildGeneratedTxt(ForwarderKitRequest request, DateTimeOffset generatedAt, string kitSha256)
     {
         var builder = new StringBuilder();
         builder.AppendLine("# Yagura forwarder kit - generation metadata (ADR-0008)");
@@ -89,6 +231,27 @@ public static class ForwarderKitBuilder
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Channels: {request.ChannelsValue}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Yagura-Version: {YaguraVersion}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Fluent-Bit-Verified: {ForwarderKitConstraints.VerifiedFluentBitVersion}");
+        builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Msi-Bundled: {(request.IncludeMsi ? "true" : "false")}");
+
+        if (request.MsiBundle is { } bundle)
+        {
+            var officialMatchValue = bundle.OfficialHashMatch switch
+            {
+                OfficialHashMatchResult.Match => "yes",
+                OfficialHashMatchResult.Mismatch => "no",
+                _ => "unverified",
+            };
+
+            builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Msi-FileName: {bundle.FileName}");
+            builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Msi-ProductVersion: {bundle.ProductVersion ?? "unknown"}");
+            builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Msi-SHA256: {bundle.Sha256}");
+            builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Msi-OfficialHashMatch: {officialMatchValue}");
+        }
+
+        // Kit-SHA256: GENERATED.txt 自身を除く全エントリのハッシュ（本メソッド冒頭の Build の
+        // コメント参照。自己参照を避けるための定義）。
+        builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Kit-SHA256: {kitSha256}");
+
         return builder.ToString();
     }
 
@@ -121,13 +284,25 @@ public static class ForwarderKitBuilder
         return reader.ReadToEnd();
     }
 
-    private static void WriteEntry(ZipArchive archive, string entryName, string content)
+    private static void WriteEntry(ZipArchive archive, string entryName, string content, DateTimeOffset generatedAt)
     {
         var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        // LastWriteTime を generatedAt へ固定（未指定だとウォールクロックが入り Kit-SHA256 が
+        // 非決定的になる——Build のコメント参照）。
+        entry.LastWriteTime = generatedAt;
         using var entryStream = entry.Open();
         // BOM なし UTF-8: install.ps1 の設定書き出しと同じ判断（Fluent Bit のパーサが
         // BOM を想定しない）。README・GENERATED.txt も一貫して BOM なしにする。
         using var writer = new StreamWriter(entryStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         writer.Write(content);
+    }
+
+    private static void WriteBinaryEntry(ZipArchive archive, string entryName, byte[] content, DateTimeOffset generatedAt)
+    {
+        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        // LastWriteTime を generatedAt へ固定（WriteEntry と同じ理由）。
+        entry.LastWriteTime = generatedAt;
+        using var entryStream = entry.Open();
+        entryStream.Write(content);
     }
 }
