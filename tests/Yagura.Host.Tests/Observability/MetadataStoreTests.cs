@@ -81,6 +81,55 @@ public sealed class MetadataStoreTests : IDisposable
     }
 
     [Fact]
+    public void SaveThenRead_RoundTripsTcpConnectionAndOversizedCounters()
+    {
+        // Issue #143・#140 で追加した 3 カウンタも往復すること。
+        var counters = new IngestionCounterSnapshot(
+            InternalBufferDropped: 0,
+            TcpConnectionRejected: 0,
+            SpoolEvacuated: 0,
+            SpoolWriteFailed: 0,
+            SpoolDiscarded: 0,
+            PersistenceFailed: 0,
+            FlowControlDropped: 0,
+            TcpConnectionClosed: 12,
+            TcpConnectionIdleTimeout: 4,
+            TcpMessageOversizedDiscarded: 9);
+        var state = new MetadataState(counters, LastStopEvent: null, LastLivenessAt: null);
+
+        MetadataStore.Save(_dataRoot, state);
+        var reloaded = MetadataStore.Read(_dataRoot);
+
+        Assert.Equal(12, reloaded.Counters.TcpConnectionClosed);
+        Assert.Equal(4, reloaded.Counters.TcpConnectionIdleTimeout);
+        Assert.Equal(9, reloaded.Counters.TcpMessageOversizedDiscarded);
+    }
+
+    [Fact]
+    public void Read_FileWithoutTcpCounterKeys_DefaultsThemToZero()
+    {
+        // Issue #143・#140 より前に書かれた（3 キーを持たない）メタデータ領域ファイルを模す。
+        // additive-only なスキーマ変更のため、キー欠落は 0 として扱われ検証違反にはならない。
+        File.WriteAllText(
+            FilePath,
+            """
+            {
+              "Version": 1,
+              "Counters": { "InternalBufferDropped": 5 },
+              "LastStopEvent": null,
+              "LastLivenessAt": null
+            }
+            """);
+
+        var state = MetadataStore.Read(_dataRoot);
+
+        Assert.Equal(5, state.Counters.InternalBufferDropped);
+        Assert.Equal(0, state.Counters.TcpConnectionClosed);
+        Assert.Equal(0, state.Counters.TcpConnectionIdleTimeout);
+        Assert.Equal(0, state.Counters.TcpMessageOversizedDiscarded);
+    }
+
+    [Fact]
     public void SaveTwice_SecondSaveOverwritesFirst()
     {
         var first = new MetadataState(new IngestionCounterSnapshot(1, 0, 0, 0, 0, 0, 0), null, null);

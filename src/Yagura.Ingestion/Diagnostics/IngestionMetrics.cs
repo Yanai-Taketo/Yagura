@@ -38,8 +38,12 @@ namespace Yagura.Ingestion.Diagnostics;
 /// M2 で「内部バッファ破棄」、M4-1 で「TCP 接続拒否」、M4-3 で「スプール退避」「スプール書込
 /// 失敗」「スプール破棄」「永続化失敗」を追加した。M4-4 で「流量制御破棄」（挿入点のみ。
 /// <see cref="Yagura.Ingestion.FlowControl.NoopIngressGate"/> が発火させることはない）と、
-/// OS 統計突合ゲージ（§4.2）を追加した。残り（解析失敗（保存済み）・TCP 接続断・TLS
-/// ハンドシェイク失敗・TCP 不完全メッセージ）は該当機能（TLS 受信等）の実装時に追加する。
+/// OS 統計突合ゲージ（§4.2）を追加した。Issue #143・#140（syslog 実務者ペルソナの深掘り
+/// レビューで発見された、1 メッセージの逸脱による接続全損・アイドル接続の資源枯渇の 2 件）の
+/// 対応で「TCP 接続断」（当初計画の 12 種の一つ）・「TCP 接続アイドルタイムアウト」・
+/// 「TCP メッセージ破棄（上限超過）」（後者 2 つは新規）を追加した。残り（解析失敗
+/// （保存済み）・TLS ハンドシェイク失敗・TCP 不完全メッセージ）は該当機能（TLS 受信等）の
+/// 実装時に追加する。
 /// </para>
 /// <para>
 /// Issue #142 で「UDP 受信エラー」を追加した（<see cref="RecordUdpReceiveError"/>）。
@@ -69,6 +73,9 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _persistenceFailed;
     private readonly Counter<long> _flowControlDropped;
     private readonly Counter<long> _udpReceiveError;
+    private readonly Counter<long> _tcpConnectionClosed;
+    private readonly Counter<long> _tcpConnectionIdleTimeout;
+    private readonly Counter<long> _tcpMessageDiscardedOversized;
 
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
@@ -87,6 +94,9 @@ public sealed class IngestionMetrics : IDisposable
     private long _spoolDiscardedTotal;
     private long _persistenceFailedTotal;
     private long _flowControlDroppedTotal;
+    private long _tcpConnectionClosedTotal;
+    private long _tcpConnectionIdleTimeoutTotal;
+    private long _tcpMessageDiscardedOversizedTotal;
 
     private readonly ObservableGauge<long>? _osUdpIPv4DatagramsDiscarded;
     private readonly ObservableGauge<long>? _osUdpIPv6DatagramsDiscarded;
@@ -159,6 +169,32 @@ public sealed class IngestionMetrics : IDisposable
             unit: "{error}",
             description: "UDP 受信ソケットの ReceiveAsync が SocketException で失敗した回数" +
                 "（プロセス内累積。個々のケースが実データ損失と一致するとは限らない診断用カウンタ）。");
+
+        // architecture.md §4.1・§4.5「TCP 接続断」（Issue #140）: TCP 接続が切断された回数
+        // （理由を問わない——正常シャットダウン・異常切断・停止要求・再同期不能な破損・
+        // アイドルタイムアウトのいずれも含む）。損失ではなく解釈の手がかり。
+        _tcpConnectionClosed = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_connection.closed",
+            unit: "{connection}",
+            description: "TCP 接続が切断された回数（理由を問わない。損失ではなく解釈の手がかり）。");
+
+        // architecture.md §4.5「TCP 接続アイドルタイムアウト」（Issue #140 で新設）:
+        // アイドルタイムアウト（TcpSyslogListenerOptions.IdleTimeout）により切断した接続数
+        // （§4.1「TCP 接続断」の内訳の一種として、無言接続の資源回収が働いていることを
+        // 個別に確認できるよう分離する）。
+        _tcpConnectionIdleTimeout = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_connection.idle_timeout",
+            unit: "{connection}",
+            description: "アイドルタイムアウトにより切断した TCP 接続数（TCP 接続断の内訳）。");
+
+        // architecture.md §4.5「TCP メッセージ破棄（上限超過）」（Issue #143 で新設）:
+        // 1 メッセージのバイト数上限（TcpFrameDecoderOptions.MaxMessageLength）超過により、
+        // 当該メッセージのみを破棄した件数（接続は維持する。TcpFrameDecoder.
+        // OversizedMessagesDiscardedCount 参照）。
+        _tcpMessageDiscardedOversized = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_message.oversized_discarded",
+            unit: "{message}",
+            description: "1 メッセージのサイズ上限超過により、当該メッセージのみを破棄した件数（接続は維持）。");
 
         // architecture.md §4.2 OS レベル取りこぼしの観測（M4-4 で実機検証: Windows ARM64・
         // SDK 10.0.301 で IPGlobalProperties.GetUdpIPv4Statistics()/GetUdpIPv6Statistics() の
@@ -313,6 +349,35 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// TCP 接続の切断を 1 件計上する（理由を問わない。§4.5「TCP 接続断」。Issue #140）。
+    /// アイドルタイムアウトによる切断は本カウンタに加え <see cref="RecordTcpConnectionIdleTimeout"/>
+    /// も併せて計上する。
+    /// </summary>
+    public void RecordTcpConnectionClosed()
+    {
+        _tcpConnectionClosed.Add(1);
+        Interlocked.Increment(ref _tcpConnectionClosedTotal);
+    }
+
+    /// <summary>
+    /// アイドルタイムアウトによる TCP 接続切断を 1 件計上する（§4.5。Issue #140）。
+    /// </summary>
+    public void RecordTcpConnectionIdleTimeout()
+    {
+        _tcpConnectionIdleTimeout.Add(1);
+        Interlocked.Increment(ref _tcpConnectionIdleTimeoutTotal);
+    }
+
+    /// <summary>
+    /// 1 メッセージのサイズ上限超過による破棄を 1 件計上する（接続は維持。§4.5。Issue #143）。
+    /// </summary>
+    public void RecordTcpMessageDiscardedOversized()
+    {
+        _tcpMessageDiscardedOversized.Add(1);
+        Interlocked.Increment(ref _tcpMessageDiscardedOversizedTotal);
+    }
+
+    /// <summary>
     /// 起動時、メタデータ領域（§4.3）から読み込んだ前回までの累積値を引き継ぐ
     /// （「前回までの累積 + 今回プロセス分」の合成。Counter&lt;T&gt; 自体は加算専用で
     /// 初期値を設定する API を持たないため、本クラス自身が保持する
@@ -333,6 +398,9 @@ public sealed class IngestionMetrics : IDisposable
         Interlocked.Exchange(ref _spoolDiscardedTotal, previous.SpoolDiscarded);
         Interlocked.Exchange(ref _persistenceFailedTotal, previous.PersistenceFailed);
         Interlocked.Exchange(ref _flowControlDroppedTotal, previous.FlowControlDropped);
+        Interlocked.Exchange(ref _tcpConnectionClosedTotal, previous.TcpConnectionClosed);
+        Interlocked.Exchange(ref _tcpConnectionIdleTimeoutTotal, previous.TcpConnectionIdleTimeout);
+        Interlocked.Exchange(ref _tcpMessageDiscardedOversizedTotal, previous.TcpMessageOversizedDiscarded);
     }
 
     /// <summary>
@@ -346,7 +414,10 @@ public sealed class IngestionMetrics : IDisposable
         SpoolWriteFailed: Interlocked.Read(ref _spoolWriteFailedTotal),
         SpoolDiscarded: Interlocked.Read(ref _spoolDiscardedTotal),
         PersistenceFailed: Interlocked.Read(ref _persistenceFailedTotal),
-        FlowControlDropped: Interlocked.Read(ref _flowControlDroppedTotal));
+        FlowControlDropped: Interlocked.Read(ref _flowControlDroppedTotal),
+        TcpConnectionClosed: Interlocked.Read(ref _tcpConnectionClosedTotal),
+        TcpConnectionIdleTimeout: Interlocked.Read(ref _tcpConnectionIdleTimeoutTotal),
+        TcpMessageOversizedDiscarded: Interlocked.Read(ref _tcpMessageDiscardedOversizedTotal));
 
     /// <summary>
     /// 内部バッファ破棄カウンタの計器そのもの。テストで
@@ -377,6 +448,15 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>UDP 受信エラーカウンタの計器そのもの（テスト用。<see cref="InternalBufferDroppedCounter"/> と同じ理由。Issue #142）。</summary>
     public Counter<long> UdpReceiveErrorCounter => _udpReceiveError;
+
+    /// <summary>TCP 接続断カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> TcpConnectionClosedCounter => _tcpConnectionClosed;
+
+    /// <summary>TCP 接続アイドルタイムアウトカウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> TcpConnectionIdleTimeoutCounter => _tcpConnectionIdleTimeout;
+
+    /// <summary>TCP メッセージ破棄（上限超過）カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> TcpMessageDiscardedOversizedCounter => _tcpMessageDiscardedOversized;
 
     /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
     public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;

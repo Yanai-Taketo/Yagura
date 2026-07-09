@@ -38,6 +38,15 @@ internal sealed class MetadataStoreFileFormat
         public long? PersistenceFailed { get; set; }
 
         public long? FlowControlDropped { get; set; }
+
+        // Issue #143・#140 で追加。旧バージョンのファイルにはキーが無いため、読み込み側
+        // （MetadataStore.FromFileFormat）は null を 0 として扱う（追加はスキーマの
+        // additive-only 原則どおり）。
+        public long? TcpConnectionClosed { get; set; }
+
+        public long? TcpConnectionIdleTimeout { get; set; }
+
+        public long? TcpMessageOversizedDiscarded { get; set; }
     }
 
     internal sealed class StopEventFileFormat

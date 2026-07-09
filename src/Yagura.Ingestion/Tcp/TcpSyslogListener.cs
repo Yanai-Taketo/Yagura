@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Udp;
@@ -31,9 +32,31 @@ namespace Yagura.Ingestion.Tcp;
 /// 停止中に接続数が無限に積み上がることを防ぐ有限化である。
 /// </para>
 /// <para>
+/// <b>アイドルタイムアウト</b>（§4.5・<see cref="TcpSyslogListenerOptions.IdleTimeout"/>。
+/// Issue #140）: 同時接続数上限は「読み取り停止中も接続を保持する」設計の帰結として必要な
+/// 有限化だが、それ自体が無言・低速な接続（何も送らない、または 1 バイトだけ送って黙る）に
+/// 占有され続けると、正常な送信元の新規接続が拒否され続ける（slowloris 型の資源枯渇）。
+/// 本実装は最後にバイトを読み取ってから <see cref="TcpSyslogListenerOptions.IdleTimeout"/> が
+/// 経過した接続を切断し、枠を返す。切断は
+/// <see cref="IngestionMetrics.RecordTcpConnectionIdleTimeout"/> で計上する。
+/// </para>
+/// <para>
+/// <b>1 メッセージの逸脱への耐性</b>（§4.5。Issue #143）: octet-counting のフレーム間に紛れた
+/// LF/CR は <see cref="TcpFrameDecoder"/> が寛容にスキップして再同期し、1 メッセージのサイズ
+/// 上限超過（octet-counting・non-transparent-framing とも）は当該メッセージのみを破棄して
+/// 接続を維持する（<see cref="TcpFrameDecoder.OversizedMessagesDiscardedCount"/> の差分を
+/// <see cref="IngestionMetrics.RecordTcpMessageDiscardedOversized"/> で計上）。再同期できない
+/// 深刻な破損（<see cref="TcpFrameSizeExceededException"/>）のときのみ接続を切断する。
+/// </para>
+/// <para>
 /// <b>切断時の不完全メッセージ</b>（database.md §2.1）: 接続が切断された時点で
 /// <see cref="TcpFrameDecoder"/> に読みかけのデータが残っていれば、それを
 /// <see cref="RawDatagram.Incomplete"/> = <c>true</c> として Q1 へ流す（捨てない）。
+/// </para>
+/// <para>
+/// <b>TCP 接続断の計上</b>（§4.5。Issue #140）: 理由を問わず、接続が終了するたびに
+/// <see cref="IngestionMetrics.RecordTcpConnectionClosed"/> を 1 件計上する（損失ではなく
+/// 解釈の手がかり。アイドルタイムアウト由来の切断はこれに加えて専用カウンタも計上する）。
 /// </para>
 /// </remarks>
 public sealed class TcpSyslogListener : IAsyncDisposable
@@ -42,6 +65,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
     private readonly ChannelWriter<RawDatagram> _q1Writer;
     private readonly IIngressGate _ingressGate;
     private readonly IngestionMetrics _metrics;
+    private readonly ILogger<TcpSyslogListener>? _logger;
 
     private TcpListener? _tcpListener;
     private Task? _acceptLoopTask;
@@ -57,7 +81,8 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         TcpSyslogListenerOptions options,
         ChannelWriter<RawDatagram> q1Writer,
         IIngressGate ingressGate,
-        IngestionMetrics metrics)
+        IngestionMetrics metrics,
+        ILogger<TcpSyslogListener>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(q1Writer);
@@ -68,6 +93,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         _q1Writer = q1Writer;
         _ingressGate = ingressGate;
         _metrics = metrics;
+        _logger = logger;
     }
 
     /// <summary>
@@ -193,6 +219,19 @@ public sealed class TcpSyslogListener : IAsyncDisposable
 
         var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxMessageLength = _options.MaxMessageLength });
         var buffer = new byte[8192];
+        var previousOversizedDiscardedCount = 0;
+        var idleTimedOut = false;
+
+        // Issue #140: アイドルタイムアウト。stoppingToken にリンクした CTS を用意し、読み取りの
+        // たびに CancelAfter で再スケジュールする（TryReset ではなく CancelAfter の再呼び出しで
+        // タイマーを延長する——CancellationTokenSource の標準的な使い方）。IdleTimeout が
+        // Zero 以下なら無効化し、stoppingToken をそのまま使う（主にテスト用途）。
+        var idleTimeoutEnabled = _options.IdleTimeout > TimeSpan.Zero;
+        using var idleCts = idleTimeoutEnabled
+            ? CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)
+            : null;
+        idleCts?.CancelAfter(_options.IdleTimeout);
+        var readToken = idleCts?.Token ?? stoppingToken;
 
         try
         {
@@ -204,7 +243,15 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     int bytesRead;
                     try
                     {
-                        bytesRead = await stream.ReadAsync(buffer, stoppingToken).ConfigureAwait(false);
+                        bytesRead = await stream.ReadAsync(buffer, readToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (idleTimeoutEnabled && !stoppingToken.IsCancellationRequested)
+                    {
+                        // アイドルタイムアウトによる打ち切り（stoppingToken 自体はキャンセルされて
+                        // いない——リンクした idleCts 側の CancelAfter が発火した）。無通信接続が
+                        // 同時接続枠（§3.1・M-14）を占有し続けることを防ぐ有限化（Issue #140）。
+                        idleTimedOut = true;
+                        break;
                     }
                     catch (OperationCanceledException)
                     {
@@ -226,6 +273,9 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                         break;
                     }
 
+                    // 読み取りに成功したのでアイドルタイマーを再スケジュールする（Issue #140）。
+                    idleCts?.CancelAfter(_options.IdleTimeout);
+
                     var receivedAt = DateTimeOffset.UtcNow;
 
                     IReadOnlyList<byte[]> messages;
@@ -233,15 +283,41 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     {
                         messages = decoder.Push(buffer.AsSpan(0, bytesRead));
                     }
-                    catch (TcpFrameSizeExceededException)
+                    catch (TcpFrameSizeExceededException ex)
                     {
-                        // M4-1 依頼の安全側判断: 1 メッセージのサイズ上限（巨大な MSG-LEN を騙る、
-                        // または LF が来ないまま流し込み続ける送信元）を超えたら、当該接続を
-                        // 切断する。切断前に読みかけデータが残っていれば通常の切断経路と同じく
-                        // Incomplete として Q1 へ流す（下のfinally相当の処理へ委ねるため、ここでは
-                        // ループを抜けるだけでよい——decoder の内部バッファはそのまま残るため、
+                        // Issue #143: 再同期不能な深刻な破損（MSG-LEN の桁の途中に数字以外が
+                        // 混入・桁数異常・int 範囲超過）のときのみ、安全側判断として当該接続を
+                        // 切断する。1 メッセージのサイズ上限超過は decoder 内部で当該メッセージを
+                        // 破棄するだけで済み、この例外には現れない（下の OversizedMessagesDiscardedCount
+                        // 参照）。切断前に読みかけデータが残っていれば通常の切断経路と同じく
+                        // Incomplete として Q1 へ流す（decoder の内部バッファはそのまま残るため、
                         // ループ終了後の Flush() が拾う）。
+                        _logger?.LogWarning(
+                            ex,
+                            "TCP 接続 {SourceAddress}:{SourcePort} で再同期不能なフレーム破損を検出したため切断します。",
+                            sourceAddress,
+                            sourcePort);
                         break;
+                    }
+
+                    // Issue #143: 1 メッセージのサイズ上限超過による破棄をカウンタ・ログへ計上する
+                    // （decoder は計測 API を持たない純粋ロジックのため、呼び出し元が差分を計上する）。
+                    if (decoder.OversizedMessagesDiscardedCount != previousOversizedDiscardedCount)
+                    {
+                        var discardedThisPush = decoder.OversizedMessagesDiscardedCount - previousOversizedDiscardedCount;
+                        previousOversizedDiscardedCount = decoder.OversizedMessagesDiscardedCount;
+
+                        for (var i = 0; i < discardedThisPush; i++)
+                        {
+                            _metrics.RecordTcpMessageDiscardedOversized();
+                        }
+
+                        _logger?.LogWarning(
+                            "TCP 接続 {SourceAddress}:{SourcePort} で 1 メッセージのサイズ上限超過により " +
+                            "{Count} 件を破棄しました（接続は継続します）。",
+                            sourceAddress,
+                            sourcePort,
+                            discardedThisPush);
                     }
 
                     foreach (var message in messages)
@@ -268,9 +344,9 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     }
                 }
 
-                // 切断時（正常シャットダウン・異常切断・停止要求・サイズ超過のいずれか）に
-                // 読みかけの不完全データが残っていれば、Incomplete として Q1 へ流す
-                // （database.md §2.1「不完全は解析失敗に優先」——捨てない）。
+                // 切断時（正常シャットダウン・異常切断・停止要求・アイドルタイムアウト・
+                // 再同期不能な破損のいずれか）に読みかけの不完全データが残っていれば、
+                // Incomplete として Q1 へ流す（database.md §2.1「不完全は解析失敗に優先」——捨てない）。
                 var incomplete = decoder.Flush();
                 if (incomplete is not null)
                 {
@@ -291,6 +367,19 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         finally
         {
             Interlocked.Decrement(ref _currentConnectionCount);
+
+            // architecture.md §4.5「TCP 接続断」（Issue #140）: 理由を問わず接続終了を 1 件計上する。
+            _metrics.RecordTcpConnectionClosed();
+
+            if (idleTimedOut)
+            {
+                _metrics.RecordTcpConnectionIdleTimeout();
+                _logger?.LogInformation(
+                    "TCP 接続 {SourceAddress}:{SourcePort} をアイドルタイムアウト（{IdleTimeout}）により切断しました。",
+                    sourceAddress,
+                    sourcePort,
+                    _options.IdleTimeout);
+            }
         }
     }
 

@@ -239,6 +239,277 @@ public sealed class TcpSyslogListenerTests
     }
 
     // ------------------------------------------------------------------
+    // 1 メッセージの逸脱への耐性（architecture.md §4.5。Issue #143）:
+    // サイズ上限超過は接続を切断せず当該メッセージのみ破棄する。再同期不能な破損のみ切断する。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task OversizedMessage_DiscardsOnlyThatMessageAndKeepsConnectionOpen()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var meterCollector = new MetricCollector<long>(metrics.TcpMessageDiscardedOversizedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0, MaxMessageLength = 10 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // MSG-LEN 100 は上限 10 を超えるため破棄される。続けて正常なフレームを同じ接続で送る。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"100 {new string('x', 100)}5 abcde"));
+            await stream.FlushAsync();
+
+            var datagram = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+
+            Assert.Equal("abcde", Encoding.ASCII.GetString(datagram.Payload));
+            Assert.False(datagram.Incomplete);
+
+            await meterCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+
+            // 接続がまだ生きていることを確認する（切断されていれば CurrentConnectionCount は 0 になる）。
+            Assert.Equal(1, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        var measurements = meterCollector.GetMeasurementSnapshot();
+        Assert.Equal(1, measurements.Sum(m => m.Value));
+    }
+
+    [Fact]
+    public async Task InterFrameStrayLfCr_ResyncsWithoutDisconnecting()
+    {
+        // Issue #143: octet-counting のフレーム間に紛れた LF/CR は寛容にスキップして再同期する。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("5 first\r\n5 secnd"));
+            await stream.FlushAsync();
+
+            var first = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+            var second = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+
+            Assert.Equal("first", Encoding.ASCII.GetString(first.Payload));
+            Assert.Equal("secnd", Encoding.ASCII.GetString(second.Payload));
+            Assert.Equal(1, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task UnrecoverableFrameCorruption_StillDisconnectsConnection()
+    {
+        // MSG-LEN の桁の途中に数字以外が混入するのは再同期不能な破損であり、従来どおり切断する。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("1x2 body"));
+            await stream.FlushAsync();
+
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task NormalDisconnect_IncrementsTcpConnectionClosedCounter()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using (var client = new TcpClient())
+            {
+                await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+                await WaitUntilAsync(() => listener.CurrentConnectionCount >= 1, TimeSpan.FromSeconds(10));
+            }
+
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        var measurements = closedCollector.GetMeasurementSnapshot();
+        Assert.True(measurements.Sum(m => m.Value) >= 1);
+    }
+
+    // ------------------------------------------------------------------
+    // アイドルタイムアウト（architecture.md §4.5。Issue #140）:
+    // 無通信接続を有限時間で切断し、同時接続枠を返す。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task IdleTimeout_NoDataSent_DisconnectsAndIncrementsCounters()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var idleCollector = new MetricCollector<long>(metrics.TcpConnectionIdleTimeoutCounter, timeProvider: null);
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                IdleTimeout = TimeSpan.FromMilliseconds(200),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+
+            // 何も送らずに放置する——アイドルタイムアウトが発火して切断されるはず。
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+
+            await idleCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        Assert.True(idleCollector.GetMeasurementSnapshot().Sum(m => m.Value) >= 1);
+        Assert.True(closedCollector.GetMeasurementSnapshot().Sum(m => m.Value) >= 1);
+    }
+
+    [Fact]
+    public async Task IdleTimeout_PeriodicWrites_KeepsConnectionAlive()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var idleCollector = new MetricCollector<long>(metrics.TcpConnectionIdleTimeoutCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                IdleTimeout = TimeSpan.FromMilliseconds(300),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // アイドルタイムアウト（300ms）より短い間隔で送り続ける限り、切断されないはず。
+            for (var i = 0; i < 5; i++)
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("<34>keepalive\n"));
+                await stream.FlushAsync();
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+            }
+
+            Assert.Equal(1, listener.CurrentConnectionCount);
+            Assert.Empty(idleCollector.GetMeasurementSnapshot());
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task IdleTimeout_DisabledWhenZero_NeverDisconnectsForIdleness()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                IdleTimeout = TimeSpan.Zero,
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+
+            // IdleTimeout = Zero は無効化を意味する——短時間放置しても切断されないはず。
+            await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+            Assert.Equal(1, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    // ------------------------------------------------------------------
     // ヘルパー
     // ------------------------------------------------------------------
 

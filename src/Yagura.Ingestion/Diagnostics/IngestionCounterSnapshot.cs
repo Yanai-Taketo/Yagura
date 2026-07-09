@@ -17,6 +17,16 @@
 /// <param name="SpoolDiscarded">スプール破棄の累積値。</param>
 /// <param name="PersistenceFailed">永続化失敗の累積値。</param>
 /// <param name="FlowControlDropped">流量制御破棄の累積値。</param>
+/// <param name="TcpConnectionClosed">
+/// TCP 接続断の累積値（理由を問わない。Issue #140。既定 0——末尾への追加のため
+/// 旧バージョンのメタデータ領域ファイルにキーが無くても 0 として扱われる）。
+/// </param>
+/// <param name="TcpConnectionIdleTimeout">
+/// アイドルタイムアウトによる TCP 接続断の累積値（Issue #140。既定 0）。
+/// </param>
+/// <param name="TcpMessageOversizedDiscarded">
+/// 1 メッセージのサイズ上限超過により破棄した件数の累積値（Issue #143。既定 0）。
+/// </param>
 public sealed record IngestionCounterSnapshot(
     long InternalBufferDropped,
     long TcpConnectionRejected,
@@ -24,8 +34,11 @@ public sealed record IngestionCounterSnapshot(
     long SpoolWriteFailed,
     long SpoolDiscarded,
     long PersistenceFailed,
-    long FlowControlDropped)
+    long FlowControlDropped,
+    long TcpConnectionClosed = 0,
+    long TcpConnectionIdleTimeout = 0,
+    long TcpMessageOversizedDiscarded = 0)
 {
     /// <summary>全カウンタが 0 の初期スナップショット（メタデータ領域が無い初回起動用）。</summary>
-    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0);
+    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 }

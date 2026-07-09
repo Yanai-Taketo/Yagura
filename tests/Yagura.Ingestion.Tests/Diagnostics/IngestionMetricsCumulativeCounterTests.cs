@@ -80,4 +80,65 @@ public sealed class IngestionMetricsCumulativeCounterTests
         var snapshot = metrics.SnapshotCumulativeCounters();
         Assert.Equal(1, snapshot.SpoolEvacuated);
     }
+
+    // ------------------------------------------------------------------
+    // Issue #143・#140 で追加した TCP 接続断・アイドルタイムアウト・オーバーサイズ破棄の 3 カウンタ
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void SnapshotCumulativeCounters_WithoutSeed_ReflectsTcpCounters()
+    {
+        using var metrics = new IngestionMetrics();
+
+        metrics.RecordTcpConnectionClosed();
+        metrics.RecordTcpConnectionClosed();
+        metrics.RecordTcpConnectionIdleTimeout();
+        metrics.RecordTcpMessageDiscardedOversized();
+
+        var snapshot = metrics.SnapshotCumulativeCounters();
+
+        Assert.Equal(2, snapshot.TcpConnectionClosed);
+        Assert.Equal(1, snapshot.TcpConnectionIdleTimeout);
+        Assert.Equal(1, snapshot.TcpMessageOversizedDiscarded);
+    }
+
+    [Fact]
+    public void SeedCumulativeCounters_ThenRecord_ComposesTcpCountersPreviousPlusThisProcess()
+    {
+        var previous = new IngestionCounterSnapshot(
+            InternalBufferDropped: 0,
+            TcpConnectionRejected: 0,
+            SpoolEvacuated: 0,
+            SpoolWriteFailed: 0,
+            SpoolDiscarded: 0,
+            PersistenceFailed: 0,
+            FlowControlDropped: 0,
+            TcpConnectionClosed: 20,
+            TcpConnectionIdleTimeout: 5,
+            TcpMessageOversizedDiscarded: 3);
+
+        using var metrics = new IngestionMetrics();
+        metrics.SeedCumulativeCounters(previous);
+
+        metrics.RecordTcpConnectionClosed();
+        metrics.RecordTcpMessageDiscardedOversized();
+
+        var snapshot = metrics.SnapshotCumulativeCounters();
+
+        Assert.Equal(21, snapshot.TcpConnectionClosed); // 20 + 1
+        Assert.Equal(5, snapshot.TcpConnectionIdleTimeout); // 種のみ、今回の加算なし
+        Assert.Equal(4, snapshot.TcpMessageOversizedDiscarded); // 3 + 1
+    }
+
+    [Fact]
+    public void IngestionCounterSnapshot_ConstructedWithoutTcpFields_DefaultsToZero()
+    {
+        // 追加前の 7 引数の呼び出し（旧テスト・旧メタデータ領域ファイル相当）が、末尾の
+        // 3 引数を既定値 0 として扱えること（additive-only なスキーマ変更の後方互換性）。
+        var snapshot = new IngestionCounterSnapshot(1, 2, 3, 4, 5, 6, 7);
+
+        Assert.Equal(0, snapshot.TcpConnectionClosed);
+        Assert.Equal(0, snapshot.TcpConnectionIdleTimeout);
+        Assert.Equal(0, snapshot.TcpMessageOversizedDiscarded);
+    }
 }
