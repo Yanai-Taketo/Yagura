@@ -440,6 +440,27 @@ public static class UiText
     /// <summary>詳細: 送信元が名乗った時刻（参考情報。ui.md §6）。</summary>
     public const string DetailDeviceTimestamp = "送信元が名乗った時刻（参考）";
 
+    /// <summary>
+    /// 装置時計ずれの注記（ui.md §6・Issue #158）。{0} に乖離量（例: "5 時間"）が入る。
+    /// 装置時刻がサーバ受信時刻より進んでいる場合。
+    /// </summary>
+    public const string DetailDeviceTimestampDriftAheadFormat = "装置時刻はサーバ受信時刻より約 {0} 進んでいます";
+
+    /// <summary>
+    /// 装置時計ずれの注記（ui.md §6・Issue #158）。{0} に乖離量（例: "5 時間"）が入る。
+    /// 装置時刻がサーバ受信時刻より遅れている場合。
+    /// </summary>
+    public const string DetailDeviceTimestampDriftBehindFormat = "装置時刻はサーバ受信時刻より約 {0} 遅れています";
+
+    /// <summary>
+    /// 装置時計ずれ注記の補足（2026-07-09 Issue #158 の判断）。RFC 3164（タイムゾーン情報なし）
+    /// 由来の DeviceTimestamp は解析時にタイムゾーンを UTC とみなす近似のため、乖離が時計のずれ
+    /// だけでなく送信元のタイムゾーン設定の違いを表すこともあることを明示する。
+    /// </summary>
+    public const string DetailDeviceTimestampDriftSupplement =
+        "タイムゾーン情報を持たない送信形式（RFC 3164 等）では、装置のローカル時刻をそのまま UTC とみなして比較しています。" +
+        "この差には時計のずれだけでなく、タイムゾーン設定の違いが含まれる場合があります";
+
     /// <summary>詳細: 原文（受信したバイト列そのもの）。</summary>
     public const string DetailRaw = "受信した原文";
 

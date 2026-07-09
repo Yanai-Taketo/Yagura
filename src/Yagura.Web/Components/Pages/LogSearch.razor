@@ -212,6 +212,19 @@
                 </div>
             </div>
 
+            @* 装置時計ずれの明示（ui.md §6・Issue #158）: 受信時刻との乖離が閾値以上の場合のみ
+               注記する（BuildDeviceTimestampDriftNote が閾値判定込みで文言を組み立てる）。
+               補足文言は RFC 3164（TZ 情報なし）由来の近似に触れる——出し分けの判断は同メソッドの
+               コメントを参照。 *@
+            @if (BuildDeviceTimestampDriftNote(_detail.ReceivedAt, _detail.DeviceTimestamp) is { } driftNote)
+            {
+                <div class="mb-3">
+                    <YaguraSystemNotice Severity="YaguraNoticeSeverity.Info"
+                                        Message="@driftNote"
+                                        Supplement="@UiText.DetailDeviceTimestampDriftSupplement" />
+                </div>
+            }
+
             @if (_detail.StructuredData is not null)
             {
                 <YaguraCopyBlock Label="@UiText.DetailStructuredData" Value="@_detail.StructuredData" Muted="true" />
@@ -446,4 +459,57 @@
         // 不正 UTF-8 を含み得るため置換文字で無害化して表示する（保存自体はバイト列のまま——
         // database.md §2.1。ここは表示のみ）。
         System.Text.Encoding.UTF8.GetString(raw);
+
+    // ---- 装置時計ずれの明示（ui.md §6・Issue #158） ----
+
+    // 乖離表示の閾値（仮値。UI-2——ステール警告の閾値（Dashboard.razor・YaguraStaleGuard）と同じ
+    // 「仮値で実装し、実利用で確定する」の流儀）。Issue #158 に具体的な提案値がなかったため、
+    // 実務者が詳細を開いて気づく水準として 5 分を仮に置く。
+    internal static readonly TimeSpan DeviceTimestampDriftThreshold = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// 装置時計ずれの注記文言を組み立てる（乖離が <see cref="DeviceTimestampDriftThreshold"/>
+    /// 未満、または DeviceTimestamp 自体が未設定の場合は null——注記を出さない）。
+    /// </summary>
+    /// <remarks>
+    /// <b>RFC 3164（タイムゾーン情報なし）由来レコードの扱い（2026-07-09 判断）</b>:
+    /// 受信段（Yagura.Ingestion.Parsing.SyslogParser）の RFC 3164 解析は TIMESTAMP に
+    /// タイムゾーン情報がないため UTC とみなす近似で DeviceTimestamp を組み立てる
+    /// （database.md §2.1「参考情報。基準軸にしない」）。装置が実際には UTC 以外のタイムゾーンで
+    /// 動作している場合、この乖離は真の時計ずれではなく送信元のタイムゾーン設定の違いを表す
+    /// ことがある。<see cref="LogRecord"/> には RFC バージョンを判別できる永続化済み情報がなく
+    /// （StructuredData の有無は RFC 5424 でも無記載があり得るため信頼できる判別に使えない）、
+    /// レコード単位でこの注記を出し分けることはできない。そのため本メソッドは常に同じ規則
+    /// （単純な差分 + 閾値）で注記を出し、原因の曖昧さは <see cref="UiText.DetailDeviceTimestampDriftSupplement"/>
+    /// の補足文言で明示する側に倒す（値を隠す・出し分けを誤って行うより、限界を明示したうえで
+    /// 常時見せる方が実務者の判断材料になる——ui.md §6 の趣旨「装置の時計ずれの発見に使う」に
+    /// も、RFC 3164 機器のタイムゾーン誤設定の発見にも資する）。
+    /// </remarks>
+    internal static string? BuildDeviceTimestampDriftNote(DateTimeOffset receivedAt, DateTimeOffset? deviceTimestamp)
+    {
+        if (deviceTimestamp is not { } device)
+        {
+            return null;
+        }
+
+        var drift = device - receivedAt;
+        var magnitude = drift < TimeSpan.Zero ? -drift : drift;
+        if (magnitude < DeviceTimestampDriftThreshold)
+        {
+            return null;
+        }
+
+        var format = drift > TimeSpan.Zero
+            ? UiText.DetailDeviceTimestampDriftAheadFormat
+            : UiText.DetailDeviceTimestampDriftBehindFormat;
+
+        return string.Format(CultureInfo.InvariantCulture, format, FormatDriftMagnitude(magnitude));
+    }
+
+    private static string FormatDriftMagnitude(TimeSpan magnitude) => magnitude switch
+    {
+        { TotalDays: >= 1 } => string.Create(CultureInfo.InvariantCulture, $"{(int)magnitude.TotalDays} 日 {magnitude.Hours} 時間"),
+        { TotalHours: >= 1 } => string.Create(CultureInfo.InvariantCulture, $"{(int)magnitude.TotalHours} 時間 {magnitude.Minutes} 分"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{(int)magnitude.TotalMinutes} 分"),
+    };
 }
