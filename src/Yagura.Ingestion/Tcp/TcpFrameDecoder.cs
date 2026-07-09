@@ -109,6 +109,9 @@ public sealed class TcpFrameDecoder
     /// または non-transparent-framing の 1 行が上限超過の場合）はこの例外を送出せず、当該
     /// メッセージだけを破棄して接続を維持する（Issue #143。<see cref="OversizedMessagesDiscardedCount"/>
     /// で計上する）。呼び出し元は本例外を「再同期不能な深刻な破損」として接続を切断する。
+    /// 例外送出までに同一チャンク内で境界が確定していた正常メッセージは
+    /// <see cref="TcpFrameSizeExceededException.CompletedMessages"/> に載せて引き渡す——
+    /// 呼び出し元は切断前にこれらを Q1 へ流すこと（確定済みメッセージの無計上な喪失を防ぐ）。
     /// </exception>
     public IReadOnlyList<byte[]> Push(ReadOnlySpan<byte> chunk)
     {
@@ -232,78 +235,93 @@ public sealed class TcpFrameDecoder
     {
         List<byte[]>? messages = null;
 
-        var remaining = chunk;
-        while (!remaining.IsEmpty)
+        try
         {
-            if (_oversizedSkipRemaining >= 0)
+            var remaining = chunk;
+            while (!remaining.IsEmpty)
             {
-                // Issue #143: 上限超過と判明済みのメッセージ本体を読み捨てている最中。
-                var skip = Math.Min(_oversizedSkipRemaining, remaining.Length);
-                remaining = remaining[skip..];
-                _oversizedSkipRemaining -= skip;
-                if (_oversizedSkipRemaining == 0)
+                if (_oversizedSkipRemaining >= 0)
                 {
-                    _oversizedSkipRemaining = -1;
-                }
-
-                continue;
-            }
-
-            if (_pendingMessageLength < 0)
-            {
-                if (_lengthDigits.Count == 0)
-                {
-                    // Issue #143: 新しい MSG-LEN の先頭に紛れ込んだ LF/CR（フレーム間の余分
-                    // バイト・空行）を寛容にスキップして再同期する。数字が現れるまで読み飛ばす。
-                    var skipped = 0;
-                    while (skipped < remaining.Length && IsInterFrameSeparator(remaining[skipped]))
+                    // Issue #143: 上限超過と判明済みのメッセージ本体を読み捨てている最中。
+                    var skip = Math.Min(_oversizedSkipRemaining, remaining.Length);
+                    remaining = remaining[skip..];
+                    _oversizedSkipRemaining -= skip;
+                    if (_oversizedSkipRemaining == 0)
                     {
-                        skipped++;
+                        _oversizedSkipRemaining = -1;
                     }
 
-                    if (skipped > 0)
+                    continue;
+                }
+
+                if (_pendingMessageLength < 0)
+                {
+                    if (_lengthDigits.Count == 0)
                     {
-                        remaining = remaining[skipped..];
-                        continue;
+                        // Issue #143: 新しい MSG-LEN の先頭に紛れ込んだ LF/CR（フレーム間の余分
+                        // バイト・空行）を寛容にスキップして再同期する。数字が現れるまで読み飛ばす。
+                        var skipped = 0;
+                        while (skipped < remaining.Length && IsInterFrameSeparator(remaining[skipped]))
+                        {
+                            skipped++;
+                        }
+
+                        if (skipped > 0)
+                        {
+                            remaining = remaining[skipped..];
+                            continue;
+                        }
                     }
+
+                    // MSG-LEN の桁を集めている段階。SP (%d32) が来たら桁確定。
+                    var spIndex = remaining.IndexOf((byte)' ');
+                    if (spIndex < 0)
+                    {
+                        AppendLengthDigits(remaining);
+                        break;
+                    }
+
+                    AppendLengthDigits(remaining[..spIndex]);
+                    remaining = remaining[(spIndex + 1)..];
+
+                    _pendingMessageLength = ParseMessageLength(_lengthDigits);
+                    _lengthDigits.Clear();
+
+                    if (_pendingMessageLength > _options.MaxMessageLength)
+                    {
+                        // Issue #143: 接続は切断せず、宣言済みの本体だけを読み飛ばして破棄する。
+                        _oversizedSkipRemaining = _pendingMessageLength;
+                        _pendingMessageLength = -1;
+                        _oversizedMessagesDiscarded++;
+                    }
+
+                    continue;
                 }
 
-                // MSG-LEN の桁を集めている段階。SP (%d32) が来たら桁確定。
-                var spIndex = remaining.IndexOf((byte)' ');
-                if (spIndex < 0)
+                var needed = _pendingMessageLength - _messageBuffer.WrittenCount;
+                var take = Math.Min(needed, remaining.Length);
+                _messageBuffer.Write(remaining[..take]);
+                remaining = remaining[take..];
+
+                if (_messageBuffer.WrittenCount == _pendingMessageLength)
                 {
-                    AppendLengthDigits(remaining);
-                    break;
-                }
-
-                AppendLengthDigits(remaining[..spIndex]);
-                remaining = remaining[(spIndex + 1)..];
-
-                _pendingMessageLength = ParseMessageLength(_lengthDigits);
-                _lengthDigits.Clear();
-
-                if (_pendingMessageLength > _options.MaxMessageLength)
-                {
-                    // Issue #143: 接続は切断せず、宣言済みの本体だけを読み飛ばして破棄する。
-                    _oversizedSkipRemaining = _pendingMessageLength;
+                    (messages ??= new List<byte[]>()).Add(_messageBuffer.WrittenSpan.ToArray());
+                    _messageBuffer.Clear();
                     _pendingMessageLength = -1;
-                    _oversizedMessagesDiscarded++;
                 }
-
-                continue;
             }
-
-            var needed = _pendingMessageLength - _messageBuffer.WrittenCount;
-            var take = Math.Min(needed, remaining.Length);
-            _messageBuffer.Write(remaining[..take]);
-            remaining = remaining[take..];
-
-            if (_messageBuffer.WrittenCount == _pendingMessageLength)
-            {
-                (messages ??= new List<byte[]>()).Add(_messageBuffer.WrittenSpan.ToArray());
-                _messageBuffer.Clear();
-                _pendingMessageLength = -1;
-            }
+        }
+        catch (TcpFrameSizeExceededException ex) when (messages is not null)
+        {
+            // PR #169 レビュー指摘 2 への対応: 例外送出までに同一チャンク内で境界が確定していた
+            // 正常メッセージを例外に載せて呼び出し元へ引き渡す。ここで載せずに例外だけを伝播
+            // させると、確定済みメッセージが Q1 未到達・Incomplete 復元なし・カウンタ計上なしの
+            // まま黙って消える（「損失は必ずどれかのカウンタに計上される」§3.1 の原則違反）。
+            // Issue #143 でサイズ上限超過が例外を投げなくなったことにより、1 チャンク内に
+            // 「複数の正常メッセージ + 末尾の再同期不能な破損」が同居する状況が従来より
+            // 起きやすくなったため、この経路の手当てが必要になった。
+            ex.CompletedMessages = messages;
+            throw;
         }
 
         return (IReadOnlyList<byte[]>?)messages ?? Array.Empty<byte[]>();

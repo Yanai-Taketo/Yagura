@@ -356,6 +356,50 @@ public sealed class TcpSyslogListenerTests
     }
 
     [Fact]
+    public async Task UnrecoverableCorruption_CompletedMessagesInSameChunkStillReachQ1()
+    {
+        // PR #169 レビュー指摘 2: 1 チャンク内に「複数の正常フレーム + 末尾に再同期不能な破損」が
+        // 同居しても、例外送出までに境界が確定していた正常メッセージは切断前に Q1 へ届くこと
+        // （Q1 未到達・カウンタ計上なしのまま黙って消えないこと——architecture.md §3.1 の原則）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // 正常フレーム 2 件の直後に MSG-LEN 桁の途中の非数字（再同期不能な破損）。
+            // 1 回の書き込みで送り、受信側で 1 チャンクにまとまって届く状況を作る。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("5 abcde5 fghij1x2 broken"));
+            await stream.FlushAsync();
+
+            var first = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+            var second = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+
+            Assert.Equal("abcde", Encoding.ASCII.GetString(first.Payload));
+            Assert.False(first.Incomplete);
+            Assert.Equal("fghij", Encoding.ASCII.GetString(second.Payload));
+            Assert.False(second.Incomplete);
+
+            // 破損の検出により接続自体は切断される（確定済みメッセージを流し終えた後）。
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task NormalDisconnect_IncrementsTcpConnectionClosedCounter()
     {
         var q1 = CreateQ1();
@@ -392,6 +436,58 @@ public sealed class TcpSyslogListenerTests
     // アイドルタイムアウト（architecture.md §4.5。Issue #140）:
     // 無通信接続を有限時間で切断し、同時接続枠を返す。
     // ------------------------------------------------------------------
+
+    [Fact]
+    public void RenewIdleReadCancellation_PreviousAlreadyCancelled_ReturnsFreshUncancelledSource()
+    {
+        // PR #169 レビュー指摘 1 の競合を決定的に再現する: 「タイマーが発火して CTS がキャンセル
+        // 済みになった直後に、読み取りがたまたま受信済みデータで正常完了した」状況を、キャンセル
+        // 済みの previous として模す。単一 CTS の CancelAfter 再スケジュール方式では
+        // 「キャンセル済みソースへの CancelAfter は no-op」という .NET の仕様により、この
+        // キャンセル状態が次の読み取りへ持ち越されて活性接続を誤アイドル判定していた。
+        // 読み取りごとの CTS 再生成（RenewIdleReadCancellation）は、必ずキャンセル未要求の
+        // 新しいソースを返すことで、この持ち越し経路を構造的に消す。
+        using var stopping = new CancellationTokenSource();
+
+        var first = TcpSyslogListener.RenewIdleReadCancellation(null, stopping.Token, TimeSpan.FromMinutes(5));
+        first.Cancel(); // タイマー発火と読み取り成功の競合を模す。
+
+        var second = TcpSyslogListener.RenewIdleReadCancellation(first, stopping.Token, TimeSpan.FromMinutes(5));
+        try
+        {
+            Assert.NotSame(first, second);
+            Assert.False(second.Token.IsCancellationRequested);
+
+            // previous は破棄済みであること（リークしないこと）。
+            Assert.Throws<ObjectDisposedException>(() => first.CancelAfter(TimeSpan.Zero));
+        }
+        finally
+        {
+            second.Dispose();
+        }
+    }
+
+    [Fact]
+    public void RenewIdleReadCancellation_LinkedToStoppingToken_CancelsWhenListenerStops()
+    {
+        // 生成されるソースがリスナ停止のトークンへ正しくリンクされていること
+        // （停止要求が読み取りの打ち切りとして伝わる従来挙動の維持）。
+        using var stopping = new CancellationTokenSource();
+
+        var renewed = TcpSyslogListener.RenewIdleReadCancellation(null, stopping.Token, TimeSpan.FromMinutes(5));
+        try
+        {
+            Assert.False(renewed.Token.IsCancellationRequested);
+
+            stopping.Cancel();
+
+            Assert.True(renewed.Token.IsCancellationRequested);
+        }
+        finally
+        {
+            renewed.Dispose();
+        }
+    }
 
     [Fact]
     public async Task IdleTimeout_NoDataSent_DisconnectsAndIncrementsCounters()

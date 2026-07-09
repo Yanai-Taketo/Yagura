@@ -134,6 +134,34 @@ public sealed class TcpFrameDecoderTests
         Assert.Throws<TcpFrameSizeExceededException>(() => decoder.Push(Ascii("1x2 body")));
     }
 
+    [Fact]
+    public void Push_OctetCounting_CorruptionAfterCompletedMessages_ExceptionCarriesCompletedMessages()
+    {
+        // PR #169 レビュー指摘 2: 1 チャンク内に「複数の正常フレーム + 末尾に再同期不能な破損」が
+        // 同居した場合、例外送出までに境界が確定していた正常メッセージが例外に載って引き渡される
+        // こと（例外とともに黙って消えると、Q1 未到達・カウンタ計上なしの無計上な喪失になる——
+        // architecture.md §3.1「損失は必ずどれかのカウンタに計上される」の原則違反）。
+        var decoder = new TcpFrameDecoder();
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(
+            () => decoder.Push(Ascii("5 abcde3 xyz1x2 broken")));
+
+        Assert.Equal(2, ex.CompletedMessages.Count);
+        Assert.Equal("abcde", Encoding.ASCII.GetString(ex.CompletedMessages[0]));
+        Assert.Equal("xyz", Encoding.ASCII.GetString(ex.CompletedMessages[1]));
+    }
+
+    [Fact]
+    public void Push_OctetCounting_CorruptionWithoutCompletedMessages_ExceptionCarriesEmptyList()
+    {
+        // 確定済みメッセージが 1 件もない場合は空リストのまま（null にならないことの固定化）。
+        var decoder = new TcpFrameDecoder();
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(() => decoder.Push(Ascii("1x2 body")));
+
+        Assert.Empty(ex.CompletedMessages);
+    }
+
     // ------------------------------------------------------------------
     // Issue #143: 1 メッセージのサイズ上限超過 — 接続を切断せず当該メッセージのみ破棄する
     // ------------------------------------------------------------------

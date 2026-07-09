@@ -17,7 +17,9 @@
 /// </para>
 /// <para>
 /// 呼び出し元（<see cref="TcpSyslogListener"/>）はこの例外を「安全側」として扱い、接続を
-/// 切断する（切断時点の読みかけデータは database.md §2.1 の Incomplete として Q1 へ流す）。
+/// 切断する（切断時点の読みかけデータは database.md §2.1 の Incomplete として Q1 へ流す。
+/// 例外送出までに確定していた正常メッセージは <see cref="CompletedMessages"/> から取り出して
+/// 切断前に Q1 へ流す）。
 /// </para>
 /// </remarks>
 public sealed class TcpFrameSizeExceededException : Exception
@@ -26,4 +28,14 @@ public sealed class TcpFrameSizeExceededException : Exception
         : base(message)
     {
     }
+
+    /// <summary>
+    /// 例外送出までに、同一の <see cref="TcpFrameDecoder.Push"/> 呼び出し内で境界が確定していた
+    /// 正常メッセージの一覧（PR #169 レビュー指摘への対応）。呼び出し元
+    /// （<see cref="TcpSyslogListener"/>）は接続を切断する前にこれらを Q1 へ流す——例外とともに
+    /// 確定済みメッセージまで黙って失うと、Q1 未到達かつどのカウンタにも現れない無計上の
+    /// 喪失経路になり、「損失は必ずどれかのカウンタに計上される」（architecture.md §3.1・§4.1）
+    /// の原則を破るため。
+    /// </summary>
+    public IReadOnlyList<byte[]> CompletedMessages { get; internal set; } = Array.Empty<byte[]>();
 }

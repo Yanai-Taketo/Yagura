@@ -222,16 +222,18 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         var previousOversizedDiscardedCount = 0;
         var idleTimedOut = false;
 
-        // Issue #140: アイドルタイムアウト。stoppingToken にリンクした CTS を用意し、読み取りの
-        // たびに CancelAfter で再スケジュールする（TryReset ではなく CancelAfter の再呼び出しで
-        // タイマーを延長する——CancellationTokenSource の標準的な使い方）。IdleTimeout が
-        // Zero 以下なら無効化し、stoppingToken をそのまま使う（主にテスト用途）。
+        // Issue #140: アイドルタイムアウト。読み取りのたびに stoppingToken にリンクした新しい
+        // CTS を生成し、CancelAfter でその読み取り 1 回分のタイマーを張る（PR #169 レビュー
+        // 指摘 1 への対応——単一 CTS の CancelAfter 再スケジュール方式は、タイマー発火と
+        // 読み取り成功が僅差で競合すると「キャンセル済みソースへの CancelAfter は no-op」という
+        // .NET の仕様により再スケジュールが黙って無視され、直前までデータを受信していた活性
+        // 接続を次の読み取りで誤ってアイドル扱いする。読み取りごとに CTS を作り直せば、
+        // キャンセル済みソースが次の読み取りへ持ち越される経路自体が存在しない）。
+        // 副次効果として、Q1 満杯による WriteAsync の停滞時間（§3.1 の意図された読み取り停止）が
+        // アイドル時間へ誤算入される経路も閉じる——タイマーが覆うのは ReadAsync の待機だけになる。
+        // IdleTimeout が Zero 以下なら無効化し、stoppingToken をそのまま使う（主にテスト用途）。
         var idleTimeoutEnabled = _options.IdleTimeout > TimeSpan.Zero;
-        using var idleCts = idleTimeoutEnabled
-            ? CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)
-            : null;
-        idleCts?.CancelAfter(_options.IdleTimeout);
-        var readToken = idleCts?.Token ?? stoppingToken;
+        CancellationTokenSource? idleCts = null;
 
         try
         {
@@ -240,6 +242,17 @@ public sealed class TcpSyslogListener : IAsyncDisposable
             {
                 while (!stoppingToken.IsCancellationRequested)
                 {
+                    CancellationToken readToken;
+                    if (idleTimeoutEnabled)
+                    {
+                        idleCts = RenewIdleReadCancellation(idleCts, stoppingToken, _options.IdleTimeout);
+                        readToken = idleCts.Token;
+                    }
+                    else
+                    {
+                        readToken = stoppingToken;
+                    }
+
                     int bytesRead;
                     try
                     {
@@ -248,8 +261,11 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     catch (OperationCanceledException) when (idleTimeoutEnabled && !stoppingToken.IsCancellationRequested)
                     {
                         // アイドルタイムアウトによる打ち切り（stoppingToken 自体はキャンセルされて
-                        // いない——リンクした idleCts 側の CancelAfter が発火した）。無通信接続が
+                        // いない——この読み取りのために張ったタイマーが発火した）。無通信接続が
                         // 同時接続枠（§3.1・M-14）を占有し続けることを防ぐ有限化（Issue #140）。
+                        // readToken はこの読み取り専用に生成されたため、このキャンセルは
+                        // 「この ReadAsync の待機が IdleTimeout 続いた」ことを確実に意味する
+                        // （過去の読み取りのタイマー発火が持ち越される競合は構造上起きない）。
                         idleTimedOut = true;
                         break;
                     }
@@ -273,12 +289,13 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                         break;
                     }
 
-                    // 読み取りに成功したのでアイドルタイマーを再スケジュールする（Issue #140）。
-                    idleCts?.CancelAfter(_options.IdleTimeout);
-
                     var receivedAt = DateTimeOffset.UtcNow;
 
+                    // PR #169 レビュー指摘 2 への対応: 再同期不能な破損の例外が出ても、同一
+                    // チャンク内で既に境界が確定していた正常メッセージは失わない——例外の
+                    // CompletedMessages から取り出して通常どおり Q1 へ流し、その後に切断する。
                     IReadOnlyList<byte[]> messages;
+                    var unrecoverableCorruption = false;
                     try
                     {
                         messages = decoder.Push(buffer.AsSpan(0, bytesRead));
@@ -289,15 +306,17 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                         // 混入・桁数異常・int 範囲超過）のときのみ、安全側判断として当該接続を
                         // 切断する。1 メッセージのサイズ上限超過は decoder 内部で当該メッセージを
                         // 破棄するだけで済み、この例外には現れない（下の OversizedMessagesDiscardedCount
-                        // 参照）。切断前に読みかけデータが残っていれば通常の切断経路と同じく
-                        // Incomplete として Q1 へ流す（decoder の内部バッファはそのまま残るため、
-                        // ループ終了後の Flush() が拾う）。
+                        // 参照）。切断前に、例外送出までに確定していた正常メッセージ
+                        // （ex.CompletedMessages）を Q1 へ流し、読みかけデータが残っていれば
+                        // 通常の切断経路と同じく Incomplete として Q1 へ流す（decoder の内部
+                        // バッファはそのまま残るため、ループ終了後の Flush() が拾う）。
                         _logger?.LogWarning(
                             ex,
                             "TCP 接続 {SourceAddress}:{SourcePort} で再同期不能なフレーム破損を検出したため切断します。",
                             sourceAddress,
                             sourcePort);
-                        break;
+                        messages = ex.CompletedMessages;
+                        unrecoverableCorruption = true;
                     }
 
                     // Issue #143: 1 メッセージのサイズ上限超過による破棄をカウンタ・ログへ計上する
@@ -342,6 +361,13 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                         // ループ自体が進まなくなり、OS の TCP フロー制御が送信側へ伝搬する。
                         await _q1Writer.WriteAsync(datagram, CancellationToken.None).ConfigureAwait(false);
                     }
+
+                    if (unrecoverableCorruption)
+                    {
+                        // 確定済みメッセージを流し終えてから切断する（Flush() による Incomplete
+                        // 退避はループ終了後の共通経路が行う）。
+                        break;
+                    }
                 }
 
                 // 切断時（正常シャットダウン・異常切断・停止要求・アイドルタイムアウト・
@@ -366,6 +392,8 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         }
         finally
         {
+            idleCts?.Dispose();
+
             Interlocked.Decrement(ref _currentConnectionCount);
 
             // architecture.md §4.5「TCP 接続断」（Issue #140）: 理由を問わず接続終了を 1 件計上する。
@@ -381,6 +409,31 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     _options.IdleTimeout);
             }
         }
+    }
+
+    /// <summary>
+    /// 読み取り 1 回分のアイドルタイマー付きキャンセルソースを生成する（Issue #140。PR #169
+    /// レビュー指摘 1 への対応）。前回の読み取りで使ったソース（<paramref name="previous"/>）は
+    /// ——タイマー発火と読み取り成功が僅差で競合してキャンセル済みになっていたとしても——
+    /// ここで必ず破棄され、新しいソースに置き換わる。「キャンセル済みソースへの
+    /// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> は no-op」という .NET の仕様に
+    /// 起因する、活性接続の誤アイドル判定（stale なキャンセル状態の次回読み取りへの持ち越し）を
+    /// 構造的に防ぐ。
+    /// </summary>
+    /// <param name="previous">前回の読み取りで使ったソース（初回は <c>null</c>）。破棄される。</param>
+    /// <param name="stoppingToken">リスナ停止のトークン（生成するソースにリンクする）。</param>
+    /// <param name="idleTimeout">アイドルタイムアウト（生成するソースに CancelAfter で張る）。</param>
+    /// <returns>この読み取り専用の新しいキャンセルソース（キャンセル未要求の状態で返る）。</returns>
+    internal static CancellationTokenSource RenewIdleReadCancellation(
+        CancellationTokenSource? previous,
+        CancellationToken stoppingToken,
+        TimeSpan idleTimeout)
+    {
+        previous?.Dispose();
+
+        var renewed = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        renewed.CancelAfter(idleTimeout);
+        return renewed;
     }
 
     public async ValueTask DisposeAsync()
