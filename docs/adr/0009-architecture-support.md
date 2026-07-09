@@ -1,6 +1,6 @@
 # ADR-0009: アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用）
 
-- 状態: proposed
+- 状態: accepted（2026-07-09 マージ）
 - 日付: 2026-07-09
 - 決定者: YANAI Taketo
 - 関連: [Issue #123](https://github.com/Yanai-Taketo/Yagura/issues/123)（起票・現状調査）/ [ADR-0001](0001-project-founding.md)（目的——手軽な導入・品質原則）/ [ADR-0002](0002-architecture-principles.md)（アーキテクチャ原則）/ [ADR-0005](0005-oss-packaging.md)（README 等入口文書）/ [ADR-0008](0008-forwarder-kit-generation.md)（フォワーダ配布キット・Fluent Bit 検証済み版の運用）/ `Directory.Build.props`・`Directory.Packages.props`・`installer/Yagura.Installer.wixproj`・`installer/Package.wxs`・`.github/workflows/ci.yml`
