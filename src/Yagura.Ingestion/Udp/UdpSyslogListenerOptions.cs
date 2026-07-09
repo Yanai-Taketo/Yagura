@@ -10,9 +10,17 @@
 public sealed class UdpSyslogListenerOptions
 {
     /// <summary>
-    /// 既定の bind アドレス（すべてのインターフェース）。configuration.md での既定確定前の暫定値。
+    /// 既定の bind アドレス。<c>::</c>（IPv6 ワイルドカード）を DualMode ソケットで bind し、
+    /// IPv4・IPv6 の両方を単一ソケットで受信する（Issue #133。<see cref="UdpSyslogListener"/> の
+    /// remarks・<see cref="Yagura.Ingestion.Net.DualStackBindAddress"/> 参照）。
     /// </summary>
-    public const string DefaultBindAddress = "0.0.0.0";
+    /// <remarks>
+    /// <b>後方互換の逃げ道</b>: <c>BindAddress</c> に明示的に <c>0.0.0.0</c>（IPv4 ワイルドカード）
+    /// を指定した場合は、旧来どおり IPv4 単独ソケットで bind する（IPv6 を受けない）。
+    /// v0.1〜v0.2 で <c>0.0.0.0</c> が既定だった環境からのアップグレードで、手動設定ファイルに
+    /// 明示 <c>0.0.0.0</c> が残っている場合の挙動を変えないための設計判断。
+    /// </remarks>
+    public const string DefaultBindAddress = "::";
 
     /// <summary>
     /// syslog の既定 UDP ポート（RFC 5426）。
@@ -77,7 +85,9 @@ public sealed class UdpSyslogListenerOptions
     public const int MaxReceiveBufferBytes = 256 * 1024 * 1024;
 
     /// <summary>
-    /// bind するアドレス。既定は <see cref="DefaultBindAddress"/>（0.0.0.0 = すべてのインターフェース）。
+    /// bind するアドレス。既定は <see cref="DefaultBindAddress"/>（<c>::</c> = DualMode による
+    /// IPv4/IPv6 両対応の全インターフェース）。<c>0.0.0.0</c> を明示指定すると IPv4 のみに
+    /// 縮小される（<see cref="DefaultBindAddress"/> の remarks 参照）。
     /// </summary>
     public string BindAddress { get; init; } = DefaultBindAddress;
 

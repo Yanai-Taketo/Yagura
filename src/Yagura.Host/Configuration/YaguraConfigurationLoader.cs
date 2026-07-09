@@ -239,9 +239,11 @@ public static class YaguraConfigurationLoader
             return UdpSyslogListenerOptions.DefaultBindAddress;
         }
 
-        // "0.0.0.0"（全インターフェース）は既定どおりの正当な値として受け入れる。
-        // それ以外は IPAddress として解釈できることを確認する（形式不正の縮小対象）。
-        if (raw == UdpSyslogListenerOptions.DefaultBindAddress || IPAddress.TryParse(raw, out _))
+        // IPAddress として解釈できる値を受け入れる（形式不正のみ縮小対象）。
+        // ワイルドカードの意味づけ（Issue #133・configuration.md §4.1）: 既定の "::" は
+        // DualMode による IPv4/IPv6 両受信、明示の "0.0.0.0" は IPv4 専用（後方互換の
+        // 逃げ道）——解釈は受信段（DualStackBindAddress）が行い、本メソッドは形式検証のみ担う。
+        if (IPAddress.TryParse(raw, out _))
         {
             return raw;
         }
@@ -324,7 +326,8 @@ public static class YaguraConfigurationLoader
             return TcpSyslogListenerOptions.DefaultBindAddress;
         }
 
-        if (raw == TcpSyslogListenerOptions.DefaultBindAddress || IPAddress.TryParse(raw, out _))
+        // ワイルドカードの意味づけは UDP 側と同一（Issue #133。ResolveUdpBindAddress のコメント参照）。
+        if (IPAddress.TryParse(raw, out _))
         {
             return raw;
         }

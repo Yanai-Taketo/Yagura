@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.FlowControl;
+using Yagura.Ingestion.Net;
 using Yagura.Storage;
 
 namespace Yagura.Ingestion.Udp;
@@ -31,6 +32,15 @@ namespace Yagura.Ingestion.Udp;
 /// の間隔で抑制・集約し、持続的エラー時のログ溢れを防ぐ）。さらに連続して失敗する間は
 /// <see cref="ComputeReceiveErrorBackoff"/> による短い backoff を挟み、持続的エラー状態での
 /// 密ループによる CPU 浪費を防ぐ（単発エラーは backoff しない）。
+/// </para>
+/// <para>
+/// <b>IPv4/IPv6 デュアルスタック受信（Issue #133）</b>: <see cref="UdpSyslogListenerOptions.BindAddress"/>
+/// が IPv6 ワイルドカード（<c>::</c>。既定値）のときは、<see cref="Socket.DualMode"/> を有効にした
+/// 単一ソケットで bind し、IPv4・IPv6 双方の送信元から受信する（<see cref="DualStackBindAddress"/>
+/// 参照）。DualMode ソケットが受ける IPv4 由来のデータグラムは <c>RemoteEndPoint.Address</c> が
+/// IPv4-mapped IPv6（<c>::ffff:x.x.x.x</c>）として現れるため、<see cref="RawDatagram.SourceAddress"/>
+/// へ書き込む前に <see cref="DualStackBindAddress.NormalizeSourceAddress"/> で純粋な IPv4 表現へ
+/// 正規化する（ADR-0007 決定 2 が <c>ReverseDnsResolver</c> で既に採用している規約と同じ）。
 /// </para>
 /// </remarks>
 public sealed class UdpSyslogListener : IAsyncDisposable
@@ -115,8 +125,24 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             throw new InvalidOperationException("UdpSyslogListener は既に開始されている。");
         }
 
-        var endpoint = new IPEndPoint(IPAddress.Parse(_options.BindAddress), _options.Port);
-        _udpClient = new UdpClient(endpoint);
+        var bindAddress = IPAddress.Parse(_options.BindAddress);
+        if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
+        {
+            // DualMode ソケット（Issue #133）。UdpClient(IPEndPoint) は指定エンドポイントの
+            // アドレスファミリ単独のソケットを作るため、DualMode を有効にするには
+            // AddressFamily 指定のコンストラクタで未 bind のソケットを作ってから
+            // 明示的に DualMode を立て、その後 Bind する必要がある。
+            _udpClient = new UdpClient(AddressFamily.InterNetworkV6);
+            _udpClient.Client.DualMode = true;
+            _udpClient.Client.Bind(new IPEndPoint(bindAddress, _options.Port));
+        }
+        else
+        {
+            // 明示的な 0.0.0.0（IPv4 のみ）・特定の IPv4/IPv6 アドレス指定は、
+            // 従来どおりそのアドレスファミリ単独のソケットで bind する。
+            _udpClient = new UdpClient(new IPEndPoint(bindAddress, _options.Port));
+        }
+
         BoundPort = ((IPEndPoint)_udpClient.Client.LocalEndPoint!).Port;
 
         ApplyReceiveBufferSize(_udpClient.Client, _options.ReceiveBufferBytes, _logger);
@@ -255,7 +281,11 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             // 読み取り直後に ReceivedAt を刻印する（受信段の責務。解析はまだ行わない）。
             var receivedAt = DateTimeOffset.UtcNow;
 
-            if (!_ingressGate.ShouldAdmit(result.RemoteEndPoint.Address, result.Buffer))
+            // DualMode ソケットが受けた IPv4 送信元は ::ffff:x.x.x.x として現れるため、
+            // 判定・記録の前に正規化する（Issue #133。DualStackBindAddress の remarks 参照）。
+            var remoteAddress = DualStackBindAddress.NormalizeSourceAddress(result.RemoteEndPoint.Address);
+
+            if (!_ingressGate.ShouldAdmit(remoteAddress, result.Buffer))
             {
                 // v0.1 の NoopIngressGate は常に true を返すため、この分岐は到達しない。
                 // 挿入点のみ（architecture.md §3.3）——判定・破棄の実装は後続マイルストーンで
@@ -266,7 +296,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
 
             var datagram = new RawDatagram(
                 ReceivedAt: receivedAt,
-                SourceAddress: result.RemoteEndPoint.Address.ToString(),
+                SourceAddress: remoteAddress.ToString(),
                 SourcePort: result.RemoteEndPoint.Port,
                 Protocol: Protocol.Udp,
                 Payload: result.Buffer);

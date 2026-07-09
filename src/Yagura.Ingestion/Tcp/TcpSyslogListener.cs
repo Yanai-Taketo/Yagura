@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.FlowControl;
+using Yagura.Ingestion.Net;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 
@@ -72,6 +73,15 @@ namespace Yagura.Ingestion.Tcp;
 /// <see cref="IngestionMetrics.RecordTcpConnectionClosed"/> を 1 件計上する（損失ではなく
 /// 解釈の手がかり。アイドルタイムアウト由来の切断はこれに加えて専用カウンタも計上する）。
 /// </para>
+/// <para>
+/// <b>IPv4/IPv6 デュアルスタック受信（Issue #133）</b>: <see cref="TcpSyslogListenerOptions.BindAddress"/>
+/// が IPv6 ワイルドカード（<c>::</c>。既定値）のときは、<see cref="Socket.DualMode"/> を有効にした
+/// 単一ソケットで bind し、IPv4・IPv6 双方からの接続を受け付ける（<see cref="DualStackBindAddress"/>
+/// 参照）。DualMode ソケットが受ける IPv4 由来の接続は <c>RemoteEndPoint.Address</c> が
+/// IPv4-mapped IPv6（<c>::ffff:x.x.x.x</c>）として現れるため、<see cref="RawDatagram.SourceAddress"/>
+/// へ書き込む前に <see cref="DualStackBindAddress.NormalizeSourceAddress"/> で純粋な IPv4 表現へ
+/// 正規化する（UDP 側・ADR-0007 決定 2 と同じ規約）。
+/// </para>
 /// </remarks>
 public sealed class TcpSyslogListener : IAsyncDisposable
 {
@@ -131,8 +141,16 @@ public sealed class TcpSyslogListener : IAsyncDisposable
             throw new InvalidOperationException("TcpSyslogListener は既に開始されている。");
         }
 
-        var endpoint = new IPEndPoint(IPAddress.Parse(_options.BindAddress), _options.Port);
-        _tcpListener = new TcpListener(endpoint);
+        var bindAddress = IPAddress.Parse(_options.BindAddress);
+        _tcpListener = new TcpListener(bindAddress, _options.Port);
+        if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
+        {
+            // DualMode ソケット（Issue #133）。TcpListener.Server は Start() 前であれば
+            // 直接設定できる（.NET の確立されたパターン——Kestrel 側の同種の扱いは
+            // Yagura.Host.ListenerBindPlan の remarks 参照）。
+            _tcpListener.Server.DualMode = true;
+        }
+
         _tcpListener.Start();
         BoundPort = ((IPEndPoint)_tcpListener.LocalEndpoint).Port;
 
@@ -228,7 +246,10 @@ public sealed class TcpSyslogListener : IAsyncDisposable
     private async Task HandleConnectionAsync(TcpClient client, CancellationToken stoppingToken)
     {
         var remoteEndPoint = client.Client.RemoteEndPoint as IPEndPoint;
-        var sourceAddress = remoteEndPoint?.Address.ToString() ?? "unknown";
+        // DualMode ソケットが受けた IPv4 接続は ::ffff:x.x.x.x として現れるため正規化する
+        // （Issue #133。DualStackBindAddress の remarks 参照）。
+        var remoteAddress = remoteEndPoint is null ? null : DualStackBindAddress.NormalizeSourceAddress(remoteEndPoint.Address);
+        var sourceAddress = remoteAddress?.ToString() ?? "unknown";
         var sourcePort = remoteEndPoint?.Port ?? 0;
 
         var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions
@@ -388,7 +409,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
 
                     foreach (var message in messages)
                     {
-                        if (!_ingressGate.ShouldAdmit(remoteEndPoint?.Address ?? IPAddress.None, message))
+                        if (!_ingressGate.ShouldAdmit(remoteAddress ?? IPAddress.None, message))
                         {
                             // 挿入点のみ（architecture.md §3.3）。UDP 側と同じく計上の枠を設ける
                             // （M4-4。v0.1 の NoopIngressGate ではこの分岐に到達しない）。
