@@ -22,24 +22,62 @@ namespace Yagura.Ingestion.Udp;
 /// ブロックすると読み取りが停滞し、計測困難な OS 側ロスに転化するため）。破棄は
 /// <see cref="IngestionMetrics.RecordInternalBufferDropped"/> で計上する。
 /// </para>
+/// <para>
+/// <b>受信エラー（SocketException）時の扱い（Issue #142）</b>: 個々の <c>ReceiveAsync</c>
+/// 失敗（Windows の UDP では、直前の送信に対する ICMP ポート到達不能の反映等、環境依存の
+/// 一過性エラーが発生し得る）は読み取りループを止めない（§2.1「受信段はソケットからの読み取りに
+/// 専念する」）が、無言では握り潰さない。<see cref="IngestionMetrics.RecordUdpReceiveError"/>
+/// で計上し、SocketErrorCode 付きでログ出力する（<see cref="ReceiveErrorLogThrottleWindow"/>
+/// の間隔で抑制・集約し、持続的エラー時のログ溢れを防ぐ）。さらに連続して失敗する間は
+/// <see cref="ComputeReceiveErrorBackoff"/> による短い backoff を挟み、持続的エラー状態での
+/// 密ループによる CPU 浪費を防ぐ（単発エラーは backoff しない）。
+/// </para>
 /// </remarks>
 public sealed class UdpSyslogListener : IAsyncDisposable
 {
+    /// <summary>
+    /// 受信エラーログの抑制ウィンドウ（Issue #142）。この間隔内に発生した同種のログは
+    /// 1 回にまとめ、抑制した件数を添えて出力する（持続的エラー時のログ溢れを防ぐ）。
+    /// </summary>
+    internal static readonly TimeSpan ReceiveErrorLogThrottleWindow = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// 連続受信エラー時の backoff の初期値（ミリ秒。Issue #142）。1 回目のエラーでは
+    /// backoff しない（<see cref="ComputeReceiveErrorBackoff"/> 参照）ため、2 回目の
+    /// エラーで最初に適用される値になる。
+    /// </summary>
+    internal const int ReceiveErrorBackoffBaseMilliseconds = 10;
+
+    /// <summary>
+    /// 連続受信エラー時の backoff の上限値（ミリ秒。Issue #142）。持続的エラー時の密ループに
+    /// よる CPU 浪費を防ぎつつ、過大な遅延で受信段の応答性を損なわないための上限。
+    /// </summary>
+    internal const int ReceiveErrorBackoffMaxMilliseconds = 1000;
+
     private readonly UdpSyslogListenerOptions _options;
     private readonly ChannelWriter<RawDatagram> _q1Writer;
     private readonly IIngressGate _ingressGate;
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<UdpSyslogListener>? _logger;
+    private readonly TimeProvider _timeProvider;
     private UdpClient? _udpClient;
     private Task? _receiveLoopTask;
     private CancellationTokenSource? _stoppingCts;
+
+    // 受信エラー時の backoff・ログ抑制の状態（Issue #142）。読み取りループ（単一タスク）
+    // からのみ更新される想定だが、直接ハンドラを呼ぶ単体テストからも呼ばれ得るため
+    // 複数回呼び出しの直列実行のみを前提とする（並行呼び出しは想定しない）。
+    private int _consecutiveReceiveErrors;
+    private DateTimeOffset _receiveErrorThrottleWindowStartedAt = DateTimeOffset.MinValue;
+    private int _suppressedReceiveErrorLogCount;
 
     public UdpSyslogListener(
         UdpSyslogListenerOptions options,
         ChannelWriter<RawDatagram> q1Writer,
         IIngressGate ingressGate,
         IngestionMetrics metrics,
-        ILogger<UdpSyslogListener>? logger = null)
+        ILogger<UdpSyslogListener>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(q1Writer);
@@ -51,6 +89,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
         _ingressGate = ingressGate;
         _metrics = metrics;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -185,12 +224,24 @@ public sealed class UdpSyslogListener : IAsyncDisposable
                 // 到達しないはずだが、予期しない破棄タイミングでの中断を停止経路として扱う。
                 break;
             }
-            catch (SocketException)
+            catch (SocketException ex)
             {
                 // 個々のデータグラムでの受信エラーは読み取りループを止めない
                 // （§2.1「受信段はソケットからの読み取りに専念する」——エラーで停滞させない）。
+                // ただし無言では握り潰さない——ログ・メトリクス・backoff を行う（Issue #142）。
+                if (!await HandleReceiveErrorAsync(ex, stoppingToken).ConfigureAwait(false))
+                {
+                    // backoff の待機中に停止要求（トークンのキャンセル）を受けた。
+                    // OperationCanceledException と同じ正常な停止経路として扱う。
+                    break;
+                }
+
                 continue;
             }
+
+            // 受信が成立したので連続エラーのカウントをリセットする（Issue #142。
+            // 次に SocketException が起きても「連続」の 1 回目からやり直す）。
+            _consecutiveReceiveErrors = 0;
 
             // 読み取り直後に ReceivedAt を刻印する（受信段の責務。解析はまだ行わない）。
             var receivedAt = DateTimeOffset.UtcNow;
@@ -216,6 +267,112 @@ public sealed class UdpSyslogListener : IAsyncDisposable
                 // Q1 満杯——ブロックせず破棄する（architecture.md §3.1）。
                 _metrics.RecordInternalBufferDropped();
             }
+        }
+    }
+
+    /// <summary>
+    /// UDP 受信ソケットの受信エラー（<see cref="SocketException"/>）を処理する（Issue #142）:
+    /// メトリクスへ計上し、抑制付きでログ出力し、連続失敗の度合いに応じた backoff を待つ。
+    /// </summary>
+    /// <returns>
+    /// 読み取りループを継続してよければ <c>true</c>。backoff の待機中に <paramref name="stoppingToken"/>
+    /// がキャンセルされた場合は <c>false</c>（呼び出し元は正常な停止経路として扱う）。
+    /// </returns>
+    /// <remarks>
+    /// 単体テストから直接呼び出せるよう <c>internal</c> にする（実際の <see cref="SocketException"/>
+    /// をネットワーク経由で確実に再現するのは環境依存で難しいため、
+    /// <c>InternalsVisibleTo(&quot;Yagura.Ingestion.Tests&quot;)</c> 経由でロジックを直接検証する）。
+    /// </remarks>
+    internal async Task<bool> HandleReceiveErrorAsync(SocketException ex, CancellationToken stoppingToken)
+    {
+        _consecutiveReceiveErrors++;
+        var consecutiveErrors = _consecutiveReceiveErrors;
+
+        _metrics.RecordUdpReceiveError();
+        LogReceiveErrorThrottled(ex, consecutiveErrors);
+
+        var backoff = ComputeReceiveErrorBackoff(consecutiveErrors);
+        if (backoff <= TimeSpan.Zero)
+        {
+            return true;
+        }
+
+        try
+        {
+            await Task.Delay(backoff, _timeProvider, stoppingToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 連続受信エラー回数から backoff 時間を求める（Issue #142）。1 回目（単発）のエラーは
+    /// backoff しない——transient な単発エラーを不必要に遅延させないため。2 回目以降は
+    /// <see cref="ReceiveErrorBackoffBaseMilliseconds"/> を起点に指数的に伸ばし、
+    /// <see cref="ReceiveErrorBackoffMaxMilliseconds"/> で頭打ちにする（持続的エラー時の
+    /// 密ループによる CPU 浪費を防ぐ）。
+    /// </summary>
+    internal static TimeSpan ComputeReceiveErrorBackoff(int consecutiveErrorCount)
+    {
+        if (consecutiveErrorCount <= 1)
+        {
+            return TimeSpan.Zero;
+        }
+
+        // シフト量はオーバーフロー防止のため頭打ちにする（上限到達後は Math.Min が効くため
+        // 大きすぎるシフト量そのものは結果に影響しない）。
+        var exponent = Math.Min(consecutiveErrorCount - 1, 10);
+        var delayMilliseconds = Math.Min(
+            (long)ReceiveErrorBackoffBaseMilliseconds << exponent,
+            ReceiveErrorBackoffMaxMilliseconds);
+
+        return TimeSpan.FromMilliseconds(delayMilliseconds);
+    }
+
+    /// <summary>
+    /// 受信エラーを抑制付きでログ出力する（Issue #142）。<see cref="ReceiveErrorLogThrottleWindow"/>
+    /// 内に発生した同種のログは 1 回にまとめ、抑制した件数を添えて出力する。
+    /// </summary>
+    private void LogReceiveErrorThrottled(SocketException ex, int consecutiveErrorCount)
+    {
+        if (_logger is null)
+        {
+            return;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        if (_receiveErrorThrottleWindowStartedAt != DateTimeOffset.MinValue &&
+            now - _receiveErrorThrottleWindowStartedAt < ReceiveErrorLogThrottleWindow)
+        {
+            _suppressedReceiveErrorLogCount++;
+            return;
+        }
+
+        var suppressedCount = _suppressedReceiveErrorLogCount;
+        _suppressedReceiveErrorLogCount = 0;
+        _receiveErrorThrottleWindowStartedAt = now;
+
+        if (suppressedCount > 0)
+        {
+            _logger.LogWarning(
+                ex,
+                "UDP 受信でエラーが発生しました（SocketErrorCode={SocketErrorCode}、連続 {ConsecutiveErrorCount} 件目）。" +
+                "直近 {ThrottleWindowSeconds} 秒間に、さらに {SuppressedCount} 件の受信エラーログを抑制しました。",
+                ex.SocketErrorCode,
+                consecutiveErrorCount,
+                ReceiveErrorLogThrottleWindow.TotalSeconds,
+                suppressedCount);
+        }
+        else
+        {
+            _logger.LogWarning(
+                ex,
+                "UDP 受信でエラーが発生しました（SocketErrorCode={SocketErrorCode}、連続 {ConsecutiveErrorCount} 件目）。",
+                ex.SocketErrorCode,
+                consecutiveErrorCount);
         }
     }
 
