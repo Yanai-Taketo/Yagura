@@ -50,14 +50,21 @@ public sealed class PersistenceWriter
     // 側は LogLevel.Error への格上げ（下記 WriteBatchWithTimeoutAsync 参照）で表現する。
     private static readonly TimeSpan PermanentFailureWarningSuppressionWindow = TimeSpan.FromMinutes(5);
 
+    // スプール書込失敗（architecture.md §4.6 の能動通知。Issue #149）の警告連発を抑制する
+    // 最小間隔。恒久障害警告と同じ抑制窓の考え方・同じ値を流用する（ディスク障害等、原因の
+    // 性質が近いため。実測確定待ちの暫定値）。
+    private static readonly TimeSpan SpoolWriteFailedWarningSuppressionWindow = TimeSpan.FromMinutes(5);
+
     private readonly ChannelReader<LogRecord> _q2Reader;
     private readonly ILogStore _logStore;
     private readonly DiskSpool? _spool;
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<PersistenceWriter> _logger;
     private readonly ICapacityExhaustionHandler? _capacityExhaustionHandler;
+    private readonly TimeProvider _timeProvider;
 
     private DateTimeOffset? _lastPermanentFailureWarningAt;
+    private DateTimeOffset? _lastSpoolWriteFailedWarningAt;
 
     public PersistenceWriter(
         ChannelReader<LogRecord> q2Reader,
@@ -65,7 +72,8 @@ public sealed class PersistenceWriter
         DiskSpool? spool,
         IngestionMetrics metrics,
         ILogger<PersistenceWriter>? logger = null,
-        ICapacityExhaustionHandler? capacityExhaustionHandler = null)
+        ICapacityExhaustionHandler? capacityExhaustionHandler = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(q2Reader);
         ArgumentNullException.ThrowIfNull(logStore);
@@ -77,6 +85,7 @@ public sealed class PersistenceWriter
         _metrics = metrics;
         _logger = logger ?? NullLogger<PersistenceWriter>.Instance;
         _capacityExhaustionHandler = capacityExhaustionHandler;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -308,7 +317,7 @@ public sealed class PersistenceWriter
     /// </summary>
     private bool ShouldEmitPermanentFailureWarning()
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         if (_lastPermanentFailureWarningAt is { } lastWarningAt &&
             now - lastWarningAt < PermanentFailureWarningSuppressionWindow)
         {
@@ -316,6 +325,24 @@ public sealed class PersistenceWriter
         }
 
         _lastPermanentFailureWarningAt = now;
+        return true;
+    }
+
+    /// <summary>
+    /// スプール書込失敗（architecture.md §4.6 の能動通知。Issue #149）の警告を今出すべきか判定する。
+    /// <see cref="SpoolWriteFailedWarningSuppressionWindow"/> 以内に既に出していれば抑制する
+    /// （<see cref="ShouldEmitPermanentFailureWarning"/> と同じ設計）。
+    /// </summary>
+    private bool ShouldEmitSpoolWriteFailedWarning()
+    {
+        var now = _timeProvider.GetUtcNow();
+        if (_lastSpoolWriteFailedWarningAt is { } lastWarningAt &&
+            now - lastWarningAt < SpoolWriteFailedWarningSuppressionWindow)
+        {
+            return false;
+        }
+
+        _lastSpoolWriteFailedWarningAt = now;
         return true;
     }
 
@@ -359,6 +386,22 @@ public sealed class PersistenceWriter
             case SpoolAppendResult.WriteFailed:
                 _metrics.RecordSpoolWriteFailed();
                 _metrics.RecordPersistenceFailed();
+
+                // architecture.md §4.6 の能動通知「スプール書込失敗」: 発生箇所からの即時通知
+                // （抑制窓付き。Issue #149）。QuotaExceeded（上限到達による新規破棄。§3.2.3）とは
+                // 異なり、スプール自体への書き込み（ディスク I/O）が失敗したケースであり、
+                // ディスク障害等の一時的でない要因を示唆するため、恒久障害警告と同じ抑制窓の
+                // 考え方で即時に警告する。
+                if (ShouldEmitSpoolWriteFailedWarning())
+                {
+                    _logger.LogWarning(
+                        PersistenceEventIds.SpoolWriteFailed,
+                        "[spool-write-failed] スプールへの書き込みがリトライ後も失敗したため、当該レコードを破棄しました" +
+                        "（ディスク障害等の可能性。architecture.md §3.2.1）。同種の警告は {SuppressionWindow} の間は" +
+                        "再表示を抑制します。",
+                        SpoolWriteFailedWarningSuppressionWindow);
+                }
+
                 break;
         }
     }
