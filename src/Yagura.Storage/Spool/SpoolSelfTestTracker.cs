@@ -67,6 +67,34 @@ public sealed class SpoolSelfTestTracker
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(marker);
 
+        ClearIfMatches(marker);
+    }
+
+    /// <summary>
+    /// 投入（スプール書込）に失敗したマーカーの未照合登録を取り消す（PR #200 レビュー指摘への
+    /// 対応）。ディスクへ書かれなかったマーカーは drain に照合される見込みが無く、未照合のまま
+    /// 残すと「即時の書込失敗通知」に加えて「タイムアウト通知」（別トリガキー）が次回投入
+    /// （最大 1 日後）まで抑制窓ごとに反復発火するノイズ源になるため、投入側は書込失敗を
+    /// 確認した時点で本メソッドを呼び登録を取り消す。現在未照合のマーカーと一致する場合のみ
+    /// 取り消す。
+    /// </summary>
+    /// <remarks>
+    /// 「書込成功を確認した後にのみ登録する」順序にしなかった理由: マーカーは書込前にレコードへ
+    /// 埋め込む必要があり、書込完了と投入側の後続処理（登録）の間に、別スレッドで常時動作する
+    /// drain がそのレコードを読み <see cref="OnSelfTestRecordDrained"/> を呼び得る。未登録の
+    /// マーカーへの通知は黙って無視される設計のため、成功後に登録する方式では「照合済みのはずが
+    /// 未照合として登録され偽のタイムアウトに至る」競合が生まれる。先に登録し失敗時に取り消す
+    /// 本方式は、この競合を原理的に持たない。
+    /// </remarks>
+    public void CancelPending(string marker)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(marker);
+
+        ClearIfMatches(marker);
+    }
+
+    private void ClearIfMatches(string marker)
+    {
         lock (_gate)
         {
             if (string.Equals(_pendingMarker, marker, StringComparison.Ordinal))

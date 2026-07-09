@@ -467,7 +467,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     [Fact]
-    public async Task EvaluateOnce_SpoolWriteFails_WarnsImmediately_WithoutWaitingForTimeout()
+    public async Task EvaluateOnce_SpoolWriteFails_WarnsImmediatelyOnce_AndNeverFiresTimeoutNotificationAfterwards()
     {
         var collector = new FakeLogCollector();
         var tracker = new SpoolSelfTestTracker();
@@ -479,13 +479,28 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         Assert.NotNull(spool);
         _openedSpools.Add(spool);
 
-        var monitor = CreateMonitor(spool, collector, out _, selfTestTracker: tracker);
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
 
         await monitor.EvaluateOnceAsync();
 
         // タイムアウト（仮値 10 分）を待たず、投入失敗の時点で即座に警告する。
         var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1009);
         Assert.Contains("[spool-self-test-write-failed]", record.Message);
+
+        // 書込失敗したマーカーは未照合登録から取り消されるため、以降の周期評価で
+        // タイムアウト通知（別トリガキー）が後追いで発火しない（PR #200 レビュー指摘への対応——
+        // 修正前は書込失敗の約 10 分後からタイムアウト通知が抑制窓ごとに次回投入まで反復していた。
+        // タイムアウト + 抑制窓数回分を 1 分周期で進めて確認する）。
+        for (var i = 0; i < 60; i++)
+        {
+            timeProvider.Advance(ActiveNotificationConstants.PollInterval);
+            await monitor.EvaluateOnceAsync();
+        }
+
+        var records = collector.GetSnapshot().Where(r => r.Id.Id == 1009).ToList();
+        var single = Assert.Single(records);
+        Assert.Contains("[spool-self-test-write-failed]", single.Message);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Message.Contains("[spool-self-test-timeout]"));
     }
 
     [Fact]

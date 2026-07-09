@@ -358,12 +358,26 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         if (_selfTestTracker.IsPendingTimedOut(now, ActiveNotificationConstants.SelfTestTimeout))
         {
-            NotifySelfTestFailure(
-                "spool-self-test-timeout",
-                "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
-                "期待時間 {Timeout} 以内に完了しませんでした（architecture.md §3.2.5）。スプール経路" +
-                "（書込 → セグメント読出 → 逆直列化 → drain 合流判定）に障害が疑われます。",
-                ActiveNotificationConstants.SelfTestTimeout);
+            // 文言は「経路の障害」と断定しない（PR #200 レビュー指摘への対応）: drain は FIFO の
+            // ため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する
+            // 持続的な速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しない。
+            // その場合はスプール退避継続の警告（EventId 1004）が並行して出ている可能性が高いため、
+            // 切り分けの手がかりとして文言に含め、現在のスプール使用率も添える。バックログ起因を
+            // 判定に加味する改善（投入時点のバックログ記録・判定の先送り等）はフォローアップ
+            // Issue に委ねる。
+            var usageRatio = _spool.UsageRatio;
+            NotifyIfDue("spool-self-test-timeout", () =>
+                _logger.LogError(
+                    ActiveNotificationEventIds.SpoolSelfTestFailed,
+                    "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
+                    "期待時間 {Timeout} 以内に完了しませんでした（architecture.md §3.2.5。現在のスプール使用率" +
+                    " {UsageRatio:P0}）。スプール経路（書込 → セグメント読出 → 逆直列化 → drain 合流判定）の障害、" +
+                    "または未消化バックログの滞留（保存先の持続的な速度不足。§3.2.2——この場合はスプール退避継続の" +
+                    "警告（イベント ID 1004）が並行して出ている可能性が高い）が考えられます。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    ActiveNotificationConstants.SelfTestTimeout,
+                    usageRatio,
+                    ActiveNotificationConstants.SuppressionWindow));
         }
 
         if (_lastSelfTestInjectedAt is { } lastInjectedAt &&
@@ -374,35 +388,43 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         _lastSelfTestInjectedAt = now;
+
+        // 登録 → 書込 → 失敗時は登録取消、の順序（PR #200 レビュー指摘への対応）。
+        // 書込に失敗したマーカーを未照合のまま残すと、drain に照合される見込みが無いまま
+        // タイムアウト通知（別トリガキー）が次回投入（最大 1 日後）まで抑制窓ごとに反復発火する。
+        // 登録自体は書込より先に行う——書込成功の確認より先に drain がレコードを読んで照合を
+        // 通知し得るため、成功後に登録する方式は偽タイムアウトの競合を持つ
+        // （SpoolSelfTestTracker.CancelPending の remarks 参照）。
         var marker = _selfTestTracker.BeginNewMarker(now);
 
-        var result = await _spool.TryAppendAsync(SpoolRecord.ForSelfTest(marker), cancellationToken).ConfigureAwait(false);
+        SpoolAppendResult result;
+        try
+        {
+            result = await _spool.TryAppendAsync(SpoolRecord.ForSelfTest(marker), cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // キャンセル・想定外例外のいずれでも、書き込まれた確証の無いマーカーを未照合のまま
+            // 残さない（例外はループ側の包括保護（EventId 1008）またはキャンセル処理に委ねる）。
+            _selfTestTracker.CancelPending(marker);
+            throw;
+        }
 
         if (result != SpoolAppendResult.Appended)
         {
-            // 投入自体が失敗した——タイムアウトを待たず即座に警告する（書込失敗はそれ自体が
-            // 経路の破損を示す一次シグナルであり、次の判定機会（次回投入時）まで待つ理由がない）。
-            NotifySelfTestFailure(
-                "spool-self-test-write-failed",
-                "[spool-self-test-write-failed] スプールの定期自己検証用レコードの書き込みに失敗しました" +
-                "（結果: {Result}。architecture.md §3.2.5）。",
-                result);
+            // 投入自体が失敗した——登録を取り消し、タイムアウトを待たず即座に警告する
+            // （書込失敗はそれ自体が経路の破損を示す一次シグナルであり、次の判定機会まで
+            // 待つ理由がない。通知は本 1 系統に一本化され、タイムアウト通知は発生しない）。
+            _selfTestTracker.CancelPending(marker);
+            NotifyIfDue("spool-self-test-write-failed", () =>
+                _logger.LogError(
+                    ActiveNotificationEventIds.SpoolSelfTestFailed,
+                    "[spool-self-test-write-failed] スプールの定期自己検証用レコードの書き込みに失敗しました" +
+                    "（結果: {Result}。architecture.md §3.2.5）。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    result,
+                    ActiveNotificationConstants.SuppressionWindow));
         }
-    }
-
-    /// <summary>
-    /// 自己検証失敗（EventId 1009）を共通の形式で警告する。<paramref name="detailArg"/> は
-    /// メッセージ末尾のプレースホルダ 1 つ分に対応する（呼び出し元ごとに意味が異なるため
-    /// 引数として受け取る——タイムアウト時は期待時間、書込失敗時は結果種別）。
-    /// </summary>
-    private void NotifySelfTestFailure(string triggerKey, string messageTemplate, object detailArg)
-    {
-        NotifyIfDue(triggerKey, () =>
-            _logger.LogError(
-                ActiveNotificationEventIds.SpoolSelfTestFailed,
-                messageTemplate + "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
-                detailArg,
-                ActiveNotificationConstants.SuppressionWindow));
     }
 
     /// <summary>

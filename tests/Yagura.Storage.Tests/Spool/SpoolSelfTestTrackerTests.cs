@@ -91,4 +91,29 @@ public sealed class SpoolSelfTestTrackerTests
         Assert.False(string.IsNullOrWhiteSpace(second));
         Assert.NotEqual(first, second);
     }
+
+    [Fact]
+    public void CancelPending_MatchingMarker_ClearsPending_TimeoutNoLongerTriggers()
+    {
+        // 投入（スプール書込）失敗時の登録取消（PR #200 レビュー指摘への対応）: 書き込まれなかった
+        // マーカーが未照合のまま残ると、drain に照合される見込みが無いままタイムアウト通知が
+        // 次回投入まで反復するため、投入側は書込失敗の時点で登録を取り消す。
+        var tracker = new SpoolSelfTestTracker();
+        var marker = tracker.BeginNewMarker(Baseline);
+
+        tracker.CancelPending(marker);
+
+        Assert.False(tracker.IsPendingTimedOut(Baseline + Timeout + TimeSpan.FromDays(1), Timeout));
+    }
+
+    [Fact]
+    public void CancelPending_NonMatchingMarker_DoesNotClearPending()
+    {
+        var tracker = new SpoolSelfTestTracker();
+        tracker.BeginNewMarker(Baseline);
+
+        tracker.CancelPending("some-unrelated-marker");
+
+        Assert.True(tracker.IsPendingTimedOut(Baseline + Timeout, Timeout));
+    }
 }
