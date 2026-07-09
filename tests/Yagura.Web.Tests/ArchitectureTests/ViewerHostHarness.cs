@@ -45,8 +45,14 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     /// 既定 <see langword="null"/> は常に未検出を返す <see cref="StubForwarderMsiSource"/>）。
     /// <c>ForwarderKitDownloadEndpointTests</c> の includeMsi 系ケースが使う。
     /// </param>
+    /// <param name="logStore">
+    /// <see cref="ILogStore"/> の差し替え（既定 <see langword="null"/> は空集合のみを返す
+    /// <see cref="NoopLogStore"/>）。<c>LogSearchCsvExportEndpointTests</c>（Issue #157）が
+    /// 実データを積んだフェイクへ差し替えて使う。
+    /// </param>
     public static async Task<ViewerHostHarness> StartAsync(
-        Yagura.Web.ForwarderKit.IForwarderMsiSource? forwarderMsiSource = null)
+        Yagura.Web.ForwarderKit.IForwarderMsiSource? forwarderMsiSource = null,
+        ILogStore? logStore = null)
     {
         var builder = WebApplication.CreateBuilder();
 
@@ -58,7 +64,7 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Configuration["DisableStaticAssetNotFoundRuntimeFallback"] = "true";
 
         builder.Services.AddYaguraWebViewer();
-        builder.Services.AddSingleton<ILogStore>(_ => new NoopLogStore());
+        builder.Services.AddSingleton<ILogStore>(_ => logStore ?? new NoopLogStore());
         builder.Services.AddSingleton<WebGuardMetrics>();
         builder.Services.AddSingleton<IAuditRecorder, NoopAuditRecorder>();
         builder.Services.AddSingleton<Yagura.Abstractions.Observability.IYaguraSystemStatusReader, NoopStatusReader>();

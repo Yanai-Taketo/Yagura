@@ -93,6 +93,23 @@
                                  Outages="@_chartOutages" />
         </YaguraCard>
     </div>
+
+    @* CSV エクスポート導線（Issue #157）: 現在の検索条件を引き継いだまま
+       /search/export.csv へ全ページ遷移する（ForwarderKitScreen の生成ボタンと同じ方式——
+       NavigationManager.NavigateTo(url, forceLoad: true)。最終検証・件数上限はサーバ側の
+       責務、ここは条件の引き渡しのみ）。クエリの組み立ては検索 URL（BuildSearchUrl）と
+       同一の BuildQueryParameters を共有する——条件マッピングの二重管理を避け、
+       「エクスポートは今見ている検索と同じ条件」を構造的に保証する（Issue #148 の
+       URL 共有設計に相乗り）。主ボタン（検索）は上のフォームの 1 つのみのため、
+       本ボタンは Normal ロールとする（ui.md §3.1「主ボタンは 1 ビューに 1 つ」）。 *@
+    <div class="mb-4 d-flex align-center justify-end gap-2">
+        <MudText Typo="Typo.caption" Class="yagura-detail-meta-label">
+            @string.Format(CultureInfo.InvariantCulture, UiText.SearchExportCsvHintFormat, SearchLimit)
+        </MudText>
+        <YaguraButton Role="YaguraButtonRole.Normal" OnClick="ExportCsv">
+            @UiText.SearchExportCsvButton
+        </YaguraButton>
+    </div>
 }
 
 @foreach (var outage in _visibleOutages)
@@ -395,7 +412,27 @@
     /// </summary>
     private void SubmitSearch() => Navigation.NavigateTo(BuildSearchUrl());
 
-    private string BuildSearchUrl()
+    private string BuildSearchUrl() =>
+        QueryHelpers.AddQueryString("/search", BuildQueryParameters());
+
+    /// <summary>
+    /// CSV エクスポート（Issue #157）: 現在の検索条件を引き継いだクエリ付きで
+    /// <c>/search/export.csv</c>（YaguraWebViewerExtensions.MapLogSearchCsvExport）へ
+    /// 全ページ遷移する。クエリのキー・値は検索 URL（<see cref="BuildSearchUrl"/>）と
+    /// 同一（<see cref="BuildQueryParameters"/> を共有——「今見ている検索と同じ条件」を
+    /// 構造的に保証する）。
+    /// </summary>
+    private void ExportCsv() =>
+        Navigation.NavigateTo(
+            QueryHelpers.AddQueryString("/search/export.csv", BuildQueryParameters()),
+            forceLoad: true);
+
+    /// <summary>
+    /// フォームの現在値から URL クエリパラメータ（Issue #148 の URL 共有形式）を組み立てる。
+    /// 検索 URL（<see cref="BuildSearchUrl"/>）と CSV エクスポート URL（<see cref="ExportCsv"/>）で
+    /// 同一のロジックを共有する（条件マッピングの二重管理を避ける）。
+    /// </summary>
+    private Dictionary<string, string?> BuildQueryParameters()
     {
         var query = new Dictionary<string, string?>();
 
@@ -434,7 +471,7 @@
             query["q"] = _searchText;
         }
 
-        return QueryHelpers.AddQueryString("/search", query);
+        return query;
     }
 
     // 期間はサーバ UTC の往復形式（"O"）で URL に載せる——サーバのタイムゾーンに依存せず、

@@ -313,6 +313,15 @@ public static class UiText
     /// <summary>検索実行ボタン。</summary>
     public const string SearchButton = "検索";
 
+    /// <summary>検索結果の CSV エクスポートボタン（Issue #157）。</summary>
+    public const string SearchExportCsvButton = "CSV エクスポート";
+
+    /// <summary>
+    /// CSV エクスポートの上限件数の注記（<c>{0}</c> に件数を埋め込む書式文字列）。画面表示（一覧）と
+    /// 同じ上限を使うことを利用者に明示する（「件数上限の明示」——Issue #157 の受け入れ条件）。
+    /// </summary>
+    public const string SearchExportCsvHintFormat = "現在の検索条件のまま、最大 {0:N0} 件まで CSV に出力します（一覧表示と同じ上限）。";
+
     // ---- 送信元の逆引きホスト名（ADR-0007。ui.md §4） ----
 
     /// <summary>
