@@ -32,7 +32,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 |---|---|
 | Windows サービス登録 | `ServiceInstall`(サービス名 `Yagura` = `Program.WindowsServiceName`)。仮想サービスアカウント `NT SERVICE\Yagura`・自動起動・失敗時再起動(5 秒 × 3 回、`util:ServiceConfig`) |
 | データルート作成 + ACL | `%ProgramData%\Yagura` を作成し、native `PermissionEx`(MsiLockPermissionsEx)の SDDL で「SYSTEM/Administrators = フル、サービスアカウント = 変更、継承無効化」を適用(security.md §5) |
-| ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可(WixToolset.Firewall.wixext)。管理 8515 は loopback 専用のため規則を作らない |
+| ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可(WixToolset.Firewall.wixext)。**プロファイルは Domain + Private 限定**(Public は含まない。WiX Firewall 拡張の `Profile` 属性は単一値の列挙型で複数値の同時指定に非対応のため、系統ごとに `Profile="domain"` / `Profile="private"` の 2 規則に分けて作成する。規則数は実質 6 本)。管理 8515 は loopback 専用のため規則を作らない |
 | 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_FIREWALL=""` |
 | インストール記録 | 選択(`RulesRequested`)と作成規則一覧をデータルート直下の `firewall-rules.ini` に記録(初回起動時のイベントログ転記は Host 側の後続 Issue) |
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
@@ -48,8 +48,8 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 
 - スクリプト: [e2e/Invoke-YaguraInstallerE2E.ps1](e2e/Invoke-YaguraInstallerE2E.ps1)
   - Full モード(管理者権限必須): サイレントインストール(`msiexec /i /qn`)→ サービス
-    `Yagura` の Running 待機 → インストール状態の証拠採取(規則 3 本・データルート・
-    firewall-rules.ini)→ UDP 514 へ syslog 送出 → 閲覧リスナ(http://localhost:8514/)の
+    `Yagura` の Running 待機 → インストール状態の証拠採取(規則 3 系統・6 本 = Domain+Private・
+    データルート・firewall-rules.ini)→ UDP 514 へ syslog 送出 → 閲覧リスナ(http://localhost:8514/)の
     HTML で照合 → アンインストール(`msiexec /x /qn`)→ 残置物確認(サービス・規則・
     スタートメニュー消滅、**データルート保持** = 上の責務表どおり)
   - `-DryRun`: msiexec・サービス操作を行わず手順と出力の配管のみ検証(開発機用)
@@ -69,6 +69,12 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 - ローカルビルド + WiX 標準の ICE 検証(ビルドに内蔵)を通過(警告 0)
 - MSI テーブルの内容検証済み(ServiceInstall / Wix4ServiceConfig / MsiLockPermissionsEx /
   Wix5FirewallException / IniFile / Upgrade / ControlEvent を WindowsInstaller COM で照合)
+- **ファイアウォール規則のプロファイル限定(Issue #125)**: ローカルビルドした MSI の
+  `Wix5FirewallException` テーブルを WindowsInstaller COM で照合し、6 規則すべてで
+  `Profile` 列が `1`(NET_FW_PROFILE2_DOMAIN)または `2`(NET_FW_PROFILE2_PRIVATE)のみで
+  あること(`4` = Public・`0x7FFFFFFF` = All が含まれないこと)を確認済み(2026-07-09)。
+  **実機での `Get-NetFirewallRule` によるプロファイル表示確認は未実施**(管理者権限での
+  実インストールが要る。次回 Full E2E または M9-3 lab 手順で確認する)
 - E2E スクリプトは開発機で `-DryRun` と `-SendVerifyOnly`(実ビルド出力の Yagura.Host に
   対する送出・照合)を検証済み。**Full モード(実インストール)の初回実行は CI
   (installer-e2e.yml)で行う**——GitHub ホストランナーの管理者権限の根拠は workflow 内の
