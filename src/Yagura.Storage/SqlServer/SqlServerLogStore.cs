@@ -123,6 +123,20 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
 
         try
         {
+            // 並行初期化の直列化: 複数の呼び出しが同時に InitializeAsync へ到達した場合、
+            // IF OBJECT_ID 判定と CREATE TABLE / ALTER COLUMN の間に他者が割り込むと
+            // 「既に存在する」エラーや競合が起こり得る。sp_getapplock（@LockOwner = 'Transaction' は
+            // トランザクション終了時に自動解放される——Microsoft Learn "sp_getapplock (Transact-SQL)"。
+            // 確認日 2026-07-10）でスキーマ管理全体を排他し、後着は先着の完了を待ってから
+            // 冪等判定（適用済みなら何もしない）に入る。
+            await using (var lockCommand = connection.CreateCommand())
+            {
+                lockCommand.Transaction = transaction;
+                lockCommand.CommandText =
+                    "EXEC sp_getapplock @Resource = N'Yagura.SchemaInitialization', @LockMode = 'Exclusive', @LockOwner = 'Transaction';";
+                await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             await EnsureCollationAvailableAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
             await using (var command = connection.CreateCommand())
@@ -373,7 +387,8 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                 CREATE INDEX IX_LogRecords_ReceivedAt_Id ON dbo.LogRecords (ReceivedAt DESC, Id DESC);
             END;
 
-            -- Issue #145 症状 1: Severity 絞り込みが索引に乗らずフルスキャンする問題。
+            -- Issue #145 症状 1: Severity 絞り込み（閾値方式 Severity <= N——Issue #148）が
+            -- 索引に乗らずフルスキャンする問題。
             IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_LogRecords_Severity_ReceivedAt' AND object_id = OBJECT_ID(N'dbo.LogRecords'))
             BEGIN
                 CREATE INDEX IX_LogRecords_Severity_ReceivedAt ON dbo.LogRecords (Severity, ReceivedAt DESC);

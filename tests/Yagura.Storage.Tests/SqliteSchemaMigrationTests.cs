@@ -167,7 +167,7 @@ public sealed class SqliteSchemaMigrationTests : IDisposable
         });
 
         var severityFiltered = await store.QueryAsync(
-            new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), Severity: 3));
+            new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), SeverityAtMost: 3));
         Assert.Single(severityFiltered);
         Assert.Equal("critical disk", severityFiltered[0].Message);
 

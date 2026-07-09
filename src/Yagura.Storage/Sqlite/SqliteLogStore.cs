@@ -144,8 +144,8 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
 
                     -- 絞り込み列の複合索引（Issue #145 症状 1: Severity 絞り込み・SourceAddress 絞り込みが
                     -- ReceivedAt 単一索引に乗らずフルスキャンする問題）。ReceivedAt を第 2 列に含めることで、
-                    -- 「WHERE 列 = 値 ORDER BY ReceivedAt DESC LIMIT N」の絞り込み+並び替えの両方を
-                    -- 1 つの索引でカバーする。
+                    -- 絞り込み（Severity は閾値方式 Severity <= N——Issue #148）と ORDER BY ReceivedAt DESC の
+                    -- 両方を 1 つの索引で支える（希少 severity のフルスキャンを避ける）。
                     CREATE INDEX IF NOT EXISTS IX_LogRecords_Severity_ReceivedAt ON LogRecords (Severity, ReceivedAt DESC);
 
                     -- QuerySourceActivityAsync の GROUP BY SourceAddress（Issue #145 症状 1 後段:
