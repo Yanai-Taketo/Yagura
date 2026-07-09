@@ -4,6 +4,8 @@
   責務(configuration.md §4.3 / ADR-0004 決定 4・5):
   - Windows サービス登録(仮想サービスアカウント NT SERVICE\Yagura・自動起動・失敗時再起動)
   - データルート %ProgramData%\Yagura の作成 + ACL(security.md §5 の ACE 構成)
+  - フォワーダ MSI 配置フォルダ %ProgramData%\Yagura\forwarder の作成 + 明示 ACL
+    (Administrators のみ書込可。ADR-0008 設計条件 9・security.md §5.1・Issue #171)
   - ファイアウォール規則(UDP 514 / TCP 514 / TCP 8514。オプトアウト可。Firewall.wxs)
   - イベントログソース "Yagura" の事前登録(Program.cs の M9 申し送り)
   - 完了画面での閲覧 URL 案内 + スタートメニューリンク
@@ -87,6 +89,7 @@
       <ComponentRef Id="HostServiceExe" />
       <ComponentRef Id="EventLogMessages" />
       <ComponentRef Id="DataRootFolder" />
+      <ComponentRef Id="ForwarderFolder" />
       <ComponentRef Id="FirewallInstallRecord" />
       <ComponentRef Id="FirewallRules" />
       <ComponentRef Id="ViewerShortcut" />
@@ -100,7 +103,12 @@
 
     <StandardDirectory Id="CommonAppDataFolder">
       <!-- データルート(configuration.md §2: 既定 %ProgramData%\Yagura)。 -->
-      <Directory Id="YaguraDataRoot" Name="Yagura" />
+      <Directory Id="YaguraDataRoot" Name="Yagura">
+        <!-- フォワーダ MSI 配置フォルダ(ADR-0008 設計条件 9・Issue #171)。
+             データルートの ACL をそのまま継承すると、サービスアカウントに書込権限が
+             残ってしまう(下の ForwarderFolder コンポーネントで明示 ACL に上書きする)。 -->
+        <Directory Id="YaguraForwarderFolder" Name="forwarder" />
+      </Directory>
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
@@ -199,6 +207,60 @@
     <Component Id="DataRootFolder" Directory="YaguraDataRoot" Guid="F8857077-4311-4A8C-8372-1D478D98A976">
       <CreateFolder>
         <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297)" />
+      </CreateFolder>
+    </Component>
+
+    <!--
+      フォワーダ MSI 配置フォルダの作成 + 明示 ACL(ADR-0008 設計条件 9・security.md §5.1・
+      Issue #171)。データルート配下だが、DataRootFolder と同じ ACE 構成をそのまま継承すると
+      サービスアカウントに書込権限が残ってしまう(#171 で icacls 確認により判明した乖離)。
+      設計条件 9 は「Administrators のみ書込可」を意図しているため、DataRootFolder と同じ
+      native PermissionEx(MsiLockPermissionsEx)で継承を明示的に断ち切り、
+      サービスアカウントには読み取り専用の ACE のみを与える。
+
+      設定タイミングをインストーラ側に置いた理由: DataRootFolder が同じ native PermissionEx
+      方式で ACL を確定させており(コメント参照)、そこに合わせるのが最小の変更半径になる。
+      サービス起動時(Yagura.Host 側)に ACL を設定する代替も検討したが、(1) 実行時アカウント
+      (仮想サービスアカウント)は ProgramData 直下に自力で ACL を張る権限を持たない
+      (DataRootFolder コメントと同じ理由)、(2) フォルダ作成・ACL 確定の責務をインストーラに
+      一本化したほうが「適用はインストーラが行い、サービスは起動時に検証する」という
+      security.md §5 の既定方針とも一致するため、インストーラ側を採用する。
+
+      フォルダが存在しない場合の扱い: DataRootFolder と同様、CreateFolder で**常に作成する**
+      (存在時のみ適用、ではない)。理由: (1) DataRootFolder との対称性(データルート配下の
+      サブフォルダの作成方式を分岐させない)、(2) 管理者が生成 UI の案内(パス表示)を見て
+      MSI を配置しようとした時点で、既に正しい ACL のフォルダが存在している状態にできる
+      (利用者ガイドの「初回は管理者が自分で作成する」という手作業を不要にする)。
+
+      SDDL の内訳(DataRootFolder との差分はサービスアカウントの権限のみ):
+        D:P                        … DACL 保護(データルートからの継承 ACE を持ち込まない)
+        (A;OICI;FA;;;SY)           … SYSTEM = フルコントロール(配下へ継承)
+        (A;OICI;FA;;;BA)           … Administrators = フルコントロール(同上)
+        (A;OICI;0x120089;;;S-1-5-80-…) … サービスアカウント = 読み取りのみ
+                                      (FILE_GENERIC_READ = 0x120089。書込・削除・ACL 変更の
+                                      いずれも与えない)。SystemForwarderMsiSource
+                                      (src/Yagura.Web/ForwarderKit/SystemForwarderMsiSource.cs)は
+                                      フォルダの列挙・ファイルのハッシュ計算・MSI 版取得のみを
+                                      行う読み取り専用の実装であり、書込は一切行わないため
+                                      Read で動作に支障はない
+      SID は DataRootFolder と同じ NT SERVICE\Yagura の SID(サービス名から決定的に導出される
+      ため全マシンで同一。DataRootFolder コメント参照)。
+
+      実機確認(2026-07-09、Issue #171 実装 PR): msiexec /qn でインストール後、
+      `icacls %ProgramData%\Yagura\forwarder` が意図どおり
+      `NT AUTHORITY\SYSTEM:(OI)(CI)(F)` / `BUILTIN\Administrators:(OI)(CI)(F)` /
+      `NT SERVICE\Yagura:(OI)(CI)(R)` を返すことを確認。データルート本体は
+      `NT SERVICE\Yagura:(OI)(CI)(M)` のままで、forwarder フォルダのみ `(R)` に絞られている
+      ことも確認済み。Administrators で `fluent-bit-*-win64.msi` パターンのファイルを配置した
+      状態で `/admin/forwarder-kit`(NT SERVICE\Yagura で稼働する Yagura.Host)にアクセスし、
+      MSI が「未検出」にならず正しく検出されることを確認——サービスアカウントの読み取り専用
+      ACE で SystemForwarderMsiSource(列挙・SHA256・ProductVersion の読み取り)が支障なく
+      動作することを実機で確認した。アンインストール時、フォルダが空なら DataRootFolder と
+      同様に削除され、MSI 配置済み(非空)なら保持されることも確認済み(ACL も保持されたまま)。
+    -->
+    <Component Id="ForwarderFolder" Directory="YaguraForwarderFolder" Guid="42FE74EC-C5CB-4E46-BB03-AC56C5D0EFF6">
+      <CreateFolder>
+        <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x120089;;;S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297)" />
       </CreateFolder>
     </Component>
 

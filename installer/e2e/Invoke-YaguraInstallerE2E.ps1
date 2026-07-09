@@ -88,6 +88,7 @@ else { $script:Mode = 'Full' }
 # 既定パス(installer/README.md の責務表と一致させる)
 $script:ServiceName = 'Yagura'
 $script:DataRoot = Join-Path $env:ProgramData 'Yagura'
+$script:ForwarderDir = Join-Path $script:DataRoot 'forwarder'
 $script:InstallDir = Join-Path $env:ProgramFiles 'Yagura'
 $script:StartMenuDir = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Yagura'
 $script:FirewallDisplayNames = @(
@@ -216,6 +217,33 @@ function Invoke-Msiexec {
 
 function Get-YaguraService {
     return Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+}
+
+function Test-ForwarderFolderAcl {
+    # forwarder フォルダの ACL が意図どおり(Administrators のみ書込可・サービスアカウントは
+    # 読み取りのみ)であることを icacls の出力で確認する(ADR-0008 設計条件 9・
+    # security.md §5.1・Issue #171)。データルート本体(NT SERVICE\Yagura:(M))とは異なり、
+    # forwarder フォルダは NT SERVICE\Yagura:(R) でなければならない。
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $lines = @(& icacls $Path 2>$null)
+    $serviceLine = @($lines | Where-Object { $_ -match 'NT SERVICE\\Yagura' -or $_ -match 'S-1-5-80-' })
+    if ($serviceLine.Count -eq 0) {
+        throw ('service account ACE not found on {0} (icacls output: {1})' -f $Path, ($lines -join ' | '))
+    }
+    if ($serviceLine -match '\(F\)' -or $serviceLine -match '\(M\)' -or $serviceLine -match '\(W\)') {
+        throw ('service account ACE grants write/modify/full control on {0} (expected read-only): {1}' -f $Path, ($serviceLine -join ' | '))
+    }
+    if ($serviceLine -notmatch '\(R\)') {
+        throw ('service account ACE does not grant read on {0}: {1}' -f $Path, ($serviceLine -join ' | '))
+    }
+
+    $adminLine = @($lines | Where-Object { $_ -match 'BUILTIN\\Administrators' })
+    if ($adminLine.Count -eq 0 -or -not ($adminLine -match '\(F\)')) {
+        throw ('Administrators does not have full control on {0} (line: {1})' -f $Path, ($adminLine -join ' | '))
+    }
+
+    return ($lines -join ' | ')
 }
 
 function Get-YaguraFirewallRules {
@@ -396,6 +424,22 @@ try {
         }
 
         # -------------------------------------------------------------------
+        # 3b. フォワーダ MSI 配置フォルダの ACL 検証(ADR-0008 設計条件 9・Issue #171)
+        # -------------------------------------------------------------------
+        if ($DryRun) {
+            Add-SkippedStep -Name 'verify-forwarder-acl' -Reason ('dry-run: would verify {0} exists and restricts NT SERVICE\Yagura to read-only' -f $script:ForwarderDir)
+        }
+        else {
+            [void](Invoke-E2EStep -Name 'verify-forwarder-acl' -Action {
+                if (-not (Test-Path -Path $script:ForwarderDir)) {
+                    throw ('forwarder folder not created: {0}' -f $script:ForwarderDir)
+                }
+                $summary = Test-ForwarderFolderAcl -Path $script:ForwarderDir
+                return ('forwarder folder ACL restricts service account to read-only: {0}' -f $summary)
+            })
+        }
+
+        # -------------------------------------------------------------------
         # 4. UDP 送出 -> 閲覧リスナで照合(ゼロ設定ファーストランの本丸)
         # -------------------------------------------------------------------
         if ($DryRun) {
@@ -462,6 +506,7 @@ try {
             Add-SkippedStep -Name 'residue-firewall-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-startmenu-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-dataroot-retained' -Reason 'dry-run'
+            Add-SkippedStep -Name 'residue-forwarder-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-installdir-removed' -Reason 'dry-run'
         }
         else {
@@ -503,6 +548,18 @@ try {
                     throw ('yagura.db not retained in data root: {0}' -f $dbPath)
                 }
                 return ('data root retained with yagura.db: {0}' -f $script:DataRoot)
+            })
+
+            [void](Invoke-E2EStep -Name 'residue-forwarder-removed' -ContinueOnFailure $true -Action {
+                # 本 E2E は forwarder フォルダに MSI を配置しないため、常に空のまま
+                # アンインストールを迎える。DataRootFolder と同じ CreateFolder 由来の
+                # 空フォルダ削除挙動により、空なら削除されるのが設計どおり
+                # (ADR-0008 設計条件 9・Issue #171。管理者が MSI を配置して非空にした場合は
+                # データルート同様に保持される——installer/Package.wxs のコメント参照)。
+                if (Test-Path -Path $script:ForwarderDir) {
+                    throw ('empty forwarder folder still present after uninstall (should be removed): {0}' -f $script:ForwarderDir)
+                }
+                return 'empty forwarder folder removed'
             })
 
             [void](Invoke-E2EStep -Name 'residue-installdir-removed' -ContinueOnFailure $true -Action {
