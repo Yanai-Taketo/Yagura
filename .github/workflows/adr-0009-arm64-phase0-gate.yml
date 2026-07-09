@@ -10,12 +10,18 @@
 #
 # 本 workflow は Phase 0 のゲート通過確認専用であり、恒久的な CI ステップではない
 # (ADR-0009 決定5 が挙げる「ネイティブ依存変更 PR への軽量チェック追加」は Phase 1 の
-# 検討事項として別途扱う——委任事項6)。トリガは workflow_dispatch のみとし、
-# 通常の pull_request / push では実行しない。
+# 検討事項として別途扱う——委任事項6)。トリガは workflow_dispatch と、本ファイル自身を
+# 変更する pull_request のみ(installer-e2e.yml と同じトリガ設計。workflow_dispatch は
+# GitHub の制約上、既定ブランチにファイルが存在しないと呼び出せない——ゲート導入 PR
+# 自身の上で実行し run URL を PR に記録できる経路として pull_request を残す)。
+# src/ 側の変更では実行しない。
 name: ADR-0009 Phase 0 ARM64 Gate
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/adr-0009-arm64-phase0-gate.yml'
 
 permissions:
   contents: read
