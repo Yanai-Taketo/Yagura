@@ -264,6 +264,32 @@ public static class UiText
     /// <summary>ダッシュボードから状態画面への導線。</summary>
     public const string StatLinkToStatus = "すべてのカウンタ・記録を見る（システム状態）";
 
+    // ---- 重大度分布・Top talkers（ui.md §4。M8-5/Issue #159） ----
+
+    /// <summary>重大度分布カードの見出し。</summary>
+    public const string SeverityDistributionTitle = "重大度別の受信件数（直近 1 時間）";
+
+    /// <summary>
+    /// 重大度分布で PRI が解析できなかった（severity 不明）バケットのラベル
+    /// （解析失敗の事実を隠さない——ui.md §5.3 と同じ向き）。
+    /// </summary>
+    public const string SeverityDistributionUnparsedLabel = "重大度不明（解析できなかったログ）";
+
+    /// <summary>重大度分布・Top talkers ともこの期間に受信がない場合の注記。</summary>
+    public const string SeverityDistributionNoData = "この期間に受信したログはありません";
+
+    /// <summary>
+    /// 受信量上位の送信元（Top talkers）カードの見出し。既存の「送信元別の受信状況」
+    /// （最終受信が古い順・無音化検出専用。UI-4）とは別の視点であることを見出しで明示する。
+    /// </summary>
+    public const string TopTalkersTitle = "受信量上位の送信元（直近 1 時間・上位 10）";
+
+    /// <summary>Top talkers: 件数列（重大度分布と同じ列見出しの重複を避けるため独自形式）。</summary>
+    public const string TopTalkersColumnCount = "受信件数（直近 1 時間）";
+
+    /// <summary>Top talkers にこの期間の受信がない場合の注記。</summary>
+    public const string TopTalkersNoData = "この期間に受信した送信元はありません";
+
     /// <summary>スプールが使えない（縮退・無効）場合の現在値カードの値表示。</summary>
     public const string StatSpoolUnavailable = "利用できません";
 

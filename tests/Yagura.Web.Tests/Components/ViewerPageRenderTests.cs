@@ -48,6 +48,51 @@ public sealed class ViewerPageRenderTests
         Assert.Contains(UiText.StatSpoolUsage, html, StringComparison.Ordinal);
         Assert.Contains(UiText.StatLossTotal, html, StringComparison.Ordinal);
         Assert.Contains(UiText.StatStoredRecords, html, StringComparison.Ordinal);
+
+        // 重大度分布・Top talkers（受信 0 件時は空データの注記。Issue #159）
+        Assert.Contains(UiText.SeverityDistributionTitle, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.SeverityDistributionNoData, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.TopTalkersTitle, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.TopTalkersNoData, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dashboard_WithSeverityDistributionAndTopTalkers_ShowsBothSections()
+    {
+        // 重大度分布（平常時からの逸脱検知）と Top talkers（受信量上位。フラッディング検知）
+        // の 2 視点（Issue #159）。両集計は受信量推移と同じ窓（直近 1 時間）に限定される
+        // ——フェイクは窓を無視してそのまま返すため、値の突合はここでは表示内容の確認に留める。
+        var store = new FakeLogStore
+        {
+            SeverityDistribution =
+            [
+                new SeverityCount(Severity: 3, Count: 12),
+                new SeverityCount(Severity: 6, Count: 40),
+                new SeverityCount(Severity: null, Count: 2), // PRI 解析失敗バケット
+            ],
+            TopTalkers =
+            [
+                new SourceActivity("192.0.2.50", DateTimeOffset.UtcNow, RecordCount: 9_000),
+                new SourceActivity("192.0.2.51", DateTimeOffset.UtcNow, RecordCount: 120),
+            ],
+        };
+        var reader = new FakeStatusReader { RetentionDays = 30 };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        // 重大度分布: 短形ラベル + 件数（YaguraSeverityChip 経由の表示。ui.md §4 の色対応を流用）
+        Assert.Contains(UiText.SeverityDistributionTitle, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.SeverityShortLabels[3], html, StringComparison.Ordinal);
+        Assert.Contains(UiText.SeverityShortLabels[6], html, StringComparison.Ordinal);
+        // PRI 解析失敗バケット（解析失敗の事実を隠さない——ui.md §5.3 と同じ向き）
+        Assert.Contains(UiText.SeverityDistributionUnparsedLabel, html, StringComparison.Ordinal);
+        Assert.Contains("40", html, StringComparison.Ordinal);
+
+        // Top talkers: 受信量降順の送信元表 + 検索への導線（既存の無音化検出表とは別視点）
+        Assert.Contains(UiText.TopTalkersTitle, html, StringComparison.Ordinal);
+        Assert.Contains("192.0.2.50", html, StringComparison.Ordinal);
+        Assert.Contains("9,000", html, StringComparison.Ordinal);
+        Assert.Contains("/search?source=192.0.2.50", html, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -505,6 +550,15 @@ public sealed class ViewerPageRenderTests
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SourceActivity>)Sources
                 .OrderBy(s => s.LastReceivedAt).Take(limit).ToList());
+
+        public List<SeverityCount> SeverityDistribution { get; init; } = [];
+        public List<SourceActivity> TopTalkers { get; init; } = [];
+
+        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            Task.FromResult((IReadOnlyList<SeverityCount>)SeverityDistribution);
+
+        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            Task.FromResult((IReadOnlyList<SourceActivity>)TopTalkers.OrderByDescending(t => t.RecordCount).Take(limit).ToList());
     }
 
     private sealed class FakeStatusReader : IYaguraSystemStatusReader

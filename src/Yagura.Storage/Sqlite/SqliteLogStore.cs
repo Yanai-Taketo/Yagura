@@ -623,6 +623,118 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
         return results;
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeout.Ticks);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        var results = new List<SeverityCount>();
+
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            // 索引済みの ReceivedAt 範囲へ先に絞り込んでから集計する（ILogStore の契約参照。
+            // Issue #145——Severity 列に索引が無いための窓必須化）。
+            command.CommandText =
+                """
+                SELECT Severity, COUNT(*) AS RecordCount
+                FROM LogRecords
+                WHERE ReceivedAt >= $from AND ReceivedAt <= $to
+                GROUP BY Severity;
+                """;
+            command.Parameters.Add("$from", SqliteType.Text).Value = from.UtcDateTime.ToString("O");
+            command.Parameters.Add("$to", SqliteType.Text).Value = to.UtcDateTime.ToString("O");
+
+            await using var reader = await command.ExecuteReaderAsync(linkedCts.Token).ConfigureAwait(false);
+
+            while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
+            {
+                results.Add(new SeverityCount(
+                    Severity: reader.IsDBNull(0) ? null : reader.GetInt32(0),
+                    Count: reader.GetInt64(1)));
+            }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"重大度分布の集計がタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqliteException ex)
+        {
+            throw ex.ToLogStoreWriteException("重大度分布の集計");
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeout.Ticks);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        var results = new List<SourceActivity>();
+
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            // 受信量降順（Top talkers。ILogStore の契約参照——QuerySourceActivityAsync とは
+            // 逆順の集計）。同数は SourceAddress 昇順で決定的にする。
+            command.CommandText =
+                """
+                SELECT SourceAddress, MAX(ReceivedAt) AS LastReceivedAt, COUNT(*) AS RecordCount
+                FROM LogRecords
+                WHERE ReceivedAt >= $from AND ReceivedAt <= $to
+                GROUP BY SourceAddress
+                ORDER BY RecordCount DESC, SourceAddress ASC
+                LIMIT $limit;
+                """;
+            command.Parameters.Add("$from", SqliteType.Text).Value = from.UtcDateTime.ToString("O");
+            command.Parameters.Add("$to", SqliteType.Text).Value = to.UtcDateTime.ToString("O");
+            command.Parameters.Add("$limit", SqliteType.Integer).Value = limit;
+
+            await using var reader = await command.ExecuteReaderAsync(linkedCts.Token).ConfigureAwait(false);
+
+            while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
+            {
+                results.Add(new SourceActivity(
+                    SourceAddress: reader.GetString(0),
+                    LastReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
+                    RecordCount: reader.GetInt64(2)));
+            }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"受信量上位の送信元集計がタイムアウト時間 {timeout} を超過した。");
+        }
+        catch (SqliteException ex)
+        {
+            throw ex.ToLogStoreWriteException("受信量上位の送信元集計");
+        }
+
+        return results;
+    }
+
     private static string EscapeLikePattern(string value)
     {
         var builder = new StringBuilder(value.Length);
