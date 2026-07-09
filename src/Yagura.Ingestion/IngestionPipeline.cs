@@ -33,6 +33,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private readonly PersistenceWriter _persistenceWriter;
     private readonly SpoolDrainCoordinator? _drainCoordinator;
     private readonly IngestionMetrics _metrics;
+    private readonly ILogger<IngestionPipeline>? _logger;
 
     private CancellationTokenSource? _consumerStoppingCts;
     private Task? _parsingTask;
@@ -87,6 +88,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(ingressGate);
 
         _metrics = new IngestionMetrics();
+        _logger = loggerFactory?.CreateLogger<IngestionPipeline>();
 
         // Q1・Q2 の容量は実測確定待ちの暫定値（PipelineConstants 参照。M-1）。
         // FullMode は既定の Wait のままにする: UDP 受信段（UdpSyslogListener）は TryWrite のみを
@@ -163,10 +165,37 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// DB 初期化の完了を待たずに呼び出してよい——Q1・Q2 が緩衝になる。UDP・TCP は同時に開始する
     /// （依頼「起動順序: UDP と同時（受信先行の一部）」）。
     /// </summary>
+    /// <remarks>
+    /// <b>原子的起動</b>（Issue #141）: 片方の bind に成功した後にもう片方が失敗すると、
+    /// 何もしなければ成功済みのリスナ（ソケット + 受信ループ）が起動したまま取り残される。
+    /// 本メソッドは起動済みのリスナを記録しておき、失敗時にそれらをすべて停止してから
+    /// 例外を再送出する——「両方成功」か「（ログを残した上で）全停止」のいずれかにする。
+    /// </remarks>
     public async Task StartListenerAsync(CancellationToken cancellationToken = default)
     {
-        await _udpListener.StartAsync(cancellationToken).ConfigureAwait(false);
-        await _tcpListener.StartAsync(cancellationToken).ConfigureAwait(false);
+        var startedListeners = new List<Func<Task>>(2);
+        try
+        {
+            await _udpListener.StartAsync(cancellationToken).ConfigureAwait(false);
+            startedListeners.Add(() => _udpListener.StopAsync());
+
+            await _tcpListener.StartAsync(cancellationToken).ConfigureAwait(false);
+            startedListeners.Add(() => _tcpListener.StopAsync());
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(
+                ex,
+                "受信リスナの起動に失敗したため、起動済みのリスナ {StartedCount} 件を停止して起動全体を失敗として扱います。",
+                startedListeners.Count);
+
+            foreach (var stopStartedListener in startedListeners)
+            {
+                await stopStartedListener().ConfigureAwait(false);
+            }
+
+            throw;
+        }
     }
 
     /// <summary>

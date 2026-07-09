@@ -221,6 +221,59 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Issue #141: TCP bind 失敗時に、起動済みの UDP リスナがロールバックされずに
+    /// 取り残される非原子的起動の回帰テスト。TCP ポートを事前に占有して bind を失敗させ、
+    /// (1) 例外が伝播すること (2) 既に起動していた UDP ソケットが確実に解放される
+    /// （＝同じポートへの再 bind が成功する）ことを確認する。
+    /// </summary>
+    [Fact]
+    public async Task StartListenerAsync_WhenTcpBindFails_StopsAlreadyStartedUdpListener()
+    {
+        // TCP ポートを先に占有し、パイプライン側の TCP bind を確実に失敗させる。
+        using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+        portReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
+            _logStore);
+
+        await Assert.ThrowsAsync<SocketException>(() => pipeline.StartListenerAsync());
+
+        var udpPort = pipeline.BoundPort;
+
+        // ロールバックにより UDP ソケットが解放されていれば、同じポートへの再 bind が
+        // 例外なく成功する（解放されていなければ AddressAlreadyInUse で失敗する）。
+        using var rebind = new UdpClient(new IPEndPoint(IPAddress.Loopback, udpPort));
+
+        portReservation.Stop();
+    }
+
+    /// <summary>
+    /// Issue #141 の裏側のケース: 先頭（UDP）の bind そのものが失敗する部分失敗。
+    /// このときロールバック対象は「まだ何も起動していない」ため、TCP リスナは一度も
+    /// 起動されないこと（BoundPort が既定値のまま）を確認する。
+    /// </summary>
+    [Fact]
+    public async Task StartListenerAsync_WhenUdpBindFails_NeverStartsTcpListener()
+    {
+        // UDP ポートを先に占有し、パイプライン側の UDP bind を最初の一歩で失敗させる。
+        using var portReservation = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var occupiedUdpPort = ((IPEndPoint)portReservation.Client.LocalEndPoint!).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedUdpPort },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            _logStore);
+
+        await Assert.ThrowsAsync<SocketException>(() => pipeline.StartListenerAsync());
+
+        // TCP は一度も起動されていない（UDP が最初の一歩で失敗し、ロールバック対象すら無い）。
+        Assert.Equal(0, pipeline.TcpBoundPort);
+    }
+
+    /// <summary>
     /// 条件ポーリング（固定 sleep ではなく上限付きで繰り返し確認する。conventions.md の
     /// 時間窓の扱いに準ずる——CI 環境の揺らぎに対して安定させるため）。
     /// </summary>
