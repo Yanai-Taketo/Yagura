@@ -81,6 +81,11 @@ public sealed class ViewerEndpointAllowlistTests
         new("/search", new[] { "GET", "POST" }),
         new("/status", new[] { "GET", "POST" }),
 
+        // 外形監視・LB 用の liveness エンドポイント（Issue #126。2026-07-09 オーナー決定）。
+        // 認証なし・内部情報を一切持たない固定レスポンス（200 + 固定文字列）のみ——
+        // 書き込みエンドポイントではない。DB にも触れない。
+        new("/health", new[] { "GET" }),
+
         // 接続終了の案内ページ（M8-4。security.md §2.2 の個別切断・SEC-8 の無操作回収の着地先。
         // circuit を要しない静的応答・読み取り専用 GET のみ——書き込みエンドポイントではない）。
         new("/circuit-ended", new[] { "GET" }),
