@@ -99,6 +99,13 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     public int BoundPort { get; private set; }
 
     /// <summary>
+    /// 現在の連続受信エラー回数（テスト用。Issue #142）。「受信が 1 回成立するたびに
+    /// 連続エラー回数がリセットされる」という <see cref="ReceiveLoopAsync"/> の中核挙動を
+    /// 単体テストから観測するために internal 公開する。
+    /// </summary>
+    internal int ConsecutiveReceiveErrors => Volatile.Read(ref _consecutiveReceiveErrors);
+
+    /// <summary>
     /// ソケットを bind し、読み取りループを開始する（architecture.md §1.2「受信を最初に開く」）。
     /// </summary>
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -241,7 +248,9 @@ public sealed class UdpSyslogListener : IAsyncDisposable
 
             // 受信が成立したので連続エラーのカウントをリセットする（Issue #142。
             // 次に SocketException が起きても「連続」の 1 回目からやり直す）。
-            _consecutiveReceiveErrors = 0;
+            // Volatile.Write は ConsecutiveReceiveErrors（テスト用の観測点）が別スレッドから
+            // リセットを確実に観測できるようにするため。
+            Volatile.Write(ref _consecutiveReceiveErrors, 0);
 
             // 読み取り直後に ReceivedAt を刻印する（受信段の責務。解析はまだ行わない）。
             var receivedAt = DateTimeOffset.UtcNow;
@@ -285,7 +294,16 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     /// </remarks>
     internal async Task<bool> HandleReceiveErrorAsync(SocketException ex, CancellationToken stoppingToken)
     {
-        _consecutiveReceiveErrors++;
+        // int.MaxValue で頭打ちにする（PR #163 レビュー指摘 2）: 無条件インクリメントだと
+        // 折り返し（オーバーフロー）で負値 → ComputeReceiveErrorBackoff の
+        // consecutiveErrorCount <= 1 判定に該当し、持続的エラーの真っ最中に backoff が
+        // 突然ゼロへ戻る。実務上は到達しない回数（最大 backoff 1000ms 換算で数十年オーダー）
+        // だが、「持続的エラー時の CPU 浪費防止」という目的の理論上の穴を残さない。
+        if (_consecutiveReceiveErrors < int.MaxValue)
+        {
+            _consecutiveReceiveErrors++;
+        }
+
         var consecutiveErrors = _consecutiveReceiveErrors;
 
         _metrics.RecordUdpReceiveError();
@@ -310,10 +328,10 @@ public sealed class UdpSyslogListener : IAsyncDisposable
 
     /// <summary>
     /// 連続受信エラー回数から backoff 時間を求める（Issue #142）。1 回目（単発）のエラーは
-    /// backoff しない——transient な単発エラーを不必要に遅延させないため。2 回目以降は
-    /// <see cref="ReceiveErrorBackoffBaseMilliseconds"/> を起点に指数的に伸ばし、
-    /// <see cref="ReceiveErrorBackoffMaxMilliseconds"/> で頭打ちにする（持続的エラー時の
-    /// 密ループによる CPU 浪費を防ぐ）。
+    /// backoff しない——transient な単発エラーを不必要に遅延させないため。2 回目のエラーで
+    /// 最初の backoff <see cref="ReceiveErrorBackoffBaseMilliseconds"/>（10ms）が適用され、
+    /// 以降は指数的に伸ばし、<see cref="ReceiveErrorBackoffMaxMilliseconds"/> で頭打ちにする
+    /// （持続的エラー時の密ループによる CPU 浪費を防ぐ）。
     /// </summary>
     internal static TimeSpan ComputeReceiveErrorBackoff(int consecutiveErrorCount)
     {
@@ -322,9 +340,11 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             return TimeSpan.Zero;
         }
 
+        // 指数は「2 回目 = 底値そのもの（シフト 0）」を起点にする（PR #163 レビュー指摘 1:
+        // 「10ms 起点」という文言と、実際に発生する最小 backoff を一致させる）。
         // シフト量はオーバーフロー防止のため頭打ちにする（上限到達後は Math.Min が効くため
         // 大きすぎるシフト量そのものは結果に影響しない）。
-        var exponent = Math.Min(consecutiveErrorCount - 1, 10);
+        var exponent = Math.Min(consecutiveErrorCount - 2, 10);
         var delayMilliseconds = Math.Min(
             (long)ReceiveErrorBackoffBaseMilliseconds << exponent,
             ReceiveErrorBackoffMaxMilliseconds);
