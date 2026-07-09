@@ -281,8 +281,31 @@ public static class UiText
     /// </summary>
     public const string SearchFieldSource = "送信元 IP アドレス（完全一致。名前では検索できません）";
 
-    /// <summary>検索条件: 重大度（用語対応表: severity → 重大度）。</summary>
+    /// <summary>検索条件: 重大度（用語対応表: severity → 重大度）。閾値方式（Issue #148）。</summary>
     public const string SearchFieldSeverity = "重大度";
+
+    /// <summary>
+    /// 検索条件: 重大度欄の補足（Issue #148——完全一致ではなく閾値方式であることの明示。
+    /// syslog は数値が小さいほど深刻なため、選択した重大度「以上」＝選択値と、より深刻な値を含む）。
+    /// </summary>
+    public const string SearchFieldSeverityHelp =
+        "選択した重大度と、それより深刻な重大度をまとめて表示します（例:「3: エラー」を選ぶと、" +
+        "0: 緊急・1: 警報・2: 重大・3: エラーを含みます）";
+
+    /// <summary>検索条件: ファシリティ（用語対応表: facility → 分類（ファシリティ））。完全一致（Issue #148）。</summary>
+    public const string SearchFieldFacility = "分類（ファシリティ）";
+
+    /// <summary>検索条件: 解析状態（Issue #148——「解析失敗だけを見たい」等の絞り込み）。</summary>
+    public const string SearchFieldParseStatus = "解析状態";
+
+    /// <summary>解析状態の選択肢: 解析済み。</summary>
+    public const string ParseStatusOptionParsed = "解析済み";
+
+    /// <summary>解析状態の選択肢: 解析失敗（<see cref="ParseFailedLabel"/> の短縮形）。</summary>
+    public const string ParseStatusOptionParseFailed = "解析失敗（形式を解釈できなかったログ）";
+
+    /// <summary>解析状態の選択肢: 不完全（<see cref="IncompleteLabel"/> の短縮形）。</summary>
+    public const string ParseStatusOptionIncomplete = "不完全（切断により途中で途切れたログ）";
 
     /// <summary>検索条件: 本文の検索語（Message への部分一致）。</summary>
     public const string SearchFieldText = "本文の検索語（部分一致）";

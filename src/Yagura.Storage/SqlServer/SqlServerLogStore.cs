@@ -417,10 +417,25 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                 command.Parameters.Add("@sourceAddress", System.Data.SqlDbType.NVarChar, 255).Value = sourceAddress;
             }
 
-            if (query.Severity is { } severityFilter)
+            if (query.SeverityAtMost is { } severityAtMost)
             {
-                whereClauses.Add("Severity = @severity");
-                command.Parameters.Add("@severity", System.Data.SqlDbType.Int).Value = severityFilter;
+                // 閾値方式（Severity <= N。LogQuery.SeverityAtMost の doc コメント参照——
+                // syslog は数値が小さいほど深刻なため「N 以上の重大度」は「Severity <= N」になる。
+                // Severity が NULL（PRI 未解析）の行は比較が unknown になり自然に対象外となる。
+                whereClauses.Add("Severity <= @severityAtMost");
+                command.Parameters.Add("@severityAtMost", System.Data.SqlDbType.Int).Value = severityAtMost;
+            }
+
+            if (query.Facility is { } facilityFilter)
+            {
+                whereClauses.Add("Facility = @facility");
+                command.Parameters.Add("@facility", System.Data.SqlDbType.Int).Value = facilityFilter;
+            }
+
+            if (query.ParseStatus is { } parseStatusFilter)
+            {
+                whereClauses.Add("ParseStatus = @parseStatus");
+                command.Parameters.Add("@parseStatus", System.Data.SqlDbType.Int).Value = (int)parseStatusFilter;
             }
 
             if (query.SearchText is { Length: > 0 } searchText)
@@ -437,6 +452,10 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
 
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
 
+            // Id DESC のタイブレーク（Issue #144）: ReceivedAt 単独では同一時刻（同一ミリ秒）の
+            // 行の相対順序が SQL 上未定義になる——UDP バースト・スタックトレースの分割送信等、
+            // syslog では同一時刻多発が日常的に起きる。Id は採番順（挿入順）と一致するため、
+            // 同時刻内は「新しく挿入された行が先」という決定的な順序になる。
             command.CommandText =
                 $"""
                 SELECT TOP (@limit) Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
@@ -444,7 +463,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                        StructuredData, Message
                 FROM dbo.LogRecords
                 {whereSql}
-                ORDER BY ReceivedAt DESC;
+                ORDER BY ReceivedAt DESC, Id DESC;
                 """;
             command.Parameters.Add("@limit", System.Data.SqlDbType.Int).Value = query.Limit;
 

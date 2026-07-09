@@ -329,19 +329,82 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     }
 
     [SkippableFact]
-    public async Task QueryAsync_Severity_FiltersToExactMatch()
+    public async Task QueryAsync_SeverityAtMost_IncludesThresholdAndMoreSevereButExcludesLessSevere()
     {
+        // Issue #148: 完全一致ではなく閾値方式——「3: エラー以上」を意図した SeverityAtMost: 3 は、
+        // より深刻な緊急・警報・重大（0〜2）と、指定値そのもの（3）を含み、より軽い警告以下（4〜7）を除く。
         var baseline = DateTimeOffset.UtcNow;
         await Store.WriteBatchAsync(new[]
         {
-            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "low-severity", severity: 3),
-            CreateParsedRecord(baseline, "10.0.0.1", "high-severity", severity: 7),
+            CreateParsedRecord(baseline.AddSeconds(-3), "10.0.0.1", "emergency", severity: 0),
+            CreateParsedRecord(baseline.AddSeconds(-2), "10.0.0.1", "critical", severity: 2),
+            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "at-threshold-error", severity: 3),
+            CreateParsedRecord(baseline, "10.0.0.1", "warning-excluded", severity: 4),
         });
 
-        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), Severity: 7));
+        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), SeverityAtMost: 3));
+
+        Assert.Equal(3, results.Count);
+        Assert.DoesNotContain(results, r => r.Message == "warning-excluded");
+        Assert.Contains(results, r => r.Message == "emergency");
+        Assert.Contains(results, r => r.Message == "critical");
+        Assert.Contains(results, r => r.Message == "at-threshold-error");
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_SeverityAtMost_ExcludesRecordsWithUnsetSeverity()
+    {
+        // ParseStatus が解析失敗等で Severity が未設定（NULL）の行は、閾値比較が unknown になり
+        // 自然に対象外となる——これらを明示的に拾う手段は ParseStatus 条件（LogQuery のドキュメント）。
+        var baseline = DateTimeOffset.UtcNow;
+        var unsetSeverityRecord = new LogRecord(
+            ReceivedAt: baseline,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.ParseFailed,
+            Message: "no-severity");
+        await Store.WriteBatchAsync(new[] { unsetSeverityRecord });
+
+        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), SeverityAtMost: 7));
+
+        Assert.Empty(results);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_Facility_FiltersToExactMatch()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        var recordFacility4 = CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "auth-facility") with { Facility = 4 };
+        var recordFacility16 = CreateParsedRecord(baseline, "10.0.0.1", "local0-facility") with { Facility = 16 };
+        await Store.WriteBatchAsync(new[] { recordFacility4, recordFacility16 });
+
+        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), Facility: 16));
 
         Assert.Single(results);
-        Assert.Equal("high-severity", results[0].Message);
+        Assert.Equal("local0-facility", results[0].Message);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_ParseStatus_FiltersToExactMatch()
+    {
+        // Issue #148: 「解析失敗だけを見たい」——Severity 条件では NULL 行が常に除外されるため、
+        // ParseStatus がこの絞り込みの唯一の手段になる。
+        var baseline = DateTimeOffset.UtcNow;
+        var parsedRecord = CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", "parsed-ok");
+        var parseFailedRecord = new LogRecord(
+            ReceivedAt: baseline,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.ParseFailed,
+            Message: null);
+        await Store.WriteBatchAsync(new[] { parsedRecord, parseFailedRecord });
+
+        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), ParseStatus: ParseStatus.ParseFailed));
+
+        Assert.Single(results);
+        Assert.Equal(ParseStatus.ParseFailed, results[0].ParseStatus);
     }
 
     [SkippableFact]
@@ -366,17 +429,35 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         var baseline = DateTimeOffset.UtcNow;
         var matching = CreateParsedRecord(baseline, "10.0.0.5", "disk failure detected", severity: 2);
         var wrongSource = CreateParsedRecord(baseline, "10.0.0.6", "disk failure detected", severity: 2);
-        var wrongSeverity = CreateParsedRecord(baseline, "10.0.0.5", "disk failure detected", severity: 6);
-        await Store.WriteBatchAsync(new[] { matching, wrongSource, wrongSeverity });
+        var tooLowSeverity = CreateParsedRecord(baseline, "10.0.0.5", "disk failure detected", severity: 6);
+        await Store.WriteBatchAsync(new[] { matching, wrongSource, tooLowSeverity });
 
         var results = await Store.QueryAsync(new LogQuery(
             Limit: 10,
             Timeout: TimeSpan.FromSeconds(5),
             SourceAddress: "10.0.0.5",
-            Severity: 2,
+            SeverityAtMost: 2,
             SearchText: "disk failure"));
 
         Assert.Single(results);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_CombinedFacilityAndParseStatus_AllMustMatch()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        var matching = CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.5", "matching") with { Facility = 4 };
+        var wrongFacility = CreateParsedRecord(baseline, "10.0.0.5", "wrong-facility") with { Facility = 16 };
+        await Store.WriteBatchAsync(new[] { matching, wrongFacility });
+
+        var results = await Store.QueryAsync(new LogQuery(
+            Limit: 10,
+            Timeout: TimeSpan.FromSeconds(5),
+            Facility: 4,
+            ParseStatus: ParseStatus.Parsed));
+
+        Assert.Single(results);
+        Assert.Equal("matching", results[0].Message);
     }
 
     [SkippableFact]
@@ -468,6 +549,31 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("third", results[0].Message);
         Assert.Equal("second", results[1].Message);
         Assert.Equal("first", results[2].Message);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_RecordsWithSameReceivedAt_TieBreaksByIdDescending()
+    {
+        // Issue #144: ReceivedAt 単独では同一時刻（同一ミリ秒）の行の相対順序が SQL 上未定義になる
+        // ——UDP バースト・スタックトレースの分割送信等、syslog では同一時刻多発が日常的に起きる。
+        // Id 降順（新しく挿入された行が先）でタイブレークすることを機械検証する。
+        var sameInstant = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(new[]
+        {
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-1"),
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-2"),
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-3"),
+        });
+
+        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(3, results.Count);
+        // Id は挿入順で採番される——Id 降順 = 挿入順の逆（最後に挿入された burst-3 が先頭）。
+        Assert.Equal("burst-3", results[0].Message);
+        Assert.Equal("burst-2", results[1].Message);
+        Assert.Equal("burst-1", results[2].Message);
+        Assert.True(results[0].Id > results[1].Id);
+        Assert.True(results[1].Id > results[2].Id);
     }
 
     // ------------------------------------------------------------------

@@ -5,6 +5,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      bUnit（Issue #148。ログ検索の URL クエリ双方向反映——SupplyParameterFromQuery による
+      「NavigateTo 後に OnParametersSetAsync が再実行される」という対話的な状態遷移は、
+      既存の HtmlRenderer 直描画ハーネス（CommonComponentRenderHarness）では検証できない
+      （Router を介さないため。同ハーネスの doc コメント「クリック後の状態遷移など対話的検証が
+      必要になった時点で bUnit の採用を再検討する」に該当）。当日ライブ検証:
+      nuget.org の flat container index (api.nuget.org/v3-flatcontainer/bunit/index.json) で
+      最新安定版 2.7.2 を確認（2.8.1-preview / 2.8.4-preview はプレリリースのため除外）。
+      nuspec の依存グループで net10.0 対応（Microsoft.AspNetCore.Components 系 10.0.0）を確認済み。
+      ライセンス MIT（検証日 2026-07-09）。
+    -->
+    <PackageVersion Include="bunit" Version="2.7.2" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <!--
       SQL Server provider（M5-3。Issue #47）。当日ライブ検証: nuget.org の flat container index

@@ -10,7 +10,26 @@ namespace Yagura.Storage;
 /// 送信元アドレスの完全一致。DB-6（対話的検索の一致規則）確定までの暫定として、
 /// 送信元は完全一致のみを対象列とする（自由文検索の対象は <paramref name="SearchText"/> に限る）。
 /// </param>
-/// <param name="Severity">重大度の完全一致。<c>null</c> は条件なし。</param>
+/// <param name="SeverityAtMost">
+/// 重大度の閾値（Issue #148）。syslog の重大度は<b>数値が小さいほど深刻</b>（0 = 緊急〜7 = デバッグ）
+/// であるため、「N 以上の重大度」という運用語彙は数値としては<b>「Severity が N 以下」</b>に
+/// 対応する——<paramref name="SeverityAtMost"/> を満たすレコードは <c>Severity &lt;= SeverityAtMost</c>
+/// のもの（指定値そのものより深刻、または同じ深刻度をすべて含む）。<c>null</c> は条件なし。
+/// Severity が未設定（PRI 自体を解析できなかった行）は対象外——それらを明示的に拾うには
+/// <paramref name="ParseStatus"/> を使う。
+/// <b>完全一致ではなく閾値方式を採る理由</b>: 完全一致では「エラー以上」を意図して
+/// 「3: エラー」を選んでも Severity = 3 の行しか返らず、より深刻な緊急・警報・重大（0〜2）が
+/// 結果から消える実害があった（Issue #148 の症状）。
+/// </param>
+/// <param name="Facility">
+/// syslog PRI の facility の完全一致（Issue #148）。<c>null</c> は条件なし。
+/// PRI 自体を解析できなかった行（Facility が未設定）は対象外。
+/// </param>
+/// <param name="ParseStatus">
+/// <see cref="Yagura.Storage.ParseStatus"/> の完全一致（Issue #148）。<c>null</c> は条件なし。
+/// 「解析失敗だけを見る」等の絞り込みに使う——Severity 系の条件は Severity が
+/// <see langword="null"/> の行（解析失敗の典型）を常に除外するため、本条件がその唯一の手段となる。
+/// </param>
 /// <param name="SearchText">
 /// 自由文検索。<see cref="LogRecord.Message"/> に対する部分一致（大文字小文字を区別しない）とする
 /// （DB-6 確定までの暫定規則。適合テストスイート整備時に database.md §1.2 へ固定する）。
@@ -27,7 +46,9 @@ public sealed record LogQuery(
     DateTimeOffset? ReceivedAtFrom = null,
     DateTimeOffset? ReceivedAtTo = null,
     string? SourceAddress = null,
-    int? Severity = null,
+    int? SeverityAtMost = null,
+    int? Facility = null,
+    ParseStatus? ParseStatus = null,
     string? SearchText = null,
     // 既定値はここに直接リテラルで書く必要がある（C# の言語仕様上、プライマリコンストラクタの
     // 既定パラメータ値はレコード本体で宣言する定数を前方参照できない）。値そのものの定義は

@@ -61,9 +61,10 @@ public interface ILogStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 条件付きの対話的検索（database.md §1.2 契約 4）。条件（時間範囲・送信元・重大度・
-    /// 自由文）+ 射影（一覧用の軽量列。先頭 N 文字）+ 結果上限 + タイムアウトを
-    /// <see cref="LogQuery"/> で必須引数化する。
+    /// 条件付きの対話的検索（database.md §1.2 契約 4）。条件（時間範囲・送信元・重大度の閾値・
+    /// facility・解析状態・自由文）+ 射影（一覧用の軽量列。先頭 N 文字）+ 結果上限 + タイムアウトを
+    /// <see cref="LogQuery"/> で必須引数化する。同一 <see cref="LogRecord.ReceivedAt"/> の行は
+    /// <see cref="LogRecord.Id"/> 降順でタイブレークする（Issue #144。結果順序の決定性）。
     /// </summary>
     /// <remarks>
     /// この防御（上限・タイムアウトの必須化）は UI の対話的検索が対象であり、
