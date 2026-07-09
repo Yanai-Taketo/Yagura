@@ -193,6 +193,77 @@ public sealed class ViewerPageRenderTests
         Assert.DoesNotContain("サーバ起動からの累計", html, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Dashboard_SpoolEvacuationOngoing_ShowsWarningNoticeAndOngoingSupplement()
+    {
+        // 一時保管への退避が現在も進行中（SystemStatusReader が消化未完了と判定。Issue #132）:
+        // 常時表示の警告通知（ui.md §5.4）+ 累計カードの「進行中」補足の両方が出る。
+        var store = new FakeLogStore();
+        var reader = new FakeStatusReader
+        {
+            RetentionDays = 30,
+            Counters =
+            [
+                new YaguraCounterReading("yagura.ingestion.internal_buffer.dropped", 0, IsLoss: true),
+                new YaguraCounterReading("yagura.ingestion.spool.evacuated", 42, IsLoss: false),
+            ],
+            Health = new YaguraHealthReading(
+                YaguraHealthKind.Warning,
+                [YaguraHealthReason.SpoolEvacuationObserved]),
+        };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        Assert.Contains(UiText.SpoolEvacuationNotice, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.StatSpoolEvacuatedOngoingSupplement, html, StringComparison.Ordinal);
+        Assert.DoesNotContain(UiText.StatSpoolEvacuatedResolvedSupplement, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dashboard_SpoolEvacuationResolved_HidesWarningNotice_ShowsResolvedSupplement()
+    {
+        // 消化完了（スプール使用量が 0 に戻った。Issue #132）後: 常時表示の警告通知は消え、
+        // 累計カードは「退避分は格納済み」の補足に切り替わる——累計値そのものはリセットしない
+        // （過去に退避があった事実は残す。issue の (B) 論点）。
+        var store = new FakeLogStore();
+        var reader = new FakeStatusReader
+        {
+            RetentionDays = 30,
+            Counters =
+            [
+                new YaguraCounterReading("yagura.ingestion.internal_buffer.dropped", 0, IsLoss: true),
+                new YaguraCounterReading("yagura.ingestion.spool.evacuated", 42, IsLoss: false),
+            ],
+            Health = YaguraHealthReading.Ok,
+        };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        Assert.DoesNotContain(UiText.SpoolEvacuationNotice, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.StatSpoolEvacuatedResolvedSupplement, html, StringComparison.Ordinal);
+        Assert.DoesNotContain(UiText.StatSpoolEvacuatedOngoingSupplement, html, StringComparison.Ordinal);
+        // 累計値そのものは消えていない(監査上の価値を残す)。
+        Assert.Contains("42", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dashboard_SpoolNeverEvacuated_OmitsSpoolEvacuatedSupplement()
+    {
+        // 一度も退避が発生していない（累計 0）場合はカードを静かに保つ（補足を付けない）。
+        var store = new FakeLogStore();
+        var reader = new FakeStatusReader
+        {
+            RetentionDays = 30,
+            Counters = [new YaguraCounterReading("yagura.ingestion.spool.evacuated", 0, IsLoss: false)],
+            Health = YaguraHealthReading.Ok,
+        };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        Assert.DoesNotContain(UiText.StatSpoolEvacuatedOngoingSupplement, html, StringComparison.Ordinal);
+        Assert.DoesNotContain(UiText.StatSpoolEvacuatedResolvedSupplement, html, StringComparison.Ordinal);
+    }
+
     // ---- ログ検索（ui.md §4・§5.3。architecture.md §4.4・§6） ----
 
     [Fact]

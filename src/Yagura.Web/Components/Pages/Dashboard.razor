@@ -64,7 +64,7 @@
         <YaguraStatCard Label="@UiText.StatSpoolUsage" Value="@SpoolUsageValue" Supplement="@SpoolUsageSupplement" />
     </MudItem>
     <MudItem xs="12" sm="6" md="3">
-        <YaguraStatCard Label="@UiText.StatSpoolEvacuated" Value="@FormatCount(_spoolEvacuatedTotal)" />
+        <YaguraStatCard Label="@UiText.StatSpoolEvacuated" Value="@FormatCount(_spoolEvacuatedTotal)" Supplement="@SpoolEvacuatedSupplement" />
     </MudItem>
     <MudItem xs="12" sm="6" md="3">
         <YaguraStatCard Label="@UiText.StatLossTotal" Value="@FormatCount(_lossTotal)" Supplement="@LossSupplement" />
@@ -447,6 +447,20 @@
         ? string.Format(CultureInfo.InvariantCulture, UiText.StatLossTotalSupplementFormat,
             FormatCount(_lossTotal - (_lossBaselineSinceOpen ?? _lossTotal)))
         : null;
+
+    /// <summary>
+    /// 一時保管への退避カードの補足（Issue #132）。累計が 0 のときは付けない（カードを静かに保つ）。
+    /// 累計 &gt; 0 のときは「今も進行中か（<see cref="_spoolEvacuationOngoing"/>。消化完了の判定は
+    /// <c>SystemStatusReader</c> がスプールの現在ゲージで行う）」で文言を出し分け、
+    /// 「一度退避が発生すると画面表示が戻らない」という誤解（Issue #132 の報告）を防ぐ——
+    /// 消化完了後は累計を過去分と分かる文言に切り替える。
+    /// </summary>
+    private string? SpoolEvacuatedSupplement => _spoolEvacuatedTotal switch
+    {
+        0 => null,
+        _ when _spoolEvacuationOngoing => UiText.StatSpoolEvacuatedOngoingSupplement,
+        _ => UiText.StatSpoolEvacuatedResolvedSupplement,
+    };
 
     private static string ListenerLabel(YaguraListenerEndpoint listener) =>
         string.Format(CultureInfo.InvariantCulture, UiText.ListenerPortLabelFormat, listener.ProtocolName);

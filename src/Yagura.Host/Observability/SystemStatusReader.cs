@@ -33,6 +33,28 @@ namespace Yagura.Host.Observability;
 /// 開けない失敗はホスト起動自体の失敗として現れる（architecture.md §1.2）ことを暫定の
 /// 根拠とし、部分 bind 失敗等の観測点は UI-6 の確定と合わせて追加する。
 /// </para>
+/// <para>
+/// <b>「消化完了」による復帰（<see cref="YaguraHealthReason.SpoolEvacuationObserved"/>。Issue #132）</b>:
+/// 一時保管（スプール）退避の警告は、他の判定理由と異なり <see cref="ObservationWindow"/>
+/// による時間経過ではなく、<b>スプールの現在ゲージ（<see cref="DiskSpool.CurrentUsageBytes"/>）が
+/// 0 かどうか</b>という、その瞬間の状態そのもので判定する。理由: <c>SpoolDrainCoordinator</c> は
+/// 退避先セグメントの DB 書き込みが確定してから <c>DeleteSegment</c> を呼び使用量を減算する
+/// （at-least-once。§3.2.1・§3.2.4）ため、<c>CurrentUsageBytes == 0</c> は「退避したデータの
+/// DB 格納がすべて完了した（消化完了）」ことを表す直接的な正シグナルであり、追加の待ち時間
+/// （observation window）を挟む必要がない——退避 → 即 drain → 消化完了のケースでも、次回の
+/// 読み出しで直ちに警告が解除される（旧実装は退避カウンタの増分を観測窓で見ており、消化が
+/// 一瞬で終わっても最大 <see cref="ObservationWindow"/> の間は警告が残っていた）。
+/// これは同時に「基準（baseline）が無い最初の読み出しでも判定できる」という副次的な改善も
+/// 兼ねる——起動直後に前回セッションの未消化セグメントが残っている場合（§1.2「前回退避分の
+/// 存在確認」）も、観測窓の基準を待たずに警告として現れる。
+/// </para>
+/// <para>
+/// <b>取りこぼし（<see cref="YaguraHealthReason.LossObserved"/>）は対象外</b>: 破棄カウンタの
+/// 増分は「サーバに届いた後に失われた」という取り消せない事実であり、スプールのように
+/// 「消化が完了すれば元に戻る」という正シグナルが存在しない。そのため取りこぼしの警告は
+/// 引き続き <see cref="ObservationWindow"/> 内の増分で判定する（時間経過による自然な鎮静化。
+/// 状態帯は「今」を映し、発生の事実は累計カウンタ・履歴側に残る——ui.md §5.1 の分担のとおり）。
+/// </para>
 /// </remarks>
 public sealed class SystemStatusReader : IYaguraSystemStatusReader
 {
@@ -151,11 +173,14 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
             {
                 reasons.Add(YaguraHealthReason.LossObserved);
             }
+        }
 
-            if (current.SpoolEvacuated - baseline.SpoolEvacuated > 0)
-            {
-                reasons.Add(YaguraHealthReason.SpoolEvacuationObserved);
-            }
+        // 「消化完了」による復帰（クラス remarks 参照。Issue #132）: 退避の警告は観測窓の増分では
+        // なく、スプールの現在ゲージ（未消化データの有無）そのもので判定する——観測窓の基準
+        // （baseline）が無い最初の読み出しでも判定できる（起動直後の前回退避分の持ち越しを見逃さない）。
+        if (spoolReading is { CurrentUsageBytes: > 0 })
+        {
+            reasons.Add(YaguraHealthReason.SpoolEvacuationObserved);
         }
 
         if (spoolReading is not null && spoolReading.UsageRatio >= SpoolNearLimitRatio)
