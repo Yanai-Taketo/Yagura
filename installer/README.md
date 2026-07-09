@@ -39,7 +39,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
 | 完了画面 | 閲覧 URL(http://localhost:8514/)+ 管理 URL(http://localhost:8515/admin)の案内(併記) + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`。開くのは閲覧 URL) |
 | スタートメニュー | 「Yagura ログ閲覧」(.url、http://localhost:8514/、無条件)+ 「Yagura 管理」(.url、http://localhost:8515/admin、無条件) |
-| デスクトップ | 「Yagura」(.url、http://localhost:8514/。閲覧 UI。**opt-in・既定 ON**) |
+| デスクトップ | 「Yagura」(.url、http://localhost:8514/。閲覧 UI。**opt-in・既定 ON**)。perMachine(ALLUSERS=1)のため作成先は **`%PUBLIC%\Desktop` = 全ユーザー共有のパブリック デスクトップ**(特定ユーザーのデスクトップではない。learn.microsoft.com/windows/win32/msi/desktopfolder、確認日 2026-07-09)。この性質はセットアップ画面(`YaguraShortcutDlg`)の注記でも利用者に明示する |
 | ショートカットのオプトアウト | セットアップ UI の `YaguraShortcutDlg` チェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_DESKTOP_SHORTCUT=""`(デスクトップの閲覧ショートカットのみ対象。管理 UI のスタートメニューリンクは無条件のためオプトアウト不可) |
 | アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される。`forwarder` フォルダの ACL も新製品インストール時に `PermissionEx` が再実行され再適用される |
 | アンインストール | 規則・ショートカット(スタートメニュー・デスクトップとも)・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除)。`forwarder` フォルダも同じ規則(MSI 未配置で空なら削除、配置済みで非空なら ACL ごと保持) |

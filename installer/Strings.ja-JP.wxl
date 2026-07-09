@@ -35,7 +35,7 @@
   <String Id="YaguraShortcutDlgDescription" Value="スタートメニューとデスクトップに作成するショートカットを確認します。" />
   <String Id="YaguraShortcutDlgAdminNote" Value="スタートメニューに「Yagura 管理」を作成します(管理画面 http://localhost:8515/admin)。管理画面は localhost 専用のため、このショートカットはこのサーバー上でのみ機能します。" />
   <String Id="YaguraShortcutDlgCheckBox" Value="デスクトップに「Yagura」(ログ閲覧画面)のショートカットを作成する(既定)" />
-  <String Id="YaguraShortcutDlgOptOutNote" Value="チェックを外すとデスクトップにはショートカットを作成しません(スタートメニューの「Yagura ログ閲覧」は既定で作成されます)。サイレントインストールでは msiexec のプロパティ YAGURA_DESKTOP_SHORTCUT で指定できます(YAGURA_DESKTOP_SHORTCUT=&quot;&quot; で無効化)。" />
+  <String Id="YaguraShortcutDlgOptOutNote" Value="ショートカットは、この PC を使うすべてのユーザーに共有されるデスクトップ(パブリック デスクトップ)に作成されます。チェックを外すとデスクトップにはショートカットを作成しません(スタートメニューの「Yagura ログ閲覧」は既定で作成されます)。サイレントインストールでは msiexec のプロパティ YAGURA_DESKTOP_SHORTCUT で指定できます(YAGURA_DESKTOP_SHORTCUT=&quot;&quot; で無効化)。" />
 
   <!-- ファイアウォール規則の説明(Windows ファイアウォール管理画面に表示される)。 -->
   <String Id="FwDescriptionUdp514" Value="Yagura syslog 受信 (UDP 514)" />
