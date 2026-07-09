@@ -135,10 +135,15 @@ Fluent Bit の MSI(4.0.14 で確認)は、インストール時に**自ら** `fl
 # 方法 1: エンコーディングを明示して読む(推奨)
 Get-Content -Path C:\ProgramData\fluent-bit-yagura\fluent-bit-yagura.conf -Encoding UTF8
 
-# 方法 2: コンソールのコードページを UTF-8 に切り替えてから開く(そのセッション内で有効)
+# 方法 2: コンソールのコードページを UTF-8 に切り替えてから、コンソール上に表示する
+#         (chcp が効くのはそのコンソールセッション内での表示のみ)
 chcp 65001
-notepad C:\ProgramData\fluent-bit-yagura\fluent-bit-yagura.conf
+type C:\ProgramData\fluent-bit-yagura\fluent-bit-yagura.conf
 ```
+
+メモ帳(Windows 10 1903 以降)は BOM なし UTF-8 を自動判定できるため、通常はそのまま
+開いても正しく表示される(この自動判定はメモ帳自身の機能であり、コンソールの `chcp`
+設定とは無関係。判定に失敗して文字化けした場合は方法 1 を使う)。
 
 **PowerShell 7 以降は既定エンコーディングが UTF-8 のため、この問題の影響を受けない。**
 `README.md` ・ `GENERATED.txt` は BOM 付きのため、PowerShell 5.1 の `Get-Content` や
