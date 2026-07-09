@@ -22,6 +22,7 @@
 | [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | accepted |
 | [0007](0007-reverse-dns-display.md) | 閲覧画面の送信元逆引き（PTR）ホスト名表示 | accepted |
 | [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | accepted |
+| [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64・x86 を採用 | proposed |
 
 ## 起案予定
 
