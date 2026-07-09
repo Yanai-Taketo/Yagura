@@ -42,6 +42,16 @@ namespace Yagura.Ingestion.Tcp;
 /// 1 行分の破棄として扱い、次の行から通常運転に戻る（Issue #143。破棄は
 /// <see cref="OversizedMessagesDiscardedCount"/> で計上する）。
 /// </para>
+/// <para>
+/// <b>再同期バイト数上限</b>（PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09）: 上記の
+/// 寛容な読み飛ばし（フレーム間 LF/CR のスキップ・上限超過メッセージ本体の読み飛ばし・
+/// non-transparent-framing の破棄行）には、**有効なメッセージが 1 件確定するたびにリセット
+/// される累計バイト数の天井**（<see cref="TcpFrameDecoderOptions.MaxResyncBytes"/>。既定
+/// 128 KiB）を設ける。他社実装（rsyslog・syslog-ng・Fluent Bit 等）はフレーミングエラー
+/// 即切断が主流であり、Issue #143 の寛容化はこの一次防御を外した状態になるため、天井との組で
+/// 同等の防御水準を保つ。超過時は <see cref="TcpFrameViolationKind.ResyncByteLimitExceeded"/>
+/// の <see cref="TcpFrameSizeExceededException"/> を送出し、呼び出し元が接続を切断する。
+/// </para>
 /// </remarks>
 public sealed class TcpFrameDecoder
 {
@@ -67,6 +77,13 @@ public sealed class TcpFrameDecoder
     // Issue #143: これまでにサイズ上限超過で破棄したメッセージの累積数（OctetCounting・
     // NonTransparent の両方式で共有する。OversizedMessagesDiscardedCount 参照）。
     private int _oversizedMessagesDiscarded;
+
+    // PR #169 レビュー指摘 3 へのオーナー決定（2026-07-09）対応: 有効なメッセージが 1 件も
+    // 確定しないまま読み捨てたバイト数の累積（フレーム間 LF/CR のスキップ・上限超過メッセージ
+    // 本体の読み飛ばし・non-transparent-framing の破棄行）。メッセージが 1 件確定するたびに
+    // 0 へリセットする。TcpFrameDecoderOptions.MaxResyncBytes を超えたら「再同期の見込みが
+    // ないゴミデータ」として ResyncByteLimitExceeded の例外を送出する（呼び出し元が切断する）。
+    private long _resyncDiscardedBytes;
 
     public TcpFrameDecoder(TcpFrameDecoderOptions? options = null)
     {
@@ -104,14 +121,20 @@ public sealed class TcpFrameDecoder
     /// 各要素は解析段へ渡すための独立したバイト配列（呼び出し元がバッファを再利用してよい）。
     /// </returns>
     /// <exception cref="TcpFrameSizeExceededException">
-    /// octet-counting の MSG-LEN が再同期不能な形式で壊れている場合（数字以外のバイトの混入・
-    /// 桁数異常・int 範囲超過）。1 メッセージのサイズ上限超過（MSG-LEN 自体は正しく読み取れる、
-    /// または non-transparent-framing の 1 行が上限超過の場合）はこの例外を送出せず、当該
+    /// 次のいずれかの回復不能なフレーミング違反の場合（種別は
+    /// <see cref="TcpFrameSizeExceededException.Kind"/>）:
+    /// ① octet-counting の MSG-LEN が再同期不能な形式で壊れている（数字以外のバイトの混入・
+    /// 桁数異常・int 範囲超過。<see cref="TcpFrameViolationKind.UnrecoverableCorruption"/>）、
+    /// ② 有効なメッセージが 1 件も確定しないまま読み捨てたバイト数が
+    /// <see cref="TcpFrameDecoderOptions.MaxResyncBytes"/> を超えた
+    /// （<see cref="TcpFrameViolationKind.ResyncByteLimitExceeded"/>。オーナー決定 2026-07-09）。
+    /// 1 メッセージのサイズ上限超過（MSG-LEN 自体は正しく読み取れる、または
+    /// non-transparent-framing の 1 行が上限超過の場合）はこの例外を送出せず、当該
     /// メッセージだけを破棄して接続を維持する（Issue #143。<see cref="OversizedMessagesDiscardedCount"/>
-    /// で計上する）。呼び出し元は本例外を「再同期不能な深刻な破損」として接続を切断する。
-    /// 例外送出までに同一チャンク内で境界が確定していた正常メッセージは
-    /// <see cref="TcpFrameSizeExceededException.CompletedMessages"/> に載せて引き渡す——
-    /// 呼び出し元は切断前にこれらを Q1 へ流すこと（確定済みメッセージの無計上な喪失を防ぐ）。
+    /// で計上する）。呼び出し元は本例外で接続を切断する。例外送出までに同一チャンク内で境界が
+    /// 確定していた正常メッセージは <see cref="TcpFrameSizeExceededException.CompletedMessages"/>
+    /// に載せて引き渡す——呼び出し元は切断前にこれらを Q1 へ流すこと（確定済みメッセージの
+    /// 無計上な喪失を防ぐ）。
     /// </exception>
     public IReadOnlyList<byte[]> Push(ReadOnlySpan<byte> chunk)
     {
@@ -174,58 +197,80 @@ public sealed class TcpFrameDecoder
     {
         List<byte[]>? messages = null;
 
-        var remaining = chunk;
-        while (!remaining.IsEmpty)
+        try
         {
-            var lfIndex = remaining.IndexOf((byte)'\n');
-
-            if (_discardingOversizedLine)
+            var remaining = chunk;
+            while (!remaining.IsEmpty)
             {
+                var lfIndex = remaining.IndexOf((byte)'\n');
+
+                if (_discardingOversizedLine)
+                {
+                    if (lfIndex < 0)
+                    {
+                        // 破棄対象の行がこのチャンクでも終端しない。バッファには積まず読み捨てる
+                        // （読み捨ては再同期バイト数上限の対象——オーナー決定 2026-07-09）。
+                        CountResyncDiscardedBytes(remaining.Length);
+                        break;
+                    }
+
+                    // 破棄対象の行がここで終端した。次のバイトから通常運転に戻る。
+                    CountResyncDiscardedBytes(lfIndex + 1);
+                    _discardingOversizedLine = false;
+                    remaining = remaining[(lfIndex + 1)..];
+                    continue;
+                }
+
                 if (lfIndex < 0)
                 {
-                    // 破棄対象の行がこのチャンクでも終端しない。バッファには積まず読み捨てる。
+                    if (!TryAppendLine(remaining))
+                    {
+                        var discardedBytes = _lineBuffer.WrittenCount + remaining.Length;
+                        StartDiscardingOversizedLine();
+                        CountResyncDiscardedBytes(discardedBytes);
+                    }
+
                     break;
                 }
 
-                // 破棄対象の行がここで終端した。次のバイトから通常運転に戻る。
-                _discardingOversizedLine = false;
-                remaining = remaining[(lfIndex + 1)..];
-                continue;
-            }
-
-            if (lfIndex < 0)
-            {
-                if (!TryAppendLine(remaining))
+                var linePart = remaining[..lfIndex];
+                if (!TryAppendLine(linePart))
                 {
-                    StartDiscardingOversizedLine();
+                    // このチャンク内に LF があるため、破棄対象の行はここで完結する
+                    // （Issue #143: 上限超過も接続は切断せず、次の行から通常運転に戻る）。
+                    var discardedBytes = _lineBuffer.WrittenCount + lfIndex + 1;
+                    _lineBuffer.Clear();
+                    _oversizedMessagesDiscarded++;
+                    CountResyncDiscardedBytes(discardedBytes);
+                    remaining = remaining[(lfIndex + 1)..];
+                    continue;
                 }
 
-                break;
-            }
+                var line = _lineBuffer.WrittenSpan;
+                // CRLF 相互運用: トレーラー直前の単独 CR を取り除く（RFC 6587 §3.4.2 の
+                // 「CR LF の 2 文字トレーラーも観測される」に対応）。
+                if (line.Length > 0 && line[^1] == (byte)'\r')
+                {
+                    line = line[..^1];
+                }
 
-            var linePart = remaining[..lfIndex];
-            if (!TryAppendLine(linePart))
-            {
-                // このチャンク内に LF があるため、破棄対象の行はここで完結する
-                // （Issue #143: 上限超過も接続は切断せず、次の行から通常運転に戻る）。
+                (messages ??= new List<byte[]>()).Add(line.ToArray());
                 _lineBuffer.Clear();
-                _oversizedMessagesDiscarded++;
+
+                // 有効なメッセージが 1 件確定した——再同期バイト数のカウントをリセットする
+                //（正常な送信元が散発的な破棄で切断へ追い込まれないための天井のリセット規則。
+                // オーナー決定 2026-07-09）。
+                _resyncDiscardedBytes = 0;
+
                 remaining = remaining[(lfIndex + 1)..];
-                continue;
             }
-
-            var line = _lineBuffer.WrittenSpan;
-            // CRLF 相互運用: トレーラー直前の単独 CR を取り除く（RFC 6587 §3.4.2 の
-            // 「CR LF の 2 文字トレーラーも観測される」に対応）。
-            if (line.Length > 0 && line[^1] == (byte)'\r')
-            {
-                line = line[..^1];
-            }
-
-            (messages ??= new List<byte[]>()).Add(line.ToArray());
-            _lineBuffer.Clear();
-
-            remaining = remaining[(lfIndex + 1)..];
+        }
+        catch (TcpFrameSizeExceededException ex) when (messages is not null)
+        {
+            // PushOctetCounting と同じ理由: 例外送出までに確定していた正常メッセージを
+            // 例外に載せて呼び出し元へ引き渡す（無計上の喪失を防ぐ）。
+            ex.CompletedMessages = messages;
+            throw;
         }
 
         return (IReadOnlyList<byte[]>?)messages ?? Array.Empty<byte[]>();
@@ -242,7 +287,9 @@ public sealed class TcpFrameDecoder
             {
                 if (_oversizedSkipRemaining >= 0)
                 {
-                    // Issue #143: 上限超過と判明済みのメッセージ本体を読み捨てている最中。
+                    // Issue #143: 上限超過と判明済みのメッセージ本体を読み捨てている最中
+                    // （読み捨ては再同期バイト数上限の対象——オーナー決定 2026-07-09。
+                    // 上限超過メッセージだけを送り続けて接続を占有し続ける経路の天井）。
                     var skip = Math.Min(_oversizedSkipRemaining, remaining.Length);
                     remaining = remaining[skip..];
                     _oversizedSkipRemaining -= skip;
@@ -251,6 +298,7 @@ public sealed class TcpFrameDecoder
                         _oversizedSkipRemaining = -1;
                     }
 
+                    CountResyncDiscardedBytes(skip);
                     continue;
                 }
 
@@ -268,6 +316,9 @@ public sealed class TcpFrameDecoder
 
                         if (skipped > 0)
                         {
+                            // スキップも読み捨てであり、再同期バイト数上限の対象
+                            //（LF/CR だけを延々と送り続ける接続への天井——オーナー決定 2026-07-09）。
+                            CountResyncDiscardedBytes(skipped);
                             remaining = remaining[skipped..];
                             continue;
                         }
@@ -308,6 +359,10 @@ public sealed class TcpFrameDecoder
                     (messages ??= new List<byte[]>()).Add(_messageBuffer.WrittenSpan.ToArray());
                     _messageBuffer.Clear();
                     _pendingMessageLength = -1;
+
+                    // 有効なメッセージが 1 件確定した——再同期バイト数のカウントをリセットする
+                    //（オーナー決定 2026-07-09 のリセット規則。PushNonTransparent 側と同じ）。
+                    _resyncDiscardedBytes = 0;
                 }
             }
         }
@@ -405,6 +460,30 @@ public sealed class TcpFrameDecoder
         _lineBuffer.Clear();
         _discardingOversizedLine = true;
         _oversizedMessagesDiscarded++;
+    }
+
+    /// <summary>
+    /// 読み捨てバイト数を加算し、再同期バイト数上限（<see cref="TcpFrameDecoderOptions.MaxResyncBytes"/>）
+    /// を超えたら <see cref="TcpFrameViolationKind.ResyncByteLimitExceeded"/> の例外を送出する
+    /// （PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09。有効なメッセージが確定するたびに
+    /// カウントは 0 へ戻る——リセットは各 Push 内のメッセージ確定箇所で行う）。
+    /// </summary>
+    private void CountResyncDiscardedBytes(int count)
+    {
+        if (_options.MaxResyncBytes <= 0)
+        {
+            // 無効化（主にテスト用途）。
+            return;
+        }
+
+        _resyncDiscardedBytes += count;
+        if (_resyncDiscardedBytes > _options.MaxResyncBytes)
+        {
+            throw new TcpFrameSizeExceededException(
+                $"有効なメッセージが確定しないまま読み捨てたバイト数が上限 {_options.MaxResyncBytes} を超えた" +
+                "（再同期の見込みがないストリームへの防御）。",
+                TcpFrameViolationKind.ResyncByteLimitExceeded);
+        }
     }
 
     private static bool IsAsciiDigit(byte b) => b is >= (byte)'1' and <= (byte)'9';

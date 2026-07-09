@@ -27,6 +27,13 @@
 /// <param name="TcpMessageOversizedDiscarded">
 /// 1 メッセージのサイズ上限超過により破棄した件数の累積値（Issue #143。既定 0）。
 /// </param>
+/// <param name="TcpConnectionResyncLimitExceeded">
+/// 再同期バイト数上限の超過による TCP 接続断の累積値（PR #169 レビュー指摘 3 への
+/// オーナー決定 2026-07-09。既定 0）。
+/// </param>
+/// <param name="TcpConnectionFramingTimeout">
+/// フレーミング進捗タイムアウトによる TCP 接続断の累積値（同上。既定 0）。
+/// </param>
 public sealed record IngestionCounterSnapshot(
     long InternalBufferDropped,
     long TcpConnectionRejected,
@@ -37,8 +44,10 @@ public sealed record IngestionCounterSnapshot(
     long FlowControlDropped,
     long TcpConnectionClosed = 0,
     long TcpConnectionIdleTimeout = 0,
-    long TcpMessageOversizedDiscarded = 0)
+    long TcpMessageOversizedDiscarded = 0,
+    long TcpConnectionResyncLimitExceeded = 0,
+    long TcpConnectionFramingTimeout = 0)
 {
     /// <summary>全カウンタが 0 の初期スナップショット（メタデータ領域が無い初回起動用）。</summary>
-    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 }

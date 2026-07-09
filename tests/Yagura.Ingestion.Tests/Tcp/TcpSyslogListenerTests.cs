@@ -433,6 +433,160 @@ public sealed class TcpSyslogListenerTests
     }
 
     // ------------------------------------------------------------------
+    // 寛容化の天井（architecture.md §4.5。オーナー決定 2026-07-09）:
+    // A = 再同期バイト数上限 / B = フレーミング進捗タイムアウト。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ResyncByteLimitExceeded_DisconnectsAndIncrementsCounter()
+    {
+        // A: 有効なメッセージが確定しないまま読み捨てたバイト数が上限を超えた接続は切断される。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var resyncCollector = new MetricCollector<long>(metrics.TcpConnectionResyncLimitExceededCounter, timeProvider: null);
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                MaxMessageLength = 10,
+                MaxResyncBytes = 20,
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // MSG-LEN 100 は上限 10 超過で本体 100 バイトの読み飛ばしに入り、読み飛ばしが
+            // 再同期バイト数上限 20 を超えた時点で切断される。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"100 {new string('x', 100)}"));
+            await stream.FlushAsync();
+
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+            await resyncCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        Assert.Equal(1, resyncCollector.GetMeasurementSnapshot().Sum(m => m.Value));
+    }
+
+    [Fact]
+    public async Task FramingProgressTimeout_TrickleGarbage_DisconnectsAndIncrementsCounter()
+    {
+        // B: バイトは届き続けているのに有効なメッセージが 1 件も確定しない接続は、
+        // フレーミング進捗タイムアウトで切断される（読み取りが起き続けるためアイドル
+        // タイムアウトでは回収できない低速トリクルの回収）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var framingCollector = new MetricCollector<long>(metrics.TcpConnectionFramingTimeoutCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                FramingProgressTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30), // アイドル側が先に発火しないよう十分大きく。
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // LF を送らない断片（non-transparent の未完の行）を少しずつ送り続ける。
+            // 有効なメッセージは 1 件も確定しないため、300ms 経過後の読み取りで切断されるはず。
+            for (var i = 0; i < 100 && listener.CurrentConnectionCount > 0; i++)
+            {
+                try
+                {
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes("<34>x"));
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    // 切断済み（期待どおり）。
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(50));
+            }
+
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+            await framingCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        Assert.True(framingCollector.GetMeasurementSnapshot().Sum(m => m.Value) >= 1);
+    }
+
+    [Fact]
+    public async Task FramingProgressTimeout_ValidMessagesKeepArriving_TimerResetsAndConnectionStaysOpen()
+    {
+        // B のリセット規則: 有効なメッセージが確定し続ける限り、タイムアウト時間を累計で
+        // 超えても切断されない（正常な送信元は巻き込まれない）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var framingCollector = new MetricCollector<long>(metrics.TcpConnectionFramingTimeoutCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                FramingProgressTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // 有効なメッセージをタイムアウト（300ms）より短い間隔で送り続ける。
+            // 合計時間（約 800ms）はタイムアウトを超えるが、確定のたびにリセットされる。
+            for (var i = 0; i < 8; i++)
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("<34>valid message\n"));
+                await stream.FlushAsync();
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+            }
+
+            Assert.Equal(1, listener.CurrentConnectionCount);
+            Assert.Empty(framingCollector.GetMeasurementSnapshot());
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    // ------------------------------------------------------------------
     // アイドルタイムアウト（architecture.md §4.5。Issue #140）:
     // 無通信接続を有限時間で切断し、同時接続枠を返す。
     // ------------------------------------------------------------------

@@ -82,7 +82,8 @@ public sealed class IngestionMetricsCumulativeCounterTests
     }
 
     // ------------------------------------------------------------------
-    // Issue #143・#140 で追加した TCP 接続断・アイドルタイムアウト・オーバーサイズ破棄の 3 カウンタ
+    // Issue #143・#140 で追加した TCP 接続断・アイドルタイムアウト・オーバーサイズ破棄の 3 カウンタと、
+    // オーナー決定 2026-07-09 で追加した再同期上限・フレーミング進捗タイムアウトの 2 カウンタ
     // ------------------------------------------------------------------
 
     [Fact]
@@ -94,12 +95,17 @@ public sealed class IngestionMetricsCumulativeCounterTests
         metrics.RecordTcpConnectionClosed();
         metrics.RecordTcpConnectionIdleTimeout();
         metrics.RecordTcpMessageDiscardedOversized();
+        metrics.RecordTcpConnectionResyncLimitExceeded();
+        metrics.RecordTcpConnectionFramingTimeout();
+        metrics.RecordTcpConnectionFramingTimeout();
 
         var snapshot = metrics.SnapshotCumulativeCounters();
 
         Assert.Equal(2, snapshot.TcpConnectionClosed);
         Assert.Equal(1, snapshot.TcpConnectionIdleTimeout);
         Assert.Equal(1, snapshot.TcpMessageOversizedDiscarded);
+        Assert.Equal(1, snapshot.TcpConnectionResyncLimitExceeded);
+        Assert.Equal(2, snapshot.TcpConnectionFramingTimeout);
     }
 
     [Fact]
@@ -115,30 +121,37 @@ public sealed class IngestionMetricsCumulativeCounterTests
             FlowControlDropped: 0,
             TcpConnectionClosed: 20,
             TcpConnectionIdleTimeout: 5,
-            TcpMessageOversizedDiscarded: 3);
+            TcpMessageOversizedDiscarded: 3,
+            TcpConnectionResyncLimitExceeded: 2,
+            TcpConnectionFramingTimeout: 1);
 
         using var metrics = new IngestionMetrics();
         metrics.SeedCumulativeCounters(previous);
 
         metrics.RecordTcpConnectionClosed();
         metrics.RecordTcpMessageDiscardedOversized();
+        metrics.RecordTcpConnectionResyncLimitExceeded();
 
         var snapshot = metrics.SnapshotCumulativeCounters();
 
         Assert.Equal(21, snapshot.TcpConnectionClosed); // 20 + 1
         Assert.Equal(5, snapshot.TcpConnectionIdleTimeout); // 種のみ、今回の加算なし
         Assert.Equal(4, snapshot.TcpMessageOversizedDiscarded); // 3 + 1
+        Assert.Equal(3, snapshot.TcpConnectionResyncLimitExceeded); // 2 + 1
+        Assert.Equal(1, snapshot.TcpConnectionFramingTimeout); // 種のみ
     }
 
     [Fact]
     public void IngestionCounterSnapshot_ConstructedWithoutTcpFields_DefaultsToZero()
     {
         // 追加前の 7 引数の呼び出し（旧テスト・旧メタデータ領域ファイル相当）が、末尾の
-        // 3 引数を既定値 0 として扱えること（additive-only なスキーマ変更の後方互換性）。
+        // 5 引数を既定値 0 として扱えること（additive-only なスキーマ変更の後方互換性）。
         var snapshot = new IngestionCounterSnapshot(1, 2, 3, 4, 5, 6, 7);
 
         Assert.Equal(0, snapshot.TcpConnectionClosed);
         Assert.Equal(0, snapshot.TcpConnectionIdleTimeout);
         Assert.Equal(0, snapshot.TcpMessageOversizedDiscarded);
+        Assert.Equal(0, snapshot.TcpConnectionResyncLimitExceeded);
+        Assert.Equal(0, snapshot.TcpConnectionFramingTimeout);
     }
 }

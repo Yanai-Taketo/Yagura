@@ -41,7 +41,9 @@ namespace Yagura.Ingestion.Diagnostics;
 /// OS 統計突合ゲージ（§4.2）を追加した。Issue #143・#140（syslog 実務者ペルソナの深掘り
 /// レビューで発見された、1 メッセージの逸脱による接続全損・アイドル接続の資源枯渇の 2 件）の
 /// 対応で「TCP 接続断」（当初計画の 12 種の一つ）・「TCP 接続アイドルタイムアウト」・
-/// 「TCP メッセージ破棄（上限超過）」（後者 2 つは新規）を追加した。残り（解析失敗
+/// 「TCP メッセージ破棄（上限超過）」（後者 2 つは新規）を追加した。PR #169 レビュー指摘 3 への
+/// オーナー決定（2026-07-09）で「TCP 接続再同期上限」「TCP フレーミング進捗タイムアウト」
+/// （いずれも TCP 接続断の内訳。新規）を追加した。残り（解析失敗
 /// （保存済み）・TLS ハンドシェイク失敗・TCP 不完全メッセージ）は該当機能（TLS 受信等）の
 /// 実装時に追加する。
 /// </para>
@@ -76,6 +78,8 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _tcpConnectionClosed;
     private readonly Counter<long> _tcpConnectionIdleTimeout;
     private readonly Counter<long> _tcpMessageDiscardedOversized;
+    private readonly Counter<long> _tcpConnectionResyncLimitExceeded;
+    private readonly Counter<long> _tcpConnectionFramingTimeout;
 
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
@@ -97,6 +101,8 @@ public sealed class IngestionMetrics : IDisposable
     private long _tcpConnectionClosedTotal;
     private long _tcpConnectionIdleTimeoutTotal;
     private long _tcpMessageDiscardedOversizedTotal;
+    private long _tcpConnectionResyncLimitExceededTotal;
+    private long _tcpConnectionFramingTimeoutTotal;
 
     private readonly ObservableGauge<long>? _osUdpIPv4DatagramsDiscarded;
     private readonly ObservableGauge<long>? _osUdpIPv6DatagramsDiscarded;
@@ -195,6 +201,23 @@ public sealed class IngestionMetrics : IDisposable
             "yagura.ingestion.tcp_message.oversized_discarded",
             unit: "{message}",
             description: "1 メッセージのサイズ上限超過により、当該メッセージのみを破棄した件数（接続は維持）。");
+
+        // architecture.md §4.5「TCP 接続再同期上限」（PR #169 レビュー指摘 3 へのオーナー決定
+        // 2026-07-09 で新設）: 有効なメッセージが 1 件も確定しないまま読み捨てたバイト数が上限
+        // （TcpFrameDecoderOptions.MaxResyncBytes）を超えて切断した接続数（TCP 接続断の内訳）。
+        _tcpConnectionResyncLimitExceeded = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_connection.resync_limit_exceeded",
+            unit: "{connection}",
+            description: "再同期バイト数上限の超過により切断した TCP 接続数（TCP 接続断の内訳）。");
+
+        // architecture.md §4.5「TCP フレーミング進捗タイムアウト」（同上で新設）: バイトは
+        // 届いているのに有効なメッセージが 1 件も確定しないまま一定時間
+        // （TcpSyslogListenerOptions.FramingProgressTimeout）が経過して切断した接続数
+        // （TCP 接続断の内訳。低速トリクル対策——アイドルタイムアウトとは別軸）。
+        _tcpConnectionFramingTimeout = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_connection.framing_timeout",
+            unit: "{connection}",
+            description: "有効メッセージが確定しないまま一定時間が経過し切断した TCP 接続数（TCP 接続断の内訳）。");
 
         // architecture.md §4.2 OS レベル取りこぼしの観測（M4-4 で実機検証: Windows ARM64・
         // SDK 10.0.301 で IPGlobalProperties.GetUdpIPv4Statistics()/GetUdpIPv6Statistics() の
@@ -378,6 +401,26 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// 再同期バイト数上限の超過による TCP 接続切断を 1 件計上する
+    /// （§4.5。PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09）。
+    /// </summary>
+    public void RecordTcpConnectionResyncLimitExceeded()
+    {
+        _tcpConnectionResyncLimitExceeded.Add(1);
+        Interlocked.Increment(ref _tcpConnectionResyncLimitExceededTotal);
+    }
+
+    /// <summary>
+    /// フレーミング進捗タイムアウトによる TCP 接続切断を 1 件計上する
+    /// （§4.5。PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09）。
+    /// </summary>
+    public void RecordTcpConnectionFramingTimeout()
+    {
+        _tcpConnectionFramingTimeout.Add(1);
+        Interlocked.Increment(ref _tcpConnectionFramingTimeoutTotal);
+    }
+
+    /// <summary>
     /// 起動時、メタデータ領域（§4.3）から読み込んだ前回までの累積値を引き継ぐ
     /// （「前回までの累積 + 今回プロセス分」の合成。Counter&lt;T&gt; 自体は加算専用で
     /// 初期値を設定する API を持たないため、本クラス自身が保持する
@@ -401,6 +444,8 @@ public sealed class IngestionMetrics : IDisposable
         Interlocked.Exchange(ref _tcpConnectionClosedTotal, previous.TcpConnectionClosed);
         Interlocked.Exchange(ref _tcpConnectionIdleTimeoutTotal, previous.TcpConnectionIdleTimeout);
         Interlocked.Exchange(ref _tcpMessageDiscardedOversizedTotal, previous.TcpMessageOversizedDiscarded);
+        Interlocked.Exchange(ref _tcpConnectionResyncLimitExceededTotal, previous.TcpConnectionResyncLimitExceeded);
+        Interlocked.Exchange(ref _tcpConnectionFramingTimeoutTotal, previous.TcpConnectionFramingTimeout);
     }
 
     /// <summary>
@@ -417,7 +462,9 @@ public sealed class IngestionMetrics : IDisposable
         FlowControlDropped: Interlocked.Read(ref _flowControlDroppedTotal),
         TcpConnectionClosed: Interlocked.Read(ref _tcpConnectionClosedTotal),
         TcpConnectionIdleTimeout: Interlocked.Read(ref _tcpConnectionIdleTimeoutTotal),
-        TcpMessageOversizedDiscarded: Interlocked.Read(ref _tcpMessageDiscardedOversizedTotal));
+        TcpMessageOversizedDiscarded: Interlocked.Read(ref _tcpMessageDiscardedOversizedTotal),
+        TcpConnectionResyncLimitExceeded: Interlocked.Read(ref _tcpConnectionResyncLimitExceededTotal),
+        TcpConnectionFramingTimeout: Interlocked.Read(ref _tcpConnectionFramingTimeoutTotal));
 
     /// <summary>
     /// 内部バッファ破棄カウンタの計器そのもの。テストで
@@ -457,6 +504,12 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>TCP メッセージ破棄（上限超過）カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> TcpMessageDiscardedOversizedCounter => _tcpMessageDiscardedOversized;
+
+    /// <summary>TCP 接続再同期上限カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> TcpConnectionResyncLimitExceededCounter => _tcpConnectionResyncLimitExceeded;
+
+    /// <summary>TCP フレーミング進捗タイムアウトカウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> TcpConnectionFramingTimeoutCounter => _tcpConnectionFramingTimeout;
 
     /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
     public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;

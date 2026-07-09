@@ -45,6 +45,23 @@ public sealed class TcpSyslogListenerOptions
     /// </remarks>
     public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// フレーミング進捗タイムアウトの既定値（仮値。実利用で確定する。PR #169 レビュー指摘 3 への
+    /// オーナー決定 2026-07-09）。
+    /// </summary>
+    /// <remarks>
+    /// アイドルタイムアウト（<see cref="DefaultIdleTimeout"/>）は「読み取りが起きない」接続を
+    /// 回収するが、**バイトは届き続けているのに有効なメッセージが 1 件も確定しない接続**
+    /// （低速トリクル・LF を送らないゴミデータ等）は常に読み取りが発生し続けるためアイドルに
+    /// ならず、回収できない。再同期バイト数上限（<see cref="TcpFrameDecoderOptions.MaxResyncBytes"/>）
+    /// と併せたもう 1 つの天井として、この時間内に有効なメッセージが 1 件も確定しない接続を
+    /// 切断する。既定値 60 秒はオーナー指定範囲（30〜60 秒）の上端を選定——既定の 1 メッセージ
+    /// 上限 64 KiB を 60 秒かけても確定できないのは 9 kbit/s 未満の病的な低速であり、輻輳した
+    /// 回線経由等の正常な低速送信元を巻き込むリスクを最小化する側に倒した。有効なメッセージが
+    /// 1 件確定するたびにタイマーはリセットされる。
+    /// </remarks>
+    public static readonly TimeSpan DefaultFramingProgressTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>bind するアドレス。既定は <see cref="DefaultBindAddress"/>。</summary>
     public string BindAddress { get; init; } = DefaultBindAddress;
 
@@ -66,4 +83,19 @@ public sealed class TcpSyslogListenerOptions
     /// <see cref="TimeSpan.Zero"/> 以下を指定すると無効化する（無期限待機に戻る。主にテスト用途）。
     /// </summary>
     public TimeSpan IdleTimeout { get; init; } = DefaultIdleTimeout;
+
+    /// <summary>
+    /// 有効なメッセージが 1 件確定するごとにリセットされる、読み捨てバイト数の上限
+    /// （再同期バイト数上限。オーナー決定 2026-07-09）。超過した接続は切断する。
+    /// 既定は <see cref="TcpFrameDecoderOptions.DefaultMaxResyncBytes"/>。0 以下で無効化。
+    /// </summary>
+    public int MaxResyncBytes { get; init; } = TcpFrameDecoderOptions.DefaultMaxResyncBytes;
+
+    /// <summary>
+    /// フレーミング進捗タイムアウト。既定は <see cref="DefaultFramingProgressTimeout"/>。
+    /// バイトは届いているのに有効なメッセージが 1 件も確定しないままこの時間が経過した接続を
+    /// 切断する（オーナー決定 2026-07-09。有効なメッセージが確定するたびにリセット）。
+    /// <see cref="TimeSpan.Zero"/> 以下を指定すると無効化する（主にテスト用途）。
+    /// </summary>
+    public TimeSpan FramingProgressTimeout { get; init; } = DefaultFramingProgressTimeout;
 }

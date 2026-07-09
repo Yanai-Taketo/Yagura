@@ -83,7 +83,8 @@ public sealed class MetadataStoreTests : IDisposable
     [Fact]
     public void SaveThenRead_RoundTripsTcpConnectionAndOversizedCounters()
     {
-        // Issue #143・#140 で追加した 3 カウンタも往復すること。
+        // Issue #143・#140 で追加した 3 カウンタと、オーナー決定 2026-07-09 で追加した
+        // 2 カウンタ（再同期上限・フレーミング進捗タイムアウト）も往復すること。
         var counters = new IngestionCounterSnapshot(
             InternalBufferDropped: 0,
             TcpConnectionRejected: 0,
@@ -94,7 +95,9 @@ public sealed class MetadataStoreTests : IDisposable
             FlowControlDropped: 0,
             TcpConnectionClosed: 12,
             TcpConnectionIdleTimeout: 4,
-            TcpMessageOversizedDiscarded: 9);
+            TcpMessageOversizedDiscarded: 9,
+            TcpConnectionResyncLimitExceeded: 6,
+            TcpConnectionFramingTimeout: 2);
         var state = new MetadataState(counters, LastStopEvent: null, LastLivenessAt: null);
 
         MetadataStore.Save(_dataRoot, state);
@@ -103,13 +106,16 @@ public sealed class MetadataStoreTests : IDisposable
         Assert.Equal(12, reloaded.Counters.TcpConnectionClosed);
         Assert.Equal(4, reloaded.Counters.TcpConnectionIdleTimeout);
         Assert.Equal(9, reloaded.Counters.TcpMessageOversizedDiscarded);
+        Assert.Equal(6, reloaded.Counters.TcpConnectionResyncLimitExceeded);
+        Assert.Equal(2, reloaded.Counters.TcpConnectionFramingTimeout);
     }
 
     [Fact]
     public void Read_FileWithoutTcpCounterKeys_DefaultsThemToZero()
     {
-        // Issue #143・#140 より前に書かれた（3 キーを持たない）メタデータ領域ファイルを模す。
-        // additive-only なスキーマ変更のため、キー欠落は 0 として扱われ検証違反にはならない。
+        // Issue #143・#140（およびオーナー決定 2026-07-09）より前に書かれた（追加 5 キーを
+        // 持たない）メタデータ領域ファイルを模す。additive-only なスキーマ変更のため、
+        // キー欠落は 0 として扱われ検証違反にはならない。
         File.WriteAllText(
             FilePath,
             """
@@ -127,6 +133,8 @@ public sealed class MetadataStoreTests : IDisposable
         Assert.Equal(0, state.Counters.TcpConnectionClosed);
         Assert.Equal(0, state.Counters.TcpConnectionIdleTimeout);
         Assert.Equal(0, state.Counters.TcpMessageOversizedDiscarded);
+        Assert.Equal(0, state.Counters.TcpConnectionResyncLimitExceeded);
+        Assert.Equal(0, state.Counters.TcpConnectionFramingTimeout);
     }
 
     [Fact]

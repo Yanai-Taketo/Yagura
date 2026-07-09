@@ -47,6 +47,11 @@ internal sealed class MetadataStoreFileFormat
         public long? TcpConnectionIdleTimeout { get; set; }
 
         public long? TcpMessageOversizedDiscarded { get; set; }
+
+        // PR #169 レビュー指摘 3 へのオーナー決定（2026-07-09）で追加。上と同じく additive-only。
+        public long? TcpConnectionResyncLimitExceeded { get; set; }
+
+        public long? TcpConnectionFramingTimeout { get; set; }
     }
 
     internal sealed class StopEventFileFormat

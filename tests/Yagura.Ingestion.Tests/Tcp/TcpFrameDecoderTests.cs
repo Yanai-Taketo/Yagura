@@ -160,6 +160,110 @@ public sealed class TcpFrameDecoderTests
         var ex = Assert.Throws<TcpFrameSizeExceededException>(() => decoder.Push(Ascii("1x2 body")));
 
         Assert.Empty(ex.CompletedMessages);
+        Assert.Equal(TcpFrameViolationKind.UnrecoverableCorruption, ex.Kind);
+    }
+
+    // ------------------------------------------------------------------
+    // 再同期バイト数上限（PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09 の A）:
+    // 有効なメッセージが確定しないまま読み捨てたバイト数の天井。確定ごとにリセット。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Push_OctetCounting_InterFrameSeparatorsBeyondResyncLimit_ThrowsResyncLimitExceeded()
+    {
+        // LF/CR だけを延々と送り続ける接続への天井。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxResyncBytes = 4 });
+        decoder.Push(Ascii("5 abcde")); // 方式判別 + 正常メッセージ 1 件。
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(() => decoder.Push(Ascii("\r\n\r\n\r\n")));
+
+        Assert.Equal(TcpFrameViolationKind.ResyncByteLimitExceeded, ex.Kind);
+    }
+
+    [Fact]
+    public void Push_OctetCounting_OversizedSkipBeyondResyncLimit_ThrowsResyncLimitExceeded()
+    {
+        // 上限超過メッセージ「だけ」を送り続けて接続を占有し続ける経路への天井——
+        // 読み飛ばした本体バイトも再同期バイト数として数える。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxMessageLength = 5, MaxResyncBytes = 10 });
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(
+            () => decoder.Push(Ascii($"20 {new string('x', 20)}")));
+
+        Assert.Equal(TcpFrameViolationKind.ResyncByteLimitExceeded, ex.Kind);
+    }
+
+    [Fact]
+    public void Push_OctetCounting_ResyncCountResetsOnEachConfirmedMessage()
+    {
+        // オーナー決定のリセット規則: 有効なメッセージが 1 件確定するたびにカウントは 0 へ戻る。
+        // 累計では上限（4）を超える読み捨て（4 + 4 = 8）でも、間に正常メッセージを挟めば
+        // 切断されない（正常な送信元が散発的な逸脱で切断へ追い込まれないこと）。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxResyncBytes = 4 });
+
+        var first = decoder.Push(Ascii("5 abcde\r\n\r\n")); // 正常 1 件 + 読み捨て 4（== 上限。超過ではない）
+        var second = decoder.Push(Ascii("3 xyz"));          // 正常 1 件 → リセット
+        var third = decoder.Push(Ascii("\r\n\r\n3 pqr"));   // 読み捨て 4 + 正常 1 件
+
+        Assert.Single(first);
+        Assert.Single(second);
+        Assert.Single(third);
+        Assert.Equal("pqr", Encoding.ASCII.GetString(third[0]));
+    }
+
+    [Fact]
+    public void Push_OctetCounting_ResyncLimitExceeded_ExceptionCarriesCompletedMessages()
+    {
+        // 上限超過の例外でも、同一チャンク内で確定済みだった正常メッセージは例外に載って
+        // 引き渡される（レビュー指摘 2 対応との整合——切断前に Q1 へ流せる）。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxResyncBytes = 4 });
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(
+            () => decoder.Push(Ascii("5 abcde\r\n\r\n\r\n")));
+
+        Assert.Equal(TcpFrameViolationKind.ResyncByteLimitExceeded, ex.Kind);
+        Assert.Single(ex.CompletedMessages);
+        Assert.Equal("abcde", Encoding.ASCII.GetString(ex.CompletedMessages[0]));
+    }
+
+    [Fact]
+    public void Push_NonTransparent_OversizedDiscardBeyondResyncLimit_ThrowsResyncLimitExceeded()
+    {
+        // LF を送らないゴミデータへの天井（従来はこの経路に強制切断の上限が無かった——
+        // オーナー決定 2026-07-09 で閉じた slowloris 亜種）。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxMessageLength = 8, MaxResyncBytes = 10 });
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(
+            () => decoder.Push(Ascii("<34>0123456789abcdef")));
+
+        Assert.Equal(TcpFrameViolationKind.ResyncByteLimitExceeded, ex.Kind);
+    }
+
+    [Fact]
+    public void Push_NonTransparent_ResyncCountResetsOnEachConfirmedMessage()
+    {
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxMessageLength = 8, MaxResyncBytes = 12 });
+
+        // 破棄行（12 バイト == 上限。超過ではない）→ 正常行（リセット）→ 破棄行（12 バイト）→ 正常行。
+        var first = decoder.Push(Ascii("<34>1234567\n<34>ok\n"));
+        var second = decoder.Push(Ascii("<34>1234567\n<34>no\n"));
+
+        Assert.Single(first);
+        Assert.Equal("<34>ok", Encoding.ASCII.GetString(first[0]));
+        Assert.Single(second);
+        Assert.Equal("<34>no", Encoding.ASCII.GetString(second[0]));
+        Assert.Equal(2, decoder.OversizedMessagesDiscardedCount);
+    }
+
+    [Fact]
+    public void Push_ResyncLimitDisabledWithZero_NeverThrowsForDiscards()
+    {
+        // MaxResyncBytes <= 0 は無効化（主にテスト用途）。大量の読み捨てでも例外にならない。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { MaxMessageLength = 8, MaxResyncBytes = 0 });
+
+        var messages = decoder.Push(Ascii($"<34>{new string('x', 1000)}"));
+
+        Assert.Empty(messages);
     }
 
     // ------------------------------------------------------------------
