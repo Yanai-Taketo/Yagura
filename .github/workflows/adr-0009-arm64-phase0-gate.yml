@@ -179,13 +179,15 @@ jobs:
             }
             Write-Host "OK: receive -> store -> view confirmed (runId=$runId, datagrams sent=$sendCount)"
 
-            # 観測性カウンタの出力確認(architecture.md §4.1.1 の計器一覧。/status ページは
-            # 常に全計器を表示するため、トラフィックの有無に関わらず計器名自体は現れる)。
+            # 観測性カウンタの出力確認(architecture.md §4.1.1)。/status ページに現れる計器は
+            # SystemStatusReader.BuildCounterReadings の 7 種(+Web 層の計器)であり、
+            # yagura.ingestion.udp.receive_error は診断用として状態画面の対象外
+            # (§4.1.1 の設計判断——SystemStatusReader の入力に含めない)なので照合対象にしない。
             $statusResp = Invoke-WebRequest -Uri $statusUrl -UseBasicParsing -TimeoutSec 10
             $expectedInstruments = @(
               'yagura.ingestion.internal_buffer.dropped',
-              'yagura.ingestion.udp.receive_error',
-              'yagura.ingestion.spool.evacuated'
+              'yagura.ingestion.spool.evacuated',
+              'yagura.ingestion.persistence.failed'
             )
             foreach ($inst in $expectedInstruments) {
               if (-not $statusResp.Content.Contains($inst)) {
