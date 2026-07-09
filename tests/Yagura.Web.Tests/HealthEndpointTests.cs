@@ -31,9 +31,29 @@ public sealed class HealthEndpointTests
     }
 
     [Fact]
+    public async Task Health_HeadReturns200WithoutBody()
+    {
+        // 外形監視・LB ツールには帯域節約のため既定で HEAD を送るものがあり、GET のみでは
+        // 本エンドポイントの目的（外形監視からの死活確認）が一部ツール構成で達成できない
+        // （PR #164 レビュー指摘）。HTTP セマンティクス上 HEAD は「GET と同一ヘッダ・本文なし」
+        // ——200 + 本文が空であることを実 HTTP で確認する。
+        await using var harness = await ViewerHostHarness.StartAsync();
+        using var client = new HttpClient { BaseAddress = harness.GetBaseAddress() };
+
+        using var request = new HttpRequestMessage(HttpMethod.Head, "/health");
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(string.Empty, body);
+    }
+
+    [Fact]
     public async Task Health_PostIsNotAllowed()
     {
-        // /health は GET のみ登録（MapGet）——書き込みエンドポイントではないことの実地確認
+        // /health は GET/HEAD のみ登録——書き込みエンドポイントではないことの実地確認
         // （ui.md §4「閲覧リスナはいかなる書き込みエンドポイントも持たない」の裏付け。
         // ViewerEndpointAllowlistTests の許可リスト側の期待値と対をなす実 HTTP 確認）。
         await using var harness = await ViewerHostHarness.StartAsync();

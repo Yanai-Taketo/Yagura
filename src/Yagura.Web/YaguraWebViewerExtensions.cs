@@ -119,9 +119,18 @@ public static class YaguraWebViewerExtensions
         // 採用。認証なし・内部情報を一切持たない固定レスポンス限定）。DB・カウンタ・バージョン等の
         // 内部状態には一切触れない純粋な生存確認——攻撃面の最小化（security.md §1 L-5 の許可リスト
         // 方針）と外形監視の要望のトレードオフを、公開して問題のない情報範囲（200 + 固定文字列のみ）
-        // に絞ることで両立する。circuit を要しない静的応答であり、読み取り専用（GET のみ）——
+        // に絞ることで両立する。circuit を要しない静的応答であり、読み取り専用（GET/HEAD のみ）——
         // 閲覧リスナの「書き込みエンドポイントを持たない」不変条件を破らない。L-5 許可リストに登録済み。
-        endpoints.MapGet("/health", () => Results.Text("OK", "text/plain; charset=utf-8"));
+        //
+        // HEAD も受ける理由（PR #164 レビュー指摘）: 外形監視・LB ツールには帯域節約のため既定で
+        // HEAD を送るものがあり、MapGet（GET のみ登録。HEAD へ自動フォールバックせず 405 になる）
+        // では本エンドポイントの目的自体が一部のツール構成で達成できない。HTTP セマンティクス上
+        // HEAD は「GET と同一ヘッダ・本文なし」であり、Kestrel が HEAD 応答の本文送出を抑止する
+        // ため、ハンドラは GET と共通でよい（HealthEndpointTests で 200 + 本文なしを実機確認）。
+        endpoints.MapMethods(
+            "/health",
+            new[] { HttpMethods.Get, HttpMethods.Head },
+            () => Results.Text("OK", "text/plain; charset=utf-8"));
 
         // 接続終了の案内ページ（M8-4。security.md §2.2 の個別切断・SEC-8 の無操作回収の着地先）。
         // circuit を要しない静的応答であり、読み取り専用（GET のみ）——閲覧リスナの
