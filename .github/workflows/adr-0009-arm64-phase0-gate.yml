@@ -42,19 +42,23 @@ jobs:
 
       # ADR-0009 決定6 Phase0 手順の第一歩: SDK feature band の事前確認。
       # Issue #123 はこの不一致で検証に着手できなかった(同じ罠を踏まないための最初のステップ)。
+      # 判定は「global.json を検証環境の dotnet --version が解決できること」(ADR の文言どおり)。
+      # 厳密一致は要求しない——global.json は rollForward: latestFeature を指定しており
+      # (かつ main は #174 で version を 10.0.100 の下限へ引き下げ済み)、下限以上の最新
+      # feature band へ解決されるのが正しい挙動。解決不能時は dotnet --version 自体が
+      # 非ゼロ終了する("A compatible .NET SDK was not found")のでそれを検知する。
       - name: Confirm SDK feature band resolution
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
-          $expected = (Get-Content global.json | ConvertFrom-Json).sdk.version
-          $resolved = (dotnet --version).Trim()
-          Write-Host "global.json sdk.version = $expected"
-          Write-Host "dotnet --version         = $resolved"
-          if ($resolved -ne $expected) {
-            throw "SDK feature band mismatch: global.json expects $expected but dotnet --version resolved $resolved"
+          $gj = (Get-Content global.json -Raw | ConvertFrom-Json).sdk
+          Write-Host "global.json: version=$($gj.version) rollForward=$($gj.rollForward)"
+          $resolved = (dotnet --version)
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet --version failed (exit $LASTEXITCODE): global.json SDK requirement could not be resolved on this runner"
           }
-          Write-Host "SDK feature band OK: $resolved"
+          Write-Host "resolved SDK = $resolved (feature band resolution OK)"
 
       # 決定6 Phase0 基準2: publish が成功し、ネイティブ資産(e_sqlite3.dll・SqlClient SNI)が
       # 出力に含まれること。ADR 起案時点(決定3)で未実施だった実機 publish 検証。
