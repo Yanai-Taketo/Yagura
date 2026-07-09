@@ -239,6 +239,527 @@ public sealed class TcpSyslogListenerTests
     }
 
     // ------------------------------------------------------------------
+    // 1 メッセージの逸脱への耐性（architecture.md §4.5。Issue #143）:
+    // サイズ上限超過は接続を切断せず当該メッセージのみ破棄する。再同期不能な破損のみ切断する。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task OversizedMessage_DiscardsOnlyThatMessageAndKeepsConnectionOpen()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var meterCollector = new MetricCollector<long>(metrics.TcpMessageDiscardedOversizedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0, MaxMessageLength = 10 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // MSG-LEN 100 は上限 10 を超えるため破棄される。続けて正常なフレームを同じ接続で送る。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"100 {new string('x', 100)}5 abcde"));
+            await stream.FlushAsync();
+
+            var datagram = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+
+            Assert.Equal("abcde", Encoding.ASCII.GetString(datagram.Payload));
+            Assert.False(datagram.Incomplete);
+
+            await meterCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+
+            // 接続がまだ生きていることを確認する（切断されていれば CurrentConnectionCount は 0 になる）。
+            Assert.Equal(1, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        var measurements = meterCollector.GetMeasurementSnapshot();
+        Assert.Equal(1, measurements.Sum(m => m.Value));
+    }
+
+    [Fact]
+    public async Task InterFrameStrayLfCr_ResyncsWithoutDisconnecting()
+    {
+        // Issue #143: octet-counting のフレーム間に紛れた LF/CR は寛容にスキップして再同期する。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("5 first\r\n5 secnd"));
+            await stream.FlushAsync();
+
+            var first = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+            var second = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+
+            Assert.Equal("first", Encoding.ASCII.GetString(first.Payload));
+            Assert.Equal("secnd", Encoding.ASCII.GetString(second.Payload));
+            Assert.Equal(1, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task UnrecoverableFrameCorruption_StillDisconnectsConnection()
+    {
+        // MSG-LEN の桁の途中に数字以外が混入するのは再同期不能な破損であり、従来どおり切断する。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("1x2 body"));
+            await stream.FlushAsync();
+
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task UnrecoverableCorruption_CompletedMessagesInSameChunkStillReachQ1()
+    {
+        // PR #169 レビュー指摘 2: 1 チャンク内に「複数の正常フレーム + 末尾に再同期不能な破損」が
+        // 同居しても、例外送出までに境界が確定していた正常メッセージは切断前に Q1 へ届くこと
+        // （Q1 未到達・カウンタ計上なしのまま黙って消えないこと——architecture.md §3.1 の原則）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // 正常フレーム 2 件の直後に MSG-LEN 桁の途中の非数字（再同期不能な破損）。
+            // 1 回の書き込みで送り、受信側で 1 チャンクにまとまって届く状況を作る。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("5 abcde5 fghij1x2 broken"));
+            await stream.FlushAsync();
+
+            var first = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+            var second = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+
+            Assert.Equal("abcde", Encoding.ASCII.GetString(first.Payload));
+            Assert.False(first.Incomplete);
+            Assert.Equal("fghij", Encoding.ASCII.GetString(second.Payload));
+            Assert.False(second.Incomplete);
+
+            // 破損の検出により接続自体は切断される（確定済みメッセージを流し終えた後）。
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task NormalDisconnect_IncrementsTcpConnectionClosedCounter()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using (var client = new TcpClient())
+            {
+                await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+                await WaitUntilAsync(() => listener.CurrentConnectionCount >= 1, TimeSpan.FromSeconds(10));
+            }
+
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        var measurements = closedCollector.GetMeasurementSnapshot();
+        Assert.True(measurements.Sum(m => m.Value) >= 1);
+    }
+
+    // ------------------------------------------------------------------
+    // 寛容化の天井（architecture.md §4.5。オーナー決定 2026-07-09）:
+    // A = 再同期バイト数上限 / B = フレーミング進捗タイムアウト。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ResyncByteLimitExceeded_DisconnectsAndIncrementsCounter()
+    {
+        // A: 有効なメッセージが確定しないまま読み捨てたバイト数が上限を超えた接続は切断される。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var resyncCollector = new MetricCollector<long>(metrics.TcpConnectionResyncLimitExceededCounter, timeProvider: null);
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                MaxMessageLength = 10,
+                MaxResyncBytes = 20,
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // MSG-LEN 100 は上限 10 超過で本体 100 バイトの読み飛ばしに入り、読み飛ばしが
+            // 再同期バイト数上限 20 を超えた時点で切断される。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"100 {new string('x', 100)}"));
+            await stream.FlushAsync();
+
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+            await resyncCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        Assert.Equal(1, resyncCollector.GetMeasurementSnapshot().Sum(m => m.Value));
+    }
+
+    [Fact]
+    public async Task FramingProgressTimeout_TrickleGarbage_DisconnectsAndIncrementsCounter()
+    {
+        // B: バイトは届き続けているのに有効なメッセージが 1 件も確定しない接続は、
+        // フレーミング進捗タイムアウトで切断される（読み取りが起き続けるためアイドル
+        // タイムアウトでは回収できない低速トリクルの回収）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var framingCollector = new MetricCollector<long>(metrics.TcpConnectionFramingTimeoutCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                FramingProgressTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30), // アイドル側が先に発火しないよう十分大きく。
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // LF を送らない断片（non-transparent の未完の行）を少しずつ送り続ける。
+            // 有効なメッセージは 1 件も確定しないため、300ms 経過後の読み取りで切断されるはず。
+            for (var i = 0; i < 100 && listener.CurrentConnectionCount > 0; i++)
+            {
+                try
+                {
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes("<34>x"));
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    // 切断済み（期待どおり）。
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(50));
+            }
+
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+            await framingCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        Assert.True(framingCollector.GetMeasurementSnapshot().Sum(m => m.Value) >= 1);
+    }
+
+    [Fact]
+    public async Task FramingProgressTimeout_ValidMessagesKeepArriving_TimerResetsAndConnectionStaysOpen()
+    {
+        // B のリセット規則: 有効なメッセージが確定し続ける限り、タイムアウト時間を累計で
+        // 超えても切断されない（正常な送信元は巻き込まれない）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var framingCollector = new MetricCollector<long>(metrics.TcpConnectionFramingTimeoutCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                FramingProgressTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // 有効なメッセージをタイムアウト（300ms）より短い間隔で送り続ける。
+            // 合計時間（約 800ms）はタイムアウトを超えるが、確定のたびにリセットされる。
+            for (var i = 0; i < 8; i++)
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("<34>valid message\n"));
+                await stream.FlushAsync();
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+            }
+
+            Assert.Equal(1, listener.CurrentConnectionCount);
+            Assert.Empty(framingCollector.GetMeasurementSnapshot());
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // アイドルタイムアウト（architecture.md §4.5。Issue #140）:
+    // 無通信接続を有限時間で切断し、同時接続枠を返す。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void RenewIdleReadCancellation_PreviousAlreadyCancelled_ReturnsFreshUncancelledSource()
+    {
+        // PR #169 レビュー指摘 1 の競合を決定的に再現する: 「タイマーが発火して CTS がキャンセル
+        // 済みになった直後に、読み取りがたまたま受信済みデータで正常完了した」状況を、キャンセル
+        // 済みの previous として模す。単一 CTS の CancelAfter 再スケジュール方式では
+        // 「キャンセル済みソースへの CancelAfter は no-op」という .NET の仕様により、この
+        // キャンセル状態が次の読み取りへ持ち越されて活性接続を誤アイドル判定していた。
+        // 読み取りごとの CTS 再生成（RenewIdleReadCancellation）は、必ずキャンセル未要求の
+        // 新しいソースを返すことで、この持ち越し経路を構造的に消す。
+        using var stopping = new CancellationTokenSource();
+
+        var first = TcpSyslogListener.RenewIdleReadCancellation(null, stopping.Token, TimeSpan.FromMinutes(5));
+        first.Cancel(); // タイマー発火と読み取り成功の競合を模す。
+
+        var second = TcpSyslogListener.RenewIdleReadCancellation(first, stopping.Token, TimeSpan.FromMinutes(5));
+        try
+        {
+            Assert.NotSame(first, second);
+            Assert.False(second.Token.IsCancellationRequested);
+
+            // previous は破棄済みであること（リークしないこと）。
+            Assert.Throws<ObjectDisposedException>(() => first.CancelAfter(TimeSpan.Zero));
+        }
+        finally
+        {
+            second.Dispose();
+        }
+    }
+
+    [Fact]
+    public void RenewIdleReadCancellation_LinkedToStoppingToken_CancelsWhenListenerStops()
+    {
+        // 生成されるソースがリスナ停止のトークンへ正しくリンクされていること
+        // （停止要求が読み取りの打ち切りとして伝わる従来挙動の維持）。
+        using var stopping = new CancellationTokenSource();
+
+        var renewed = TcpSyslogListener.RenewIdleReadCancellation(null, stopping.Token, TimeSpan.FromMinutes(5));
+        try
+        {
+            Assert.False(renewed.Token.IsCancellationRequested);
+
+            stopping.Cancel();
+
+            Assert.True(renewed.Token.IsCancellationRequested);
+        }
+        finally
+        {
+            renewed.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task IdleTimeout_NoDataSent_DisconnectsAndIncrementsCounters()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var idleCollector = new MetricCollector<long>(metrics.TcpConnectionIdleTimeoutCounter, timeProvider: null);
+        using var closedCollector = new MetricCollector<long>(metrics.TcpConnectionClosedCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                IdleTimeout = TimeSpan.FromMilliseconds(200),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+
+            // 何も送らずに放置する——アイドルタイムアウトが発火して切断されるはず。
+            await WaitUntilAsync(() => listener.CurrentConnectionCount == 0, TimeSpan.FromSeconds(10));
+
+            await idleCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+            await closedCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+
+        Assert.True(idleCollector.GetMeasurementSnapshot().Sum(m => m.Value) >= 1);
+        Assert.True(closedCollector.GetMeasurementSnapshot().Sum(m => m.Value) >= 1);
+    }
+
+    [Fact]
+    public async Task IdleTimeout_PeriodicWrites_KeepsConnectionAlive()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var idleCollector = new MetricCollector<long>(metrics.TcpConnectionIdleTimeoutCounter, timeProvider: null);
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                IdleTimeout = TimeSpan.FromMilliseconds(300),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+            var stream = client.GetStream();
+
+            // アイドルタイムアウト（300ms）より短い間隔で送り続ける限り、切断されないはず。
+            for (var i = 0; i < 5; i++)
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("<34>keepalive\n"));
+                await stream.FlushAsync();
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+            }
+
+            Assert.Equal(1, listener.CurrentConnectionCount);
+            Assert.Empty(idleCollector.GetMeasurementSnapshot());
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task IdleTimeout_DisabledWhenZero_NeverDisconnectsForIdleness()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new TcpSyslogListener(
+            new TcpSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                IdleTimeout = TimeSpan.Zero,
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+
+            // IdleTimeout = Zero は無効化を意味する——短時間放置しても切断されないはず。
+            await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+            Assert.Equal(1, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    // ------------------------------------------------------------------
     // ヘルパー
     // ------------------------------------------------------------------
 

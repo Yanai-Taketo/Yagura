@@ -16,7 +16,7 @@ namespace Yagura.Host.Observability;
 /// （<see cref="Yagura.Host.Configuration.YaguraConfigurationWriter"/>）と同じ方式を採用した。
 /// 判断理由: (i) メタデータ領域は「一定間隔 + 停止時」の低頻度書き込みであり、スプール
 /// （高頻度追記に最適化した専用セグメント形式）ほどの書き込み性能は要求されない、
-/// (ii) 内容（カウンタ 7 個・停止イベント・生存時刻）は数十バイト程度で全体書き換えの
+/// (ii) 内容（カウンタ 12 個・停止イベント・生存時刻）は数十バイト程度で全体書き換えの
 /// コストが無視できる、(iii) 本リポジトリに既に「一時ファイル + <see cref="File.Replace(string, string, string?)"/>
 /// （初回は <see cref="File.Move(string, string, bool)"/>）」という原子的置換の実装・検証済み
 /// パターンが存在し、同じ判断枠組みを流用できる。**追記型のスプール形式を新設する理由はない**
@@ -146,7 +146,12 @@ public static class MetadataStore
                 SpoolWriteFailed: c.SpoolWriteFailed ?? 0,
                 SpoolDiscarded: c.SpoolDiscarded ?? 0,
                 PersistenceFailed: c.PersistenceFailed ?? 0,
-                FlowControlDropped: c.FlowControlDropped ?? 0)
+                FlowControlDropped: c.FlowControlDropped ?? 0,
+                TcpConnectionClosed: c.TcpConnectionClosed ?? 0,
+                TcpConnectionIdleTimeout: c.TcpConnectionIdleTimeout ?? 0,
+                TcpMessageOversizedDiscarded: c.TcpMessageOversizedDiscarded ?? 0,
+                TcpConnectionResyncLimitExceeded: c.TcpConnectionResyncLimitExceeded ?? 0,
+                TcpConnectionFramingTimeout: c.TcpConnectionFramingTimeout ?? 0)
             : IngestionCounterSnapshot.Zero;
 
         StopEventRecord? stopEvent = null;
@@ -176,6 +181,11 @@ public static class MetadataStore
             SpoolDiscarded = state.Counters.SpoolDiscarded,
             PersistenceFailed = state.Counters.PersistenceFailed,
             FlowControlDropped = state.Counters.FlowControlDropped,
+            TcpConnectionClosed = state.Counters.TcpConnectionClosed,
+            TcpConnectionIdleTimeout = state.Counters.TcpConnectionIdleTimeout,
+            TcpMessageOversizedDiscarded = state.Counters.TcpMessageOversizedDiscarded,
+            TcpConnectionResyncLimitExceeded = state.Counters.TcpConnectionResyncLimitExceeded,
+            TcpConnectionFramingTimeout = state.Counters.TcpConnectionFramingTimeout,
         },
         LastStopEvent = state.LastStopEvent is { } stopEvent
             ? new MetadataStoreFileFormat.StopEventFileFormat

@@ -14,6 +14,8 @@
       HandleReceiveErrorAsync・ComputeReceiveErrorBackoff）は internal 実装であり、単体テストで
       直接検証する（実際の SocketException をネットワーク経由で確実に再現するのは環境依存で
       難しいため。Issue #142）。Yagura.Storage の InternalsVisibleTo と同じ理由。
+      アイドルタイマー再生成（TcpSyslogListener.RenewIdleReadCancellation）等の internal な
+      純粋ロジックの決定的な検証（PR #169 レビュー指摘 1 対応のテスト）も同じ枠に乗る。
     -->
     <InternalsVisibleTo Include="Yagura.Ingestion.Tests" />
   </ItemGroup>

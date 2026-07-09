@@ -73,13 +73,22 @@ public static class CounterReconciler
         // なく一時的な経由地だが、drain 完了後は savedCount 側に現れるため、drain 完了前に
         // 突合すると二重計上のように見える——呼び出し側は drain 完了（スプール使用量 0）を
         // 待ってから本メソッドを呼ぶこと（ScenarioRunner の待機ロジック参照）。
+        //
+        // Issue #143 で追加した「TCP メッセージ破棄（上限超過）」は 1 メッセージ単位の実損失
+        // （§4.1 の意味で InternalBufferDropped 等と同じ「送信されたが保存されなかった」事象）
+        // のため合計へ含める。同時に追加した「TCP 接続断」「TCP 接続アイドルタイムアウト」、
+        // およびオーナー決定 2026-07-09 で追加した「TCP 接続再同期上限」「TCP フレーミング
+        // 進捗タイムアウト」は、メッセージ単位ではなく接続単位の事象（切断そのものは損失では
+        // ない——§4.5「損失ではなく解釈の手がかり」）のため、本メッセージ数ベースの突合式には
+        // 含めない。
         var accountedLoss =
             counters.InternalBufferDropped +
             counters.TcpConnectionRejected +
             counters.SpoolWriteFailed +
             counters.SpoolDiscarded +
             counters.PersistenceFailed +
-            counters.FlowControlDropped;
+            counters.FlowControlDropped +
+            counters.TcpMessageOversizedDiscarded;
 
         // スプール退避（SpoolEvacuated）は「損失ではない予兆シグナル」（§4.1）であり、drain 完了後は
         // savedCount 側に含まれるため突合式には加えない。drain が完了していない状態（スプール
@@ -125,7 +134,8 @@ public static class CounterReconciler
 /// <summary>突合結果。</summary>
 /// <param name="SentCount">送信数（負荷生成器の自己計上値）。</param>
 /// <param name="SavedCount">DB provider の保存件数（実行前後の差分）。</param>
-/// <param name="AccountedLossCount">破棄・退避系カウンタ（スプール退避を除く）の合計。</param>
+/// <param name="AccountedLossCount">破棄・退避系カウンタ（スプール退避・TCP 接続断・TCP 接続
+/// アイドルタイムアウトを除く、メッセージ単位の損失カウンタ）の合計。</param>
 /// <param name="SpoolEvacuatedCount">参考値: スプール退避カウンタ（drain 完了後は SavedCount に含まれる）。</param>
 /// <param name="OsUdpDatagramsDiscardedDelta">参考値: OS レベル UDP 受信破棄カウンタの実行前後差分。
 /// 自己宛送信のベンチトラフィックはこの統計に現れない（実機確認 2026-07-05。<see cref="CounterReconciler.Reconcile"/>

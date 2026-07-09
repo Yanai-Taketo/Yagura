@@ -131,7 +131,12 @@ public sealed class IngestionPipeline : IAsyncDisposable
             ingressGate,
             _metrics,
             loggerFactory?.CreateLogger<UdpSyslogListener>());
-        _tcpListener = new TcpSyslogListener(tcpListenerOptions, _q1.Writer, ingressGate, _metrics);
+        _tcpListener = new TcpSyslogListener(
+            tcpListenerOptions,
+            _q1.Writer,
+            ingressGate,
+            _metrics,
+            loggerFactory?.CreateLogger<TcpSyslogListener>());
         _parsingStage = new ParsingStage(
             _q1.Reader,
             _q2.Writer,

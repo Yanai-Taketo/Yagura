@@ -81,6 +81,63 @@ public sealed class MetadataStoreTests : IDisposable
     }
 
     [Fact]
+    public void SaveThenRead_RoundTripsTcpConnectionAndOversizedCounters()
+    {
+        // Issue #143・#140 で追加した 3 カウンタと、オーナー決定 2026-07-09 で追加した
+        // 2 カウンタ（再同期上限・フレーミング進捗タイムアウト）も往復すること。
+        var counters = new IngestionCounterSnapshot(
+            InternalBufferDropped: 0,
+            TcpConnectionRejected: 0,
+            SpoolEvacuated: 0,
+            SpoolWriteFailed: 0,
+            SpoolDiscarded: 0,
+            PersistenceFailed: 0,
+            FlowControlDropped: 0,
+            TcpConnectionClosed: 12,
+            TcpConnectionIdleTimeout: 4,
+            TcpMessageOversizedDiscarded: 9,
+            TcpConnectionResyncLimitExceeded: 6,
+            TcpConnectionFramingTimeout: 2);
+        var state = new MetadataState(counters, LastStopEvent: null, LastLivenessAt: null);
+
+        MetadataStore.Save(_dataRoot, state);
+        var reloaded = MetadataStore.Read(_dataRoot);
+
+        Assert.Equal(12, reloaded.Counters.TcpConnectionClosed);
+        Assert.Equal(4, reloaded.Counters.TcpConnectionIdleTimeout);
+        Assert.Equal(9, reloaded.Counters.TcpMessageOversizedDiscarded);
+        Assert.Equal(6, reloaded.Counters.TcpConnectionResyncLimitExceeded);
+        Assert.Equal(2, reloaded.Counters.TcpConnectionFramingTimeout);
+    }
+
+    [Fact]
+    public void Read_FileWithoutTcpCounterKeys_DefaultsThemToZero()
+    {
+        // Issue #143・#140（およびオーナー決定 2026-07-09）より前に書かれた（追加 5 キーを
+        // 持たない）メタデータ領域ファイルを模す。additive-only なスキーマ変更のため、
+        // キー欠落は 0 として扱われ検証違反にはならない。
+        File.WriteAllText(
+            FilePath,
+            """
+            {
+              "Version": 1,
+              "Counters": { "InternalBufferDropped": 5 },
+              "LastStopEvent": null,
+              "LastLivenessAt": null
+            }
+            """);
+
+        var state = MetadataStore.Read(_dataRoot);
+
+        Assert.Equal(5, state.Counters.InternalBufferDropped);
+        Assert.Equal(0, state.Counters.TcpConnectionClosed);
+        Assert.Equal(0, state.Counters.TcpConnectionIdleTimeout);
+        Assert.Equal(0, state.Counters.TcpMessageOversizedDiscarded);
+        Assert.Equal(0, state.Counters.TcpConnectionResyncLimitExceeded);
+        Assert.Equal(0, state.Counters.TcpConnectionFramingTimeout);
+    }
+
+    [Fact]
     public void SaveTwice_SecondSaveOverwritesFirst()
     {
         var first = new MetadataState(new IngestionCounterSnapshot(1, 0, 0, 0, 0, 0, 0), null, null);
