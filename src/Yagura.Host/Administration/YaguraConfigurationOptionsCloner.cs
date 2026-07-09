@@ -42,6 +42,10 @@ internal static class YaguraConfigurationOptionsCloner
             {
                 HttpPort = source.Viewer.HttpPort,
                 PublicAccess = source.Viewer.PublicAccess,
+                ReverseDns = source.Viewer.ReverseDns is null ? null : new YaguraConfigurationOptions.ViewerOptions.ReverseDnsOptions
+                {
+                    Enabled = source.Viewer.ReverseDns.Enabled,
+                },
             },
             Admin = source.Admin is null ? null : new YaguraConfigurationOptions.AdminOptions
             {
