@@ -981,4 +981,70 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
 
         Assert.Empty(talkers);
     }
+
+    [SkippableFact]
+    public async Task QueryTopTalkersAsync_EqualCounts_TieBreaksBySourceAddressAscending()
+    {
+        // 同数の送信元は SourceAddress 昇順で決定的にする（ILogStore の契約。
+        // provider 間で行順序が揺れないことの回帰検知）。
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-5), "192.0.2.20", "b-1"),
+            CreateParsedRecord(baseline.AddMinutes(-4), "192.0.2.10", "a-1"),
+            CreateParsedRecord(baseline.AddMinutes(-3), "192.0.2.30", "c-1"),
+        ]);
+
+        var talkers = await Store.QueryTopTalkersAsync(
+            from: baseline.AddMinutes(-10),
+            to: baseline,
+            limit: 10,
+            timeout: TimeSpan.FromSeconds(30));
+
+        Assert.Equal(3, talkers.Count);
+        Assert.Equal("192.0.2.10", talkers[0].SourceAddress);
+        Assert.Equal("192.0.2.20", talkers[1].SourceAddress);
+        Assert.Equal("192.0.2.30", talkers[2].SourceAddress);
+    }
+
+    [SkippableFact]
+    public async Task QuerySeverityDistributionAsync_WindowBoundaries_AreInclusive()
+    {
+        // 観測窓は両端含む（ReceivedAt >= from AND <= to——既存 QueryAsync の範囲条件と同じ慣習）。
+        // 境界ちょうどのレコードが黙って落ちないことの回帰検知。
+        var baseline = DateTimeOffset.UtcNow;
+        var from = baseline.AddMinutes(-10);
+        var to = baseline;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(from, "10.0.0.1", "exactly-at-from", severity: 4),
+            CreateParsedRecord(to, "10.0.0.2", "exactly-at-to", severity: 4),
+        ]);
+
+        var distribution = await Store.QuerySeverityDistributionAsync(from, to, TimeSpan.FromSeconds(30));
+
+        var severity4 = Assert.Single(distribution);
+        Assert.Equal(4, severity4.Severity);
+        Assert.Equal(2, severity4.Count);
+    }
+
+    [SkippableFact]
+    public async Task QueryTopTalkersAsync_WindowBoundaries_AreInclusive()
+    {
+        // QuerySeverityDistributionAsync と同じ両端含む窓（>= from AND <= to）の検証。
+        var baseline = DateTimeOffset.UtcNow;
+        var from = baseline.AddMinutes(-10);
+        var to = baseline;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(from, "192.0.2.1", "exactly-at-from"),
+            CreateParsedRecord(to, "192.0.2.1", "exactly-at-to"),
+        ]);
+
+        var talkers = await Store.QueryTopTalkersAsync(from, to, limit: 10, TimeSpan.FromSeconds(30));
+
+        var talker = Assert.Single(talkers);
+        Assert.Equal("192.0.2.1", talker.SourceAddress);
+        Assert.Equal(2, talker.RecordCount);
+    }
 }

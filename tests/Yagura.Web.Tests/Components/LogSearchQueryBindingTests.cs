@@ -202,6 +202,12 @@ public sealed class LogSearchQueryBindingTests : IDisposable
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SourceActivity>)Array.Empty<SourceActivity>());
+
+        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            Task.FromResult((IReadOnlyList<SeverityCount>)Array.Empty<SeverityCount>());
+
+        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            Task.FromResult((IReadOnlyList<SourceActivity>)Array.Empty<SourceActivity>());
     }
 
     private sealed class FakeStatusReader : IYaguraSystemStatusReader
