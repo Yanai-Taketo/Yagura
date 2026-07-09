@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
@@ -5,9 +6,11 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MudBlazor.Services;
+using Yagura.Storage;
 using Yagura.Web.Circuits;
 using Yagura.Web.Components;
 using Yagura.Web.Components.Common;
+using Yagura.Web.Export;
 
 namespace Yagura.Web;
 
@@ -153,10 +156,148 @@ public static class YaguraWebViewerExtensions
             return Results.Content(html, "text/html; charset=utf-8");
         });
 
+        // ログ検索結果の CSV エクスポート（Issue #157）。読み取り専用の GET のみ——
+        // 書き込みエンドポイントではない。L-5 許可リスト（ViewerEndpointAllowlistTests）に
+        // 登録済み。
+        MapLogSearchCsvExport(endpoints);
+
         // AddInteractiveServerRenderMode は Interactive Server の circuit エンドポイント
         // （SignalR。既定パス /_blazor）を有効化する。circuit 数の上限・origin 検証・無操作回収の
         // 統治は M8-4 で実装済み（CircuitGuardMiddleware・CircuitRegistry。security.md §2）。
         return endpoints.MapRazorComponents<YaguraWebApp>()
             .AddInteractiveServerRenderMode();
     }
+
+    /// <summary>
+    /// 検索結果 CSV エクスポートの上限件数（Issue #157）。ログ検索画面の表示上限
+    /// （<c>LogSearch.SearchLimit</c>）と同じ 10,000 件——architecture.md §6 M-10 の仮値を
+    /// そのまま踏襲し、画面に表示されている以上の件数を CSV へ出力しない（「件数上限の明示」を
+    /// 独自の新しい仮値で増やさない判断。値の見直しは M-10 の確定と歩調を合わせる）。
+    /// </summary>
+    private const int CsvExportRecordLimit = 10_000;
+
+    /// <summary>CSV エクスポートのクエリタイムアウト（検索画面の <c>SearchTimeout</c> と同値）。</summary>
+    private static readonly TimeSpan CsvExportQueryTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// 一覧射影の 200 文字切り詰め（database.md §2.1・M-10 仮値）を回避し、CSV には全文を出力する
+    /// ための <see cref="LogQuery.MessageProjectionLength"/> 上書き値。<c>MessageProjection.Truncate</c>
+    /// は「メッセージ長がこの値以下ならそのまま返す」実装のため、実用上メッセージ全文を切り詰めない
+    /// 上限として <see cref="int.MaxValue"/> を使う（database.md §1.2 の射影契約自体は変更しない——
+    /// 呼び出し側オプションの利用のみ。LogQuery.cs の doc コメント参照）。
+    /// </summary>
+    private const int CsvExportMessageProjectionLength = int.MaxValue;
+
+    /// <summary>
+    /// 上限到達（打ち切り）を応答ヘッダーで明示するための名前（ui.md §5.3「検索の打ち切り」の
+    /// CSV 版。CSV 本文へ非データ行を混入させない——監査提出用途で本文をデータのみに保つため、
+    /// ヘッダーで明示する）。
+    /// </summary>
+    private const string CsvTruncatedHeaderName = "X-Yagura-Csv-Truncated";
+
+    /// <summary>
+    /// ログ検索結果の CSV エクスポート（Issue #157）。閲覧リスナの GET のみ——書き込みを
+    /// 一切行わない。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>検索条件との対応</b>: クエリパラメータ（<c>from</c>・<c>to</c>・<c>source</c>・
+    /// <c>severity</c>・<c>facility</c>・<c>parseStatus</c>・<c>q</c>）は <c>LogSearch.razor</c> の
+    /// 検索 URL（Issue #148 の URL 共有形式——<c>BuildQueryParameters</c>）と同一のキー・値形式で
+    /// あり、<see cref="LogQuery"/> の対応フィールド（<c>severity</c> → <see cref="LogQuery.SeverityAtMost"/>
+    /// の閾値・<c>facility</c> → 完全一致・<c>parseStatus</c> → enum 名・<c>q</c> → 自由文）へ
+    /// 変換する。<b>不正な値は検索画面と同じく例外を出さず「条件なし」に安全側で丸める</b>
+    /// （<c>LogSearch.razor</c> の <c>TryParseInt</c>／<c>TryParseParseStatus</c> と同じ寛容規則。
+    /// エクスポートは検索画面から共有される URL の写しで呼ばれる想定であり、改変された URL で
+    /// 400 を返すより検索画面と同じ解釈で応答を一致させる）。
+    /// </para>
+    /// <para>
+    /// <b>CSV 形式</b>: RFC 4180 準拠のエスケープ・CSV インジェクション対策は
+    /// <see cref="LogRecordCsvWriter"/>／<see cref="CsvField"/> が担う。<b>UTF-8 BOM</b> は本メソッドが
+    /// <see cref="StreamWriter"/> に BOM 付与ありの <see cref="UTF8Encoding"/>
+    /// （<c>encoderShouldEmitUTF8Identifier: true</c>）を渡すことで付与する（Excel の日本語文字化け
+    /// 耐性——Issue #157 の受け入れ条件）。
+    /// </para>
+    /// <para>
+    /// <b>メモリ節約</b>: CSV 全体を文字列へ組み立てず、<see cref="LogRecordCsvWriter.WriteAsync"/>
+    /// がレコード 1 件ごとに応答ストリームへ直接書き出す。
+    /// </para>
+    /// </remarks>
+    private static void MapLogSearchCsvExport(IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapGet("/search/export.csv", async (
+            HttpContext context,
+            string? from,
+            string? to,
+            string? source,
+            string? severity,
+            string? facility,
+            string? parseStatus,
+            string? q,
+            ILogStore logStore) =>
+        {
+            var query = new LogQuery(
+                Limit: CsvExportRecordLimit,
+                Timeout: CsvExportQueryTimeout,
+                ReceivedAtFrom: TryParseUtcTimestamp(from),
+                ReceivedAtTo: TryParseUtcTimestamp(to),
+                SourceAddress: string.IsNullOrWhiteSpace(source) ? null : source.Trim(),
+                SeverityAtMost: TryParseInt(severity),
+                Facility: TryParseInt(facility),
+                ParseStatus: TryParseParseStatus(parseStatus),
+                SearchText: string.IsNullOrWhiteSpace(q) ? null : q,
+                MessageProjectionLength: CsvExportMessageProjectionLength);
+
+            var results = await logStore.QueryAsync(query, context.RequestAborted).ConfigureAwait(false);
+
+            context.Response.ContentType = "text/csv; charset=utf-8";
+            context.Response.Headers.ContentDisposition =
+                $"attachment; filename=\"{BuildCsvFileName()}\"";
+
+            if (results.Count >= CsvExportRecordLimit)
+            {
+                context.Response.Headers[CsvTruncatedHeaderName] = "true";
+            }
+
+            // BOM 付与ありの UTF8Encoding: StreamWriter は先頭書き込み時に GetPreamble() を
+            // 自動出力する（.NET の StreamWriter の既定動作。Encoding.UTF8 静的プロパティも同じ
+            // 既定だが、意図を読み手に明示するため生成引数を明示する）。leaveOpen: true——
+            // context.Response.Body の完了・破棄は ASP.NET Core の応答パイプライン自体の責務であり、
+            // 本メソッドが Stream.Dispose を通じて先取りしない（バッファのフラッシュのみ行う）。
+            await using var writer = new StreamWriter(
+                context.Response.Body,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+                bufferSize: 1024,
+                leaveOpen: true);
+            await LogRecordCsvWriter.WriteAsync(writer, results, context.RequestAborted).ConfigureAwait(false);
+            await writer.FlushAsync(context.RequestAborted).ConfigureAwait(false);
+        });
+    }
+
+    /// <summary>CSV ダウンロードのファイル名（生成時刻を UTC で埋め込み、上書き事故を避ける）。</summary>
+    private static string BuildCsvFileName() =>
+        $"yagura-log-search-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.csv";
+
+    // ---- クエリ値の寛容な解釈（LogSearch.razor の TryParseInt / TryParseParseStatus /
+    //      ParseServerWallClock と同じ規則: 不正な値は例外を出さず「条件なし」= null に丸める）----
+
+    /// <summary>期間クエリ（往復形式 "O"。LogSearch の FormatQueryTimestamp と対）の寛容な解釈。</summary>
+    private static DateTimeOffset? TryParseUtcTimestamp(string? value) =>
+        value is { Length: > 0 } &&
+        DateTimeOffset.TryParse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var parsed)
+            ? parsed
+            : null;
+
+    private static int? TryParseInt(string? value) =>
+        value is { Length: > 0 } &&
+        int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+
+    private static ParseStatus? TryParseParseStatus(string? value) =>
+        value is { Length: > 0 } && Enum.TryParse<ParseStatus>(value, out var parsed) ? parsed : null;
 }

@@ -87,6 +87,10 @@ public sealed class ViewerEndpointAllowlistTests
         // 既定に使う場合があるため受ける（PR #164 レビュー指摘。本文なし・ヘッダ同一）。
         new("/health", new[] { "GET", "HEAD" }),
 
+        // ログ検索結果の CSV エクスポート（Issue #157）。読み取り専用の GET のみ——
+        // 書き込みエンドポイントではない（YaguraWebViewerExtensions.MapLogSearchCsvExport）。
+        new("/search/export.csv", new[] { "GET" }),
+
         // 接続終了の案内ページ（M8-4。security.md §2.2 の個別切断・SEC-8 の無操作回収の着地先。
         // circuit を要しない静的応答・読み取り専用 GET のみ——書き込みエンドポイントではない）。
         new("/circuit-ended", new[] { "GET" }),
