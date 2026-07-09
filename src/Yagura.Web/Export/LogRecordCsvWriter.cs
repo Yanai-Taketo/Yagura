@@ -90,13 +90,15 @@ public static class LogRecordCsvWriter
 
     /// <summary>
     /// 解析状態の短形ラベル（CSV の 1 セルに収める表形式向け。<see cref="UiText.ParseFailedLabel"/> /
-    /// <see cref="UiText.IncompleteLabel"/> は画面の注記文用の長文であり、CSV セルには使わない）。
+    /// <see cref="UiText.IncompleteLabel"/>・検索条件の選択肢ラベル
+    /// （<see cref="UiText.ParseStatusOptionParseFailed"/> 等。Issue #148）は括弧書きの説明を
+    /// 含む長文であり、CSV セルには先頭の短語のみを使う——用語は選択肢ラベルと一致させる）。
     /// </summary>
     private static string FormatParseStatus(ParseStatus status) => status switch
     {
         ParseStatus.Parsed => "解析済み",
         ParseStatus.ParseFailed => "解析失敗",
-        ParseStatus.Incomplete => "途中終端",
+        ParseStatus.Incomplete => "不完全",
         _ => status.ToString(),
     };
 
