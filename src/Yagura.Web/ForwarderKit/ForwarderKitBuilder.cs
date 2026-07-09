@@ -136,7 +136,14 @@ public static class ForwarderKitBuilder
         template
             .Replace("@@YAGURA_HOST@@", request.Host)
             .Replace("@@YAGURA_PORT@@", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture))
-            .Replace("@@CHANNELS@@", request.ChannelsValue);
+            .Replace("@@CHANNELS@@", request.ChannelsValue)
+            // Issue #156 added a udp/tcp @@MODE@@ placeholder to the shared conf template
+            // (forwarder/fluent-bit/fluent-bit-yagura.conf, embedded here — ADR-0008 委任 #1) so the
+            // static/manual kit's install.ps1 -Mode parameter can select it. ForwarderKitRequest has
+            // no Mode field yet, so the generated kit always substitutes "udp" here, preserving its
+            // existing behavior unchanged. Adding a Mode choice to the generated kit (request/builder/
+            // admin UI) is out of scope for #156 and tracked as a follow-up.
+            .Replace("@@MODE@@", "udp");
 
     private static string SubstituteReadme(string template, ForwarderKitRequest request, DateTimeOffset generatedAt)
     {

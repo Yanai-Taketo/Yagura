@@ -1,7 +1,8 @@
 # Fluent Bit 配布キット
 
 Windows 端末・サーバのイベントログを Fluent Bit(Apache-2.0)経由で Yagura へ
-syslog(RFC 5424 / UDP)転送するための、サイレント導入可能な配布キット。
+syslog(RFC 5424 / UDP または TCP、`install.ps1 -Mode`で選択)転送するための、
+サイレント導入可能な配布キット。
 
 | ファイル | 役割 |
 |---|---|
