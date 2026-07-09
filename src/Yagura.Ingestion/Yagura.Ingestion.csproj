@@ -8,4 +8,14 @@
     <ProjectReference Include="..\Yagura.Storage\Yagura.Storage.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      UDP 受信エラー（SocketException）時の backoff・ログ抑制ロジック（UdpSyslogListener の
+      HandleReceiveErrorAsync・ComputeReceiveErrorBackoff）は internal 実装であり、単体テストで
+      直接検証する（実際の SocketException をネットワーク経由で確実に再現するのは環境依存で
+      難しいため。Issue #142）。Yagura.Storage の InternalsVisibleTo と同じ理由。
+    -->
+    <InternalsVisibleTo Include="Yagura.Ingestion.Tests" />
+  </ItemGroup>
+
 </Project>

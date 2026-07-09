@@ -41,6 +41,16 @@ namespace Yagura.Ingestion.Diagnostics;
 /// OS 統計突合ゲージ（§4.2）を追加した。残り（解析失敗（保存済み）・TCP 接続断・TLS
 /// ハンドシェイク失敗・TCP 不完全メッセージ）は該当機能（TLS 受信等）の実装時に追加する。
 /// </para>
+/// <para>
+/// Issue #142 で「UDP 受信エラー」を追加した（<see cref="RecordUdpReceiveError"/>）。
+/// <see cref="Yagura.Ingestion.Udp.UdpSyslogListener"/> の <c>ReceiveAsync</c> が
+/// <see cref="System.Net.Sockets.SocketException"/> で失敗した回数の診断用カウンタである。
+/// 他の 7 種（<see cref="IngestionCounterSnapshot"/> が保持する「発生箇所別ドロップカウンタ」
+/// §4.1）とは異なり、個々の失敗が必ずしもデータグラム損失と 1 対 1 対応するとは限らない
+/// （ネットワーク環境依存の一過性エラーを含み得る）ため、再起動をまたぐ累積永続化（§4.3・
+/// <see cref="SeedCumulativeCounters"/>・<see cref="SnapshotCumulativeCounters"/>）の対象には
+/// 含めない——プロセス内累積のみ（Web 層の逆引き解決カウンタと同じ扱い。§4.1.1 末尾の注記参照）。
+/// </para>
 /// </remarks>
 public sealed class IngestionMetrics : IDisposable
 {
@@ -58,6 +68,7 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _spoolDiscarded;
     private readonly Counter<long> _persistenceFailed;
     private readonly Counter<long> _flowControlDropped;
+    private readonly Counter<long> _udpReceiveError;
 
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
@@ -138,6 +149,16 @@ public sealed class IngestionMetrics : IDisposable
             "yagura.ingestion.flow_control.dropped",
             unit: "{datagram}",
             description: "流量制御により破棄した件数（v0.1 の NoopIngressGate では常に 0）。");
+
+        // architecture.md §4.1「UDP 受信エラー」（Issue #142 で追加）: UDP 受信ソケットの
+        // ReceiveAsync が SocketException で失敗した回数。個々の失敗が必ずしもデータグラム損失と
+        // 1 対 1 対応するとは限らない診断用カウンタのため、他 7 種とは異なりプロセス内累積のみ
+        // （本クラス remarks 参照。再起動をまたぐ永続化の対象外）。
+        _udpReceiveError = _meter.CreateCounter<long>(
+            "yagura.ingestion.udp.receive_error",
+            unit: "{error}",
+            description: "UDP 受信ソケットの ReceiveAsync が SocketException で失敗した回数" +
+                "（プロセス内累積。個々のケースが実データ損失と一致するとは限らない診断用カウンタ）。");
 
         // architecture.md §4.2 OS レベル取りこぼしの観測（M4-4 で実機検証: Windows ARM64・
         // SDK 10.0.301 で IPGlobalProperties.GetUdpIPv4Statistics()/GetUdpIPv6Statistics() の
@@ -281,6 +302,17 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// UDP 受信ソケットの受信エラー（<see cref="System.Net.Sockets.SocketException"/>）を
+    /// 1 件計上する（Issue #142）。プロセス内累積のみで、再起動をまたぐ永続化
+    /// （<see cref="SeedCumulativeCounters"/>・<see cref="SnapshotCumulativeCounters"/>）の
+    /// 対象外（本クラス remarks 参照）。
+    /// </summary>
+    public void RecordUdpReceiveError()
+    {
+        _udpReceiveError.Add(1);
+    }
+
+    /// <summary>
     /// 起動時、メタデータ領域（§4.3）から読み込んだ前回までの累積値を引き継ぐ
     /// （「前回までの累積 + 今回プロセス分」の合成。Counter&lt;T&gt; 自体は加算専用で
     /// 初期値を設定する API を持たないため、本クラス自身が保持する
@@ -342,6 +374,9 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>流量制御破棄カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> FlowControlDroppedCounter => _flowControlDropped;
+
+    /// <summary>UDP 受信エラーカウンタの計器そのもの（テスト用。<see cref="InternalBufferDroppedCounter"/> と同じ理由。Issue #142）。</summary>
+    public Counter<long> UdpReceiveErrorCounter => _udpReceiveError;
 
     /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
     public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;
