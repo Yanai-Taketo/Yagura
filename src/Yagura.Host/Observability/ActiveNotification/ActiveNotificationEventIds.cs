@@ -26,7 +26,7 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// </para>
 /// <para>
 /// <b>additive-only</b>（security.md §4.3）: 一度公開した ID の意味とレベルは変えない。
-/// 以降の追加は 1008 以降を使う。
+/// 以降の追加は 1009 以降を使う。
 /// </para>
 /// </remarks>
 public static class ActiveNotificationEventIds
@@ -45,9 +45,21 @@ public static class ActiveNotificationEventIds
 
     // 1005 = SpoolWriteFailed は Yagura.Ingestion.Persistence.PersistenceEventIds 側に定義（上記 remarks 参照）。
 
-    /// <summary>データルートのボリュームの空き容量が閾値を下回った（architecture.md §4.6。database.md §3・§5.3）。レベル: 警告。</summary>
-    public static readonly EventId DataRootDiskSpaceLow = new(1006, "DataRootDiskSpaceLow");
+    /// <summary>
+    /// 監視対象ボリューム（データルート・スプール置き場所）の空き容量が閾値を下回った
+    /// （architecture.md §4.6。database.md §3・§5.3。スプール置き場所のボリュームを対象に含めるのは
+    /// PR #188 レビュー指摘への対応——`Spool:Directory` が別ドライブに向いた構成でも「夜間にスプールが
+    /// 満ちていく」現場のボリュームを見逃さない）。レベル: 警告。
+    /// </summary>
+    public static readonly EventId MonitoredVolumeFreeSpaceLow = new(1006, "MonitoredVolumeFreeSpaceLow");
 
     /// <summary>SQL Server Express の DB サイズが上限に接近（database.md §5.3・architecture.md §4.6）。レベル: 警告。</summary>
     public static readonly EventId ExpressCapacityNearLimit = new(1007, "ExpressCapacityNearLimit");
+
+    /// <summary>
+    /// 能動通知の周期評価中に未捕捉例外が発生した（監視ループ自体は継続し、次周期で再試行する。
+    /// PR #188 レビュー指摘への対応——監視自身が無警告で沈黙・停止する経路を残さない）。レベル: エラー
+    /// （その周期の監視が実行できなかった = 部分的な機能停止を伴う事象。security.md §4.3 の割当方針）。
+    /// </summary>
+    public static readonly EventId EvaluationFailed = new(1008, "ActiveNotificationEvaluationFailed");
 }

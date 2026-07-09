@@ -8,8 +8,8 @@ namespace Yagura.Host.Observability.ActiveNotification;
 
 /// <summary>
 /// architecture.md §4.6 の能動通知のうち、周期監視が必要な 4 トリガ（スプール使用率の
-/// 上限接近・到達 / スプール退避の継続 / データルートのボリューム空き容量 / SQL Server
-/// Express の DB 容量接近）を評価する背景コンポーネント（Issue #149）。
+/// 上限接近・到達 / スプール退避の継続 / 監視対象ボリューム（データルート・スプール置き場所）の
+/// 空き容量 / SQL Server Express の DB 容量接近）を評価する背景コンポーネント（Issue #149）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,6 +22,8 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// 未実装（後続 Issue #152）であり、実装済みの検知点が無い。本クラスは
 /// <see cref="EvaluateOnceAsync"/> に新しい評価メソッドを追加するだけで拡張できる構造にして
 /// あり、#152 はその評価メソッドを 1 つ追加する形で乗せられる想定（最終報告に詳細を記す）。
+/// <see cref="RunAsync"/> のループが包括的な例外保護を持つため（PR #188 レビュー指摘への対応）、
+/// 追加する評価メソッドが自前の例外処理を怠っても、監視ループ自体が無警告で恒久停止することはない。
 /// </para>
 /// <para>
 /// <b>ライフサイクルは <see cref="Yagura.Host.Retention.RetentionScheduler"/> と同じ形</b>: 独立の
@@ -44,7 +46,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 {
     private readonly DiskSpool? _spool;
     private readonly IngestionMetrics _metrics;
-    private readonly IDataRootVolumeInfo _volumeInfo;
+    private readonly IMonitoredVolumeInfo _volumeInfo;
     private readonly IExpressCapacityChecker _expressChecker;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
@@ -60,7 +62,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     public ActiveNotificationMonitor(
         DiskSpool? spool,
         IngestionMetrics metrics,
-        IDataRootVolumeInfo volumeInfo,
+        IMonitoredVolumeInfo volumeInfo,
         IExpressCapacityChecker expressChecker,
         TimeProvider? timeProvider = null,
         ILogger<ActiveNotificationMonitor>? logger = null)
@@ -89,7 +91,12 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _loopTask = Task.Run(() => RunAsync(_stoppingCts.Token));
     }
 
-    /// <summary>周期監視ループを停止する。実行中の評価の完了は待たない（軽量な読み取り専用の評価のため）。</summary>
+    /// <summary>
+    /// 周期監視ループを停止する。実行中の評価があればその終了（完了・キャンセル・例外の
+    /// いずれか）を待ってから戻る——Express 容量チェックは <c>stoppingToken</c> を SqlClient まで
+    /// 伝播させているため、通常は速やかにキャンセルされる（PR #188 レビュー指摘によりコメントの
+    /// 精度を実装に合わせて修正した）。
+    /// </summary>
     public async Task StopAsync()
     {
         if (_stoppingCts is null)
@@ -128,7 +135,33 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                 return;
             }
 
-            await EvaluateOnceAsync(stoppingToken).ConfigureAwait(false);
+            // 評価中の未捕捉例外でループを恒久停止させない（PR #188 レビュー指摘への対応）。
+            // 能動通知は「UI を見ていない夜間でも運用者が気づける」ことが存在意義（architecture.md
+            // §4.6）であり、監視自身が無警告で沈黙・停止する経路を残さない——例外はエラーとして
+            // ログ（EventLog プロバイダ到達）へ記録し、次周期で再試行する。連発は他トリガと同じ
+            // 抑制窓で抑える（評価対象の状態が変わらない限り同じ例外が毎周期出続けるため）。
+            // この保護により、将来 EvaluateOnceAsync へ追加される評価メソッド（Issue #152 の
+            // 自己検証等）が自前の例外処理を怠っても、ループの生存自体は損なわれない。
+            try
+            {
+                await EvaluateOnceAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                NotifyIfDue("evaluation-failed", () =>
+                    _logger.LogError(
+                        ActiveNotificationEventIds.EvaluationFailed,
+                        ex,
+                        "[active-notification-evaluation-failed] 能動通知の周期評価中に例外が発生しました。" +
+                        "監視ループは継続し、次周期（{PollInterval} 後）に再試行します。" +
+                        "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                        ActiveNotificationConstants.PollInterval,
+                        ActiveNotificationConstants.SuppressionWindow));
+            }
         }
     }
 
@@ -141,7 +174,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     {
         EvaluateSpoolUsage();
         EvaluateSpoolEvacuationContinuation();
-        EvaluateDataRootFreeSpace();
+        EvaluateMonitoredVolumesFreeSpace();
         await EvaluateExpressCapacityAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -221,25 +254,30 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _lastSpoolEvacuatedTotal = current;
     }
 
-    /// <summary>データルートのボリューム空き容量（architecture.md §4.6。database.md §3・§5.3）。</summary>
-    private void EvaluateDataRootFreeSpace()
+    /// <summary>
+    /// 監視対象ボリューム（データルート・スプール置き場所。同一ボリュームなら読み取り側で
+    /// 1 件に重複排除済み——<see cref="MonitoredVolumeInfo"/>）の空き容量（architecture.md §4.6。
+    /// database.md §3・§5.3。スプール置き場所のボリュームを含めるのは PR #188 レビュー指摘への対応）。
+    /// </summary>
+    private void EvaluateMonitoredVolumesFreeSpace()
     {
-        var reading = _volumeInfo.TryRead();
-        if (reading is null)
+        foreach (var reading in _volumeInfo.ReadMonitoredVolumes())
         {
-            return;
-        }
-
-        if (reading.AvailableFreeSpaceBytes < ActiveNotificationConstants.DataRootFreeSpaceMinBytes)
-        {
-            NotifyIfDue("data-root-disk-space-low", () =>
-                _logger.LogWarning(
-                    ActiveNotificationEventIds.DataRootDiskSpaceLow,
-                    "[data-root-disk-space-low] データルートのボリュームの空き容量が {AvailableFreeSpaceBytes} バイト" +
-                    "（閾値 {ThresholdBytes} バイト）まで減少しました。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
-                    reading.AvailableFreeSpaceBytes,
-                    ActiveNotificationConstants.DataRootFreeSpaceMinBytes,
-                    ActiveNotificationConstants.SuppressionWindow));
+            if (reading.AvailableFreeSpaceBytes < ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes)
+            {
+                // 抑制窓はボリューム単位で独立させる（データルートとスプールが別ドライブの場合、
+                // 片方の警告がもう片方を抑制しないように。キーの数は監視対象パス数（最大 2）で
+                // 有界であり、辞書の無制限増加は起きない）。
+                NotifyIfDue($"volume-free-space-low:{reading.VolumeRoot}", () =>
+                    _logger.LogWarning(
+                        ActiveNotificationEventIds.MonitoredVolumeFreeSpaceLow,
+                        "[volume-free-space-low] 監視対象ボリューム {VolumeRoot} の空き容量が {AvailableFreeSpaceBytes} バイト" +
+                        "（閾値 {ThresholdBytes} バイト）まで減少しました。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                        reading.VolumeRoot,
+                        reading.AvailableFreeSpaceBytes,
+                        ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes,
+                        ActiveNotificationConstants.SuppressionWindow));
+            }
         }
     }
 

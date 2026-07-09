@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
 using Yagura.Host.Observability.ActiveNotification;
@@ -180,31 +181,34 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     // ------------------------------------------------------------------
-    // データルートのボリューム空き容量（EventId 1006）
+    // 監視対象ボリュームの空き容量（EventId 1006）
     // ------------------------------------------------------------------
 
     [Fact]
     public async Task EvaluateOnce_FreeSpaceBelowThreshold_Warns()
     {
         var collector = new FakeLogCollector();
-        var volumeInfo = new FakeDataRootVolumeInfo(new DataRootVolumeReading(
+        var volumeInfo = new FakeMonitoredVolumeInfo(new MonitoredVolumeReading(
+            VolumeRoot: @"C:\",
             TotalSizeBytes: 100L * 1024 * 1024 * 1024,
-            AvailableFreeSpaceBytes: ActiveNotificationConstants.DataRootFreeSpaceMinBytes - 1));
+            AvailableFreeSpaceBytes: ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes - 1));
         var monitor = CreateMonitor(spool: null, collector, out _, volumeInfo: volumeInfo);
 
         await monitor.EvaluateOnceAsync();
 
         var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1006);
-        Assert.Contains("[data-root-disk-space-low]", record.Message);
+        Assert.Contains("[volume-free-space-low]", record.Message);
+        Assert.Contains(@"C:\", record.Message);
     }
 
     [Fact]
     public async Task EvaluateOnce_FreeSpaceAboveThreshold_DoesNotWarn()
     {
         var collector = new FakeLogCollector();
-        var volumeInfo = new FakeDataRootVolumeInfo(new DataRootVolumeReading(
+        var volumeInfo = new FakeMonitoredVolumeInfo(new MonitoredVolumeReading(
+            VolumeRoot: @"C:\",
             TotalSizeBytes: 100L * 1024 * 1024 * 1024,
-            AvailableFreeSpaceBytes: ActiveNotificationConstants.DataRootFreeSpaceMinBytes + 1));
+            AvailableFreeSpaceBytes: ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes + 1));
         var monitor = CreateMonitor(spool: null, collector, out _, volumeInfo: volumeInfo);
 
         await monitor.EvaluateOnceAsync();
@@ -216,11 +220,109 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     public async Task EvaluateOnce_VolumeInfoUnavailable_DoesNotWarn()
     {
         var collector = new FakeLogCollector();
-        var monitor = CreateMonitor(spool: null, collector, out _, volumeInfo: new FakeDataRootVolumeInfo(reading: null));
+        var monitor = CreateMonitor(spool: null, collector, out _, volumeInfo: new FakeMonitoredVolumeInfo());
 
         await monitor.EvaluateOnceAsync();
 
         Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1006);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_TwoVolumesBothBelowThreshold_WarnsPerVolume_WithIndependentSuppression()
+    {
+        // データルートとスプールが別ドライブに向いた構成（PR #188 レビュー指摘のシナリオ）を模す。
+        var collector = new FakeLogCollector();
+        var volumeInfo = new FakeMonitoredVolumeInfo(
+            new MonitoredVolumeReading(@"C:\", 100L * 1024 * 1024 * 1024, ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes - 1),
+            new MonitoredVolumeReading(@"D:\", 200L * 1024 * 1024 * 1024, ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes - 1));
+        var monitor = CreateMonitor(spool: null, collector, out var timeProvider, volumeInfo: volumeInfo);
+
+        await monitor.EvaluateOnceAsync();
+
+        // ボリュームごとに 1 件ずつ警告される（抑制窓が相互に干渉しない）。
+        var records = collector.GetSnapshot().Where(r => r.Id.Id == 1006).ToList();
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, r => r.Message.Contains(@"C:\"));
+        Assert.Contains(records, r => r.Message.Contains(@"D:\"));
+
+        // 抑制窓内の再評価では両ボリュームとも再発火しない。
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        await monitor.EvaluateOnceAsync();
+        Assert.Equal(2, collector.GetSnapshot().Count(r => r.Id.Id == 1006));
+
+        // 抑制窓を超えたら両ボリュームとも再発火する。
+        timeProvider.Advance(ActiveNotificationConstants.SuppressionWindow);
+        await monitor.EvaluateOnceAsync();
+        Assert.Equal(4, collector.GetSnapshot().Count(r => r.Id.Id == 1006));
+    }
+
+    [Fact]
+    public void MonitoredVolumeInfo_TwoPathsOnSameVolume_DeduplicatesToSingleReading()
+    {
+        // 既定構成（スプールはデータルート配下 = 同一ボリューム）で警告が二重発火しないことの
+        // 実体側の検証: 同一ドライブ上の 2 パスは 1 件の読み取りに畳まれる。
+        var pathA = Path.GetTempPath();
+        var pathB = Path.Combine(Path.GetTempPath(), "spool-subdir");
+
+        var volumeInfo = new MonitoredVolumeInfo(pathA, pathB);
+        var readings = volumeInfo.ReadMonitoredVolumes();
+
+        var reading = Assert.Single(readings);
+        Assert.Equal(Path.GetPathRoot(Path.GetFullPath(pathA)), reading.VolumeRoot);
+        Assert.True(reading.TotalSizeBytes > 0);
+    }
+
+    // ------------------------------------------------------------------
+    // 周期ループの例外保護（評価中の例外でループが死なないこと。PR #188 レビュー指摘）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Start_EvaluationThrows_LoopSurvivesAndLogsError_ThenRecoversOnNextCycles()
+    {
+        var collector = new FakeLogCollector();
+
+        // 最初の 2 周期は評価が例外を投げ、3 周期目から正常な読み取り（閾値未満の空き容量）を
+        // 返す変異フェイク——ループが例外で死んでいれば 1006 警告は永遠に出ない。
+        var throwsRemaining = 2;
+        var volumeInfo = new MutableMonitoredVolumeInfo(() =>
+        {
+            if (throwsRemaining > 0)
+            {
+                throwsRemaining--;
+                throw new InvalidOperationException("simulated evaluation failure");
+            }
+
+            return
+            [
+                new MonitoredVolumeReading(@"C:\", 100L * 1024 * 1024 * 1024, ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes - 1),
+            ];
+        });
+        var monitor = CreateMonitor(spool: null, collector, out var timeProvider, volumeInfo: volumeInfo);
+
+        monitor.Start();
+        try
+        {
+            // 条件ポーリングで時計を進める（Start_AdvancingFakeClock_... と同じ流儀）。
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!collector.GetSnapshot().Any(r => r.Id.Id == 1006) && DateTime.UtcNow < deadline)
+            {
+                timeProvider.Advance(ActiveNotificationConstants.PollInterval);
+                await Task.Delay(20);
+            }
+
+            // 例外を跨いでループが生き残り、正常化後の周期で警告が出た。
+            Assert.Contains(collector.GetSnapshot(), r => r.Id.Id == 1006);
+
+            // 例外発生時にはエラーログ（EventId 1008・機械照合トークン付き）が残っている。
+            Assert.Contains(
+                collector.GetSnapshot(),
+                r => r.Level == LogLevel.Error && r.Id.Id == 1008 &&
+                     r.Message.Contains("[active-notification-evaluation-failed]"));
+        }
+        finally
+        {
+            await monitor.StopAsync();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -276,9 +378,10 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     public async Task Start_AdvancingFakeClock_TriggersPeriodicEvaluation()
     {
         var collector = new FakeLogCollector();
-        var volumeInfo = new FakeDataRootVolumeInfo(new DataRootVolumeReading(
+        var volumeInfo = new FakeMonitoredVolumeInfo(new MonitoredVolumeReading(
+            VolumeRoot: @"C:\",
             TotalSizeBytes: 100L * 1024 * 1024 * 1024,
-            AvailableFreeSpaceBytes: ActiveNotificationConstants.DataRootFreeSpaceMinBytes - 1));
+            AvailableFreeSpaceBytes: ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes - 1));
         var monitor = CreateMonitor(spool: null, collector, out var timeProvider, volumeInfo: volumeInfo);
 
         monitor.Start();
@@ -312,7 +415,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         FakeLogCollector collector,
         out FakeTimeProvider timeProvider,
         IngestionMetrics? metrics = null,
-        IDataRootVolumeInfo? volumeInfo = null,
+        IMonitoredVolumeInfo? volumeInfo = null,
         IExpressCapacityChecker? expressChecker = null)
     {
         timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
@@ -321,7 +424,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         return new ActiveNotificationMonitor(
             spool,
             ownedMetrics,
-            volumeInfo ?? new FakeDataRootVolumeInfo(reading: null),
+            volumeInfo ?? new FakeMonitoredVolumeInfo(),
             expressChecker ?? new FakeExpressCapacityChecker(reading: null),
             timeProvider,
             new FakeLogger<ActiveNotificationMonitor>(collector));
@@ -374,9 +477,16 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         Severity: 5,
         Message: "sample");
 
-    private sealed class FakeDataRootVolumeInfo(DataRootVolumeReading? reading) : IDataRootVolumeInfo
+    /// <summary>固定の読み取り結果を返すフェイク（引数なし = 取得不能 = 空リスト）。</summary>
+    private sealed class FakeMonitoredVolumeInfo(params MonitoredVolumeReading[] readings) : IMonitoredVolumeInfo
     {
-        public DataRootVolumeReading? TryRead() => reading;
+        public IReadOnlyList<MonitoredVolumeReading> ReadMonitoredVolumes() => readings;
+    }
+
+    /// <summary>呼び出しごとに挙動を差し替えられるフェイク（例外送出 → 正常化の遷移を模す）。</summary>
+    private sealed class MutableMonitoredVolumeInfo(Func<IReadOnlyList<MonitoredVolumeReading>> behavior) : IMonitoredVolumeInfo
+    {
+        public IReadOnlyList<MonitoredVolumeReading> ReadMonitoredVolumes() => behavior();
     }
 
     private sealed class FakeExpressCapacityChecker(ExpressCapacityReading? reading) : IExpressCapacityChecker

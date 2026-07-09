@@ -44,7 +44,8 @@ public static class ActiveNotificationConstants
     public const double SpoolReachedRatio = 1.0;
 
     /// <summary>
-    /// データルートのボリューム空き容量の警告閾値（暫定値: 1 GiB）。
+    /// 監視対象ボリューム（データルート・スプール置き場所。同一ボリュームなら 1 件に重複排除
+    /// ——<see cref="MonitoredVolumeInfo"/>）の空き容量の警告閾値（暫定値: 1 GiB）。
     /// スプールの既定使用量上限（<see cref="Yagura.Storage.Spool.SpoolConstants.DefaultQuotaBytes"/>
     /// も 1 GiB）と同じ値を採った——空き容量がスプールの既定上限を下回ると、スプール自体が
     /// 設定上の上限まで育つ前にディスクが枯渇し得るため、この値を安全側の閾値とした
@@ -52,7 +53,7 @@ public static class ActiveNotificationConstants
     /// ディスクサイズが多様であり、比率だと大容量ディスクでは閾値が実質無意味に大きくなる
     /// ため——本 Issue の実装判断）。
     /// </summary>
-    public const long DataRootFreeSpaceMinBytes = 1L * 1024 * 1024 * 1024;
+    public const long MonitoredVolumeFreeSpaceMinBytes = 1L * 1024 * 1024 * 1024;
 
     /// <summary>
     /// SQL Server Express の DB 容量が「上限接近」と判定する比率（暫定値: 0.8。
