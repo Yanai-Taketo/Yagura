@@ -105,7 +105,12 @@ public enum YaguraHealthReason
     /// <summary>観測窓内に取りこぼし（いずれかの破棄カウンタの増分）が発生した（→ 異常あり）。</summary>
     LossObserved,
 
-    /// <summary>観測窓内にスプール退避が発生している（→ 警告あり）。</summary>
+    /// <summary>
+    /// 現在、未消化のスプールデータが残っている（→ 警告あり）。判定は観測窓の増分ではなく
+    /// スプールの現在ゲージ（<c>DiskSpool.CurrentUsageBytes &gt; 0</c>）で行う——退避したデータの
+    /// DB 格納がすべて完了する（＝スプール使用量が 0 に戻る）と直ちに解除される「消化完了」に
+    /// よる復帰（Issue #132。実装: <c>Yagura.Host.Observability.SystemStatusReader</c>）。
+    /// </summary>
     SpoolEvacuationObserved,
 
     /// <summary>スプール使用量が上限に接近している（→ 警告あり）。</summary>

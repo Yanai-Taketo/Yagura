@@ -246,6 +246,20 @@ public static class UiText
     /// <summary>ダッシュボードの現在値カード: 一時保管への退避（累計）。</summary>
     public const string StatSpoolEvacuated = "一時保管への退避（累計）";
 
+    /// <summary>
+    /// 一時保管への退避カードの補足（退避が現在も進行中の場合。Issue #132）。累計値は監査上の
+    /// 価値があるため残しつつ、「今」の状態が復帰したことを見分けられるようにする
+    /// （ui.md §5.4「一時保管中の表示」の裏返し——進行中でなくなったら静かに戻す）。
+    /// </summary>
+    public const string StatSpoolEvacuatedOngoingSupplement = "現在も一時保管への退避が進行中です";
+
+    /// <summary>
+    /// 一時保管への退避カードの補足（過去に退避があったが、現在は消化完了（DB 格納済み）の場合。
+    /// Issue #132。「一生画面に表示されっぱなし」という誤解を防ぐ——累計は過去分であり、
+    /// 現在は正常に戻っていることを明示する）。
+    /// </summary>
+    public const string StatSpoolEvacuatedResolvedSupplement = "退避分は格納済み（現在は正常です）";
+
     /// <summary>ダッシュボードの現在値カード: 取りこぼし（累計。破棄系カウンタの合計）。</summary>
     public const string StatLossTotal = "取りこぼし（累計）";
 
