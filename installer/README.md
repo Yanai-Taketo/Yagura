@@ -37,10 +37,16 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_FIREWALL=""` |
 | インストール記録 | 選択(`RulesRequested`)と作成規則一覧をデータルート直下の `firewall-rules.ini` に記録(初回起動時のイベントログ転記は Host 側の後続 Issue) |
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
-| 完了画面 | 閲覧 URL(http://localhost:8514/)の案内 + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`) |
-| スタートメニュー | 「Yagura ログ閲覧」(.url、http://localhost:8514/) |
+| 完了画面 | 閲覧 URL(http://localhost:8514/)+ 管理 URL(http://localhost:8515/admin)の案内(併記) + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`。開くのは閲覧 URL) |
+| スタートメニュー | 「Yagura ログ閲覧」(.url、http://localhost:8514/、無条件)+ 「Yagura 管理」(.url、http://localhost:8515/admin、無条件) |
+| デスクトップ | 「Yagura」(.url、http://localhost:8514/。閲覧 UI。**opt-in・既定 ON**) |
+| ショートカットのオプトアウト | セットアップ UI の `YaguraShortcutDlg` チェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_DESKTOP_SHORTCUT=""`(デスクトップの閲覧ショートカットのみ対象。管理 UI のスタートメニューリンクは無条件のためオプトアウト不可) |
 | アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される。`forwarder` フォルダの ACL も新製品インストール時に `PermissionEx` が再実行され再適用される |
-| アンインストール | 規則・ショートカット・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除)。`forwarder` フォルダも同じ規則(MSI 未配置で空なら削除、配置済みで非空なら ACL ごと保持) |
+| アンインストール | 規則・ショートカット(スタートメニュー・デスクトップとも)・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除)。`forwarder` フォルダも同じ規則(MSI 未配置で空なら削除、配置済みで非空なら ACL ごと保持) |
+
+管理 UI は **loopback 固定**(TCP 8515)のため、スタートメニューの「Yagura 管理」・完了画面の
+案内はいずれも「このサーバー上で開いたときのみ機能する」ショートカットである(Issue #131)。
+ファイアウォール規則は追加しない(管理ポートを外部公開しない不変条件はそのまま)。
 
 ## E2E 検証(M9-2。Issue #75 / ADR-0006 基準 1)
 
@@ -91,3 +97,26 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   M9-3(lab)の管轄。オーナー実行の手順書:
   [lab/m9-3-lab-procedure.md](lab/m9-3-lab-procedure.md)(Issue #76。ACL = SEC-3・
   失敗時再起動・アップグレード・M-15・DB-8・イベントログ・ja-JP UI・E2E Full の lab 再現)
+- **管理画面への入口(Issue #131)**: ローカルビルドした MSI を WindowsInstaller COM で照合し、
+  以下を確認済み(2026-07-09)。
+  - `Wix4InternetShortcut` テーブルに 3 行(`ViewerShortcut` → `http://localhost:8514/`・
+    `AdminMenuShortcut` → `http://localhost:8515/admin`・`ViewerDesktopShortcut` →
+    `http://localhost:8514/`)。Name 列がそれぞれ `Yagura ログ閲覧.url` / `Yagura 管理.url` /
+    `Yagura.url` であること
+  - `Component` テーブル: `ViewerShortcut` / `AdminMenuShortcut` は Condition 列が空(無条件)、
+    `ViewerDesktopShortcut` は `Condition = YAGURA_DESKTOP_SHORTCUT = 1`(opt-in・既定 ON)
+  - `Property` テーブル: `YAGURA_DESKTOP_SHORTCUT` の既定値が `1`
+  - `Directory` テーブル: `DesktopFolder` の親が `TARGETDIR`(OS 標準のデスクトップそのもの。
+    Yagura 専用サブフォルダを作らない設計どおり)
+  - `RemoveFile` テーブルに 3 つの `.url` それぞれの削除エントリ + `YaguraMenuFolder` の
+    `RemoveFolder`(アンインストール時にスタートメニュー・デスクトップとも残置しない設計の
+    静的裏付け)
+  - `Control` / `ControlEvent` テーブル: `YaguraShortcutDlg` が
+    `YaguraFirewallDlg` → `YaguraShortcutDlg` → `VerifyReadyDlg` の順で配線され、
+    チェックボックス `DesktopCheckBox` が `YAGURA_DESKTOP_SHORTCUT` に束縛されていること
+  - `WIXUI_EXITDIALOGOPTIONALTEXT` に閲覧・管理の両 URL が含まれること
+  - **実機でのショートカット動作(クリックして開く・アンインストールでの実削除)は未検証**:
+    管理者権限での実インストールが要るため、installer-e2e(Full E2E)または M9-3 lab の
+    次回実行での確認を申し送る。E2E スクリプトの残置物確認(`residue-startmenu-removed`)は
+    現状「スタートメニューのフォルダ消滅」のみを見ており、デスクトップ側の確認は含まれて
+    いない(次項参照)

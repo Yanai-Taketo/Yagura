@@ -130,13 +130,18 @@ Rename-Item C:\ProgramData\Yagura C:\ProgramData\Yagura.e2e-backup
 - コマンド: エクスプローラーで `C:\YaguraLab\Yagura-0.1.0.msi` をダブルクリック
 - 確認しながら進む(各画面のスクリーンショットを採取):
   1. Welcome → 使用許諾 → インストール先 → **ファイアウォール規則**(Yagura 固有画面)→
-     インストールの確認 → 完了、の順で遷移し、**全画面が日本語**であること
+     **ショートカット**(Yagura 固有画面。Issue #131)→ インストールの確認 → 完了、の順で
+     遷移し、**全画面が日本語**であること
   2. ファイアウォール画面: チェックボックス「Windows ファイアウォールに受信許可規則を作成する(推奨)」
      が既定 ON で、規則 3 本(UDP 514 / TCP 514 / TCP 8514)の一覧と 8515 を作らない旨の
      注記が表示されること
-  3. 完了画面: 「受信したログは次の URL で閲覧できます: http://localhost:8514/ …」の案内文と
-     チェックボックス「今すぐブラウザで閲覧画面を開く」が表示されること
-  4. **チェック ON のまま完了** → 既定ブラウザで http://localhost:8514/ が開くこと(検証項目 7 の
+  3. ショートカット画面(Issue #131): スタートメニューに「Yagura 管理」を作成する旨の案内
+     (localhost 専用の注記付き)と、チェックボックス「デスクトップに「Yagura」(ログ閲覧画面)の
+     ショートカットを作成する(既定)」が**既定 ON**で表示されること
+  4. 完了画面: 「受信したログは次の URL で閲覧できます: http://localhost:8514/ …」の案内文に
+     **管理画面 URL(http://localhost:8515/admin)が併記**され、チェックボックス
+     「今すぐブラウザで閲覧画面を開く」が表示されること
+  5. **チェック ON のまま完了** → 既定ブラウザで http://localhost:8514/ が開くこと(検証項目 7 の
      完了画面動線。開いた画面のスクリーンショットも採取)
 - インストール後の基本状態:
 
@@ -149,7 +154,7 @@ sc.exe qc Yagura
 - 期待結果: Status = Running / StartType = Automatic /
   `SERVICE_START_NAME : NT SERVICE\Yagura`(**仮想サービスアカウント指定が MSI の
   ServiceInstall 経由で成立することの実機確認**——Package.wxs の申し送り)
-- 採取してほしい出力: スクリーンショット一式(1〜4)+ 上記 3 コマンドの出力
+- 採取してほしい出力: スクリーンショット一式(1〜5)+ 上記 3 コマンドの出力
 
 ```text
 (結果記入欄: sc qc 出力と UI 確認結果。スクリーンショットは PR 添付)
@@ -369,20 +374,28 @@ Get-Content C:\ProgramData\Yagura\audit\audit.jsonl -Tail 3
 
 ## G. UI 動線の残り(検証項目 7 の後半)
 
-完了画面のブラウザ起動は B-4 で採取済み。残りはスタートメニュー。
+完了画面のブラウザ起動は B-5 で採取済み。残りはスタートメニューとデスクトップ(Issue #131)。
 
 - コマンド / 操作:
 
 ```powershell
 Get-ChildItem "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Yagura"
 Get-Content "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Yagura\Yagura ログ閲覧.url"
+Get-Content "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Yagura\Yagura 管理.url"
+Get-Content "$env:PUBLIC\Desktop\Yagura.url"
 ```
 
-スタートメニューから「Yagura ログ閲覧」を実際にクリックする。
+スタートメニューから「Yagura ログ閲覧」「Yagura 管理」、デスクトップから「Yagura」を
+それぞれ実際にクリックする。
 
-- 期待結果: `.url` ファイルが存在し、`URL=http://localhost:8514/` を含む。クリックで既定
-  ブラウザに閲覧画面が開く
-- 採取してほしい出力: 上記 2 コマンドの出力 + クリック結果(開いた/開かない)
+- 期待結果:
+  - スタートメニューの `.url` が 2 つ存在し、「Yagura ログ閲覧」は `URL=http://localhost:8514/`、
+    「Yagura 管理」は `URL=http://localhost:8515/admin` を含む
+  - デスクトップ(全ユーザー = `%PUBLIC%\Desktop`)に `Yagura.url` が存在し、
+    `URL=http://localhost:8514/` を含む(ショートカット画面のチェックボックス既定 ON の結果)
+  - クリックでそれぞれ既定ブラウザに閲覧画面・管理画面・閲覧画面が開く(「Yagura 管理」は
+    サーバー機上のブラウザでのみ開ける = loopback 固定の設計どおり)
+- 採取してほしい出力: 上記 4 コマンドの出力 + 各クリック結果(開いた/開かない)
 
 ```text
 (結果記入欄)
@@ -659,6 +672,7 @@ Start-Process msiexec.exe -Wait -ArgumentList '/x C:\YaguraLab\Yagura-0.1.1.msi 
 Get-Service Yagura -ErrorAction SilentlyContinue                        # 期待: なし
 Get-NetFirewallRule -DisplayName 'Yagura*' -ErrorAction SilentlyContinue # 期待: 0 件
 Test-Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Yagura"  # 期待: False
+Test-Path "$env:PUBLIC\Desktop\Yagura.url"                               # 期待: False(Issue #131 のデスクトップショートカットも残置しない)
 Test-Path "$env:ProgramFiles\Yagura"                                     # 期待: False
 Test-Path C:\ProgramData\Yagura\yagura.db                                # 期待: True(ログは資産 = 保持が設計)
 ```

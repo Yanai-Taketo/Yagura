@@ -11,12 +11,15 @@
       2. Windows サービス "Yagura" が Running になるまで待機
       3. インストール状態の証拠採取(ファイアウォール規則 3 本 = 各系統 1 本・
          プロファイルが Domain+Private 複合で Public/Any を含まないこと・
-         データルート・firewall-rules.ini)
+         データルート・firewall-rules.ini・
+         スタートメニューの「Yagura 管理」・デスクトップの「Yagura」閲覧ショートカット。
+         後者 2 つは Issue #131 = 管理画面への入口)
       4. UDP 514 へ syslog テストメッセージ送出 → 閲覧リスナ(既定 http://localhost:8514/)の
          HTML に RunId トークンが現れることを確認
       5. アンインストール(msiexec /x /qn)
       6. 残置物確認(サービス消滅・ファイアウォール規則消滅・スタートメニュー消滅・
-         データルート保持 = 設計どおり。installer/README.md の責務表参照)
+         デスクトップショートカット消滅・データルート保持 = 設計どおり。
+         installer/README.md の責務表参照)
 
     照合は必ず ASCII トークン(RunId)で行う。日本語本文の照合は en-US CI の
     コードページ(CP437)で文字化けして誤判定するため使用しない(旧リポジトリ PR #42 実障害)。
@@ -93,6 +96,13 @@ $script:DataRoot = Join-Path $env:ProgramData 'Yagura'
 $script:ForwarderDir = Join-Path $script:DataRoot 'forwarder'
 $script:InstallDir = Join-Path $env:ProgramFiles 'Yagura'
 $script:StartMenuDir = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Yagura'
+# デスクトップの閲覧ショートカット(Issue #131)。MSI は Scope="perMachine"(ALLUSERS=1)の
+# ため、DesktopFolder は "All Users" プロファイル配下(%PUBLIC%\Desktop)に解決される
+# (learn.microsoft.com/windows/win32/msi/desktopfolder「If an "All Users" profile exists
+# and the ALLUSERS property is set, then this property is set to the folder in the
+# "All Users" profile.」、確認日 2026-07-09)。
+$script:PublicDesktopShortcut = Join-Path $env:PUBLIC 'Desktop\Yagura.url'
+$script:StartMenuAdminShortcut = Join-Path $script:StartMenuDir 'Yagura 管理.url'
 $script:FirewallDisplayNames = @(
     'Yagura Syslog (UDP 514)',
     'Yagura Syslog (TCP 514)',
@@ -404,6 +414,7 @@ try {
         # -------------------------------------------------------------------
         if ($DryRun) {
             Add-SkippedStep -Name 'installed-state-evidence' -Reason 'dry-run: would record firewall rules (incl. Domain/Private profile check) / data root / firewall-rules.ini'
+            Add-SkippedStep -Name 'shortcut-evidence' -Reason 'dry-run: would check start menu admin shortcut and desktop viewer shortcut'
         }
         else {
             [void](Invoke-E2EStep -Name 'installed-state-evidence' -Action {
@@ -437,6 +448,26 @@ try {
                     throw ('firewall-rules.ini not found in data root: {0}' -f $iniPath)
                 }
                 return ('firewall rules present with Domain+Private profile ({0} rules: {1}), data root and firewall-rules.ini present' -f $rules.Count, ($ruleNames -join '; '))
+            })
+
+            # 管理画面への入口(Issue #131): スタートメニューの「Yagura 管理」(無条件)と
+            # デスクトップの「Yagura」(閲覧 UI。既定 ON の opt-in)がインストールされていること。
+            [void](Invoke-E2EStep -Name 'shortcut-evidence' -Action {
+                if (-not (Test-Path -Path $script:StartMenuAdminShortcut)) {
+                    throw ('start menu admin shortcut not found: {0}' -f $script:StartMenuAdminShortcut)
+                }
+                $adminContent = Get-Content -Path $script:StartMenuAdminShortcut -Raw
+                if ($adminContent -notmatch [regex]::Escape('URL=http://localhost:8515/admin')) {
+                    throw ('start menu admin shortcut does not target http://localhost:8515/admin: {0}' -f $script:StartMenuAdminShortcut)
+                }
+                if (-not (Test-Path -Path $script:PublicDesktopShortcut)) {
+                    throw ('desktop viewer shortcut not found (default ON, YAGURA_DESKTOP_SHORTCUT=1 expected): {0}' -f $script:PublicDesktopShortcut)
+                }
+                $desktopContent = Get-Content -Path $script:PublicDesktopShortcut -Raw
+                if ($desktopContent -notmatch [regex]::Escape('URL=http://localhost:8514/')) {
+                    throw ('desktop viewer shortcut does not target http://localhost:8514/: {0}' -f $script:PublicDesktopShortcut)
+                }
+                return ('start menu admin shortcut and desktop viewer shortcut present with expected URLs')
             })
         }
 
@@ -522,6 +553,7 @@ try {
             Add-SkippedStep -Name 'residue-service-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-firewall-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-startmenu-removed' -Reason 'dry-run'
+            Add-SkippedStep -Name 'residue-desktop-shortcut-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-dataroot-retained' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-forwarder-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-installdir-removed' -Reason 'dry-run'
@@ -552,6 +584,16 @@ try {
                     throw ('start menu folder still present: {0}' -f $script:StartMenuDir)
                 }
                 return 'start menu folder removed'
+            })
+
+            # デスクトップの閲覧ショートカット(Issue #131)は DesktopFolder(%PUBLIC%\Desktop)
+            # 直下に単体ファイルとして置かれる(専用サブフォルダを作らない設計)ため、
+            # フォルダ消滅ではなくファイル消滅そのものを確認する。
+            [void](Invoke-E2EStep -Name 'residue-desktop-shortcut-removed' -ContinueOnFailure $true -Action {
+                if (Test-Path -Path $script:PublicDesktopShortcut) {
+                    throw ('desktop viewer shortcut still present: {0}' -f $script:PublicDesktopShortcut)
+                }
+                return 'desktop viewer shortcut removed'
             })
 
             [void](Invoke-E2EStep -Name 'residue-dataroot-retained' -ContinueOnFailure $true -Action {

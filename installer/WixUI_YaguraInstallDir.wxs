@@ -1,14 +1,16 @@
 <!--
-  Yagura 用ダイアログ列: WixUI_InstallDir に YaguraFirewallDlg を挿入したもの。
+  Yagura 用ダイアログ列: WixUI_InstallDir に YaguraFirewallDlg / YaguraShortcutDlg を挿入したもの。
 
   公式のカスタマイズ手順(docs.firegiant.com/wix/tools/wixext/wixui/
   「Adding and removing dialogs from a dialog set」、確認日 2026-07-06)に従い、
   wixtoolset/wix v7.0.0 の src/ext/UI/wixlib/WixUI_InstallDir.wxs を複製して
-  Id を改名し、InstallDirDlg と VerifyReadyDlg の間に YaguraFirewallDlg を挿入した。
+  Id を改名し、InstallDirDlg と VerifyReadyDlg の間に YaguraFirewallDlg と
+  YaguraShortcutDlg(Issue #131。オーナー決定 2026-07-09「案A フル構成」)を挿入した。
 
   初回インストールのダイアログ列:
-    WelcomeDlg → LicenseAgreementDlg → InstallDirDlg → YaguraFirewallDlg → VerifyReadyDlg
-  メンテナンス列・パッチ列は原本のまま(YaguraFirewallDlg は初回のみ)。
+    WelcomeDlg → LicenseAgreementDlg → InstallDirDlg → YaguraFirewallDlg →
+    YaguraShortcutDlg → VerifyReadyDlg
+  メンテナンス列・パッチ列は原本のまま(YaguraFirewallDlg / YaguraShortcutDlg は初回のみ)。
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
     <?foreach WIXUIARCH in X86;X64;A64 ?>
@@ -44,6 +46,7 @@
             <DialogRef Id="ResumeDlg" />
             <DialogRef Id="UserExit" />
             <DialogRef Id="YaguraFirewallDlg" />
+            <DialogRef Id="YaguraShortcutDlg" />
 
             <!-- 完了画面: チェックボックス ON なら閲覧 URL を既定ブラウザで開いてから閉じる
                  (custom action は Package.wxs の LaunchYaguraViewer)。 -->
@@ -62,15 +65,19 @@
             <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
             <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
 
-            <!-- 挿入した YaguraFirewallDlg の前後遷移。 -->
+            <!-- 挿入した YaguraFirewallDlg / YaguraShortcutDlg の前後遷移。 -->
             <Publish Dialog="YaguraFirewallDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
-            <Publish Dialog="YaguraFirewallDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+            <!-- 原本(VerifyReadyDlg へ直行)を YaguraShortcutDlg 経由に差し替え。 -->
+            <Publish Dialog="YaguraFirewallDlg" Control="Next" Event="NewDialog" Value="YaguraShortcutDlg" />
+
+            <Publish Dialog="YaguraShortcutDlg" Control="Back" Event="NewDialog" Value="YaguraFirewallDlg" />
+            <Publish Dialog="YaguraShortcutDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
 
             <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" />
             <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" />
 
-            <!-- 原本では InstallDirDlg へ戻るところを YaguraFirewallDlg へ差し替え。 -->
-            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="YaguraFirewallDlg" Order="1" Condition="NOT Installed" />
+            <!-- 原本では InstallDirDlg へ戻るところを YaguraShortcutDlg へ差し替え。 -->
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="YaguraShortcutDlg" Order="1" Condition="NOT Installed" />
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
 
