@@ -24,7 +24,7 @@
 | `install.ps1` | サイレント導入(MSI 無人導入 → 設定配置 → サービス登録・遅延自動起動 → 起動確認)。**このキットでは宛先が設定済みのため引数不要** |
 | `uninstall.ps1` | 撤去(サービス削除 + 設定削除。`-RemoveFluentBit` で MSI も削除) |
 | `fluent-bit-yagura.conf` | 転送設定(宛先・ポート・チャネルは生成時に置換済み) |
-| `winevt-severity.lua` | イベントログの Level → syslog severity 変換フィルタ |
+| `winevt-severity.lua` | イベントログの Level → syslog severity 変換、Keywords(監査成功/失敗)の severity 反映、チャネル → facility 変換を行うフィルタ |
 | `GENERATED.txt` | 生成時のメタデータ(生成日時・宛先・チャネル・版の来歴) |
 
 ## 導入手順

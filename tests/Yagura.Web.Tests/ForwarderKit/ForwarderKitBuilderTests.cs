@@ -50,6 +50,39 @@ public sealed class ForwarderKitBuilderTests
     }
 
     [Fact]
+    public void Build_ConfEntry_HasSyslogFacilityKey()
+    {
+        // Issue #154: facility をチャネル別に付与するため、out_syslog に
+        // Syslog_Facility_Key を渡す必要がある(Lua 側が SyslogFacility を record へ設定する)。
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var conf = ReadEntry(archive, "fluent-bit-yagura.conf");
+
+        Assert.Contains("Syslog_Facility_Key SyslogFacility", conf);
+    }
+
+    [Fact]
+    public void Build_LuaEntry_HandlesAuditFailureKeywordAndChannelFacility()
+    {
+        // Issue #153 / #154: Lua フィルタが Keywords の Audit Failure ビットと
+        // チャネル別 facility を扱っていることを、生成キットに封入された実体で確認する
+        // (Lua 自体の実行結果は単体テストの対象外——lab 検証が必要。conventions.md)。
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var lua = ReadEntry(archive, "winevt-severity.lua");
+
+        Assert.Contains("has_audit_failure_keyword", lua);
+        Assert.Contains("SyslogFacility", lua);
+        Assert.Contains("channel_to_facility", lua);
+    }
+
+    [Fact]
     public void Build_ReadmeEntry_HasSubstitutedValuesAndNoPlaceholders()
     {
         var request = CreateRequest();
