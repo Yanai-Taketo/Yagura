@@ -1,13 +1,15 @@
-# ADR-0009: アーキテクチャ対応拡張 — x64 に加えて ARM64・x86 を採用
+# ADR-0009: アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用）
 
 - 状態: proposed
 - 日付: 2026-07-09
 - 決定者: YANAI Taketo
-- 関連: [Issue #123](https://github.com/Yanai-Taketo/Yagura/issues/123)（起票・現状調査）/ [ADR-0001](0001-project-founding.md)（目的——手軽な導入）/ [ADR-0002](0002-architecture-principles.md)（アーキテクチャ原則）/ [ADR-0005](0005-oss-packaging.md)（README 等入口文書）/ [ADR-0008](0008-forwarder-kit-generation.md)（フォワーダ配布キット・Fluent Bit 検証済み版の運用）/ `Directory.Build.props`・`Directory.Packages.props`・`installer/Yagura.Installer.wixproj`・`installer/Package.wxs`・`.github/workflows/ci.yml`
+- 関連: [Issue #123](https://github.com/Yanai-Taketo/Yagura/issues/123)（起票・現状調査）/ [ADR-0001](0001-project-founding.md)（目的——手軽な導入・品質原則）/ [ADR-0002](0002-architecture-principles.md)（アーキテクチャ原則）/ [ADR-0005](0005-oss-packaging.md)（README 等入口文書）/ [ADR-0008](0008-forwarder-kit-generation.md)（フォワーダ配布キット・Fluent Bit 検証済み版の運用）/ `Directory.Build.props`・`Directory.Packages.props`・`installer/Yagura.Installer.wixproj`・`installer/Package.wxs`・`.github/workflows/ci.yml`
 
 ## 文脈と課題
 
-Yagura は現在 **x64 のみ**をビルド・配布対象としている（`installer/Yagura.Installer.wixproj` の `InstallerPlatform=x64` 固定・`dotnet publish -r win-x64 --self-contained true` ハードコード、CI は `windows-latest`＝x64 のみ）。Issue #123 は「古い Windows Server（32-bit を含む）や Windows on ARM でも手軽に syslog 集約を試せるようにする」ことを動機に、ARM64・x86 への対応拡張を提起した。オーナーは 2026-07-09、**x64 に加えて ARM64・x86 の両方を採用する**方針を決定した。本 ADR はこの決定を記録し、各アーキテクチャの位置づけ・検証水準・実現方針・段階導入計画を定める。
+Yagura は現在 **x64 のみ**をビルド・配布対象としている（`installer/Yagura.Installer.wixproj` の `InstallerPlatform=x64` 固定・`dotnet publish -r win-x64 --self-contained true` ハードコード、CI は `windows-latest`＝x64 のみ）。Issue #123 は「古い Windows Server（32-bit を含む）や Windows on ARM でも手軽に syslog 集約を試せるようにする」ことを動機に、ARM64・x86 への対応拡張を提起した。
+
+本 ADR の初稿（2026-07-09）は 3 アーキ（x64/ARM64/x86）採用で起案したが、ペルソナレビュー（PR #166 の 5 コメント）と、起案時に判明した前提の訂正（下記）を踏まえ、オーナーは同日 **スコープを「x64 + ARM64」に縮小し、x86 は不採用とする**決定を行った。x86 の判断根拠は「検討した選択肢」に却下案として記録し、再評価トリガを付す。
 
 Issue #123 の実ファイル調査（`550475b` 時点）によれば、コード層の障壁は低い（`Directory.Build.props` に `RuntimeIdentifier`/`PlatformTarget` の指定がなく、publish 時の `-r` で決まる）。一方、実質の足かせは MSI/WiX・CI/リリースパイプライン・ネイティブ依存（SQLite・SqlClient）のアーキ別解決・フォワーダ配布キットの Fluent Bit アーキ対応にある。Issue はまた「arm64 / x86 の self-contained publish 実機検証は未完」と明記しており（検証環境の SDK feature band 不一致が理由）、本 ADR の起案時点でもこの実機検証は行っていない。
 
@@ -28,20 +30,16 @@ conventions.md の実体検証原則に従い、.NET 10 の Windows サポート
 - **Windows Server の ARM64 版は現時点で一般提供（GA）されていない**。Windows Server 2025 の ARM64 は Insider Preview チャネルのみで、オンプレミス向け GA の発表はない（Microsoft Q&A「Windows Server on Arm64」・TechCommunity のインサイダー議論、確認日 2026-07-09）
 - **Windows Server の 32-bit（x86）版は Windows Server 2008 が最後**であり、後継の Server 2008 R2（2009 年）以降は 64-bit のみ。Server 2008 自体のサポートは 2011 年に終了している（endoflife.date、確認日 2026-07-09）
 
-したがって、Issue #123 が動機として挙げた「古い Windows Server（32-bit を含む）」への ARM64/x86 対応は、**.NET 10 自体がその組み合わせをサポートしない**ため技術的に成立しない。本 ADR はこの事実を踏まえ、ARM64・x86 の対象環境を「Windows Server」ではなく「**Windows 11/10 のクライアント OS**」と明確に再定義する（下記「決定 2」）。この訂正は Issue 起票時点の想定を修正するものであり、批判的レビュー（クリス視点）に照らして起案文書に明記する。
+したがって、Issue #123 が動機として挙げた「古い Windows Server（32-bit を含む）」への ARM64/x86 対応は、**.NET 10 自体がその組み合わせをサポートしない**ため技術的に成立しない。本 ADR は ARM64 の対象環境を「Windows Server」ではなく「**Windows 11/10 のクライアント OS**」と明確に再定義する（決定 2）。この訂正は Issue 起票時点の想定を修正するものである。
 
 ## 検討した選択肢
 
 ### 対応アーキテクチャの範囲
 
-- **(A) ARM64 のみ採用**: Issue #123 は「開発機が既に ARM64 のため優先度・実現性ともに高い」と評価していた。x86 は 32-bit Windows Server の EOL 進行を理由に見送る案。却下（オーナー決定）——x86 の対象を「レガシー Server」ではなく「レガシー・省リソースなクライアント PC での試用」に再定義すれば、実現コストに見合う価値が残ると判断
-- **(B) x64 + ARM64 + x86 の 3 アーキ採用（採用案）**: オーナー決定どおり全採用。ただし 3 アーキを**同格**（同一 SLA・同一検証水準）とはしない——x64 を主、ARM64・x86 を副とする非対称な位置づけにする（決定 2）
-- **(C) 全アーキを同格の実機 E2E 保証で扱う**: 却下。Windows Server の ARM64 が GA されていない現状で ARM64 の実機 lab を Server 環境に対して回す意味がない（GA 前に投資しても検証対象自体が存在しない）。x86 についても現行 Windows Server に対象がないため同様。コスト（lab 環境・CI 時間・保守範囲）に見合わない
-
-### x86 の対象環境の再定義
-
-- **(a) 「32-bit Windows Server」を目標に据え続ける**: 却下——上記のとおり .NET 10 が非対応であり、目標自体が技術的に不成立
-- **(b) 「Windows 10/11 の x86 クライアント + ごく小規模な試用・検証用途」に限定（採用）**: 現実に存在し .NET 10 がサポートする組み合わせに対象を合わせる。既定の運用規模（大量ログ・長期保持）は明確に非推奨とする
+- **(A) 現状維持（x64 のみ）——Issue #123 を保留/クローズ**: Issue の当初動機（老朽 Windows Server への導入）が技術的に不成立と判明した以上、最有力の比較基準となる選択肢（ペルソナレビュー クリスの指摘を受けて初稿から追加）。却下理由——ARM64 に限っては動機の消滅後も次の実利が残る: ①開発機自体が Windows 11 ARM64 であり、現状は win-x64 バイナリを x64 エミュレーションで実行している（Issue #123 調査）。ネイティブ ARM64 ビルドは dogfooding の品質を直接上げる。②Windows on Arm クライアント機は試用・エッジ用途で現実に存在し、Fluent Bit も公式に winarm64 ビルドを提供済み（決定 7 の実体検証）——エコシステム側の足場が既に揃っている。③実現コストが低い（コード層の障壁なし・`windows-11-arm` ホストランナーが public リポジトリで無料）。この 3 点は x86 には当てはまらない（選択肢 C）
+- **(B) x64 + ARM64 の 2 アーキ採用（採用案）**: x64 を主、ARM64 を副とする非対称な位置づけ（決定 2）
+- **(C) x64 + ARM64 + x86 の 3 アーキ採用（初稿案・却下）**: 却下理由——①x86 の当初動機（32-bit Windows Server）は .NET 10 非対応で不成立。②代替根拠として置いた「レガシー・省リソースなクライアント PC での試用」には**需要の一次情報（利用者からの要望・Issue へのリアクション等）が存在しない**（ペルソナレビュー クリスの指摘どおり、技術検証は厳密に行ったのに需要検証は無検証だった）。③32-bit プロセスのメモリ上限（既定 2GB）は、有限キュー・受信バッファ・GC ヒープが同一アドレス空間を奪い合う本製品の構造上、OOM クラッシュ——すなわち「カウンタに計上されない喪失」（architecture.md §4.4 が認める限界）——の発生確率を構造的に高める（ペルソナレビュー 鈴木の指摘）。「ログを失わない」を品質原則に置く製品が、原則の劣化する環境を無需要のまま増やす理由がない。④保守コスト（リリースマトリクス・スモーク・メモリ上限系の注意書き）は需要ゼロでも恒常的に発生する。**再評価トリガ**: クライアント OS での x86 需要が一次情報として具体的に確認された場合、x86 採用を別 ADR で再評価する（「先送りにする場合の再評価トリガ」参照）
+- **(D) 全アーキを同格の実機 E2E 保証で扱う**: 却下。Windows Server の ARM64 が GA されていない現状で ARM64 の実機 lab を Server 環境に対して回す意味がない（GA 前に投資しても検証対象自体が存在しない）。コスト（lab 環境・CI 時間・保守範囲）に見合わない
 
 ### ARM64 の対象環境の再定義
 
@@ -50,90 +48,105 @@ conventions.md の実体検証原則に従い、.NET 10 の Windows サポート
 
 ### CI のアーキ別実行基盤
 
-- **(a) GitHub ホスト `windows-11-arm` ランナーを使う（採用）**: Yagura リポジトリは public（`Yanai-Taketo/Yagura`、確認済み）であり、public リポジトリの標準ホストランナー（`windows-11-arm` 含む）は無料枠で利用できる（[GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)、確認日 2026-07-09）。x86 は専用ランナーを要さない——x64 ランナー上で `dotnet publish -r win-x86` のクロス publish、および WOW64 経由の実行スモークが可能（x64 Windows は x86 バイナリをネイティブに実行できる）
+- **(a) GitHub ホスト `windows-11-arm` ランナーを使う（採用）**: Yagura リポジトリは public（`Yanai-Taketo/Yagura`、確認済み）であり、public リポジトリの標準ホストランナー（`windows-11-arm` 含む）は無料枠で利用できる（[GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)、確認日 2026-07-09）。ただし並行実行枠・キュー待ち時間などのスループット特性は未検証であり、リリース作業の所要時間への影響は Phase 1 で実測して記録する（委任事項 6）
 - **(b) セルフホストランナーを構築する**: 却下——個人運営規模（conventions.md のブランチ保護運用と同じ前提）で保守コストに見合わない。GitHub ホストランナーで足りる
 
 ## 決定
 
-**選択肢 B（x64・ARM64・x86 の 3 アーキ採用）+ x86 対象環境の再定義 (b) + ARM64 対象環境の再定義 (b) + CI は GitHub ホストランナー**を採用する。
+**選択肢 B（x64・ARM64 の 2 アーキ採用）+ ARM64 対象環境の再定義 (b) + CI は GitHub ホストランナー**を採用する。
 
-### 決定 1: 対応アーキテクチャは x64・ARM64・x86 の 3 種
+### 決定 1: 対応アーキテクチャは x64・ARM64 の 2 種
 
-`win-x64` / `win-arm64` / `win-x86` はいずれも .NET のポータブル RID として有効である（[.NET Runtime Identifier (RID) catalog](https://learn.microsoft.com/en-us/dotnet/core/rid-catalog) の「Windows RIDs」節に 3 つとも明記。確認日 2026-07-09）。ARM（32-bit）は対象外とする——.NET が Windows 32-bit ARM ランタイムを提供しないため（Issue #123 の調査どおり。RID カタログにも `win-arm` の記載はない）。
+`win-x64` / `win-arm64` はいずれも .NET のポータブル RID として有効である（[.NET Runtime Identifier (RID) catalog](https://learn.microsoft.com/en-us/dotnet/core/rid-catalog) の「Windows RIDs」節に明記。確認日 2026-07-09）。x86 は不採用（選択肢 C の却下理由と再評価トリガを参照）。ARM（32-bit）は対象外——.NET が Windows 32-bit ARM ランタイムを提供しないため（Issue #123 の調査どおり。RID カタログにも `win-arm` の記載はない）。
 
-### 決定 2: 3 アーキは非対称な位置づけとする
+### 決定 2: 2 アーキは非対称な位置づけとし、サポート水準を明文化する
 
-| アーキ | 対象環境 | 想定利用者・用途 | 検証水準 |
-|---|---|---|---|
-| **x64** | Windows Server 全般 + Windows 10/11 クライアント | 本番運用の主対象（現行どおり） | 実機 lab E2E を維持（installer-e2e.yml・M9-3 lab 相当） |
-| **ARM64** | **Windows 11 on Arm 等のクライアント OS**（Windows Server の ARM64 は GA されていないため対象外。再評価トリガ参照） | Arm デバイスでの試用・開発機での動作確認・小規模エッジ用途 | ビルド成立 + 起動・受信・閲覧までのスモークテスト（`windows-11-arm` ホストランナー上、または実機）。実機 lab E2E は当面 x64 のみとし、需要が確認できた段階で引き上げを再評価する |
-| **x86** | **Windows 10/11 の x86 クライアント SKU**（現行 Windows Server に x86 版は存在しないため Server 運用は対象外と明記する） | レガシー PC・省リソース環境でのごく小規模な試用・検証用途 | ビルド成立 + スモークテスト（x64 ランナー上のクロス publish + WOW64 実行）。実機 lab E2E は対象外（x64 lab 環境で代替検証しない） |
+| アーキ | 対象環境 | 想定利用者・用途 | 利用者向け表記 | 検証水準 |
+|---|---|---|---|---|
+| **x64** | Windows Server 全般 + Windows 10/11 クライアント | 本番運用の主対象（現行どおり） | 対応（Supported） | 実機 lab E2E・CI 回帰ベンチを維持 |
+| **ARM64** | **Windows 11 on Arm 等のクライアント OS**（Windows Server の ARM64 は GA されていないため対象外。再評価トリガ参照） | Arm デバイスでの試用・開発機での動作確認・小規模エッジ用途 | **試験的（Experimental）** | ビルド成立 + 起動・受信・閲覧 + **観測性カウンタの出力確認** + **スプール発動→drain 追いつきの 1 サイクル実機通過**（Phase 1 完了条件）。実機 lab E2E・回帰ベンチは対象外 |
 
-x64 を「主」、ARM64・x86 を「副」とする理由: (1) Windows Server 上の本番運用が Yagura の中核想定利用者（ADR-0001）であり x64 以外では実現できない、(2) ARM64・x86 の対象がクライアント OS の試用・小規模用途に限られる以上、実機 Server lab を割く投資対効果が薄い、(3) 実機検証コストを「主」に集中させることで、x64 の品質を落とさずに対応範囲を広げられる。
+**サポート水準（どこまでを約束するか）の定義**（ペルソナレビュー クリス・佐藤の指摘を受けて明文化）:
+
+- **設計原則は全アーキ共通**: ADR-0001 の品質原則（ログを失わない・失った場合に必ず観測できる）は ARM64 でも設計上の原則として適用される。アーキによって「観測できない喪失を許容する」ことはしない
+- **検証の裏付けが非対称**: x64 は実機 lab E2E・回帰ベンチで原則の成立を継続検証する。ARM64 は上記スモーク水準までしか検証しない——「原則が成立するはず」の設計は共通だが、成立の**実測保証**は x64 にしかない
+- **不具合対応**: ARM64 固有の不具合報告は受け付け、再現・修正を試みるが、修正の優先度・リリース時期は x64 品質の維持を優先して判断する（修正 SLA は約束しない）
+- **利用者向け表記**: README・ダウンロード導線・Release Notes では ARM64 を「試験的（Experimental）」と表記し、「対応（Supported）」の x64 と視覚的に区別する（委任事項 7）。実機 lab E2E への引き上げ（=「対応」への昇格）は、Windows Server ARM64 の GA または ARM64 需要の具体的確認を条件に再評価する（再評価トリガ）
+
+x64 を「主」、ARM64 を「副」とする理由: (1) Windows Server 上の本番運用が Yagura の中核想定利用者（ADR-0001）であり x64 以外では実現できない、(2) ARM64 の対象がクライアント OS の試用・小規模用途に限られる以上、実機 Server lab を割く投資対効果が薄い、(3) 実機検証コストを「主」に集中させることで、x64 の品質を落とさずに対応範囲を広げられる。
 
 ### 決定 3: ネイティブ依存の対応状況（実体検証）
 
-- **Microsoft.Data.SqlClient 7.0.2**: 公式リリースノートに `.NET 8.0+ (Windows x86, Windows x64, Windows ARM, Windows ARM64, Linux, macOS)` と明記されている（[dotnet/SqlClient releases](https://github.com/dotnet/SqlClient/releases)、確認日 2026-07-09）。ネイティブ SNI（`Microsoft.Data.SqlClient.SNI.runtime`）は x64・x86・ARM64（および ARM）向けの `Microsoft.Data.SqlClient.SNI.{arch}.dll` を同梱する（`dotnet/core` issue #6749 の記述で確認）。**3 アーキとも対応が明記されている**
-- **Microsoft.Data.Sqlite 10.0.9 / SQLitePCLRaw.lib.e_sqlite3 3.50.3**: 公式ドキュメントに RID を列挙する単一ページは見つからなかった（検証の限界として明記）。ただし複数の Microsoft Q&A スレッドが `runtimes\win-x86\native\e_sqlite3.dll`・`runtimes\win-arm64\native\e_sqlite3.dll` を当然存在するパスとして扱っており（確認日 2026-07-09）、パッケージが win-x64/win-x86/win-arm64 のネイティブ資産を同梱している状況証拠は得られた。**しかし `dotnet publish -r win-arm64 --self-contained true` / `-r win-x86 --self-contained true` を実行し、restore/publish がネイティブ資産を実際に解決できることの実機検証は、本 ADR の起案時点で未実施**（Issue #123 と同じ理由——検証環境の SDK feature band 不一致）。この検証を実装着手前のゲート条件とする（決定 6・委任事項 1）
+- **Microsoft.Data.SqlClient 7.0.2**: 公式リリースノートに `.NET 8.0+ (Windows x86, Windows x64, Windows ARM, Windows ARM64, Linux, macOS)` と明記されている（[dotnet/SqlClient releases](https://github.com/dotnet/SqlClient/releases)、確認日 2026-07-09）。ネイティブ SNI（`Microsoft.Data.SqlClient.SNI.runtime`）は x64・x86・ARM64（および ARM）向けの `Microsoft.Data.SqlClient.SNI.{arch}.dll` を同梱する（`dotnet/core` issue #6749 の記述で確認）。**ARM64 対応が公式に明記されている**
+- **Microsoft.Data.Sqlite 10.0.9 / SQLitePCLRaw.lib.e_sqlite3 3.50.3**: 公式ドキュメントに RID を列挙する単一ページは見つからなかった（検証の限界として明記）。ただし複数の Microsoft Q&A スレッドが `runtimes\win-arm64\native\e_sqlite3.dll` を当然存在するパスとして扱っており（確認日 2026-07-09）、パッケージが win-arm64 のネイティブ資産を同梱している状況証拠は得られた。**しかし `dotnet publish -r win-arm64 --self-contained true` を実行し、restore/publish がネイティブ資産を実際に解決できることの実機検証は、本 ADR の起案時点で未実施**（Issue #123 と同じ理由——検証環境の SDK feature band 不一致）。この検証を実装着手前のゲート条件とする（決定 6 Phase 0・委任事項 1）
 
 ### 決定 4: MSI/WiX のアーキ別ビルド方針
 
 - `installer/Yagura.Installer.wixproj` の `InstallerPlatform` と `dotnet publish -r`・`--self-contained` を MSBuild プロパティでパラメータ化する（例: `-p:YaguraArch=arm64` で `InstallerPlatform=arm64`・`-r win-arm64` を連動させる）。WiX の `InstallerPlatform` は x86/x64/arm64 の 3 値を公式にサポートする（v4/v5 系のドキュメント記述。実ビルドでの確証は委任事項 2 で固定する）
-- `installer/Package.wxs` の `StandardDirectory Id="ProgramFiles64Folder"` は x64・ARM64 では現行どおり（ARM64 でも 64-bit 版 Program Files を使う）。**x86 では `ProgramFilesFolder`（32-bit Program Files）への分岐が必要**（Issue #123 の指摘どおり）
-- リリース成果物の命名にアーキを機械可読に含める（例 `Yagura-0.3.0-x64.msi` / `Yagura-0.3.0-arm64.msi` / `Yagura-0.3.0-x86.msi`）。既存の x64 単体配布との後方互換のため、当面 x64 は無サフィックス名も維持するかは実装 PR で確定する（委任事項 2）
+- `installer/Package.wxs` の `StandardDirectory Id="ProgramFiles64Folder"` は x64・ARM64 とも現行どおり（ARM64 でも 64-bit 版 Program Files を使う）。x86 不採用により `ProgramFilesFolder`（32-bit Program Files）への分岐は不要になった
+- **リリース成果物の命名は全アーキで明示サフィックスとする**（例 `Yagura-0.3.0-x64.msi` / `Yagura-0.3.0-arm64.msi`）。x64 の無サフィックス名は**維持しない**——「開かずに棚卸しできる」機械可読な識別性（ADR-0008 設計条件 9 と同じ判断基準）を優先し、命名の一貫性を後方互換より上に置く（ペルソナレビュー 佐藤の指摘を受けて本 ADR で方向を確定。公開済みリリースの資産はリネームしない——公開済みタグの再 push 禁止と同じ不変原則）
+- **誤ったアーキの MSI を実行した場合の利用者体験**（例: x64 マシンで ARM64 MSI をダブルクリック）を実装 PR で実機確認し、エラーメッセージが利用者が自力で状況を理解できる水準にあるか（必要ならローンチコンディションの追加）を確定する（ペルソナレビュー 佐藤の指摘。委任事項 2）
 
 ### 決定 5: CI/リリースパイプラインの拡張方針
 
-- 現行 `ci.yml`（PR ごとの単一ビルド・単体テスト・回帰ベンチ）は **x64 のまま維持**する（本 ADR は CI の主目的である「マージ前の品質ゲート」を多アーキ化しない——回帰ベンチの基準値は x64 CI ランナーで確定済みであり、他アーキに同じ基準を持ち込む根拠がない）
-- **リリース用ワークフローを新設**し、タグ発行時に x64・ARM64・x86 の RID マトリクスで publish + MSI ビルドを行う。ARM64 のビルド自体は x64 ランナー上でのクロス publish で足りるが、**起動・受信・閲覧のスモークテストは実アーキ上で行う**——ARM64 は `windows-11-arm` ホストランナー（public リポジトリで無料）、x86 は x64 ランナー上での WOW64 実行で代替する
+- 現行 `ci.yml`（PR ごとの単一ビルド・単体テスト・回帰ベンチ）は **x64 のまま維持**する（本 ADR は CI の主目的である「マージ前の品質ゲート」を多アーキ化しない——回帰ベンチの基準値は x64 CI ランナーで確定済みであり、他アーキに同じ基準を持ち込む根拠がない）。ただし**ネイティブ依存（SQLite・SqlClient 等）に触れる変更を含む PR に対して `dotnet publish -r win-arm64` の成立のみを確認する軽量チェック**の追加を検討事項として委任事項 6 に含める（ペルソナレビュー 鈴木・リサの指摘——ARM64 の破損がタグ発行まで検知されない構造の緩和）
+- **リリース用ワークフローを新設**する（`ci.yml` とは別ファイル。トリガはタグ push + 手動 dispatch の両対応を想定——確定は実装 PR）。x64・ARM64 の RID マトリクスで publish + MSI ビルドを行う。ARM64 のビルド自体は x64 ランナー上でのクロス publish で足りるが、**起動・受信・閲覧・カウンタ出力のスモークテストは `windows-11-arm` ホストランナー（実アーキ）上で行う**
+- **脆弱性スキャンの適用範囲**: 依存パッケージの脆弱性スキャン（conventions.md の CI 規約）は、新設リリースワークフローの **x64・ARM64 いずれの publish 出力に含まれるネイティブ依存にも適用する**（ペルソナレビュー 田中の指摘——アーキ別ネイティブアセンブリを「スキャン対象外のバイナリ」にしない）。NuGet 監査（`NuGetAuditMode=all`）は restore 時に依存グラフ全体を見るが、リリースワークフロー側でも監査が有効であることを受け入れ条件に含める（委任事項 6）
+- **緊急パッチ時の運用**: 重大 CVE 対応等の緊急リリースでは **x64 を先行リリースし、ARM64 は後追いで提供してよい**（ペルソナレビュー 田中の指摘を受けて明文化）。平時のリリースは 2 アーキ同時を原則とするが、緊急時に「全アーキ揃うまで待つ」ことで主対象（x64）の修正配布を遅らせない
 - `installer-e2e.yml` 相当の重い E2E（実機同等シナリオ）は当面 x64 のみに残す（決定 2 の検証水準表と整合）
+- **コード署名（Authenticode）**: 現時点で Yagura はリリース MSI への Authenticode 署名の方針を定めていない（既存 ADR にも規定なし——「検討していない」のではなく「未着手」であることをここに明示する。ペルソナレビュー 田中の指摘）。署名方針の確立はアーキ数に依存しない独立の論点として本 ADR の範囲外とし、委任事項 8 に登録する（導入時は全アーキ成果物への適用を設計に含める）
 
 ### 決定 6: 段階導入計画
 
-Issue #123 の未検証事項（ネイティブ依存の実機 publish 検証）を踏まえ、次の順で進める。各フェーズはゲートを通過してから次へ進む:
+Issue #123 の未検証事項（ネイティブ依存の実機 publish 検証）を踏まえ、次の順で進める。**Phase 0 の完了を、ARM64 配布物（MSI・Release 資産）の公開および入口文書での対応表明の前提条件とする**——本 ADR が accepted になっても、Phase 0 を通過するまで利用者向けに「ARM64 対応（試験的）」を表明しない（ペルソナレビュー クリス・鈴木・田中の指摘——「検証前に承認だけ先に取る」構造と「利用者が誤った信頼水準で導入する」リスクへの対処。Phase 0 が失敗した場合、本 ADR は supersession で見直す）。
 
-1. **Phase 0（ゲート）**: SDK feature band を揃えた環境で `dotnet publish -r win-arm64 --self-contained true` / `-r win-x86 --self-contained true` を実行し、SQLite ネイティブ資産（`e_sqlite3.dll`）と SqlClient ネイティブ資産（`Microsoft.Data.SqlClient.SNI.{arch}.dll`）が publish 出力に含まれ、起動・DB 接続まで成功することを確認する。**失敗した場合は本 ADR の計画自体を見直す**（再評価トリガ参照）
-2. **Phase 1（ARM64 先行）**: MSI/WiX のパラメータ化・リリースワークフローのマトリクス化を ARM64 から着手する（開発機が ARM64 であり実機動作確認がしやすいため。Issue #123 の評価どおり）。`windows-11-arm` ランナーでのスモーク確立を含む
-3. **Phase 2（x86）**: Phase 1 の枠組み（パラメータ化済みの wixproj・リリースワークフロー）を x86 へ展開する。`ProgramFilesFolder` 分岐・x86 向け推奨既定値（決定 7）を確定する
-4. **Phase 3（フォワーダキット拡張）**: ADR-0008 のキット生成が前提とする Fluent Bit MSI 検出パターン（`fluent-bit-*-win64.msi`）を ARM64・x86 へ拡張する（決定 8）。Yagura サーバ本体のアーキ対応とは独立に進行可能なため、Phase 1/2 と並行できる
-5. **Phase 4（ドキュメント・入口文書）**: README のシステム要件表・ダウンロード導線をアーキ別に更新する（ADR-0005 の入口文書更新原則）
+1. **Phase 0（ゲート）**: SDK feature band を揃えた環境で `dotnet publish -r win-arm64 --self-contained true` を実行し、次の**客観的合否基準**をすべて満たすことを確認する（ペルソナレビュー リサ・鈴木の指摘を受けて基準と記録様式を明文化）:
+   - **事前確認**: `global.json`（`10.0.301` + `rollForward: latestFeature`）を検証環境の `dotnet --version` が解決できること。Issue #123 はこの feature band 不一致で検証に着手できなかった——同じ罠を踏まないため、この確認自体を手順の第一歩に置く
+   - publish が成功し、出力に `e_sqlite3.dll`（win-arm64 native）と `Microsoft.Data.SqlClient.SNI.arm64.dll` が含まれること
+   - ARM64 実機（開発機）で Yagura.Host が起動し、SQLite 既定構成で受信 → 保存 → 閲覧到達まで成功すること
+   - 観測性カウンタ（architecture.md §4.1）が出力されること
+   - **実施記録を PR body に残す**（conventions.md の実体検証記録と同じ作法: 実施日・SDK バージョン・実行コマンド・確認結果の要点）。後から来る貢献者が「ゲート通過済みか」を PR 履歴から機械的に判別できるようにする
+   - 失敗した場合は本 ADR の計画自体を見直す（再評価トリガ参照）。**x64 のリリーススケジュールには影響しない**——Phase 0 は ARM64 系統のみのゲートであり、x64 の現行パイプラインは本 ADR の全期間を通じて無変更で維持される（ペルソナレビュー 佐藤の質問への明文回答）
+2. **Phase 1（ARM64 ビルド・リリース基盤）**: MSI/WiX のパラメータ化（決定 4）・リリースワークフローの新設（決定 5）・`windows-11-arm` ランナーでのスモーク確立。**完了条件**: ①スモーク（起動・受信・閲覧・カウンタ出力）の通過、②**スプール発動 → drain 追いつきの 1 サイクルを ARM64 実アーキ上で通過させる**（ペルソナレビュー 鈴木の指摘——バックプレッシャ経路は高負荷でしか発火せず、静的スモークだけでは「未検証のまま埋め込まれた欠陥」と「副ゆえ許容する劣化」を区別できない）、③**Release Notes テンプレートに検証水準の非対称性の定型文言（決定 2 の表の要約 + 本 ADR へのリンク）を追加してから、最初の ARM64 MSI を公開する**（ペルソナレビュー 田中の指摘——README 全面更新（Phase 3）を待たずに配布物と告知を同期させる）
+3. **Phase 2（フォワーダキット拡張）**: ADR-0008 のキット生成が前提とする Fluent Bit MSI 検出パターンのアーキ対応（決定 7）。Yagura サーバ本体のアーキ対応とは独立に進行可能なため、Phase 1 と並行できる
+4. **Phase 3（ドキュメント・入口文書）**: README のシステム要件表・ダウンロード導線をアーキ別に更新する（ADR-0005 の入口文書更新原則。委任事項 7）
 
-### 決定 7: x86 の制約と推奨既定値
+Phase の順序は 0 → 1 が厳密な依存関係（ゲート）。Phase 2 は Phase 1 と独立・並行可。Phase 3 の全面更新は Phase 1 完了後だが、Release Notes 水準の告知（Phase 1 完了条件③）を配布物公開に必ず先行させる。
 
-32-bit プロセスはユーザーモード仮想アドレス空間が既定で 2GB に制限される（`IMAGE_FILE_LARGE_ADDRESS_AWARE` フラグを立てても最大 4GB。.NET ランタイムが自動でこのフラグを立てるかは実装 PR で確認する）。Yagura は受信バッファ・スプール・SQLite の in-process 動作を持つため、x86 でのメモリ上限は大量ログ保持・長期スプールに直接影響する。本 ADR の時点では具体的な既定値（スプールサイズ上限・保持日数の推奨値）を確定しない——**実装 PR で x86 実機の負荷試験を行い、推奨既定値と警告文言（インストーラ・configuration.md）を確定すること**を委任事項とする（委任事項 3）。ドキュメント上は「x86 は小規模・試用目的。大量ログの本番運用には x64 を推奨する」という位置づけを明記する。
+### 決定 7: フォワーダ配布キット（Fluent Bit）のアーキ対応
 
-### 決定 8: フォワーダ配布キット（Fluent Bit）のアーキ対応
-
-Fluent Bit は公式に Windows 32-bit（`win32`）・64-bit（`win64`）・ARM64（`winarm64`）の EXE・ZIP・MSI をすべて提供している（v5.0.8 時点。[Fluent Bit Windows downloads](https://docs.fluentbit.io/manual/installation/downloads/windows)、確認日 2026-07-09）。ADR-0008 のキット生成機能が前提とする MSI 検出パターン `fluent-bit-*-win64.msi`（設計条件 9）は win64 のみを対象としており、ARM64/x86 の送信端末向けにキットを生成するには、検出パターン・生成 UI・利用者ガイドをアーキ対応に拡張する必要がある。これは ADR-0008 の amendment または別途委任事項として扱う（委任事項 4）——本 ADR は「Fluent Bit 側の公式提供状況」の実体検証までを担い、キット生成側の実装方針の確定は委任する。
+Fluent Bit は公式に Windows 32-bit（`win32`）・64-bit（`win64`）・ARM64（`winarm64`）の EXE・ZIP・MSI をすべて提供している（v5.0.8 時点。[Fluent Bit Windows downloads](https://docs.fluentbit.io/manual/installation/downloads/windows)、確認日 2026-07-09）。ADR-0008 のキット生成機能が前提とする MSI 検出パターン `fluent-bit-*-win64.msi`（設計条件 9）は win64 のみを対象としており、ARM64 の**送信端末**向けにキットを生成するには、検出パターン・生成 UI・利用者ガイドのアーキ対応拡張が必要になる。なお**送信端末のアーキはサーバ本体のアーキと独立の論点**である——x86 クライアント端末向けの Fluent Bit は win32 MSI が公式提供されており、サーバ側の x86 不採用とは切り離して要否を判断できる。この拡張は ADR-0008 の amendment または別 ADR として扱う（委任事項 4）。その際、**複数アーキの MSI が配置フォルダに混在し得ることによる誤アーキ配布**（例: ARM64 端末向けキットに win64 MSI を同梱してしまう）への牽制（ファイル名からのアーキ判定と不一致警告）の要否を検討に含める（ペルソナレビュー 田中の指摘）。本 ADR は「Fluent Bit 側の公式提供状況」の実体検証までを担い、キット生成側の実装方針の確定は委任する。
 
 ## 帰結
 
-- **良くなること**: Windows on Arm・レガシー x86 PC でも Yagura を試用できるようになり、ADR-0001 の「手軽な導入」目標に資する。x64 の本番運用品質（実機 lab・CI 回帰ベンチ）は変更せず維持される
+- **良くなること**: Windows on Arm クライアントで Yagura をネイティブ実行できるようになり、開発機（ARM64）での dogfooding 品質も直接向上する。x64 の本番運用品質（実機 lab・CI 回帰ベンチ）は変更せず維持される。x86 を見送ったことで、需要の裏付けがないアーキの恒常保守コスト（リリースマトリクスの拡大・メモリ上限系の注意書き・低速実機との乖離説明）を負わずに済む
 - **悪くなること（受け入れるトレードオフ）**:
-  - CI/リリースパイプラインが複雑化する（RID マトリクス・アーキ別成果物）。保守対象が 3 倍になる
-  - サポート行列の説明責任が増える——「ARM64/x86 は Windows Server 非対応」という非直感的な制約を README・インストーラ・ガイドで一貫して明記し続ける必要がある（誤解による問い合わせ・誤設置の温床になりうる）
-  - x86 は大量ログ運用に不向きであるという注意書きの保守が必要になる（決定 7）
-  - フォワーダキットのアーキ対応（決定 8）は本体のアーキ対応と別の実装負担であり、ADR-0008 の変更半径をさらに広げる
+  - CI/リリースパイプラインが複雑化する（RID マトリクス・アーキ別成果物・アーキ別スモーク）。保守対象が 2 倍になる
+  - サポート行列の説明責任が増える——「ARM64 は Windows Server 非対応・クライアント OS 限定・試験的」という非直感的な制約を README・インストーラ・ガイドで一貫して明記し続ける必要がある（誤解による問い合わせ・誤設置の温床になりうる）
+  - x86 需要が将来顕在化した場合、本 ADR の判断を再評価する往復コストが発生する（再評価トリガで機械的に拾う）
+  - フォワーダキットのアーキ対応（決定 7）は本体のアーキ対応と別の実装負担であり、ADR-0008 の変更半径をさらに広げる
 - **リスク**:
-  - Phase 0 のネイティブ依存実機検証（SQLite の win-arm64/win-x86 資産解決）が失敗した場合、ARM64・x86 対応の実現可能性そのものが揺らぐ。本 ADR はこの検証を「ゲート」として明記しているが、**検証未了のまま本 ADR が accepted になる**——起案時点の技術的検証と実装着手時の検証に時間差があることを明記しておく
-  - Windows Server の ARM64 が将来 GA された場合、「ARM64 はクライアント限定」という決定 2 の前提が変わる。放置すると古い ADR の記述と実態が乖離する（再評価トリガで対処）
-  - WiX `InstallerPlatform=arm64`/`x86` の実ビルド挙動（`ProgramFiles64Folder` 分岐・`Wix4UtilCA_X64` などアーキ依存の内部参照名の扱い）は本 ADR では机上調査に留まる。実装 PR で ICE 検証・実ビルドを通すまで未確定要素が残る
+  - Phase 0 のネイティブ依存実機検証（SQLite の win-arm64 資産解決）が失敗した場合、ARM64 対応の実現可能性そのものが揺らぐ。ADR が accepted でも**配布物公開は Phase 0 通過が前提条件**（決定 6）のため利用者に誤った期待を与える窓は塞いだが、「accepted なのに実装が進まない ADR」が残る可能性はある（その場合は supersession で処理する）
+  - Windows Server の ARM64 が将来 GA された場合、「ARM64 はクライアント限定・試験的」という決定 2 の前提が変わる。放置すると古い ADR の記述と実態が乖離する（再評価トリガで対処）
+  - WiX `InstallerPlatform=arm64` の実ビルド挙動（`Wix4UtilCA_X64` などアーキ依存の内部参照名の扱いを含む）は本 ADR では机上調査に留まる。実装 PR で ICE 検証・実ビルドを通すまで未確定要素が残る
+  - ARM64 クライアントデバイスは省電力 SoC から高性能チップまで性能幅が大きく、x64 で確定した持続流量の実測値（architecture.md §7 の M 系）は ARM64 に転用できない。「試験的」表記はこの限界の告知でもあるが、ARM64 でのサイジング指針の欠如は残る（委任事項 3 で最低限の実測を行う。ペルソナレビュー 鈴木の指摘）
 
 ## 先送りにする場合の再評価トリガ
 
-- **Windows Server が ARM64 版を一般提供（GA）した場合**: ARM64 の対象環境を「クライアント限定」から「Server 込み」へ拡大するか、実機 lab E2E を ARM64 にも適用するかを再評価する
-- **Phase 0 のネイティブ依存実機検証（SQLite・SqlClient の win-arm64/win-x86 資産解決）が失敗した場合**: 本 ADR の段階導入計画（決定 6）を見直す。失敗が SQLite 側の構造的な制約であれば、当該アーキでの DB provider 既定を SQLite から別の選択肢へ変更する検討も含める
-- **x86 の試用フィードバックが一定期間（次回 v0.x リリース準備時を目安）ないか、需要が実質的にないと判明した場合**: x86 サポートの縮小・撤回（決定 1 の反転）を検討する。これは既定を反転させる判断のため、その場合は supersession とする（docs/adr/README.md の判定基準どおり）
-- **ARM64/x86 のいずれかで CI・リリースパイプラインの保守コストが継続的に本体開発を圧迫すると判断された場合**: 段階導入計画の該当フェーズを凍結し、次リリースへ先送りするかを再評価する
+- **Windows Server が ARM64 版を一般提供（GA）した場合**: ARM64 の対象環境を「クライアント限定」から「Server 込み」へ拡大するか、実機 lab E2E を ARM64 にも適用する（=「試験的」から「対応」へ昇格させる）かを再評価する
+- **Phase 0 のネイティブ依存実機検証（SQLite・SqlClient の win-arm64 資産解決）が失敗した場合**: 本 ADR の段階導入計画（決定 6）を見直す。失敗が SQLite 側の構造的な制約であれば、当該アーキでの DB provider 既定を SQLite から別の選択肢へ変更する検討も含める。ADR 自体の見直しは supersession とする
+- **クライアント OS での x86 需要が一次情報として具体的に確認された場合**（独立した利用者からの要望・Issue へのリアクション等）: x86 採用（選択肢 C の再評価）を別 ADR で起案する。その際は 32-bit メモリ上限が「計上されない喪失」の確率に与える影響（選択肢 C 却下理由③）への対処設計を必須要件とする
+- **ARM64 の CI・リリースパイプラインの保守コストが継続的に本体開発を圧迫する場合**: 目安として「リリース準備作業の所要が ARM64 追加によって従来比 2 倍を超える状態が 2 リリース連続で続く」または「ARM64 スモークの失敗（製品起因でないランナー・環境起因を含む）がリリース公開を 2 回連続で遅延させる」を発動条件とし（ペルソナレビュー クリスの指摘を受けて定量化）、該当したら ARM64 リリースの頻度引き下げ（x64 と同時 → 主要リリースのみ）や凍結を再評価する
 
 ## 委任事項の一覧(追跡用)
 
-| # | 委任事項 | 委任先 | 内容 |
-|---|---|---|---|
-| 1 | ネイティブ依存の実機 publish 検証（Phase 0 ゲート） | 実装 PR | SDK feature band を揃えた環境で `dotnet publish -r win-arm64 / win-x86 --self-contained true` を実行し、SQLite・SqlClient のネイティブ資産解決と起動・DB 接続の成功を確認・記録する |
-| 2 | WiX/wixproj のアーキ別パラメータ化の実装細目 | 実装 PR | `InstallerPlatform`・publish RID の連動、`ProgramFiles64Folder`/`ProgramFilesFolder` 分岐、成果物命名規則（x64 の後方互換命名の要否を含む）、ICE 検証・実ビルドでの確証 |
-| 3 | x86 向け推奨既定値・警告文言の確定 | 実装 PR + configuration.md | x86 実機の負荷試験に基づくスプール上限・保持日数の推奨値、インストーラ・ドキュメントでの警告文言 |
-| 4 | フォワーダキットの Fluent Bit 検出パターンのアーキ拡張 | ADR-0008 の amendment または別 ADR + 実装 PR | `fluent-bit-*-win64.msi` 検出パターンを ARM64（`winarm64`）・x86（`win32`）へ拡張する設計・実装。利用者ガイド・生成 README テンプレートとの整合を含む |
-| 5 | ARM64 実機 lab 検証の受け入れ条件の具体化 | configuration.md / operations.md 相当 | Phase 1 完了時点でのスモークテスト項目・合否基準を明文化する |
-| 6 | CI リリースワークフローの新設 | `.github/workflows/` + 実装 PR | RID マトリクスビルド・`windows-11-arm` ランナーの実導入・成果物アップロード・SHA256 添付（conventions.md のリリース規約に準拠） |
-| 7 | README・入口文書のアーキ対応記述 | README 等入口文書（ADR-0005） | システム要件表・ダウンロード導線をアーキ別に整理し、「ARM64/x86 は Windows Server 非対応・クライアント OS 限定」を明記する |
+| # | 委任事項 | Phase | 委任先 | 内容 |
+|---|---|---|---|---|
+| 1 | ネイティブ依存の実機 publish 検証（Phase 0 ゲート） | 0 | 実装 PR | 決定 6 Phase 0 の客観的合否基準（publish 成功・ネイティブ資産の存在・実機起動・受信〜閲覧・カウンタ出力）の実施と PR body への記録。SDK feature band の事前確認（`global.json` 解決確認）を手順の第一歩に含める |
+| 2 | WiX/wixproj のアーキ別パラメータ化の実装細目 | 1 | 実装 PR | `InstallerPlatform`・publish RID の連動、成果物命名（全アーキ明示サフィックス）、ICE 検証・実ビルドでの確証、**誤アーキ MSI 実行時の利用者体験の実機確認**（エラーメッセージの分かりやすさ。必要ならローンチコンディション追加） |
+| 3 | ARM64 の持続流量実測とサイジング指針 | 1 | 実装 PR + architecture.md | ARM64 実機で M 系相当の縮小版実測（持続流量・スプール発動→drain の 1 サイクル）を行い、「試験的」の裏付けとなる最低限のサイジング目安を記録する。x64 の CI 回帰ベンチ基準値は流用しない |
+| 4 | フォワーダキットの Fluent Bit 検出パターンのアーキ拡張 | 2 | ADR-0008 の amendment または別 ADR + 実装 PR | `fluent-bit-*-win64.msi` 検出パターンの ARM64（`winarm64`）拡張（x86 端末向け win32 はサーバ側 x86 不採用と独立に要否を判断）。**複数アーキ MSI 混在時の誤配布への牽制（アーキ判定・不一致警告）の要否検討**を含む。利用者ガイド・生成 README テンプレートとの整合も対象 |
+| 5 | ARM64 スモーク受け入れ条件の具体化 | 1 | 実装 PR + 全体設計書 | スモーク項目（起動・受信・閲覧・**カウンタ出力の正しさ**）と合否基準・記録様式を明文化する |
+| 6 | CI リリースワークフローの新設 | 1 | `.github/workflows/` + 実装 PR | 別ファイル・タグ push + 手動 dispatch、RID マトリクスビルド、`windows-11-arm` ランナー実導入（スループット特性の実測記録を含む）、成果物アップロード・SHA256 添付（conventions.md 準拠）、**publish 出力のネイティブ依存を含む脆弱性スキャン/監査の有効化**、**ネイティブ依存に触れる PR への `dotnet publish -r win-arm64` 軽量チェック追加の検討**（採否は実装 PR 判断でよいが検討結果を記録する） |
+| 7 | README・入口文書のアーキ対応記述 | 3（告知定型文は 1） | README 等入口文書（ADR-0005） | システム要件表・ダウンロード導線のアーキ別整理。「ARM64 は Windows Server 非対応・クライアント OS 限定・**試験的**」の明記、**自分の環境のアーキを確認する方法の案内**（設定 > システム > バージョン情報等）と「迷ったら x64」の一文（ペルソナレビュー 佐藤の指摘）。Release Notes テンプレートの非対称性定型文言は Phase 1 完了条件（決定 6）として先行させる |
+| 8 | リリース成果物のコード署名（Authenticode）方針 | 独立 | 別 ADR または ADR-0005 の amendment | 署名の要否・証明書の入手と鍵管理・リリースワークフローへの組み込み。アーキ数に依存しない独立論点だが、導入時は全アーキ成果物への適用を設計に含める |
