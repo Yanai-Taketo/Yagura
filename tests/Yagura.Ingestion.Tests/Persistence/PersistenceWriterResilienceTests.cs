@@ -162,5 +162,11 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+
+        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+
+        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
     }
 }

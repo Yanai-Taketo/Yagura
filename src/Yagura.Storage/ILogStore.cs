@@ -177,4 +177,71 @@ public interface ILogStore
         int limit,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
+
+    // ------------------------------------------------------------------
+    // M8-5（Issue #159）で追加した読み取り専用 2 操作。database.md §1.2「契約拡張の予約」
+    // (b) 集計の追加実体化——重大度分布（平常時からの逸脱検知）と受信量上位の送信元
+    // （Top talkers。フラッディング検知）。ダッシュボードに従来欠けていた 2 視点を満たす。
+    // いずれも書き込みを行わない。
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 観測窓内の重大度別件数を集計して返す（重大度分布。M8-5/Issue #159）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>窓の必須化と性能上の理由</b>: Severity 列には索引が無く（Issue #145 で追跡中の
+    /// 既知の制約）、無条件の集計は大規模時にフルスキャンへ劣化し得る。本操作は
+    /// <paramref name="from"/>・<paramref name="to"/> を必須引数とし、索引済みの
+    /// <see cref="LogRecord.ReceivedAt"/> 範囲へ先に絞り込んでから集計することで、
+    /// スキャン対象行数を観測窓の幅に限定する——複合索引の追加そのものは Issue #145 の
+    /// 範囲であり、本操作はそれとは独立に「窓の必須化」で大規模時の劣化を抑える設計とする。
+    /// </para>
+    /// <para>
+    /// PRI が解析できず <see cref="LogRecord.Severity"/> が未設定（null）のレコードも
+    /// 1 バケットとして返す（解析失敗の事実を隠さない——§5.3 と同じ向き）。
+    /// </para>
+    /// </remarks>
+    /// <param name="from">観測窓の下限（UTC、含む）。</param>
+    /// <param name="to">観測窓の上限（UTC、含む）。</param>
+    /// <param name="timeout">クエリの実行時間上限。</param>
+    /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
+    Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 観測窓内の受信量上位の送信元（Top talkers）を集計して返す（フラッディング検知。
+    /// M8-5/Issue #159）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><see cref="QuerySourceActivityAsync"/> との違い</b>: あちらは無音化検出のための
+    /// 全送信元・最終受信時刻の古い順の集計であり、**量の上位 N 抽出は不可**（UI-4 の制約。
+    /// ui.md §12 UI-4）。本操作はその逆に「量の上位 N」を返す集計であり、UI-4 の制約に
+    /// 抵触しないよう<b>別メソッド・ダッシュボードの別セクション</b>として追加する
+    /// （無音化検出の全送信元一覧を上位 N 表示に置き換えない）。
+    /// </para>
+    /// <para>
+    /// 窓の必須化の理由は <see cref="QuerySeverityDistributionAsync"/> と同じ
+    /// （Issue #145——SourceAddress 列にも索引が無く、無条件集計はフルスキャンへ劣化し得る）。
+    /// </para>
+    /// <para>
+    /// 並び順は件数降順。同数の場合は <see cref="SourceActivity.SourceAddress"/> の
+    /// 昇順で決定的にする。
+    /// </para>
+    /// </remarks>
+    /// <param name="from">観測窓の下限（UTC、含む）。</param>
+    /// <param name="to">観測窓の上限（UTC、含む）。</param>
+    /// <param name="limit">返却する送信元数の上限（必須）。</param>
+    /// <param name="timeout">クエリの実行時間上限。</param>
+    /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
+    Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default);
 }

@@ -17,3 +17,11 @@ public sealed record SourceActivity(
     string SourceAddress,
     DateTimeOffset LastReceivedAt,
     long RecordCount);
+
+/// <summary>
+/// 観測窓内の重大度別件数（database.md §1.2「契約拡張の予約」(b) 集計の追加実体化。
+/// M8-5/Issue #159）。ダッシュボードの重大度分布（ui.md §4）の入力。
+/// </summary>
+/// <param name="Severity">syslog PRI の severity（0〜7）。PRI が解析できなかったレコードは null。</param>
+/// <param name="Count">この重大度（または未解析）の観測窓内の件数。</param>
+public sealed record SeverityCount(int? Severity, long Count);

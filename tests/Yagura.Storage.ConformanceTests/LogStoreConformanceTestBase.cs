@@ -860,4 +860,125 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Single(activity);
         Assert.Equal("192.0.2.1", activity[0].SourceAddress);
     }
+
+    // ------------------------------------------------------------------
+    // M8-5 追加の読み取り専用 2 操作（ILogStore の同名メソッドの doc コメント参照。
+    // database.md §1.2「契約拡張の予約」の追加実体化——重大度分布・受信量上位の送信元。
+    // Issue #159）
+    // ------------------------------------------------------------------
+
+    [SkippableFact]
+    public async Task QuerySeverityDistributionAsync_AggregatesCountsPerSeverityWithinWindow()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-5), "10.0.0.1", "err-1", severity: 3),
+            CreateParsedRecord(baseline.AddMinutes(-4), "10.0.0.1", "err-2", severity: 3),
+            CreateParsedRecord(baseline.AddMinutes(-3), "10.0.0.2", "info-1", severity: 6),
+            // 観測窓の外(古すぎる)——集計に含まれないこと。
+            CreateParsedRecord(baseline.AddHours(-2), "10.0.0.1", "too-old", severity: 3),
+        ]);
+
+        var distribution = await Store.QuerySeverityDistributionAsync(
+            from: baseline.AddMinutes(-10),
+            to: baseline,
+            timeout: TimeSpan.FromSeconds(30));
+
+        Assert.Equal(2, distribution.Count);
+        var severity3 = Assert.Single(distribution, d => d.Severity == 3);
+        Assert.Equal(2, severity3.Count);
+        var severity6 = Assert.Single(distribution, d => d.Severity == 6);
+        Assert.Equal(1, severity6.Count);
+    }
+
+    [SkippableFact]
+    public async Task QuerySeverityDistributionAsync_UnparsedSeverity_ReturnsNullBucket()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        var unparsed = new LogRecord(
+            ReceivedAt: baseline,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.ParseFailed,
+            Severity: null,
+            Message: "unparsed-pri");
+        await Store.WriteBatchAsync([unparsed]);
+
+        var distribution = await Store.QuerySeverityDistributionAsync(
+            from: baseline.AddMinutes(-1),
+            to: baseline.AddMinutes(1),
+            timeout: TimeSpan.FromSeconds(30));
+
+        var nullBucket = Assert.Single(distribution);
+        Assert.Null(nullBucket.Severity);
+        Assert.Equal(1, nullBucket.Count);
+    }
+
+    [SkippableFact]
+    public async Task QueryTopTalkersAsync_OrdersByCountDescendingWithinWindow()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            // 送信元 A: 3 件（最多）。送信元 B: 1 件。
+            CreateParsedRecord(baseline.AddMinutes(-5), "192.0.2.1", "a-1"),
+            CreateParsedRecord(baseline.AddMinutes(-4), "192.0.2.1", "a-2"),
+            CreateParsedRecord(baseline.AddMinutes(-3), "192.0.2.1", "a-3"),
+            CreateParsedRecord(baseline.AddMinutes(-2), "192.0.2.2", "b-1"),
+            // 観測窓の外——集計に含まれないこと。
+            CreateParsedRecord(baseline.AddHours(-3), "192.0.2.2", "too-old"),
+        ]);
+
+        var talkers = await Store.QueryTopTalkersAsync(
+            from: baseline.AddMinutes(-10),
+            to: baseline,
+            limit: 10,
+            timeout: TimeSpan.FromSeconds(30));
+
+        Assert.Equal(2, talkers.Count);
+        Assert.Equal("192.0.2.1", talkers[0].SourceAddress);
+        Assert.Equal(3, talkers[0].RecordCount);
+        Assert.Equal("192.0.2.2", talkers[1].SourceAddress);
+        Assert.Equal(1, talkers[1].RecordCount);
+    }
+
+    [SkippableFact]
+    public async Task QueryTopTalkersAsync_LimitCutsLowestVolumeSide()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-5), "192.0.2.1", "a-1"),
+            CreateParsedRecord(baseline.AddMinutes(-4), "192.0.2.1", "a-2"),
+            CreateParsedRecord(baseline.AddMinutes(-3), "192.0.2.2", "b-1"),
+        ]);
+
+        var talkers = await Store.QueryTopTalkersAsync(
+            from: baseline.AddMinutes(-10),
+            to: baseline,
+            limit: 1,
+            timeout: TimeSpan.FromSeconds(30));
+
+        // 打ち切りで残るのは「受信量が多い側」（QuerySourceActivityAsync とは逆方向の防御）。
+        Assert.Single(talkers);
+        Assert.Equal("192.0.2.1", talkers[0].SourceAddress);
+        Assert.Equal(2, talkers[0].RecordCount);
+    }
+
+    [SkippableFact]
+    public async Task QueryTopTalkersAsync_OutsideWindow_ExcludesRecords()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync([CreateParsedRecord(baseline.AddHours(-5), "192.0.2.1", "outside-window")]);
+
+        var talkers = await Store.QueryTopTalkersAsync(
+            from: baseline.AddMinutes(-10),
+            to: baseline,
+            limit: 10,
+            timeout: TimeSpan.FromSeconds(30));
+
+        Assert.Empty(talkers);
+    }
 }

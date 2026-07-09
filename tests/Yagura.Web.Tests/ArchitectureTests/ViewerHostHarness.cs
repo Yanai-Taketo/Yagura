@@ -168,6 +168,12 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
             => Task.FromResult((IReadOnlyList<SourceActivity>)new List<SourceActivity>());
+
+        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult((IReadOnlyList<SeverityCount>)new List<SeverityCount>());
+
+        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult((IReadOnlyList<SourceActivity>)new List<SourceActivity>());
     }
 
     private sealed class NoopStatusReader : Yagura.Abstractions.Observability.IYaguraSystemStatusReader

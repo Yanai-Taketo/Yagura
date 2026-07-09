@@ -5,18 +5,26 @@
 @implements IAsyncDisposable
 
 @*
-    ダッシュボード（ui.md §4。M8-3。Issue #70）: 健康状態の一目確認（状態帯は全画面共通の
-    骨格 = MainLayout 側に常設——ui.md §5.1「ダッシュボード最上部（および全画面の状態帯）」を
-    共通骨格 1 箇所で満たし、二重表示を避ける）・受信量の推移・送信元別の受信状況
-    （UI-4 無音化検出——最終受信時刻の古い順）・スプール/カウンタの現在値・保持期間の常時明示
-    （database.md §3）。
+    ダッシュボード（ui.md §4。M8-3。Issue #70。重大度分布・Top talkers = M8-5/Issue #159）:
+    健康状態の一目確認（状態帯は全画面共通の骨格 = MainLayout 側に常設——ui.md §5.1
+    「ダッシュボード最上部（および全画面の状態帯）」を共通骨格 1 箇所で満たし、二重表示を
+    避ける）・受信量の推移・重大度分布（平常時からの逸脱検知）・受信量上位の送信元
+    （Top talkers。フラッディング検知）・送信元別の受信状況（UI-4 無音化検出——最終受信時刻の
+    古い順）・スプール/カウンタの現在値・保持期間の常時明示（database.md §3）。
 
-    - 更新間隔は UI-2 の仮値（10 秒。重い集計——送信元別・受信量推移——は 60 秒ごと）
+    - 更新間隔は UI-2 の仮値（10 秒。重い集計——送信元別・受信量推移・重大度分布・
+      Top talkers——は 60 秒ごと）
     - ステール警告（YaguraStaleGuard）を組み込み、circuit 生存中に更新だけが止まった局面の
       文言出し分け（ui.md §5.2 の確定文言）は本画面が引き受ける
     - データ取得はホスト側の既存読み取り口（ILogStore・IYaguraSystemStatusReader）のみ。
       受信量推移は既存の検索 API（QueryAsync）からの導出であり、取得上限で打ち切られた場合は
       その旨を注記する（導出の限界を隠さない）
+    - **重大度分布・Top talkers の窓限定（Issue #145 への配慮）**: Severity・SourceAddress
+      列には索引が無く（Issue #145 で追跡中）、無条件の集計は大規模時にフルスキャンへ
+      劣化し得る。両集計は索引済みの ReceivedAt 範囲（直近 1 時間 = 受信量推移と同じ窓）
+      へ必須で絞り込んでから集計する——索引追加そのものは Issue #145 の範囲であり、
+      本画面はそれとは独立に「窓の必須化」で大規模時の劣化を抑える（ILogStore の
+      QuerySeverityDistributionAsync / QueryTopTalkersAsync の doc コメント参照）
 *@
 <PageTitle>Yagura — @UiText.NavDashboard</PageTitle>
 
@@ -82,6 +90,75 @@
             </MudText>
         }
     </YaguraCard>
+</div>
+
+<div class="mb-4">
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="5">
+            <YaguraCard Title="@UiText.SeverityDistributionTitle">
+                @if (_severityDistribution is null)
+                {
+                    <MudText Typo="Typo.body2">読み込み中です。</MudText>
+                }
+                else if (_severityDistribution.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" role="note">@UiText.SeverityDistributionNoData</MudText>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-2">
+                        @foreach (var bucket in _severityDistribution)
+                        {
+                            <div class="d-flex align-center gap-2">
+                                @if (bucket.Severity is { } severity)
+                                {
+                                    <YaguraSeverityChip Severity="@severity" />
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2">@UiText.SeverityDistributionUnparsedLabel</MudText>
+                                }
+                                <MudSpacer />
+                                <MudText Typo="Typo.body2">@FormatCount(bucket.Count)</MudText>
+                            </div>
+                        }
+                    </div>
+                }
+            </YaguraCard>
+        </MudItem>
+        <MudItem xs="12" md="7">
+            <YaguraCard Title="@UiText.TopTalkersTitle">
+                @if (_topTalkers is null)
+                {
+                    <MudText Typo="Typo.body2">読み込み中です。</MudText>
+                }
+                else if (_topTalkers.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" role="note">@UiText.TopTalkersNoData</MudText>
+                }
+                else
+                {
+                    <YaguraTable TItem="SourceActivity" Items="@_topTalkers" RowsPerPage="@TopTalkersLimit">
+                        <HeaderContent>
+                            <MudTh>@UiText.SourceColumnAddress</MudTh>
+                            <MudTh>@UiText.TopTalkersColumnCount</MudTh>
+                            <MudTh>@UiText.SourceColumnActions</MudTh>
+                        </HeaderContent>
+                        <RowTemplate Context="talker">
+                            <MudTd DataLabel="@UiText.SourceColumnAddress"><YaguraSourceAddress Address="@talker.SourceAddress" /></MudTd>
+                            <MudTd DataLabel="@UiText.TopTalkersColumnCount">@FormatCount(talker.RecordCount)</MudTd>
+                            <MudTd DataLabel="@UiText.SourceColumnActions">
+                                <MudButton Size="Size.Small"
+                                           Variant="Variant.Text"
+                                           StartIcon="@Icons.Material.Filled.Search"
+                                           Href="@SearchHrefFor(talker.SourceAddress)">@UiText.SourceSearchLinkLabel</MudButton>
+                            </MudTd>
+                        </RowTemplate>
+                    </YaguraTable>
+                }
+            </YaguraCard>
+        </MudItem>
+    </MudGrid>
 </div>
 
 <div id="sources" class="mb-4">
@@ -159,6 +236,11 @@
     private const int SourceLimit = 1_000;
     private const int OutageQueryLimit = 100;
 
+    // 重大度分布・Top talkers の窓は受信量推移と同じ ChartWindow を使う（Issue #145 への
+    // 配慮——索引済みの ReceivedAt 範囲へ絞り込んでから集計することでフルスキャンを避ける。
+    // ILogStore.QuerySeverityDistributionAsync / QueryTopTalkersAsync の doc コメント参照）。
+    private const int TopTalkersLimit = 10;
+
     private YaguraStaleGuard? _staleGuard;
     private PeriodicTimer? _timer;
     private Task? _refreshLoop;
@@ -182,6 +264,8 @@
     private IReadOnlyList<YaguraTimelineInterval> _chartOutages = [];
     private int? _volumeTruncatedCount;
     private IReadOnlyList<SourceActivity>? _sources;
+    private IReadOnlyList<SeverityCount>? _severityDistribution;
+    private IReadOnlyList<SourceActivity>? _topTalkers;
 
     protected override async Task OnInitializedAsync()
     {
@@ -294,10 +378,28 @@
         // 送信元別の受信状況（UI-4 無音化検出——最終受信時刻の古い順。集計は provider 側）。
         _sources = await LogStore.QuerySourceActivityAsync(SourceLimit, InternalQueryTimeout);
 
+        // 重大度分布（平常時からの逸脱検知）と Top talkers（受信量上位。フラッディング検知。
+        // Issue #159）——いずれも受信量推移と同じ窓（直近 1 時間）に限定する（Issue #145 の
+        // 索引欠如への配慮。ILogStore の doc コメント参照）。
+        var severityDistribution = await LogStore.QuerySeverityDistributionAsync(
+            _chartRangeStart, _chartRangeEnd, InternalQueryTimeout);
+        _severityDistribution = OrderSeverityDistribution(severityDistribution);
+        _topTalkers = await LogStore.QueryTopTalkersAsync(
+            _chartRangeStart, _chartRangeEnd, TopTalkersLimit, InternalQueryTimeout);
+
         // 保存済み件数（統計契約。database.md §1.2 契約 6）。
         var statistics = await LogStore.GetStatisticsAsync();
         _storedRecords = statistics.RecordCount;
     }
+
+    /// <summary>
+    /// 重大度分布の表示順（severity 昇順。PRI が解析できなかった null バケットは末尾）。
+    /// provider 側の GROUP BY は並び順を保証しないため、表示側で固定する。
+    /// </summary>
+    private static IReadOnlyList<SeverityCount> OrderSeverityDistribution(IReadOnlyList<SeverityCount> distribution) =>
+        distribution
+            .OrderBy(d => d.Severity ?? int.MaxValue)
+            .ToList();
 
     private static IReadOnlyList<YaguraTimelineBucket> BuildBuckets(
         IReadOnlyList<LogRecordSummary> records,
