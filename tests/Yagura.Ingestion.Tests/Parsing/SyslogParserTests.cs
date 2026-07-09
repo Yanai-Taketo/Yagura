@@ -74,11 +74,12 @@ public class SyslogParserTests
     }
 
     [Fact]
-    public void Parse_NonUtf8MessageBytes_ReturnsParseFailedWithRawPreserved()
+    public void Parse_NonUtf8MessageBytes_ReturnsParseFailedWithPriHeaderPreserved()
     {
         // PRI は正常だが、続くメッセージ部分に不正な UTF-8 バイト列 (単独の継続バイト) を含む。
         // "<34>" の直後は 3164 判別 (VERSION "1" + SP ではない) となるため 3164 の CONTENT として扱われ、
-        // 非 UTF-8 CONTENT は ParseFailed になる。
+        // 非 UTF-8 CONTENT は ParseFailed になる。ただし PRI は CONTENT より手前で確定済みのため、
+        // Facility/Severity は破棄しない（Issue #139）。
         var priBytes = Encoding.UTF8.GetBytes("<34>");
         var invalidUtf8 = new byte[] { 0x80, 0x81, 0xFE, 0xFF };
         var payload = priBytes.Concat(invalidUtf8).ToArray();
@@ -87,8 +88,9 @@ public class SyslogParserTests
         var record = SyslogParser.Parse(datagram);
 
         Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
-        Assert.Null(record.Facility);
-        Assert.Null(record.Severity);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Null(record.Message);
         Assert.Equal(payload, record.Raw);
     }
 
@@ -404,14 +406,52 @@ public class SyslogParserTests
     }
 
     [Fact]
-    public void Parse_Rfc5424_MalformedTimestamp_ReturnsParseFailed()
+    public void Parse_Rfc5424_MalformedTimestamp_ReturnsParseFailedWithHeaderPreserved()
     {
+        // TIMESTAMP の値だけが RFC 3339 として不正（時計設定が壊れた機器等）。TIMESTAMP の
+        // 変換より前に HOSTNAME・APP-NAME・PROCID・MSGID の 4 フィールドは確定済みのため
+        // 破棄しない（Issue #139。DeviceTimestamp のみ未設定）。
         var payload = "<34>1 not-a-timestamp mymachine.example.com su - ID47 -"u8.ToArray();
         var datagram = CreateDatagram(payload);
 
         var record = SyslogParser.Parse(datagram);
 
         Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Null(record.DeviceTimestamp); // 値が不正のため未設定
+        Assert.Equal("mymachine.example.com", record.Hostname);
+        Assert.Equal("su", record.AppName);
+        Assert.Null(record.ProcId); // NILVALUE
+        Assert.Equal("ID47", record.MsgId);
+        Assert.Null(record.StructuredData); // 失敗より後段のため未確定
+        Assert.Null(record.Message);
+        Assert.Equal(payload, record.Raw);
+    }
+
+    [Fact]
+    public void Parse_Rfc5424_NonSpaceAfterStructuredData_ReturnsParseFailedWithHeaderPreserved()
+    {
+        // STRUCTURED-DATA の直後は SP + MSG か終端でなければならない（RFC 5424 §6.1）。
+        // この構造違反の時点で HEADER と STRUCTURED-DATA は確定済みのため破棄しない
+        // （Issue #139）。
+        var payload = "<34>1 2003-10-11T22:14:15.003Z host app 123 ID1 [sdid@1 x=\"1\"]junk"u8.ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Equal(
+            new DateTimeOffset(2003, 10, 11, 22, 14, 15, 3, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("123", record.ProcId);
+        Assert.Equal("ID1", record.MsgId);
+        Assert.Equal("[sdid@1 x=\"1\"]", record.StructuredData);
+        Assert.Null(record.Message);
         Assert.Equal(payload, record.Raw);
     }
 
@@ -426,6 +466,67 @@ public class SyslogParserTests
         var record = SyslogParser.Parse(datagram);
 
         Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(payload, record.Raw);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #139: 非 UTF-8（CP932/Shift-JIS 等）本文でも解析済み HEADER を破棄しない
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_Rfc5424_NonUtf8MessageBytesWithFullHeader_PreservesHeaderFields()
+    {
+        // MSG のみが非 UTF-8（"テスト" の CP932/Shift-JIS バイト列）で、他の HEADER フィールドは
+        // すべて確定済み。従来はこの Envelope が Raw のみを保持し、確定済みの HOSTNAME 等が
+        // 全て失われていた（Issue #139）。
+        var header = "<34>1 2003-10-11T22:14:15.003Z host app 123 ID1 - "u8.ToArray();
+        var cp932Bytes = new byte[] { 0x83, 0x65, 0x83, 0x58, 0x83, 0x67 }; // "テスト" (CP932/Shift-JIS)
+        var payload = header.Concat(cp932Bytes).ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Equal(
+            new DateTimeOffset(2003, 10, 11, 22, 14, 15, 3, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("123", record.ProcId);
+        Assert.Equal("ID1", record.MsgId);
+        Assert.Null(record.StructuredData); // NILVALUE
+        Assert.Null(record.Message); // 非 UTF-8 のため安全に保持できず null
+        Assert.Equal(payload, record.Raw);
+    }
+
+    [Fact]
+    public void Parse_Rfc5424_NonUtf8StructuredData_PreservesHeaderFieldsButNotStructuredData()
+    {
+        // STRUCTURED-DATA の PARAM-NAME 部分に非 UTF-8 バイト列を含む。境界検出自体は
+        // '[' ']' '"' '\\' だけを見るため成功するが、切り出した SD の UTF-8 デコードには失敗する。
+        // この時点で HEADER の 5 フィールド + TIMESTAMP は確定済みのため破棄しない（Issue #139）。
+        var headerPrefix = "<34>1 2003-10-11T22:14:15.003Z host app 123 ID1 [sdid@1 "u8.ToArray();
+        var cp932Bytes = new byte[] { 0x83, 0x65, 0x83, 0x58, 0x83, 0x67 }; // "テスト" (CP932/Shift-JIS)
+        var headerSuffix = "=\"1\"]"u8.ToArray();
+        var payload = headerPrefix.Concat(cp932Bytes).Concat(headerSuffix).ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Equal(
+            new DateTimeOffset(2003, 10, 11, 22, 14, 15, 3, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("123", record.ProcId);
+        Assert.Equal("ID1", record.MsgId);
+        Assert.Null(record.StructuredData); // 非 UTF-8 のため安全に保持できず null
+        Assert.Null(record.Message);
         Assert.Equal(payload, record.Raw);
     }
 
@@ -652,6 +753,34 @@ public class SyslogParserTests
         var record = SyslogParser.Parse(datagram);
 
         Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(payload, record.Raw);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_Cp932Content_ReturnsParseFailedWithHeaderPreserved()
+    {
+        // Issue #139: 日本の旧来機器（古い L2/L3 スイッチ・UPS・複合機等）は syslog 本文を
+        // CP932/Shift-JIS で送ることが今なお現役。CONTENT が非 UTF-8 のため Message は安全に
+        // 保持できず ParseFailed になるが、TIMESTAMP・HOSTNAME・TAG（AppName）は CONTENT より
+        // 手前で確定済みのため破棄しない——従来はここも含め Raw のみが残り、特定ホストの
+        // CP932 ログを絞り込む検索すら不可能だった。
+        var header = "<13>Jan  1 00:00:00 host app: "u8.ToArray();
+        var cp932Bytes = new byte[] { 0x83, 0x65, 0x83, 0x58, 0x83, 0x67 }; // "テスト" (CP932/Shift-JIS)
+        var payload = header.Concat(cp932Bytes).ToArray();
+        var receivedAt = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(1, record.Facility);
+        Assert.Equal(5, record.Severity);
+        Assert.Equal(
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Null(record.Message); // 非 UTF-8 のため安全に保持できず null
         Assert.Equal(payload, record.Raw);
     }
 
