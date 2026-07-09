@@ -371,6 +371,157 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // スプールの定期自己検証（EventId 1009。architecture.md §3.2.5・Issue #152）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateOnce_FirstCall_InjectsSelfTestRecord_AndDrainAcknowledgesBeforeTimeout_DoesNotWarn()
+    {
+        var spool = await OpenSpoolSizedForRatioAsync(currentOfTen: 0);
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        await monitor.EvaluateOnceAsync();
+
+        // 1 回目の評価で投入される（初回は基準値の採種を待たず即座に投入する設計）。
+        Assert.True(spool.CurrentUsageBytes > 0);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
+
+        // drain が実際に読んで照合したことを模す: 投入したマーカーで通知する。
+        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segment = Assert.Single(segments);
+        var records = spool.ReadSegmentRecords(segment, out _);
+        var selfTestRecord = Assert.Single(records, r => r.Kind == SpoolRecordKind.SelfTest);
+        tracker.OnSelfTestRecordDrained(selfTestRecord.SelfTestMarker!);
+
+        // タイムアウト未満で再評価しても警告は出ない。
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestTimeout - TimeSpan.FromSeconds(1));
+        await monitor.EvaluateOnceAsync();
+
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestNeverDrained_TimesOut_WarnsWithEventId1009()
+    {
+        var spool = await OpenSpoolSizedForRatioAsync(currentOfTen: 0);
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        await monitor.EvaluateOnceAsync();
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
+
+        // drain が一切読まないまま（照合されないまま）タイムアウト時間が経過する。
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestTimeout);
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1009);
+        Assert.Contains("[spool-self-test-timeout]", record.Message);
+        Assert.Equal(LogLevel.Error, record.Level);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestTimeout_RepeatedWithinSuppressionWindow_WarnsOnce_ThenAgainAfterWindow()
+    {
+        var spool = await OpenSpoolSizedForRatioAsync(currentOfTen: 0);
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        await monitor.EvaluateOnceAsync();
+
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestTimeout);
+        await monitor.EvaluateOnceAsync();
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1009);
+
+        // 抑制窓内の再評価では再発火しない。
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        await monitor.EvaluateOnceAsync();
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1009);
+
+        // 抑制窓を超えたら再発火する。
+        timeProvider.Advance(ActiveNotificationConstants.SuppressionWindow);
+        await monitor.EvaluateOnceAsync();
+        Assert.Equal(2, collector.GetSnapshot().Count(r => r.Id.Id == 1009));
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestIntervalNotYetElapsed_DoesNotInjectAgain()
+    {
+        var spool = await OpenSpoolSizedForRatioAsync(currentOfTen: 0);
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        await monitor.EvaluateOnceAsync();
+        var usageAfterFirstInjection = spool.CurrentUsageBytes;
+        Assert.True(usageAfterFirstInjection > 0);
+
+        // 周期（仮値 1 日）未満の経過では再投入しない——drain していないため使用量は変化しない。
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestInterval - TimeSpan.FromMinutes(1));
+        await monitor.EvaluateOnceAsync();
+
+        Assert.Equal(usageAfterFirstInjection, spool.CurrentUsageBytes);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SpoolWriteFails_WarnsImmediately_WithoutWaitingForTimeout()
+    {
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+
+        // 上限 0 バイトのスプール——自己検証レコードの投入自体が QuotaExceeded で必ず失敗する。
+        var directory = Path.Combine(_spoolDirectory, $"zero-quota-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = directory, QuotaBytes = 0 }, out _);
+        Assert.NotNull(spool);
+        _openedSpools.Add(spool);
+
+        var monitor = CreateMonitor(spool, collector, out _, selfTestTracker: tracker);
+
+        await monitor.EvaluateOnceAsync();
+
+        // タイムアウト（仮値 10 分）を待たず、投入失敗の時点で即座に警告する。
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1009);
+        Assert.Contains("[spool-self-test-write-failed]", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SpoolNull_DoesNotInjectOrWarnAboutSelfTest()
+    {
+        var collector = new FakeLogCollector();
+        var monitor = CreateMonitor(spool: null, collector, out var timeProvider);
+
+        await monitor.EvaluateOnceAsync();
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestInterval + ActiveNotificationConstants.SelfTestTimeout);
+        await monitor.EvaluateOnceAsync();
+
+        // スプールなし（opt-out・縮退運転のいずれか）では自己検証自体を行わない——
+        // 既に別の通知（1001）でカバー済みの状態を重ねて警告しない。
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SpoolPresentButTrackerNotProvided_DoesNotInjectOrWarn()
+    {
+        // Program.cs の配線では spool と selfTestTracker は同時に null/非 null になる想定だが、
+        // 本クラス自体は selfTestTracker のみ null という構成でも安全側（無評価）に倒れることを
+        // 確認する。
+        var spool = await OpenSpoolSizedForRatioAsync(currentOfTen: 0);
+        var collector = new FakeLogCollector();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: null);
+
+        await monitor.EvaluateOnceAsync();
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestInterval + ActiveNotificationConstants.SelfTestTimeout);
+        await monitor.EvaluateOnceAsync();
+
+        Assert.Equal(0, spool.CurrentUsageBytes);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
+    }
+
+    // ------------------------------------------------------------------
     // Start/StopAsync のライフサイクル（周期ループが実際に評価を呼ぶこと）
     // ------------------------------------------------------------------
 
@@ -416,7 +567,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         out FakeTimeProvider timeProvider,
         IngestionMetrics? metrics = null,
         IMonitoredVolumeInfo? volumeInfo = null,
-        IExpressCapacityChecker? expressChecker = null)
+        IExpressCapacityChecker? expressChecker = null,
+        SpoolSelfTestTracker? selfTestTracker = null)
     {
         timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
         var ownedMetrics = metrics ?? new IngestionMetrics();
@@ -427,7 +579,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
             volumeInfo ?? new FakeMonitoredVolumeInfo(),
             expressChecker ?? new FakeExpressCapacityChecker(reading: null),
             timeProvider,
-            new FakeLogger<ActiveNotificationMonitor>(collector));
+            new FakeLogger<ActiveNotificationMonitor>(collector),
+            selfTestTracker);
     }
 
     /// <summary>

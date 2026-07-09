@@ -61,4 +61,22 @@ public static class ActiveNotificationConstants
     /// 「接近」の一般的な閾値として流用した）。
     /// </summary>
     public const double ExpressNearLimitRatio = 0.8;
+
+    /// <summary>
+    /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）が合成レコードを投入する周期
+    /// （仮値: 1 日 1 回。architecture.md §9 M-11 で既に確定済みの仮値をそのまま採用する）。
+    /// </summary>
+    public static readonly TimeSpan SelfTestInterval = TimeSpan.FromDays(1);
+
+    /// <summary>
+    /// 定期自己検証の合成レコードが、投入から drain に合流判定される（DB 書き込み直前で
+    /// 破棄される）までの期待時間（暫定値: 10 分。M-16）。drain は通常
+    /// <see cref="Yagura.Storage.Spool.SpoolConstants.DrainPollInterval"/>（仮値 200ms）周期で
+    /// アクティブセグメントを封止・列挙するため、健全な経路では数秒以内に合流判定される想定——
+    /// 本値は「一時的な Q2 高水位による drain 停止（§3.2.2 のヒステリシス）」程度の遅延は
+    /// 誤検知しない安全側の余裕を持たせつつ、経路の恒久的な破損（ACL 変化・パス不整合等）は
+    /// 1 周期（1 分。<see cref="PollInterval"/>）×数回のうちに検知できる値として選んだ
+    /// （実測未実施）。
+    /// </summary>
+    public static readonly TimeSpan SelfTestTimeout = TimeSpan.FromMinutes(10);
 }

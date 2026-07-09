@@ -105,6 +105,15 @@ public static class Program
             spoolDegraded = spool is null;
         }
 
+        // 定期自己検証（architecture.md §3.2.5。Issue #152）の投入・照合の橋渡し。投入
+        // （ActiveNotificationMonitor。下記）と照合（SpoolDrainCoordinator。IngestionPipeline
+        // 経由）が同一インスタンスを共有することで、「drain の実機構に読ませて照合する」を
+        // 実現する。スプールが無い（opt-out・縮退運転のいずれか）場合は投入対象自体が無いため
+        // 生成しない（null のまま——両受け取り側とも null を「自己検証を行わない」として扱う）。
+        var selfTestTracker = spool is not null
+            ? new Yagura.Storage.Spool.SpoolSelfTestTracker()
+            : null;
+
         var builder = WebApplication.CreateBuilder(args);
 
         // 静的アセット配信面の最小化(M8-1。Issue #68)。.NET 10 の MapStaticAssets は、
@@ -295,7 +304,8 @@ public static class Program
             spool,
             sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>(),
             resolvedConfiguration.DefaultRfc3164TimeZone,
-            sp.GetRequiredService<LogStoreWriteGate>()));
+            sp.GetRequiredService<LogStoreWriteGate>(),
+            selfTestTracker));
 
         // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
         // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。
@@ -327,7 +337,8 @@ public static class Program
             sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(),
             sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
             timeProvider: null,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>()));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
+            selfTestTracker));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
