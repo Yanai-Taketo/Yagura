@@ -9,7 +9,8 @@
     実行手順(Full モード):
       1. MSI サイレントインストール(msiexec /i /qn。管理者権限が必要)
       2. Windows サービス "Yagura" が Running になるまで待機
-      3. インストール状態の証拠採取(ファイアウォール規則 3 本・データルート・firewall-rules.ini)
+      3. インストール状態の証拠採取(ファイアウォール規則 3 系統 6 本 = 各系統
+         Domain/Private の 2 本で Public を含まないこと・データルート・firewall-rules.ini)
       4. UDP 514 へ syslog テストメッセージ送出 → 閲覧リスナ(既定 http://localhost:8514/)の
          HTML に RunId トークンが現れることを確認
       5. アンインストール(msiexec /x /qn)
@@ -373,15 +374,28 @@ try {
         # 3. インストール状態の証拠採取
         # -------------------------------------------------------------------
         if ($DryRun) {
-            Add-SkippedStep -Name 'installed-state-evidence' -Reason 'dry-run: would record firewall rules / data root / firewall-rules.ini'
+            Add-SkippedStep -Name 'installed-state-evidence' -Reason 'dry-run: would record firewall rules (incl. Domain/Private profile check) / data root / firewall-rules.ini'
         }
         else {
             [void](Invoke-E2EStep -Name 'installed-state-evidence' -Action {
                 $rules = @(Get-YaguraFirewallRules)
                 $ruleNames = @($rules | ForEach-Object { $_.DisplayName })
+                # 各系統は Domain + Private の 2 規則で構成される(Public/Any を含まない。
+                # Issue #125 の回帰検知: Profile 属性の欠落 = 既定 Any への逆戻りをここで検出する)。
                 foreach ($expected in $script:FirewallDisplayNames) {
-                    if ($ruleNames -notcontains $expected) {
+                    $matching = @($rules | Where-Object { $_.DisplayName -eq $expected })
+                    if ($matching.Count -eq 0) {
                         throw ('expected firewall rule missing: {0} (found: {1})' -f $expected, ($ruleNames -join '; '))
+                    }
+                    # @() はパイプライン全体を包む(1 件時のスカラー化対策 — Get-YaguraFirewallRules の注意書きと同じ)。
+                    $profiles = @($matching | ForEach-Object { [string]$_.Profile } | Sort-Object)
+                    foreach ($p in $profiles) {
+                        if ($p -ne 'Domain' -and $p -ne 'Private') {
+                            throw ('firewall rule "{0}" has unexpected profile "{1}" (must be Domain or Private only; Public/Any not allowed - Issue #125)' -f $expected, $p)
+                        }
+                    }
+                    if ($matching.Count -ne 2 -or $profiles[0] -ne 'Domain' -or $profiles[1] -ne 'Private') {
+                        throw ('firewall rule "{0}" must consist of exactly 2 rules (Domain + Private), found {1}: {2}' -f $expected, $matching.Count, ($profiles -join '; '))
                     }
                 }
                 if (-not (Test-Path -Path $script:DataRoot)) {
@@ -391,7 +405,7 @@ try {
                 if (-not (Test-Path -Path $iniPath)) {
                     throw ('firewall-rules.ini not found in data root: {0}' -f $iniPath)
                 }
-                return ('firewall rules present ({0}), data root and firewall-rules.ini present' -f ($ruleNames -join '; '))
+                return ('firewall rules present with Domain+Private profiles only ({0} rules: {1}), data root and firewall-rules.ini present' -f $rules.Count, ($ruleNames -join '; '))
             })
         }
 
