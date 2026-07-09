@@ -179,13 +179,229 @@ public sealed class RetentionTests : IDisposable
         Assert.Contains(collector.GetSnapshot(), r => r.Message.Contains("[retention-not-configured]"));
     }
 
-    /// <summary>DeleteOlderThanAsync の呼び出しを記録する最小フェイク。</summary>
+    // ------------------------------------------------------------------
+    // スケジューラ: 起動時キャッチアップ(Issue #150)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Start_WithoutPriorDeleteRecord_ExecutesCatchUpImmediately()
+    {
+        var store = new RecordingLogStore();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, RetentionSchedulerOptions.DefaultExecutionTimeOfDay));
+
+        scheduler.Start();
+
+        await WaitUntilAsync(() => store.DeleteCallCount >= 1);
+
+        Assert.Equal(1, store.DeleteCallCount);
+        // キャッチアップ実行も通常の実行と同じくシステムイベントとして記録される。
+        Assert.Contains(store.WrittenSystemEvents, e => e.Kind == RetentionConstants.SystemEventKindRetentionDelete);
+    }
+
+    [Fact]
+    public async Task Start_WithRecentDeleteRecord_SkipsCatchUp()
+    {
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ManualTimeProvider(baseline);
+        var store = new RecordingLogStore();
+        // 前回実行が閾値(1 日)未満: 2 時間前。
+        store.SystemEventsToReturn.Add(new SystemEvent(
+            RetentionConstants.SystemEventKindRetentionDelete,
+            StartAt: baseline.AddDays(-7).AddHours(-2),
+            EndAt: baseline.AddHours(-2),
+            Approximate: false));
+
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, RetentionSchedulerOptions.DefaultExecutionTimeOfDay),
+            timeProvider,
+            new FakeLogger<RetentionScheduler>(collector));
+
+        scheduler.Start();
+
+        // 「スキップした」ことはログで確定を待つ(何も起きないことの検証を固定 sleep にしない)。
+        await WaitUntilAsync(() => collector.GetSnapshot().Any(r => r.Message.Contains("[retention-catchup-skip]")));
+
+        Assert.Equal(0, store.DeleteCallCount);
+    }
+
+    [Theory]
+    [InlineData(0, true)]   // ちょうど閾値(1 日)経過 → 実行する(境界は実行側)
+    [InlineData(-1, false)] // 閾値まで 1 分残っている → 実行しない
+    [InlineData(1, true)]   // 閾値を 1 分超過 → 実行する
+    public async Task Start_CatchUpThresholdBoundary_FiresOnlyAtOrBeyondThreshold(int minutesBeyondThreshold, bool expectCatchUp)
+    {
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ManualTimeProvider(baseline);
+        var store = new RecordingLogStore();
+        var lastDeleteAt = baseline - RetentionScheduler.CatchUpThreshold - TimeSpan.FromMinutes(minutesBeyondThreshold);
+        store.SystemEventsToReturn.Add(new SystemEvent(
+            RetentionConstants.SystemEventKindRetentionDelete,
+            StartAt: lastDeleteAt.AddDays(-7),
+            EndAt: lastDeleteAt,
+            Approximate: false));
+
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, RetentionSchedulerOptions.DefaultExecutionTimeOfDay),
+            timeProvider,
+            new FakeLogger<RetentionScheduler>(collector));
+
+        scheduler.Start();
+
+        if (expectCatchUp)
+        {
+            await WaitUntilAsync(() => store.DeleteCallCount >= 1);
+            Assert.Equal(1, store.DeleteCallCount);
+        }
+        else
+        {
+            await WaitUntilAsync(() => collector.GetSnapshot().Any(r => r.Message.Contains("[retention-catchup-skip]")));
+            Assert.Equal(0, store.DeleteCallCount);
+        }
+    }
+
+    [Fact]
+    public async Task Start_QuerySystemEventsFails_SkipsCatchUpAndKeepsSchedulerAlive()
+    {
+        var store = new RecordingLogStore { ThrowOnQuerySystemEvents = true };
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, RetentionSchedulerOptions.DefaultExecutionTimeOfDay),
+            logger: new FakeLogger<RetentionScheduler>(collector));
+
+        scheduler.Start();
+
+        await WaitUntilAsync(() => collector.GetSnapshot().Any(r => r.Message.Contains("[retention-catchup-query-failed]")));
+
+        // 判定の失敗はキャッチアップの見送りに留まり、削除は実行されない。
+        Assert.Equal(0, store.DeleteCallCount);
+
+        // スケジューラ自体は生きている(容量枯渇契機は引き続き機能する)。
+        scheduler.OnCapacityExhausted();
+        await WaitUntilAsync(() => store.DeleteCallCount >= 1);
+        Assert.Equal(1, store.DeleteCallCount);
+    }
+
+    [Fact]
+    public async Task Start_WithoutRetentionDays_DoesNotQueryOrCatchUp()
+    {
+        // RetentionDays 未設定(削除しない)ならキャッチアップ判定の読み取り自体を行わない。
+        var store = new RecordingLogStore { ThrowOnQuerySystemEvents = true };
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: null, RetentionSchedulerOptions.DefaultExecutionTimeOfDay),
+            logger: new FakeLogger<RetentionScheduler>(collector));
+
+        scheduler.Start();
+
+        // 読み取りが呼ばれていれば ThrowOnQuerySystemEvents により
+        // [retention-catchup-query-failed] が出る——出ないことを短い猶予の後に確認する。
+        await Task.Delay(200);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Message.Contains("[retention-catchup-query-failed]"));
+        Assert.Equal(0, store.DeleteCallCount);
+    }
+
+    [Fact]
+    public async Task Start_CatchUpThenScheduledTickSoonAfter_SkipsSecondExecution()
+    {
+        // キャッチアップ実行の直後に当日の定刻が到来しても、二重実行しないこと(Issue #150)。
+        // 定刻を「現在時刻の 1 時間後」に設定し、キャッチアップ実行後に手動タイマーで
+        // 1 時間進めて定刻の契機を発火させる。
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ManualTimeProvider(baseline);
+        var baselineLocal = baseline.ToLocalTime();
+        var executionTime = new TimeOnly(baselineLocal.Hour, baselineLocal.Minute).AddHours(1);
+
+        var store = new RecordingLogStore(); // 実行記録なし → キャッチアップが発火する。
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, executionTime),
+            timeProvider,
+            new FakeLogger<RetentionScheduler>(collector));
+
+        scheduler.Start();
+
+        // キャッチアップの実行と、定期実行ループのタイマー登録を待つ。
+        await WaitUntilAsync(() => store.DeleteCallCount >= 1 && timeProvider.TimersCreated >= 1);
+
+        // 定刻を超えて時刻を進める → 定期実行の契機が発火するが、直前のキャッチアップ実行から
+        // MinimumReexecutionInterval 未満のためスキップされる。進める量は実装と同じ計算で
+        // 導出する(ローカル時刻の日またぎを含め約 1 時間になる——タイムゾーン非依存)。
+        var scheduledDelay = RetentionScheduler.ComputeDelayUntilNextExecution(baseline, executionTime);
+        Assert.True(
+            scheduledDelay + TimeSpan.FromMinutes(2) < RetentionScheduler.MinimumReexecutionInterval,
+            $"定刻までの待機 {scheduledDelay} が二重実行抑止の窓を超えており、テストの前提が崩れている。");
+        timeProvider.Advance(scheduledDelay + TimeSpan.FromMinutes(2));
+        await WaitUntilAsync(() => collector.GetSnapshot().Any(r => r.Message.Contains("[retention-delete-recent-skip]")));
+
+        Assert.Equal(1, store.DeleteCallCount);
+    }
+
+    // ------------------------------------------------------------------
+    // スケジューラ: 書き込みゲートとの直列化(Issue #151)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task OnCapacityExhausted_WithWriteGateHeld_WaitsUntilGateReleased()
+    {
+        using var gate = new LogStoreWriteGate();
+        var store = new RecordingLogStore();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, RetentionSchedulerOptions.DefaultExecutionTimeOfDay),
+            writeGate: gate);
+
+        // 他経路(ライブ書き込みの体)がゲートを保持している間、削除は開始されない。
+        var lease = await gate.AcquireAsync(CancellationToken.None);
+        scheduler.OnCapacityExhausted();
+
+        await Task.Delay(200);
+        Assert.Equal(0, store.DeleteCallCount);
+
+        // 解放されると削除が進む。
+        lease.Dispose();
+        await WaitUntilAsync(() => store.DeleteCallCount >= 1);
+        Assert.Equal(1, store.DeleteCallCount);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.True(condition(), "条件が制限時間内に成立しなかった。");
+    }
+
+    /// <summary>
+    /// DeleteOlderThanAsync / WriteSystemEventAsync / QuerySystemEventsAsync の呼び出しを
+    /// 記録する最小フェイク（起動時キャッチアップ——Issue #150——の判定入力も供給する）。
+    /// </summary>
     private sealed class RecordingLogStore : ILogStore
     {
         private int _deleteCallCount;
 
         public int DeleteCallCount => Volatile.Read(ref _deleteCallCount);
         public DateTimeOffset? LastCutoff { get; private set; }
+
+        /// <summary>QuerySystemEventsAsync が返すイベント（キャッチアップ判定の入力）。</summary>
+        public List<SystemEvent> SystemEventsToReturn { get; } = [];
+
+        /// <summary>QuerySystemEventsAsync を失敗させる（キャッチアップ判定の失敗経路の検証用）。</summary>
+        public bool ThrowOnQuerySystemEvents { get; set; }
+
+        /// <summary>WriteSystemEventAsync で書き込まれたイベントの記録。</summary>
+        public List<SystemEvent> WrittenSystemEvents { get; } = [];
 
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -198,8 +414,15 @@ public sealed class RetentionTests : IDisposable
         public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LogRecordSummary>>(Array.Empty<LogRecordSummary>());
 
-        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
+        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default)
+        {
+            lock (WrittenSystemEvents)
+            {
+                WrittenSystemEvents.Add(systemEvent);
+            }
+
+            return Task.CompletedTask;
+        }
 
         public Task<DeleteOlderThanResult> DeleteOlderThanAsync(DateTimeOffset cutoff, CancellationToken cancellationToken = default)
         {
@@ -211,13 +434,23 @@ public sealed class RetentionTests : IDisposable
         public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new LogStoreStatistics(RecordCount: 0, DatabaseSizeBytes: null, WalSizeBytes: null));
 
-        // M8-3 で追加された読み取り専用 3 操作（閲覧画面用の読み取り口）。本テストダブルの
-        // 検証対象では使用しないため未対応で明示する。
+        // M8-3 で追加された読み取り専用 3 操作のうち、QuerySystemEventsAsync は起動時
+        // キャッチアップ（Issue #150）の判定入力として本テストの検証対象になった。
+        // 残る 2 操作は引き続き検証対象外のため未対応で明示する。
         public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnQuerySystemEvents)
+            {
+                throw new InvalidOperationException("テスト用の読み取り失敗。");
+            }
+
+            IReadOnlyList<SystemEvent> events =
+                SystemEventsToReturn.OrderByDescending(e => e.StartAt).Take(limit).ToList();
+            return Task.FromResult(events);
+        }
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
@@ -227,5 +460,95 @@ public sealed class RetentionTests : IDisposable
 
         public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+    }
+
+    /// <summary>
+    /// テストから時刻を明示的に進められる <see cref="TimeProvider"/> 実装。
+    /// <see cref="Advance"/> で期限を過ぎたタイマーを発火させる（Task.Delay(delay, timeProvider)
+    /// の待機を実時間なしで決定的に進めるため——キャッチアップと定刻の近接をテストで再現する）。
+    /// </summary>
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private readonly object _lock = new();
+        private readonly List<ManualTimer> _timers = [];
+        private DateTimeOffset _utcNow = utcNow;
+        private int _timersCreated;
+
+        public int TimersCreated => Volatile.Read(ref _timersCreated);
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (_lock)
+            {
+                return _utcNow;
+            }
+        }
+
+        public void Advance(TimeSpan delta)
+        {
+            List<ManualTimer> due;
+            lock (_lock)
+            {
+                _utcNow += delta;
+                due = _timers.Where(t => !t.Fired && t.DueAt <= _utcNow).ToList();
+                foreach (var timer in due)
+                {
+                    timer.Fired = true;
+                }
+            }
+
+            foreach (var timer in due)
+            {
+                timer.Fire();
+            }
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            Interlocked.Increment(ref _timersCreated);
+            var timer = new ManualTimer(this, callback, state);
+            lock (_lock)
+            {
+                timer.DueAt = dueTime == Timeout.InfiniteTimeSpan ? DateTimeOffset.MaxValue : _utcNow + dueTime;
+                _timers.Add(timer);
+            }
+
+            return timer;
+        }
+
+        private sealed class ManualTimer(ManualTimeProvider owner, TimerCallback callback, object? state) : ITimer
+        {
+            public DateTimeOffset DueAt { get; set; } = DateTimeOffset.MaxValue;
+            public bool Fired { get; set; }
+
+            public void Fire() => callback(state);
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                lock (owner._lock)
+                {
+                    DueAt = dueTime == Timeout.InfiniteTimeSpan
+                        ? DateTimeOffset.MaxValue
+                        : owner._utcNow + dueTime;
+                    Fired = false;
+                }
+
+                return true;
+            }
+
+            public void Dispose()
+            {
+                lock (owner._lock)
+                {
+                    owner._timers.Remove(this);
+                }
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 }

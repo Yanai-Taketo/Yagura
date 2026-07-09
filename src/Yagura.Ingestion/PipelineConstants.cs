@@ -39,4 +39,18 @@ public static class PipelineConstants
     /// architecture.md §2.1・§3.2.1・M-13「永続化書き込みのタイムアウト値」の実測確定待ち。
     /// </summary>
     public static readonly TimeSpan WriteBatchTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// <see cref="Yagura.Storage.LogStoreWriteGate"/>（Issue #151。ライブ・drain・保持期間削除の
+    /// 3 経路を直列化する書き込みゲート）の取得を待つ時間上限。<b><see cref="WriteBatchTimeout"/>
+    /// より意図的に大きくする</b>——ゲート取得の待ち時間を DB 操作そのもののタイムアウトと
+    /// 同じ予算で縛ると、保持期間削除がゲートを長く保持している間、ライブ書き込みの毎バッチが
+    /// 「ゲート待ちだけで」<see cref="WriteBatchTimeout"/> を使い切り、DB 自体は健全なのに
+    /// 「速度不足」と誤認してスプール退避が連発する（database.md §3 が名指しするリスク。
+    /// <see cref="Yagura.Storage.LogStoreWriteGate"/> の doc コメント参照）。この時間内にゲートを
+    /// 取得できない場合、呼び出し元は既存のスプール退避（ライブ）・未消化のまま残す（drain）
+    /// 経路へ、DB タイムアウトと区別できるログを添えて合流させる。実測確定待ちの暫定値
+    /// （本クラスの他の値と同じ運用）。
+    /// </summary>
+    public static readonly TimeSpan WriteGateAcquireTimeout = TimeSpan.FromSeconds(30);
 }

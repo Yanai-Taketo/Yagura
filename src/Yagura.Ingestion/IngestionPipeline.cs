@@ -77,6 +77,13 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// RFC 3164 TIMESTAMP の既定タイムゾーン（Issue #134。<see cref="ParsingStage"/> 経由で
     /// <see cref="Parsing.SyslogParser.Parse"/> へそのまま渡す）。<c>null</c> は UTC（現状互換）。
     /// </param>
+    /// <param name="writeGate">
+    /// ILogStore の書き込みゲート（Issue #151。<see cref="LogStoreWriteGate"/> 参照）。
+    /// ライブ書き込み（<see cref="PersistenceWriter"/>）と drain（<see cref="SpoolDrainCoordinator"/>）
+    /// へ同じインスタンスを渡し、保持期間削除（<c>Yagura.Host.Retention.RetentionScheduler</c>）と
+    /// 直列化する。<c>null</c> はゲートなし（排他なし。テスト等で並行を意識しない構成向け——
+    /// 本番結線（<c>Yagura.Host.Program</c>）は常に非 <c>null</c> を渡す）。
+    /// </param>
     public IngestionPipeline(
         UdpSyslogListenerOptions udpListenerOptions,
         TcpSyslogListenerOptions tcpListenerOptions,
@@ -85,7 +92,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
         ILoggerFactory? loggerFactory = null,
         DiskSpool? spool = null,
         ICapacityExhaustionHandler? capacityExhaustionHandler = null,
-        TimeZoneInfo? defaultRfc3164TimeZone = null)
+        TimeZoneInfo? defaultRfc3164TimeZone = null,
+        LogStoreWriteGate? writeGate = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
@@ -137,7 +145,9 @@ public sealed class IngestionPipeline : IAsyncDisposable
             spool,
             _metrics,
             loggerFactory?.CreateLogger<PersistenceWriter>(),
-            capacityExhaustionHandler);
+            capacityExhaustionHandler,
+            timeProvider: null,
+            writeGate: writeGate);
 
         // スプールがある場合のみ drain コーディネータを組み立てる（縮退運転時は drain 対象が無い）。
         _drainCoordinator = spool is null
@@ -148,7 +158,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 logStore,
                 _metrics,
                 loggerFactory?.CreateLogger<SpoolDrainCoordinator>(),
-                capacityExhaustionHandler);
+                capacityExhaustionHandler,
+                writeGate);
     }
 
     /// <summary>

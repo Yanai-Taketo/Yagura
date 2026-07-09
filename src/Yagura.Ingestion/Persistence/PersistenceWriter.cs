@@ -62,6 +62,7 @@ public sealed class PersistenceWriter
     private readonly ILogger<PersistenceWriter> _logger;
     private readonly ICapacityExhaustionHandler? _capacityExhaustionHandler;
     private readonly TimeProvider _timeProvider;
+    private readonly LogStoreWriteGate? _writeGate;
 
     private DateTimeOffset? _lastPermanentFailureWarningAt;
     private DateTimeOffset? _lastSpoolWriteFailedWarningAt;
@@ -73,7 +74,8 @@ public sealed class PersistenceWriter
         IngestionMetrics metrics,
         ILogger<PersistenceWriter>? logger = null,
         ICapacityExhaustionHandler? capacityExhaustionHandler = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        LogStoreWriteGate? writeGate = null)
     {
         ArgumentNullException.ThrowIfNull(q2Reader);
         ArgumentNullException.ThrowIfNull(logStore);
@@ -86,6 +88,7 @@ public sealed class PersistenceWriter
         _logger = logger ?? NullLogger<PersistenceWriter>.Instance;
         _capacityExhaustionHandler = capacityExhaustionHandler;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _writeGate = writeGate;
     }
 
     /// <summary>
@@ -218,7 +221,61 @@ public sealed class PersistenceWriter
     /// 待たず」に反して停止処理が遅延するため、停止要求はタイムアウトより優先して
     /// 即座に打ち切りへつなげる。
     /// </summary>
+    /// <remarks>
+    /// <b>書き込みゲート（Issue #151）</b>: <see cref="_writeGate"/> が設定されている場合、
+    /// 実際の DB 呼び出しの前に <see cref="LogStoreWriteGate.AcquireAsync(TimeSpan, CancellationToken)"/>
+    /// でゲートを取得する。ゲート待ちのタイムアウト（<see cref="PipelineConstants.WriteGateAcquireTimeout"/>）
+    /// は DB 操作のタイムアウト（<see cref="PipelineConstants.WriteBatchTimeout"/>）とは独立した
+    /// 予算とし、DB 操作のタイムアウト計測はゲート取得後に改めて開始する——同じ予算で縛ると
+    /// 保持期間削除がゲートを長く保持している間、DB 自体は健全なのに「速度不足」と誤認して
+    /// スプール退避が連発するため（<see cref="LogStoreWriteGate"/> の doc コメント参照）。
+    /// ゲート取得自体がタイムアウト・停止要求で打ち切られた場合も、DB タイムアウトと同じ
+    /// スプール退避経路へ合流させる（データを失わない設計は変えない）。
+    /// </remarks>
     private async Task WriteBatchWithTimeoutAsync(List<LogRecord> batch, CancellationToken stoppingToken)
+    {
+        IDisposable? gateLease = null;
+        if (_writeGate is not null)
+        {
+            try
+            {
+                gateLease = await _writeGate.AcquireAsync(PipelineConstants.WriteGateAcquireTimeout, stoppingToken).ConfigureAwait(false);
+            }
+            catch (LogStoreWriteGateTimeoutException)
+            {
+                _logger.LogWarning(
+                    "[write-gate-timeout] 書き込みゲートの取得が {Timeout} 以内に完了しなかったため" +
+                    "（他の書き込み経路——保持期間削除等——が実行中の可能性）、{Count} 件をスプールへ退避する。",
+                    PipelineConstants.WriteGateAcquireTimeout,
+                    batch.Count);
+                await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // 停止要求によるゲート待ちの打ち切り——DB を待たずスプールへ退避する
+                // （§1.3 手順 2 と同じ扱い）。
+                await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+                return;
+            }
+        }
+
+        try
+        {
+            await WriteBatchWithDbTimeoutAsync(batch, stoppingToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gateLease?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// ゲート取得後の実際の DB 呼び出し（<see cref="PipelineConstants.WriteBatchTimeout"/> による
+    /// 打ち切りを含む）。<see cref="WriteBatchWithTimeoutAsync"/> から、ゲート保持区間の内側で
+    /// 呼び出される。
+    /// </summary>
+    private async Task WriteBatchWithDbTimeoutAsync(List<LogRecord> batch, CancellationToken stoppingToken)
     {
         using var timeoutCts = new CancellationTokenSource(PipelineConstants.WriteBatchTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);

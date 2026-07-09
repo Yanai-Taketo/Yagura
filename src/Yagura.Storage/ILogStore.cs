@@ -12,10 +12,23 @@ namespace Yagura.Storage;
 /// </para>
 /// <para>
 /// <b>書き込みは単一 writer が呼び出す契約とする</b>（database.md §4）。
-/// <see cref="WriteBatchAsync"/> の呼び出しは、呼び出し側（永続化段）が直列化する
-/// ことを前提とし、本インターフェースの実装は複数呼び出し元からの並行呼び出しに
-/// 対する排他制御を提供しない。保持期間削除（<see cref="DeleteOlderThanAsync"/>）も
-/// 同じ書き込み経路に直列化される想定である。
+/// <see cref="WriteBatchAsync"/>・<see cref="WriteSystemEventAsync"/>・
+/// <see cref="DeleteOlderThanAsync"/> の呼び出しは、呼び出し側が直列化する責務を持ち、
+/// 本インターフェースの<b>実装（provider）自体は複数呼び出し元からの並行呼び出しに対する
+/// 排他制御を提供しない</b>——排他は provider の実装詳細ではなく呼び出し側の責務のまま
+/// 据え置く。
+/// </para>
+/// <para>
+/// <b>実配線（Issue #151。M5-1 完了後に判明した契約と実配線の乖離への対応）</b>: 実際には
+/// (a) 永続化段（ライブ書き込み）・(b) スプール drain・(c) 保持期間削除（+ 実行記録の
+/// システムイベント）の 3 経路が、独立したタスクから並行して本インターフェースの書き込み系
+/// メソッドを呼び出し得る。ホスト（<c>Yagura.Host.Program</c>）はこれを「呼び出し側の直列化」
+/// として実現するため、単一の <see cref="LogStoreWriteGate"/> インスタンスを構築し、3 経路
+/// すべて（<c>PersistenceWriter</c>・<c>SpoolDrainCoordinator</c>・<c>RetentionScheduler</c>）へ
+/// 同じインスタンスを渡す。<b>本インターフェースの契約自体（provider は排他を提供しない）は
+/// 変えていない</b>——変わったのは「呼び出し側が直列化する」という既存契約を実際に満たす
+/// 呼び出し配線が加わったことである。詳細な設計判断は <see cref="LogStoreWriteGate"/> の
+/// doc コメントを参照。
 /// </para>
 /// <para>
 /// <b>読み書き分離の性質の文書化義務</b>（database.md §1.2 契約表 末尾・§1.3）: 各 provider
