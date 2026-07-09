@@ -80,6 +80,7 @@ public sealed class ListenerBindPlanTests
             UdpReceiveBufferBytes: Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes,
             TcpBindAddress: "0.0.0.0",
             TcpPort: 514,
+            DefaultRfc3164TimeZone: TimeZoneInfo.Utc,
             HttpPort: 8514,
             ViewerPublicAccess: viewerPublicAccess,
             ViewerReverseDnsEnabled: true,

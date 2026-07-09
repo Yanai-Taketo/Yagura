@@ -82,11 +82,18 @@ STRUCTURED-DATA 直後の構造違反（確定済みの HEADER・StructuredData 
 （CP932 自動判定等）で読み替えて Message に格納することは本対応の範囲外**（Raw の生バイト列から
 利用者が事後的に判読する運用を継続する。フォールバックエンコーディング対応は将来課題として追跡する）。
 
+**RFC 3164 の寛容な TIMESTAMP 読み取り**（Issue #135。2026-07-09）: RFC 3164 は「べき」規定が多く実装依存の逸脱が現実に多い（§2.1 の best-effort 方針と同じ思想）。TIMESTAMP は厳密な `Mmm dd hh:mm:ss` に加え、次のベンダ拡張（主に Cisco IOS）を取りこぼさない: 秒の小数部（msec。例: `.345`）、TIMESTAMP 直後の TZ 付記（前述の優先順位①）、先頭シーケンス番号（`service sequence-numbers`。例: `45: Mar  1 ...`）、`Mmm dd yyyy hh:mm:ss` の 4 桁年変種。これらの形式に一致しない・後続の解析（HOSTNAME 等）が破綻する場合は、従来どおり TIMESTAMP 解析全体を諦めて CONTENT 側（Message）へ委ねる best-effort にフォールバックする（ログを失わない。値そのものは失われず本文に残る）。
+
 ### 2.2 時刻の契約
 
 - **保存はすべて UTC**。表示層（UI・通知）でローカル時刻へ変換する。この契約は ui.md の画面設計より先に固定し、画面はこれに従う
 - **基準軸は ReceivedAt（サーバ受信時刻）**とする。送信元の時計は信頼できない（進み・遅れ・未設定が現実に起こる）ため、DeviceTimestamp は保存するが、検索の並び・保持期間・受信断区間との突合には使わない。両者のずれが大きいことはそれ自体が運用上の発見であり、UI での見せ方は ui.md に委ねる
 - **ReceivedAt は受信段で刻印し、以後変更しない**。スプール退避・drain・停止時退避・移行（§6.2）のどこを経ても再刻印しない——スプールのセグメント形式（architecture.md §3.2.1。凍結対象）は ReceivedAt を運ぶ。drain が数時間遅れてもログの時刻・保持期間の起算・受信断区間との突合は揺れない
+- **RFC 3164 TIMESTAMP のタイムゾーン解釈**（Issue #134・#135。2026-07-09）: RFC 3164 の TIMESTAMP（`Mmm dd hh:mm:ss`）は年もタイムゾーンも持たず、値は送信機器のローカル時刻（RFC 3164 §4.1.2）。DeviceTimestamp への変換時、タイムゾーンは次の優先順位で解決する:
+  1. **TIMESTAMP に送信元付記の TZ が取れた場合はそれを最優先で使う**（Cisco IOS の `service timestamps log datetime show-timezone` 等。数値オフセット `+HH:MM`/`+HHMM`、または曖昧でない略号 `UTC`/`GMT`/`JST` に限る——米国 4 系統の略号 `CST`/`EST`/`PST`/`MST` 等は Cisco の `clock timezone <name> <offset>` が任意の名称を任意のオフセットに割り当てられるため、略号だけからオフセットを断定できず意図的に解決対象へ含めない。未知の略号は TZ として消費せず、従来どおり HOSTNAME 側の解析に委ねる）
+  2. **①が取れない場合、設定項目 `Ingestion:Rfc3164:DefaultTimeZone`（configuration.md）の既定タイムゾーンを適用する**。値は Windows タイムゾーン ID・IANA タイムゾーン ID のいずれも受理し、TIMESTAMP の年月日時刻に対する UTC オフセットを都度計算する（DST を持つゾーンでも季節に応じた正しいオフセットになる）
+  3. **未設定時は UTC**（2026-07-09 以前の現状互換）
+  年についても、`Mmm dd yyyy hh:mm:ss` の 4 桁年変種が取れた場合はそれを使い、取れない場合は ReceivedAt から最も近い年を補完する（既存の年またぎ補完。実装は [SyslogParser.TryReadRfc3164Timestamp](../../src/Yagura.Ingestion/Parsing/SyslogParser.cs)）。本節はいずれも DeviceTimestamp（参考情報。基準軸にしない）の精度改善であり、ReceivedAt ベースの検索・保持期間・受信断突合には影響しない。
 
 ### 2.3 システムイベント
 

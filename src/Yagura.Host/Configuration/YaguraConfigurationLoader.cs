@@ -57,6 +57,7 @@ public static class YaguraConfigurationLoader
         "Ingestion:Udp:ReceiveBufferBytes",
         "Ingestion:Tcp:BindAddress",
         "Ingestion:Tcp:Port",
+        "Ingestion:Rfc3164:DefaultTimeZone",
         "Viewer:HttpPort",
         "Viewer:PublicAccess",
         "Viewer:ReverseDns:Enabled",
@@ -119,6 +120,9 @@ public static class YaguraConfigurationLoader
         // --- 受信: TCP ポート（§1「起動失敗」——UDP と同じ分類。M4-1） ---
         var tcpPort = ResolveTcpPort(options);
 
+        // --- 受信: RFC 3164 TIMESTAMP の既定タイムゾーン（§1「既定値で継続」。Issue #134） ---
+        var defaultRfc3164TimeZone = ResolveDefaultRfc3164TimeZone(options, warnings);
+
         // --- UI: 閲覧 HTTP ポート（§1「既定値で継続」） ---
         var httpPort = ResolveHttpPort(options, warnings);
 
@@ -163,6 +167,7 @@ public static class YaguraConfigurationLoader
             UdpReceiveBufferBytes: udpReceiveBufferBytes,
             TcpBindAddress: tcpBindAddress,
             TcpPort: tcpPort,
+            DefaultRfc3164TimeZone: defaultRfc3164TimeZone,
             HttpPort: httpPort,
             ViewerPublicAccess: viewerPublicAccess,
             ViewerReverseDnsEnabled: viewerReverseDnsEnabled,
@@ -352,6 +357,41 @@ public static class YaguraConfigurationLoader
         }
 
         return ParsePortOrThrow(raw, "Ingestion:Tcp:Port", "設定ファイル");
+    }
+
+    /// <summary>
+    /// RFC 3164 TIMESTAMP の既定タイムゾーンを解決する（Issue #134。§1「既定値で継続」——
+    /// 受信の成立に不可欠なキーではなく、DeviceTimestamp は参考情報であるため）。
+    /// </summary>
+    /// <remarks>
+    /// 値は Windows タイムゾーン ID（例: <c>Tokyo Standard Time</c>）・IANA タイムゾーン ID
+    /// （例: <c>Asia/Tokyo</c>）のいずれも受理する——<see cref="TimeZoneInfo.FindSystemTimeZoneById"/>
+    /// が .NET 6 以降 Windows 上でも両方の ID 体系を解決できるため（実機検証:
+    /// <c>Yagura.Ingestion.Tests</c> の <c>SyslogParserRfc3164TimeZoneTests</c>）。未設定時・
+    /// 解決できない ID は UTC（現状互換）へフォールバックする。
+    /// </remarks>
+    private static TimeZoneInfo ResolveDefaultRfc3164TimeZone(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Ingestion?.Rfc3164?.DefaultTimeZone;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return TimeZoneInfo.Utc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(raw);
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Ingestion:Rfc3164:DefaultTimeZone",
+                InvalidValue: raw,
+                AppliedValue: TimeZoneInfo.Utc.Id,
+                Reason: "Windows/IANA タイムゾーン ID として解決できないため既定値（UTC）を適用"));
+
+            return TimeZoneInfo.Utc;
+        }
     }
 
     /// <summary>

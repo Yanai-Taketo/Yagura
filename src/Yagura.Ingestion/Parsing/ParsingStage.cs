@@ -27,13 +27,24 @@ public sealed class ParsingStage
     private readonly ChannelWriter<LogRecord> _q2Writer;
     private readonly DiskSpool? _spool;
     private readonly IngestionMetrics _metrics;
+    private readonly TimeZoneInfo? _defaultRfc3164TimeZone;
     private readonly ILogger<ParsingStage> _logger;
 
+    /// <param name="q1Reader">受信段からの生データグラム読み取り口。</param>
+    /// <param name="q2Writer">永続化段への解析済みレコード書き込み口。</param>
+    /// <param name="spool">Q2 満杯・停止時の退避先（縮退運転時は <see langword="null"/>）。</param>
+    /// <param name="metrics">計測点。</param>
+    /// <param name="defaultRfc3164TimeZone">
+    /// RFC 3164 TIMESTAMP の既定タイムゾーン（Issue #134。<see cref="SyslogParser.Parse"/> へ
+    /// そのまま渡す）。<see langword="null"/> は UTC（現状互換）。
+    /// </param>
+    /// <param name="logger">ロガー。</param>
     public ParsingStage(
         ChannelReader<RawDatagram> q1Reader,
         ChannelWriter<LogRecord> q2Writer,
         DiskSpool? spool,
         IngestionMetrics metrics,
+        TimeZoneInfo? defaultRfc3164TimeZone = null,
         ILogger<ParsingStage>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(q1Reader);
@@ -44,6 +55,7 @@ public sealed class ParsingStage
         _q2Writer = q2Writer;
         _spool = spool;
         _metrics = metrics;
+        _defaultRfc3164TimeZone = defaultRfc3164TimeZone;
         _logger = logger ?? NullLogger<ParsingStage>.Instance;
     }
 
@@ -78,7 +90,7 @@ public sealed class ParsingStage
                 return;
             }
 
-            var record = SyslogParser.Parse(datagram);
+            var record = SyslogParser.Parse(datagram, _defaultRfc3164TimeZone);
 
             if (stoppingToken.IsCancellationRequested)
             {
@@ -107,7 +119,7 @@ public sealed class ParsingStage
     {
         while (_q1Reader.TryRead(out var datagram))
         {
-            var record = SyslogParser.Parse(datagram);
+            var record = SyslogParser.Parse(datagram, _defaultRfc3164TimeZone);
             await EvacuateToSpoolAsync(record).ConfigureAwait(false);
         }
     }
