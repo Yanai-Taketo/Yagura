@@ -21,7 +21,18 @@
 # Usage:
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -YaguraPort 514 -Channels "System,Application"
+#   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -Mode tcp   (see TCP framing caveat below)
 #   powershell -NoProfile -File install.ps1                                   (pre-configured kit)
+#
+# -Mode (udp / tcp, default udp): udp is subject to IP fragmentation loss for
+# events larger than the path MTU (silent, no error on the sending side -- see
+# Issue #156). tcp avoids that, but Fluent Bit's out_syslog plugin does not
+# support RFC 6587 octet-counting framing over TCP; it terminates every message
+# with a single LF instead (verified against the out_syslog source, 2026-07-09).
+# Yagura's TCP receiver treats embedded LF bytes in a multi-line Windows event
+# body (e.g. Security audit "\r\n"-separated fields) as message boundaries too,
+# so a tcp-mode event containing embedded newlines can arrive split into several
+# records. See docs/guides/forward-windows-eventlog.md for the full trade-off.
 #
 # Exit codes: 0 = success, 1 = failure, 3010 = success but reboot required (from msiexec).
 
@@ -40,6 +51,12 @@ param(
 
     [ValidatePattern('^[A-Za-z0-9,\- ]+$')]
     [string]$Channels = "System,Application",
+
+    # udp (default): simple, but IP-fragments (and can silently drop) events
+    # larger than the path MTU. tcp: avoids that, at the cost of the LF-framing
+    # caveat documented above and in the guide.
+    [ValidateSet('udp', 'tcp')]
+    [string]$Mode = "udp",
 
     [string]$MsiPath = "",
 
@@ -61,6 +78,36 @@ function Log([string]$msg) {
 function Fail([string]$msg) {
     Log ("ERROR: " + $msg)
     exit 1
+}
+
+# Known collectible channels (Issue #155). Must stay in sync with
+# ForwarderKitConstraints.KnownChannels (src/Yagura.Web/ForwarderKit/ForwarderKitConstraints.cs) --
+# the generated kit (server-side, via ForwarderKitRequest.TryNormalizeChannels) already rejects
+# unknown/empty channel values; this static kit previously only checked the character set
+# (ValidatePattern above), so a typo'd or empty channel silently never collected. This mirrors the
+# server-side normalization so both kit forms have the same defense and produce the same conf output
+# for the same logical channel set.
+$knownChannels = @("System", "Application", "Security")
+
+function Get-NormalizedChannels([string]$raw) {
+    $parts = $raw -split "," | ForEach-Object { $_.Trim() }
+
+    if (($parts | Where-Object { $_ -eq "" }).Count -gt 0) {
+        Fail ("-Channels contains an empty element (stray/trailing/doubled comma?): '" + $raw + "'")
+    }
+
+    # PowerShell's -notcontains/-contains use -eq, which is case-insensitive by default.
+    $unknown = $parts | Where-Object { $knownChannels -notcontains $_ } | Select-Object -Unique
+    if ($unknown.Count -gt 0) {
+        Fail ("-Channels contains unknown channel(s): " + ($unknown -join ", ") +
+              ". Known channels: " + ($knownChannels -join ", "))
+    }
+
+    # Normalize to $knownChannels order and de-duplicate case-insensitively, matching
+    # ForwarderKitRequest.TryNormalizeChannels.
+    $requestedSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$parts, [System.StringComparer]::OrdinalIgnoreCase)
+    $normalized = $knownChannels | Where-Object { $requestedSet.Contains($_) }
+    return ($normalized -join ",")
 }
 
 # --- 0. Preconditions -------------------------------------------------------
@@ -126,9 +173,12 @@ if ($isPreConfigured) {
     if ([string]::IsNullOrEmpty($YaguraHost)) {
         Fail "-YaguraHost is required for this kit (the bundled config still has the @@YAGURA_HOST@@ placeholder)."
     }
+    $normalizedChannels = Get-NormalizedChannels $Channels
+    $modeValue = $Mode.ToLowerInvariant()
     $conf = $conf.Replace("@@YAGURA_HOST@@", $YaguraHost)
     $conf = $conf.Replace("@@YAGURA_PORT@@", [string]$YaguraPort)
-    $conf = $conf.Replace("@@CHANNELS@@", $Channels)
+    $conf = $conf.Replace("@@CHANNELS@@", $normalizedChannels)
+    $conf = $conf.Replace("@@MODE@@", $modeValue)
 }
 
 # UTF-8 without BOM: Fluent Bit's config parser does not expect a BOM.
@@ -138,7 +188,12 @@ Copy-Item -Path $luaTemplate -Destination (Join-Path $configDir "winevt-severity
 if ($isPreConfigured) {
     Log ("Config deployed to " + $configDir + " (pre-configured kit; destination baked in by the template)")
 } else {
-    Log ("Config deployed to " + $configDir + " (target: " + $YaguraHost + ":" + $YaguraPort + " udp, channels: " + $Channels + ")")
+    Log ("Config deployed to " + $configDir + " (target: " + $YaguraHost + ":" + $YaguraPort + " " + $modeValue + ", channels: " + $normalizedChannels + ")")
+    if ($modeValue -eq "tcp") {
+        Log ("WARN: -Mode tcp uses LF-delimited framing, not RFC 6587 octet-counting (Fluent Bit's " +
+             "out_syslog plugin does not support it). Multi-line event bodies with embedded newlines " +
+             "can arrive split into multiple records. See docs/guides/forward-windows-eventlog.md.")
+    }
 }
 
 # --- 3. Validate config before touching the service -------------------------
