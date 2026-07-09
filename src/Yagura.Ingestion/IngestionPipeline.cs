@@ -184,14 +184,28 @@ public sealed class IngestionPipeline : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(
+            // この失敗は例外の再送出を通じてホスト起動全体の失敗（IHostedService.StartAsync の
+            // 中断）につながる致命的事象のため、Error で記録する。
+            _logger?.LogError(
                 ex,
                 "受信リスナの起動に失敗したため、起動済みのリスナ {StartedCount} 件を停止して起動全体を失敗として扱います。",
                 startedListeners.Count);
 
             foreach (var stopStartedListener in startedListeners)
             {
-                await stopStartedListener().ConfigureAwait(false);
+                try
+                {
+                    await stopStartedListener().ConfigureAwait(false);
+                }
+                catch (Exception rollbackEx)
+                {
+                    // ロールバック中の停止失敗で元の起動失敗例外（本来の bind 失敗原因）を
+                    // 握り潰さない。記録した上で残りのリスナの停止も試み、最後に必ず元の
+                    // 例外を再送出する。
+                    _logger?.LogError(
+                        rollbackEx,
+                        "起動失敗のロールバック中、起動済みリスナの停止に失敗しました。元の起動失敗例外を優先して再送出します。");
+                }
             }
 
             throw;

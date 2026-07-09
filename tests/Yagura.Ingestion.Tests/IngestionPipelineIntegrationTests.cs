@@ -1,6 +1,9 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
+using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
@@ -271,6 +274,41 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
 
         // TCP は一度も起動されていない（UDP が最初の一歩で失敗し、ロールバック対象すら無い）。
         Assert.Equal(0, pipeline.TcpBoundPort);
+    }
+
+    /// <summary>
+    /// Issue #141: 起動失敗→ロールバック時に、失敗の事実が Error レベルでログに記録される
+    /// ことの検証（レビュー指摘 2・4 への対応——ログ出力自体をテストで確認する）。
+    /// </summary>
+    [Fact]
+    public async Task StartListenerAsync_WhenTcpBindFails_LogsRollbackAsError()
+    {
+        // TCP ポートを先に占有し、パイプライン側の TCP bind を確実に失敗させる。
+        using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+        portReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+
+        var collector = new FakeLogCollector();
+        using var loggerFactory = new LoggerFactory(new[] { new FakeLoggerProvider(collector) });
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
+            _logStore,
+            new NoopIngressGate(),
+            loggerFactory);
+
+        await Assert.ThrowsAsync<SocketException>(() => pipeline.StartListenerAsync());
+
+        // ロールバックの Error ログが 1 件だけ出て、起動済み件数（UDP の 1 件）と
+        // 元の bind 失敗例外がそのまま記録されていることを確認する。
+        var record = Assert.Single(
+            collector.GetSnapshot(),
+            r => r.Category == typeof(IngestionPipeline).FullName && r.Level == LogLevel.Error);
+        Assert.Contains("起動済みのリスナ 1 件を停止", record.Message);
+        Assert.IsAssignableFrom<SocketException>(record.Exception);
+
+        portReservation.Stop();
     }
 
     /// <summary>
