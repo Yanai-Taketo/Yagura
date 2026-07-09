@@ -167,7 +167,7 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
         public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
@@ -223,7 +223,7 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
         public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>

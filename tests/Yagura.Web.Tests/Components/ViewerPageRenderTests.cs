@@ -610,7 +610,7 @@ public sealed class ViewerPageRenderTests
         public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult(Record);
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SystemEvent>)Events
                 .Where(e => from is not { } f || e.EndAt >= f)
                 .Where(e => to is not { } t || e.StartAt <= t)

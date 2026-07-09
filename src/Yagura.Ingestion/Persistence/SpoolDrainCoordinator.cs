@@ -42,6 +42,7 @@ public sealed class SpoolDrainCoordinator
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<SpoolDrainCoordinator> _logger;
     private readonly ICapacityExhaustionHandler? _capacityExhaustionHandler;
+    private readonly LogStoreWriteGate? _writeGate;
 
     public SpoolDrainCoordinator(
         DiskSpool spool,
@@ -49,7 +50,8 @@ public sealed class SpoolDrainCoordinator
         ILogStore logStore,
         IngestionMetrics metrics,
         ILogger<SpoolDrainCoordinator>? logger = null,
-        ICapacityExhaustionHandler? capacityExhaustionHandler = null)
+        ICapacityExhaustionHandler? capacityExhaustionHandler = null,
+        LogStoreWriteGate? writeGate = null)
     {
         ArgumentNullException.ThrowIfNull(spool);
         ArgumentNullException.ThrowIfNull(q2Reader);
@@ -62,6 +64,7 @@ public sealed class SpoolDrainCoordinator
         _metrics = metrics;
         _logger = logger ?? NullLogger<SpoolDrainCoordinator>.Instance;
         _capacityExhaustionHandler = capacityExhaustionHandler;
+        _writeGate = writeGate;
     }
 
     /// <summary>
@@ -175,8 +178,33 @@ public sealed class SpoolDrainCoordinator
 
             try
             {
-                using var timeoutCts = new CancellationTokenSource(PipelineConstants.WriteBatchTimeout);
-                await _logStore.WriteBatchAsync(batch, timeoutCts.Token).ConfigureAwait(false);
+                // 書き込みゲート（Issue #151）: ライブ・保持期間削除と同じゲートを通す。
+                // ゲート待ちのタイムアウトは DB 操作のタイムアウトと独立させる
+                // （PersistenceWriter.WriteBatchWithTimeoutAsync のコメント・LogStoreWriteGate の
+                // doc コメント参照）。取得できなければこのセグメントは未消化のまま残し、
+                // 次周期の drain に委ねる——既存の「drain 由来のバッチはスプールへ再追記しない」
+                // 方針（§3.2.2）と同じ扱いにする。
+                IDisposable? gateLease = _writeGate is null
+                    ? null
+                    : await _writeGate.AcquireAsync(PipelineConstants.WriteGateAcquireTimeout, stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    using var timeoutCts = new CancellationTokenSource(PipelineConstants.WriteBatchTimeout);
+                    await _logStore.WriteBatchAsync(batch, timeoutCts.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    gateLease?.Dispose();
+                }
+            }
+            catch (LogStoreWriteGateTimeoutException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "[write-gate-timeout] 書き込みゲートの取得がタイムアウトしたため（他の書き込み経路が実行中の可能性）、" +
+                    "セグメント {SegmentPath} を未消化のまま残す（次周期で再試行。§3.2.2 と同じ扱い）。",
+                    segmentPath);
+                return false;
             }
             catch (LogStoreWriteException ex)
             {

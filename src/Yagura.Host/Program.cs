@@ -264,18 +264,27 @@ public static class Program
             Port = resolvedConfiguration.TcpPort,
         });
 
+        // ILogStore の書き込みゲート（Issue #151。LogStoreWriteGate の doc コメント参照）:
+        // ライブ書き込み（PersistenceWriter）・スプール drain（SpoolDrainCoordinator）・
+        // 保持期間削除（RetentionScheduler）の 3 経路を単一のゲートで直列化し、
+        // 「書き込みは単一 writer が呼び出す」契約（ILogStore）を実配線で満たす。
+        // 単一インスタンスをここで構築し、3 経路すべてへ同じものを渡す。
+        builder.Services.AddSingleton<LogStoreWriteGate>();
+
         // 保持期間削除スケジューラ（M5-1。database.md §3）。容量枯渇（§1.2 契約 3）を契機とした
         // 前倒し実行の自走復旧経路（§4・§5.3）でもあるため、ICapacityExhaustionHandler として
         // IngestionPipeline へ渡す——RetentionDays が null（既定 30 日への自動フォールバックを
         // 避ける不正値時のフォールバック。DB-1 確定に伴い既定は通常 30 が入る）でも、
         // スケジューラ自体は常に構成し、容量枯渇時の警告発火（保持期間の設定を促す）は行う。
+        // 起動時キャッチアップ（Issue #150）もこのスケジューラの Start() が担う。
         builder.Services.AddSingleton(sp => new Yagura.Host.Retention.RetentionScheduler(
             sp.GetRequiredService<ILogStore>(),
             new Yagura.Host.Retention.RetentionSchedulerOptions(
                 resolvedConfiguration.RetentionDays,
                 resolvedConfiguration.RetentionExecutionTimeOfDay),
             timeProvider: null,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Retention.RetentionScheduler>()));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Retention.RetentionScheduler>(),
+            sp.GetRequiredService<LogStoreWriteGate>()));
 
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
@@ -285,7 +294,8 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>(),
             spool,
             sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>(),
-            resolvedConfiguration.DefaultRfc3164TimeZone));
+            resolvedConfiguration.DefaultRfc3164TimeZone,
+            sp.GetRequiredService<LogStoreWriteGate>()));
 
         // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
         // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。

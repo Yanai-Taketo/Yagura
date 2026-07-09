@@ -820,6 +820,56 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task QuerySystemEventsAsync_KindFilter_ReturnsOnlyMatchingKind()
+    {
+        // Kind の完全一致フィルタ（Issue #150。ILogStore の契約参照——保持期間削除の
+        // 起動時キャッチアップ判定の入力）。null は全種別（従来互換）。
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "downtime.normal-stop", baseline.AddMinutes(-10), baseline.AddMinutes(-9), Approximate: false));
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "retention.delete", baseline.AddDays(-30), baseline.AddMinutes(-5), Approximate: false, Details: "0"));
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "downtime.normal-stop", baseline.AddMinutes(-2), baseline.AddMinutes(-1), Approximate: false));
+
+        var filtered = await Store.QuerySystemEventsAsync(
+            null, null, limit: 10, TimeSpan.FromSeconds(30), kind: "retention.delete");
+        var unfiltered = await Store.QuerySystemEventsAsync(null, null, limit: 10, TimeSpan.FromSeconds(30));
+
+        Assert.Single(filtered);
+        Assert.Equal("retention.delete", filtered[0].Kind);
+        Assert.Equal(3, unfiltered.Count);
+    }
+
+    [SkippableFact]
+    public async Task QuerySystemEventsAsync_KindFilter_FindsRecordBeyondUnfilteredLimitWindow()
+    {
+        // Issue #150 キャッチアップの押し出し問題（PR #198 レビュー指摘）の回帰テスト:
+        // retention.delete の StartAt は意図的な過去日付（cutoff）であり、他種別（受信断）の
+        // StartAt は実時刻のため、種別を問わない StartAt 降順 + limit のウィンドウからは
+        // 押し出され得る。kind フィルタはサーバ側で先に絞るため、limit が他種別の件数より
+        // 小さくても対象種別を発見できること。
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteSystemEventAsync(new SystemEvent(
+            "retention.delete", baseline.AddDays(-30), baseline.AddHours(-1), Approximate: false, Details: "0"));
+        for (var i = 0; i < 5; i++)
+        {
+            await Store.WriteSystemEventAsync(new SystemEvent(
+                "downtime.normal-stop", baseline.AddMinutes(-i - 1), baseline.AddMinutes(-i), Approximate: false));
+        }
+
+        var unfiltered = await Store.QuerySystemEventsAsync(null, null, limit: 3, TimeSpan.FromSeconds(30));
+        var filtered = await Store.QuerySystemEventsAsync(
+            null, null, limit: 3, TimeSpan.FromSeconds(30), kind: "retention.delete");
+
+        // 種別を問わないウィンドウ（limit 3）は受信断だけで埋まり、削除記録は押し出される。
+        Assert.DoesNotContain(unfiltered, e => e.Kind == "retention.delete");
+        // kind フィルタなら同じ limit でも発見できる。
+        var deleteEvent = Assert.Single(filtered);
+        Assert.Equal("retention.delete", deleteEvent.Kind);
+    }
+
+    [SkippableFact]
     public async Task QuerySourceActivityAsync_AggregatesPerSourceOldestFirst()
     {
         var baseline = DateTimeOffset.UtcNow;
