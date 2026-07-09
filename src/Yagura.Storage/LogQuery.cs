@@ -7,8 +7,9 @@ namespace Yagura.Storage;
 /// <param name="ReceivedAtFrom">受信時刻の下限（UTC。含む）。<c>null</c> は下限なし。</param>
 /// <param name="ReceivedAtTo">受信時刻の上限（UTC。含む）。<c>null</c> は上限なし。</param>
 /// <param name="SourceAddress">
-/// 送信元アドレスの完全一致。DB-6（対話的検索の一致規則）確定までの暫定として、
-/// 送信元は完全一致のみを対象列とする（自由文検索の対象は <paramref name="SearchText"/> に限る）。
+/// 送信元アドレスの完全一致。database.md §1.2「自由文検索の一致規則（DB-6）」の対象列は
+/// <see cref="LogRecord.Message"/> のみと確定しており、送信元等の他条件は常に完全一致とする
+/// （自由文検索の対象は <paramref name="SearchText"/> に限る）。
 /// </param>
 /// <param name="SeverityAtMost">
 /// 重大度の閾値（Issue #148）。syslog の重大度は<b>数値が小さいほど深刻</b>（0 = 緊急〜7 = デバッグ）
@@ -32,7 +33,10 @@ namespace Yagura.Storage;
 /// </param>
 /// <param name="SearchText">
 /// 自由文検索。<see cref="LogRecord.Message"/> に対する部分一致（大文字小文字を区別しない）とする
-/// （DB-6 確定までの暫定規則。適合テストスイート整備時に database.md §1.2 へ固定する）。
+/// （database.md §1.2「自由文検索の一致規則（DB-6）」。2026-07-09 オーナー決定で規則は確定済み。
+/// ASCII 範囲の大文字小文字非区別は両 provider が blocking で満たす。非 ASCII の実装・検証は
+/// provider ごとの実装バッチ——SQL Server は database.md §5.4 の列 COLLATE、SQLite は DB-9 の
+/// 性能実測後——に委ねる）。
 /// </param>
 /// <param name="Limit">結果件数の上限（必須。architecture.md §6・M-10）。</param>
 /// <param name="Timeout">クエリの実行時間上限（必須。超過時は例外を送出する）。</param>

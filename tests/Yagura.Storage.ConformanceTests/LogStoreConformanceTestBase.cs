@@ -238,6 +238,40 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task WriteBatchAsync_HeadersLongerThan255Characters_RoundTripWithoutTruncation()
+    {
+        // Issue #147（database.md §2.1）: RFC 5424 の各上限内なら 255 文字を超えないが、現場の
+        // 機器は非準拠に長い値を平気で送る。provider はヘッダ（Hostname/AppName/ProcId/MsgId）を
+        // 黙って切り詰めてはならない——旧 SQL Server v1 スキーマ（NVARCHAR(255) + パラメータ
+        // Size=255）が黙って 255 文字へ切り詰めていた欠陥の回帰検出（blocking）。
+        var longHostname = "h" + new string('a', 299);
+        var longAppName = "app-" + new string('b', 296);
+        var longProcId = "p" + new string('1', 299);
+        var longMsgId = "m" + new string('2', 299);
+        var record = new LogRecord(
+            ReceivedAt: DateTimeOffset.UtcNow,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.Parsed,
+            Hostname: longHostname,
+            AppName: longAppName,
+            ProcId: longProcId,
+            MsgId: longMsgId,
+            Message: "long-header probe");
+
+        await Store.WriteBatchAsync(new[] { record });
+
+        var results = await Store.QueryLatestAsync(limit: 1, timeout: TimeSpan.FromSeconds(5));
+
+        Assert.Single(results);
+        Assert.Equal(longHostname, results[0].Hostname);
+        Assert.Equal(longAppName, results[0].AppName);
+        Assert.Equal(longProcId, results[0].ProcId);
+        Assert.Equal(longMsgId, results[0].MsgId);
+    }
+
+    [SkippableFact]
     public async Task WriteBatchAsync_SameBatchTwice_DoesNotThrowAndDuplicatesAreStored()
     {
         // at-least-once の機械化（database.md §1.2「部分成功の扱い（全再試行で重複になっても
@@ -421,6 +455,30 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
 
         Assert.Single(results);
         Assert.Contains("RESET", results[0].Message);
+    }
+
+    [SkippableTheory]
+    [InlineData("error", "Kernel ERROR detected")]
+    [InlineData("ERROR", "disk error imminent")]
+    [InlineData("Error", "ERRORS: 3 total")]
+    public async Task QueryAsync_SearchText_AsciiCaseFolding_IsBlockingForAllProviders(
+        string searchText,
+        string storedMessage)
+    {
+        // database.md §1.2 DB-6（2026-07-09 オーナー決定）: ASCII 範囲（A-Z/a-z）の大文字小文字
+        // 非区別は両 provider が確実に満たす最小要件（blocking——不合格は provider 受け入れを
+        // 止める）。Issue #146 の根拠——「error」で ERROR/Error を拾えることが自由文検索の根幹。
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(new[]
+        {
+            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.1", storedMessage),
+            CreateParsedRecord(baseline, "10.0.0.1", "unrelated heartbeat"),
+        });
+
+        var results = await Store.QueryAsync(new LogQuery(Limit: 10, Timeout: TimeSpan.FromSeconds(5), SearchText: searchText));
+
+        Assert.Single(results);
+        Assert.Equal(storedMessage, results[0].Message);
     }
 
     [SkippableFact]
