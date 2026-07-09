@@ -32,14 +32,15 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 |---|---|
 | Windows サービス登録 | `ServiceInstall`(サービス名 `Yagura` = `Program.WindowsServiceName`)。仮想サービスアカウント `NT SERVICE\Yagura`・自動起動・失敗時再起動(5 秒 × 3 回、`util:ServiceConfig`) |
 | データルート作成 + ACL | `%ProgramData%\Yagura` を作成し、native `PermissionEx`(MsiLockPermissionsEx)の SDDL で「SYSTEM/Administrators = フル、サービスアカウント = 変更、継承無効化」を適用(security.md §5) |
+| フォワーダ MSI 配置フォルダ作成 + ACL | `%ProgramData%\Yagura\forwarder` を作成し、データルートとは独立した SDDL(`ForwarderFolder` コンポーネント)で「SYSTEM/Administrators = フル、サービスアカウント = **読み取りのみ**、継承無効化」を適用(ADR-0008 設計条件 9・security.md §5.1・Issue #171)。データルートの ACL をそのまま継承すると生じるサービスアカウントの書込可を明示的に断つ |
 | ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可(WixToolset.Firewall.wixext)。**プロファイルは Domain + Private 限定**(Public は含まない。WiX Firewall 拡張の `Profile` 属性は単一値の列挙型で複数値の同時指定に非対応のため、系統ごとに `Profile="domain"` / `Profile="private"` の 2 規則に分けて作成する。規則数は実質 6 本)。管理 8515 は loopback 専用のため規則を作らない |
 | 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_FIREWALL=""` |
 | インストール記録 | 選択(`RulesRequested`)と作成規則一覧をデータルート直下の `firewall-rules.ini` に記録(初回起動時のイベントログ転記は Host 側の後続 Issue) |
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
 | 完了画面 | 閲覧 URL(http://localhost:8514/)の案内 + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`) |
 | スタートメニュー | 「Yagura ログ閲覧」(.url、http://localhost:8514/) |
-| アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される |
-| アンインストール | 規則・ショートカット・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除) |
+| アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される。`forwarder` フォルダの ACL も新製品インストール時に `PermissionEx` が再実行され再適用される |
+| アンインストール | 規則・ショートカット・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除)。`forwarder` フォルダも同じ規則(MSI 未配置で空なら削除、配置済みで非空なら ACL ごと保持) |
 
 ## E2E 検証(M9-2。Issue #75 / ADR-0006 基準 1)
 

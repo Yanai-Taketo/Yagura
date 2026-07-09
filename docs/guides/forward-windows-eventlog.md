@@ -47,17 +47,20 @@ Get-FileHash ".\fluent-bit-4.0.14-win64.msi" -Algorithm SHA256
 管理画面の「公式配布 SHA256 との照合」は常に「未実施」と表示される。取得元の真正性は
 入手時点で管理者自身が確認すること。
 
-### 2. 配置フォルダを作成し、MSI を置く
+### 2. 配置フォルダに MSI を置く
 
 配置先は**データルート配下の `forwarder` フォルダ**(既定インストールでは
-`%ProgramData%\Yagura\forwarder\`)。このフォルダはインストーラ(MSI)・Yagura 本体の
-どちらも自動作成しない(委任事項の申し送りとして残っている未実装項目)。初回は管理者が
-自分で作成する:
+`%ProgramData%\Yagura\forwarder\`)。このフォルダは Yagura のインストーラ(MSI)が
+作成し、専用の ACL(Administrators のみ書き込み可。次節)を設定済みである。
+管理者権限の PowerShell からコピーする:
 
 ```powershell
-New-Item -ItemType Directory -Path "$env:ProgramData\Yagura\forwarder" -Force
 Copy-Item ".\fluent-bit-4.0.14-win64.msi" "$env:ProgramData\Yagura\forwarder\"
 ```
+
+フォルダが存在しない場合(旧版インストーラで導入した後、最新版へ未アップグレードの
+環境等)は、最新インストーラでの上書きインストールで作成・ACL 設定されるのを待つか、
+手動で作成して次節の期待値どおりに ACL を設定すること。
 
 **ファイル名は `fluent-bit-*-win64.msi` パターンに一致させること**
 (大文字小文字は区別しない。例: `fluent-bit-4.0.14-win64.msi`)。packages.fluentbit.io から
@@ -66,35 +69,39 @@ Copy-Item ".\fluent-bit-4.0.14-win64.msi" "$env:ProgramData\Yagura\forwarder\"
 
 ### 3. フォルダの ACL を確認する
 
-`forwarder` フォルダは、作成時に親フォルダ(データルート `%ProgramData%\Yagura`)の
-ACL を継承する。次のコマンドで確認する:
+`forwarder` フォルダには、Yagura のインストーラが親フォルダ(データルート
+`%ProgramData%\Yagura`)からの継承を断った専用の ACL を設定する
+([ADR-0008](../adr/0008-forwarder-kit-generation.md) 設計条件 9・
+[docs/design/security.md §5.1](../design/security.md)。ここに書ける者は
+「全端末に配る MSI を差し替えられる者」であるため、書き込みを Administrators に限定する)。
+次のコマンドで確認する:
 
 ```powershell
 icacls "$env:ProgramData\Yagura\forwarder"
 ```
 
-データルートのインストーラ既定 ACL(`installer/Package.wxs`)に基づき、次の 3 エントリが
-継承されて表示されるのが正常な状態:
+インストーラ既定 ACL(`installer/Package.wxs` の `ForwarderFolder` コンポーネント)に
+基づき、次の 3 エントリが表示されるのが正常な状態(実機確認済み・2026-07-09):
 
 ```
 NT AUTHORITY\SYSTEM:(OI)(CI)(F)
 BUILTIN\Administrators:(OI)(CI)(F)
-NT SERVICE\Yagura:(OI)(CI)(M)
+NT SERVICE\Yagura:(OI)(CI)(R)
 ```
 
-読み方: `(F)` はフルコントロール、`(M)` は変更(読み書き・削除は可だが権限変更は不可)、
+読み方: `(F)` はフルコントロール、`(R)` は読み取りのみ(書き込み・削除・権限変更は不可)、
 `(OI)(CI)` は配下のファイル・フォルダへ継承されることを示す。`NT SERVICE\Yagura` は
 Yagura サービスの仮想サービスアカウント(実行アカウント)であり、環境によっては名前解決
-されず SID(`S-1-5-80-...` で始まる文字列)のまま表示されることがある(名前解決の可否は
-実機依存で未検証)。
+されず SID(`S-1-5-80-...` で始まる文字列)のまま表示されることがある。データルート本体
+(`%ProgramData%\Yagura`)ではサービスアカウントが `(M)`(変更)を持つのに対し、
+`forwarder` フォルダのみ `(R)` に絞られているのが意図どおりの状態——Web/サービス
+プロセスが侵害されても、全端末に配布される MSI をサービスアカウント権限では差し替え
+られない。Yagura 側の読み取り(MSI の検出・SHA256 計算・版取得)は `(R)` で足りるため、
+管理画面の動作に影響はない。
 
-**注意(設計意図と現状の差)**: [ADR-0008](../adr/0008-forwarder-kit-generation.md) 設計条件 9 は
-「配置フォルダは既定で Administrators のみ書き込み可」を意図しているが、上記のとおり
-`forwarder` フォルダはデータルートの ACL をそのまま継承するため、**現状は Yagura サービス
-アカウントにも変更(書き込み)権限がある**([docs/design/security.md §5.1](../design/security.md)
-に記載の既知のギャップ。フォルダの明示的な ACL 個別設定はインストーラの未実装項目)。
-意図どおり Administrators のみに絞りたい場合は、配置後に手動で ACL を絞り込むこと
-(例: `icacls` でサービスアカウントの ACE を明示的に除去する。誤って `SYSTEM` /
+サービスアカウントの行が `(M)` や `(F)` になっている場合は、旧版インストーラの
+既定(データルート ACL の継承)が残っている状態なので、最新インストーラでの
+上書きインストールで是正するか、手動で `(R)` へ絞り込むこと(誤って `SYSTEM` /
 `Administrators` の権限まで奪わないよう注意)。
 
 ### 4. 管理画面での見え方を確認する
