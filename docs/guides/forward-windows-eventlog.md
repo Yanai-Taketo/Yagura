@@ -117,6 +117,33 @@ Fluent Bit の MSI(4.0.14 で確認)は、インストール時に**自ら** `fl
 追加権限は不要だが、Security チャネルはイベント量が多く機微情報を含むため、
 組織のポリシーで明示的に判断してから有効化すること。
 
+### キット同梱ファイルの文字コード(Windows PowerShell 5.1 での表示に関する注意)
+
+キット内のファイルはすべて UTF-8 だが、**BOM(byte order mark)の有無が用途で異なる**(Issue #127)。
+
+| ファイル | BOM | 理由 |
+|---|---|---|
+| `fluent-bit-yagura.conf` / `winevt-severity.lua` | なし | Fluent Bit のパーサが BOM を想定しないため |
+| `install.ps1` / `uninstall.ps1` | なし | 本文が ASCII のみで BOM 有無の影響を受けない |
+| `README.md` / `GENERATED.txt` | **あり** | 人間が読む専用でどのプログラムもパースしないため、BOM を付けて文字コードを明示する |
+
+`fluent-bit-yagura.conf` は BOM なしのまま維持されるため、**Windows PowerShell 5.1 の
+既定コンソールや `Get-Content` でそのまま開くと日本語コメントが文字化けする**
+(既定コードページが UTF-8 でないため)。正しく表示するには、以下のいずれかを使うこと。
+
+```powershell
+# 方法 1: エンコーディングを明示して読む(推奨)
+Get-Content -Path C:\ProgramData\fluent-bit-yagura\fluent-bit-yagura.conf -Encoding UTF8
+
+# 方法 2: コンソールのコードページを UTF-8 に切り替えてから開く(そのセッション内で有効)
+chcp 65001
+notepad C:\ProgramData\fluent-bit-yagura\fluent-bit-yagura.conf
+```
+
+**PowerShell 7 以降は既定エンコーディングが UTF-8 のため、この問題の影響を受けない。**
+`README.md` ・ `GENERATED.txt` は BOM 付きのため、PowerShell 5.1 の `Get-Content` や
+メモ帳でもそのまま正しく表示できる。
+
 ## 検証済み環境
 
 - Windows Server 2025 + Fluent Bit **4.0.14**(`fluent-bit-4.0.14-win64.msi`)で

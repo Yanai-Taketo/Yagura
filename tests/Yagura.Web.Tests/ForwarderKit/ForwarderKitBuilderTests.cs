@@ -118,6 +118,46 @@ public sealed class ForwarderKitBuilderTests
         }
     }
 
+    // ---- BOM 方針（Issue #127: PowerShell 5.1 / 既定コンソールでの文字化け対策） ----
+
+    [Theory]
+    [InlineData("fluent-bit-yagura.conf")]
+    [InlineData("install.ps1")]
+    [InlineData("uninstall.ps1")]
+    [InlineData("winevt-severity.lua")]
+    public void Build_ProgramParsedEntries_HaveNoUtf8Bom(string entryName)
+    {
+        // Fluent Bit（conf・Lua）・PowerShell（install.ps1・uninstall.ps1）がパースする
+        // 実行時アーティファクトは BOM を付けない（Fluent Bit のパーサが BOM を想定しないため。
+        // ForwarderKitBuilder.WriteEntry のコメント参照）。
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var bytes = ReadEntryBytes(archive, entryName);
+
+        Assert.False(StartsWithUtf8Bom(bytes), $"{entryName} に BOM が付与されている");
+    }
+
+    [Theory]
+    [InlineData("README.md")]
+    [InlineData("GENERATED.txt")]
+    public void Build_HumanReadOnlyEntries_HaveUtf8Bom(string entryName)
+    {
+        // README・GENERATED.txt は人間が読む専用でどのプログラムもパースしないため、
+        // Windows PowerShell 5.1 の既定 Get-Content や既定コードページのコンソールでの
+        // 文字化けを防ぐ目的で BOM 付き UTF-8 にする（Issue #127）。
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var bytes = ReadEntryBytes(archive, entryName);
+
+        Assert.True(StartsWithUtf8Bom(bytes), $"{entryName} に BOM が付与されていない");
+    }
+
     // ---- MSI オプトイン同梱（ADR-0008 設計条件 9） ----
 
     [Fact]
@@ -292,5 +332,20 @@ public sealed class ForwarderKitBuilderTests
         using var stream = entry.Open();
         using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
         return reader.ReadToEnd();
+    }
+
+    private static byte[] ReadEntryBytes(ZipArchive archive, string entryName)
+    {
+        var entry = archive.GetEntry(entryName) ?? throw new InvalidOperationException($"entry not found: {entryName}");
+        using var stream = entry.Open();
+        using var memoryStream = new MemoryStream();
+        stream.CopyTo(memoryStream);
+        return memoryStream.ToArray();
+    }
+
+    private static bool StartsWithUtf8Bom(byte[] bytes)
+    {
+        var preamble = System.Text.Encoding.UTF8.GetPreamble();
+        return bytes.Length >= preamble.Length && bytes.AsSpan(0, preamble.Length).SequenceEqual(preamble);
     }
 }
