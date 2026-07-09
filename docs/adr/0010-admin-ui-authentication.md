@@ -1,6 +1,6 @@
 # ADR-0010: 管理 UI への認証追加(opt-in)とリモート管理の解禁
 
-- 状態: proposed
+- 状態: accepted（2026-07-10 マージ）
 - 日付: 2026-07-09
 - 決定者: YANAI Taketo
 - 関連: [ADR-0004](0004-security-model.md)(決定 2・3・7 の実装詳細化——決定 2 は「リモートからの管理操作は認証 + HTTPS を有効化した場合に開放される」と本 ADR の帰結を既に予告している)/ [ADR-0003](0003-ui-policy.md)(Blazor Interactive Server 単一モード)/ [ADR-0006](0006-v1-release-criteria.md) 基準 2(opt-in 強化 3 点の一部として AD 連携認証を v1.0 提供済み条件に含む)/ [docs/design/security.md](../design/security.md) §1(loopback の CI 回帰テスト L-1〜L-5)・§2.3(circuit 認証失効の反映)・§3(役割の粒度)・§4(監査記録)・§5.1(forwarder フォルダ ACL)・§6(TLS 受信用証明書)/ [docs/design/configuration.md](../design/configuration.md) §4.2〜§4.3(管理ポート・FW 規則)・§6(Web UI HTTPS 証明書の取り扱い)/ Issue #172(本 ADR の起案元・オーナー決定済み方向性)/ Issue #130(フォワーダ MSI アップロード。PR #167 で見送り・本 ADR を再評価トリガに指定)/ Issue #171(forwarder フォルダ ACL の実装乖離。関連文脈)/ PR #167(MSI アップロード supersession 見送りのペルソナレビュー——操作者特定・拒否監査・受け入れ基準の要求事項の引き継ぎ元)
