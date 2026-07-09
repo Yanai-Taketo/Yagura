@@ -287,6 +287,38 @@ public static class Program
             sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>(),
             resolvedConfiguration.DefaultRfc3164TimeZone));
 
+        // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
+        // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。
+        // Express 判定は provider 非依存の ILogStore 契約を汚さないよう、SqlServerLogStore への
+        // 型検査を Host（合成ルート）側の LogStoreExpressCapacityChecker に閉じ込める
+        // （ExpressCapacityChecker.cs の remarks 参照）。
+        //
+        // 空き容量の監視対象はデータルートに加えて、スプール有効時はスプール置き場所も含める
+        // （PR #188 レビュー指摘への対応）: Spool:Directory は設定で独立に変更でき
+        // （configuration.md §8「スプール」区分）、データルートと別ドライブに向いた構成では
+        // 「夜間にスプールが満ちていく」現場のボリュームが監視から外れてしまうため。
+        // 既定構成（スプールはデータルート配下）では両パスは同一ボリュームであり、
+        // MonitoredVolumeInfo が読み取り時に 1 件へ重複排除する（警告の二重発火はしない）。
+        // スプール無効（opt-out）時は、監視すべきスプール成長自体が存在しないためデータルートのみ。
+        // スプールなし縮退運転（spool が null）でも SpoolEnabled = true ならスプール置き場所を
+        // 監視対象に含める——縮退の原因がそのボリュームの障害・満杯である可能性があり、
+        // 空き容量の観測はむしろ復旧判断の入力になるため。
+        string[] monitoredVolumePaths = resolvedConfiguration.SpoolEnabled
+            ? [dataRoot, resolvedConfiguration.SpoolDirectory]
+            : [dataRoot];
+        builder.Services.AddSingleton<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(
+            _ => new Yagura.Host.Observability.ActiveNotification.MonitoredVolumeInfo(monitoredVolumePaths));
+        builder.Services.AddSingleton<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(
+            sp => new Yagura.Host.Observability.ActiveNotification.LogStoreExpressCapacityChecker(
+                sp.GetRequiredService<ILogStore>()));
+        builder.Services.AddSingleton(sp => new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
+            spool,
+            sp.GetRequiredService<IngestionPipeline>().Metrics,
+            sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(),
+            sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>()));
+
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
         // 同じインスタンスへメタデータ領域の値を引き継ぐ・書き出す）。
@@ -393,9 +425,11 @@ public static class Program
             var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Startup");
             // 先頭の [spool-degraded-mode] はロケール非依存の機械照合用トークン。日本語本文は
             // リダイレクトされた子プロセス stdout のコードページ次第で化け得るため(en-US 環境の
-            // CP437 等)、E2E テストはこの ASCII トークンで照合する。恒久的なイベント ID 体系は
-            // security.md §4.3 の監査記録実装時に整備する。
+            // CP437 等)、E2E テストはこの ASCII トークンで照合する。イベント ID は
+            // ActiveNotificationEventIds.SpoolDegradedStartup（1001。security.md §4.3「1000 番台
+            // = 運用警告」区画。Issue #149 で 1000 番台を実配線した際に遡及割当・記録した）。
             startupLogger.LogWarning(
+                Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.SpoolDegradedStartup,
                 spoolOpenFailure,
                 "[spool-degraded-mode] スプール領域 {SpoolDirectory} を開けなかったため、スプールなし縮退運転で起動します。" +
                 "縮退中は Q2 溢れ・書き込み失敗分が破棄され、永続化失敗カウンタへ計上されます。",

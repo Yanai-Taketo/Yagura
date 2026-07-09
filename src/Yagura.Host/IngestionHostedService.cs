@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Yagura.Host.Observability;
+using Yagura.Host.Observability.ActiveNotification;
 using Yagura.Host.Retention;
 using Yagura.Ingestion;
 using Yagura.Storage;
@@ -40,6 +41,7 @@ public sealed class IngestionHostedService : IHostedService
     private readonly ILogStore _logStore;
     private readonly ObservabilityCoordinator _observability;
     private readonly RetentionScheduler _retentionScheduler;
+    private readonly ActiveNotificationMonitor _activeNotificationMonitor;
     private readonly ILogger<IngestionHostedService> _logger;
 
     public IngestionHostedService(
@@ -47,18 +49,21 @@ public sealed class IngestionHostedService : IHostedService
         ILogStore logStore,
         ObservabilityCoordinator observability,
         RetentionScheduler retentionScheduler,
+        ActiveNotificationMonitor activeNotificationMonitor,
         ILogger<IngestionHostedService> logger)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(logStore);
         ArgumentNullException.ThrowIfNull(observability);
         ArgumentNullException.ThrowIfNull(retentionScheduler);
+        ArgumentNullException.ThrowIfNull(activeNotificationMonitor);
         ArgumentNullException.ThrowIfNull(logger);
 
         _pipeline = pipeline;
         _logStore = logStore;
         _observability = observability;
         _retentionScheduler = retentionScheduler;
+        _activeNotificationMonitor = activeNotificationMonitor;
         _logger = logger;
     }
 
@@ -137,10 +142,20 @@ public sealed class IngestionHostedService : IHostedService
         // IngestionPipeline へ渡し済みのため、ここでは定期実行ループの開始のみを行う。
         _retentionScheduler.Start();
         _logger.LogInformation("保持期間削除の定期実行を開始しました。");
+
+        // 能動通知の周期監視（architecture.md §4.6。M4-6。Issue #149）もコンシューマ開始後に
+        // 始める。スプール使用率・退避継続・データルートの空き容量・Express 上限接近を
+        // 定期評価し、閾値超過をイベントログへ警告として書き出す（トリガごとの抑制窓あり）。
+        _activeNotificationMonitor.Start();
+        _logger.LogInformation("能動通知の周期監視を開始しました。");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // 能動通知の周期監視を止める（保持期間削除と同様、受信・drain の停止順序とは独立のため
+        // 早期に止めてよい）。
+        await _activeNotificationMonitor.StopAsync().ConfigureAwait(false);
+
         // 保持期間削除の定期実行を止める。
         await _retentionScheduler.StopAsync().ConfigureAwait(false);
 
