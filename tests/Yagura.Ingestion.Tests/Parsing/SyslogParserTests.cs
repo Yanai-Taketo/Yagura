@@ -406,14 +406,52 @@ public class SyslogParserTests
     }
 
     [Fact]
-    public void Parse_Rfc5424_MalformedTimestamp_ReturnsParseFailed()
+    public void Parse_Rfc5424_MalformedTimestamp_ReturnsParseFailedWithHeaderPreserved()
     {
+        // TIMESTAMP の値だけが RFC 3339 として不正（時計設定が壊れた機器等）。TIMESTAMP の
+        // 変換より前に HOSTNAME・APP-NAME・PROCID・MSGID の 4 フィールドは確定済みのため
+        // 破棄しない（Issue #139。DeviceTimestamp のみ未設定）。
         var payload = "<34>1 not-a-timestamp mymachine.example.com su - ID47 -"u8.ToArray();
         var datagram = CreateDatagram(payload);
 
         var record = SyslogParser.Parse(datagram);
 
         Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Null(record.DeviceTimestamp); // 値が不正のため未設定
+        Assert.Equal("mymachine.example.com", record.Hostname);
+        Assert.Equal("su", record.AppName);
+        Assert.Null(record.ProcId); // NILVALUE
+        Assert.Equal("ID47", record.MsgId);
+        Assert.Null(record.StructuredData); // 失敗より後段のため未確定
+        Assert.Null(record.Message);
+        Assert.Equal(payload, record.Raw);
+    }
+
+    [Fact]
+    public void Parse_Rfc5424_NonSpaceAfterStructuredData_ReturnsParseFailedWithHeaderPreserved()
+    {
+        // STRUCTURED-DATA の直後は SP + MSG か終端でなければならない（RFC 5424 §6.1）。
+        // この構造違反の時点で HEADER と STRUCTURED-DATA は確定済みのため破棄しない
+        // （Issue #139）。
+        var payload = "<34>1 2003-10-11T22:14:15.003Z host app 123 ID1 [sdid@1 x=\"1\"]junk"u8.ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Equal(4, record.Facility);
+        Assert.Equal(2, record.Severity);
+        Assert.Equal(
+            new DateTimeOffset(2003, 10, 11, 22, 14, 15, 3, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("123", record.ProcId);
+        Assert.Equal("ID1", record.MsgId);
+        Assert.Equal("[sdid@1 x=\"1\"]", record.StructuredData);
+        Assert.Null(record.Message);
         Assert.Equal(payload, record.Raw);
     }
 

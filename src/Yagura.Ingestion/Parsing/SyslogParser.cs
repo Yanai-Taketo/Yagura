@@ -26,12 +26,13 @@ namespace Yagura.Ingestion.Parsing;
 /// 本クラスの private メソッド群のコメントを参照）。
 /// </para>
 /// <para>
-/// **解析失敗時のフィールド保持**（Issue #139）: CONTENT/MSG/STRUCTURED-DATA の非 UTF-8 の
-/// ように、PRI・HEADER（facility/severity/HOSTNAME/AppName/ProcId/MsgId/DeviceTimestamp）
-/// より後段の解析で ParseFailed になった場合、既に確定した PRI・HEADER 側の値は破棄せず
-/// <see cref="LogRecord"/> に載せる（Message のみ null。Raw は常に保持）。一方、PRI 自体が
-/// 不正・HEADER が ABNF 途中で途切れるなど、値そのものが確定する前に失敗した場合は、
-/// 従来通り該当フィールドを設定しない（database.md §2.1「解析失敗時のフィールド保持」）。
+/// **解析失敗時のフィールド保持**（Issue #139）: ParseFailed になった原因より手前で既に
+/// 確定した値は破棄せず <see cref="LogRecord"/> に載せる（Raw は常に保持）。対象は
+/// CONTENT/MSG/STRUCTURED-DATA の非 UTF-8（このとき Message/StructuredData は null）に加え、
+/// TIMESTAMP 値の RFC 3339 不正（確定済みの HOSTNAME 等は保持し DeviceTimestamp のみ未設定）、
+/// STRUCTURED-DATA の不正・直後の構造違反（確定済みの HEADER は保持）を含む。一方、PRI 自体が
+/// 不正・HEADER が ABNF 途中で途切れるなど、フィールドのトークン化そのものが失敗した場合は、
+/// 従来通り該当フィールド以降を設定しない（database.md §2.1「解析失敗時のフィールド保持」）。
 /// </para>
 /// <para>
 /// <see cref="RawDatagram.Incomplete"/> が立っている場合（TCP 接続が切断された時点で
@@ -222,7 +223,14 @@ public static class SyslogParser
             // ため（Issue #139）。
             if (!TryParseRfc3339(timestampField, out var parsedTimestamp))
             {
-                return Fail5424(datagram);
+                // TIMESTAMP の値だけが不正（RFC 3339 として解釈できない——時計設定が壊れた
+                // 機器等）。この時点で HOSTNAME・APP-NAME・PROCID・MSGID の 4 フィールドは
+                // 既に確定済みのため破棄しない（DeviceTimestamp のみ未設定。Issue #139・
+                // database.md §2.1「解析失敗時のフィールド保持」——この失敗だけでホスト名
+                // 検索が成立しなくなる状態を避ける）。
+                return Fail5424WithHeader(
+                    datagram, deviceTimestamp: null, facility, severity, hostnameField, appNameField,
+                    procIdField, msgIdField);
             }
 
             deviceTimestamp = parsedTimestamp;
@@ -244,8 +252,12 @@ public static class SyslogParser
         {
             if (payload[pos] != (byte)' ')
             {
-                // STRUCTURED-DATA の直後は SP + MSG か終端でなければならない。
-                return Fail5424(datagram);
+                // STRUCTURED-DATA の直後は SP + MSG か終端でなければならない。この構造違反の
+                // 時点で HEADER と STRUCTURED-DATA は確定済みのため破棄しない（Issue #139・
+                // database.md §2.1「解析失敗時のフィールド保持」）。
+                return Fail5424WithHeader(
+                    datagram, deviceTimestamp, facility, severity, hostnameField, appNameField, procIdField,
+                    msgIdField, structuredData);
             }
 
             pos++; // SP を消費
@@ -283,9 +295,10 @@ public static class SyslogParser
         Envelope(datagram, ParseStatus.ParseFailed, raw: datagram.Payload);
 
     /// <summary>
-    /// HEADER（facility/severity/TIMESTAMP/HOSTNAME/APP-NAME/PROCID/MSGID）が既に確定した後、
-    /// STRUCTURED-DATA または MSG の非 UTF-8 デコードに失敗した場合の ParseFailed 封筒。
-    /// Message は設定せず、Raw はデコード不能な生バイト列を保持する（Issue #139）。
+    /// HEADER の一部または全部が既に確定した後の失敗（TIMESTAMP 値の RFC 3339 不正・
+    /// STRUCTURED-DATA の不正または非 UTF-8・MSG の非 UTF-8・STRUCTURED-DATA 直後の構造違反）
+    /// 用の ParseFailed 封筒。確定済みの値のみを渡し、失敗した項目より後は設定しない。
+    /// Message は設定せず、Raw は受信した生バイト列を保持する（Issue #139）。
     /// </summary>
     private static LogRecord Fail5424WithHeader(
         RawDatagram datagram,
