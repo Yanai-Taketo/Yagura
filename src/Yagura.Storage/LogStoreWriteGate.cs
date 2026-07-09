@@ -14,7 +14,11 @@ namespace Yagura.Storage;
 /// 呼び出し得る。SQLite は busy_timeout（既定 30 秒）による再試行と、削除のチャンクごとの
 /// コネクション開閉が生むロック解放の組み合わせで「たまたま」並行呼び出しに耐えているに
 /// 過ぎず、真に単一 writer を要求する provider（将来の PostgreSQL/MySQL 追加。database.md
-/// §1.1）では例外・デッドロックとして表面化し得る。
+/// §1.1）では例外・デッドロックとして表面化し得る。なお、ホスト起動処理の受信断記録
+/// （<c>IngestionHostedService.StartAsync</c> の <see cref="ILogStore.WriteSystemEventAsync"/>
+/// 直接呼び出し）は本ゲートを通らない第 4 の書き込み経路だが、上記 3 経路のいずれもまだ
+/// 開始されていない時点で実行されるため、非同時実行は起動順序により保証される
+/// （ゲートによる保証ではない。<see cref="ILogStore"/> の doc コメント参照）。
 /// </para>
 /// <para>
 /// <b>設置場所の設計判断</b>: ホスト（<c>Yagura.Host.Program</c>）が単一のインスタンスを

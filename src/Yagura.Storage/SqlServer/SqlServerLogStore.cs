@@ -588,6 +588,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         DateTimeOffset? to,
         int limit,
         TimeSpan timeout,
+        string? kind = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
@@ -617,6 +618,13 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             {
                 whereClauses.Add("StartAt <= @to");
                 command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = toValue.UtcDateTime;
+            }
+
+            // 種別の完全一致フィルタ（Issue #150。ILogStore の契約参照）。
+            if (kind is not null)
+            {
+                whereClauses.Add("Kind = @kind");
+                command.Parameters.Add("@kind", System.Data.SqlDbType.NVarChar, 255).Value = kind;
             }
 
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;

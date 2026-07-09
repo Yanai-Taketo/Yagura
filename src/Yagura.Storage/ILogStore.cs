@@ -31,6 +31,15 @@ namespace Yagura.Storage;
 /// doc コメントを参照。
 /// </para>
 /// <para>
+/// <b>ゲートを通らない第 4 の書き込み経路（起動順序による非同時実行）</b>: 上記 3 経路の
+/// ほかに、ホストの起動処理（<c>Yagura.Host.IngestionHostedService.StartAsync</c>）が受信断
+/// 区間のシステムイベントを <see cref="WriteSystemEventAsync"/> で直接 1 回書き込む。この
+/// 呼び出しはゲートを通らないが、消費ループ（永続化段・drain）と保持期間スケジューラの
+/// 開始より厳密に前——起動シーケンス上、他の書き込み経路がまだ 1 つも動いていない時点——で
+/// 実行されるため、非同時実行は起動順序により保証される（ゲートによる保証ではない。
+/// 起動順序をリファクタする場合はこの前提が崩れないか確認すること——PR #198 レビュー指摘）。
+/// </para>
+/// <para>
 /// <b>読み書き分離の性質の文書化義務</b>（database.md §1.2 契約表 末尾・§1.3）: 各 provider
 /// 実装は、検索（読み取り）が書き込みをブロックし得るかと、付随する運用特性（WAL 肥大等）を
 /// 実装クラスの doc コメントで明示すること。これは文書化義務であり、機械検証（適合テスト
@@ -164,12 +173,22 @@ public interface ILogStore
     /// </param>
     /// <param name="limit">結果件数の上限（必須。<see cref="SystemEvent.StartAt"/> 降順で新しい順に返す）。</param>
     /// <param name="timeout">クエリの実行時間上限。</param>
+    /// <param name="kind">
+    /// <see cref="SystemEvent.Kind"/> の完全一致フィルタ。<c>null</c> は全種別（従来互換）。
+    /// Issue #150（保持期間削除の起動時キャッチアップ）で追加した最小の契約拡張——キャッチアップ
+    /// 判定は直近の <c>retention.delete</c> イベントだけを必要とするが、種別を問わない直近 N 件の
+    /// 走査では、<c>retention.delete</c> の <see cref="SystemEvent.StartAt"/> が意図的な過去日付
+    /// （cutoff = 実行時刻 − 保持日数）である一方、受信断イベントの <see cref="SystemEvent.StartAt"/>
+    /// は実時刻のため常に新しい側に並び、受信断が N 件を超えて蓄積すると削除記録がウィンドウから
+    /// 恒常的に押し出される（PR #198 レビュー指摘）。種別で先に絞ることでこの非対称を解消する。
+    /// </param>
     /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
     Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
         DateTimeOffset? from,
         DateTimeOffset? to,
         int limit,
         TimeSpan timeout,
+        string? kind = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

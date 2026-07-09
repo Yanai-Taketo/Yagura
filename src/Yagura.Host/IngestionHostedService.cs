@@ -99,6 +99,13 @@ public sealed class IngestionHostedService : IHostedService
         // ILogStore.WriteSystemEventAsync に委ねる（DB 障害時の扱いは M5 の契約完全化まで
         // ベストエフォート——本 Issue の依頼コメント「M5 の契約完全化で正式化される前提でよい」
         // に対応する）。
+        //
+        // 書き込みゲート（Issue #151。LogStoreWriteGate）を意図的に通さない: この呼び出しは
+        // 消費ループ（永続化段・drain。StartConsumers）と保持期間スケジューラ
+        // （_retentionScheduler.Start()）の開始より厳密に前——他の書き込み経路がまだ 1 つも
+        // 動いていない時点——で実行されるため、非同時実行は起動順序により保証される
+        // （ゲートによる保証ではない。起動順序をリファクタする場合はこの前提が崩れないか
+        // 確認すること。ILogStore の doc コメント「ゲートを通らない第 4 の書き込み経路」参照）。
         var downtimeEvent = DowntimeRecorder.DetermineDowntimeEvent(_observability.PreviousState, receiveStartedAt);
         if (downtimeEvent is not null)
         {

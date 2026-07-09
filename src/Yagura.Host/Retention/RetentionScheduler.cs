@@ -33,8 +33,12 @@ namespace Yagura.Host.Retention;
 /// （下記「削除実行の記録」）であり、これを読み出すだけでキャッチアップ判定ができるため
 /// （Issue 本文の提案「メタデータ領域に最終削除実行時刻を持たせる」との比較: 新規の永続化領域
 /// ・書き込み経路を増やさずに済み、既存の記録と情報源が一本化される点を優先した。トレードオフは
-/// システムイベントの検索コスト——直近 <see cref="CatchUpEventQueryLimit"/> 件の走査——を
-/// 起動時に 1 回払う点だが、他のシステムイベント（受信断等）の頻度は低く実務上無視できる）。
+/// システムイベントの検索コスト——<c>Kind = retention.delete</c> でサーバ側フィルタした直近
+/// <see cref="CatchUpEventQueryLimit"/> 件の読み出し——を起動時に 1 回払う点。種別フィルタは
+/// 必須である——種別を問わない直近 N 件の走査だと、削除記録の StartAt が意図的な過去日付
+/// = cutoff である一方で受信断イベントの StartAt は実時刻という非対称により、受信断の蓄積が
+/// 削除記録をウィンドウから恒常的に押し出す。PR #198 レビュー指摘・
+/// <see cref="ILogStore.QuerySystemEventsAsync"/> の <c>kind</c> 引数の doc コメント参照）。
 /// </para>
 /// <para>
 /// <b>二重実行の回避</b>: キャッチアップ実行の直後に、当日の定期実行時刻（
@@ -100,11 +104,15 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
     internal static readonly TimeSpan MinimumReexecutionInterval = TimeSpan.FromHours(12);
 
     /// <summary>
-    /// 起動時キャッチアップの判定で読み出すシステムイベントの件数上限。削除実行記録
-    /// （<c>Kind = retention.delete</c>）以外のシステムイベント（受信断等）が混ざっても、
-    /// 直近 N 件の中に前回の削除実行記録が含まれる想定（受信断イベントは起動・停止のたびに
-    /// 高々 1 件であり、削除実行より高頻度に発生する運用は通常ない）。見つからなければ
-    /// 「記録なし」として安全側（キャッチアップを実行する）に倒す。
+    /// 起動時キャッチアップの判定で読み出すシステムイベントの件数上限。検索は
+    /// <c>Kind = retention.delete</c> でサーバ側フィルタ済み（PR #198 レビュー指摘への対応——
+    /// 種別を問わない直近 N 件の走査だと、<c>retention.delete</c> の StartAt が意図的な過去日付
+    /// = cutoff である一方、受信断イベントの StartAt は実時刻のため常に新しい側へ並び、受信断の
+    /// 蓄積だけで削除記録がウィンドウから恒常的に押し出される非対称があった。<see cref="ILogStore.QuerySystemEventsAsync"/>
+    /// の <c>kind</c> フィルタ参照）のため、この上限は「削除実行記録そのものが N 件を超えて並ぶ」
+    /// 場合にのみ効く。判定に使うのは EndAt（実行時刻）の最大値であり、並び（StartAt 降順）と
+    /// EndAt の順序は保持日数の設定変更をまたぐと厳密には一致しないため、1 件ではなく複数件を
+    /// 読んで最大値を取る。見つからなければ「記録なし」として安全側（キャッチアップを実行する）に倒す。
     /// </summary>
     internal const int CatchUpEventQueryLimit = 200;
 
@@ -237,15 +245,18 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
             using var timeoutCts = new CancellationTokenSource(CatchUpQueryTimeout);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
 
-            var recentEvents = await _logStore.QuerySystemEventsAsync(
+            // Kind でサーバ側フィルタする（PR #198 レビュー指摘への対応。CatchUpEventQueryLimit の
+            // doc コメント参照——種別を問わない走査では受信断イベントの蓄積が削除記録を
+            // ウィンドウから押し出す非対称があった）。
+            var recentDeleteEvents = await _logStore.QuerySystemEventsAsync(
                 from: null,
                 to: null,
                 limit: CatchUpEventQueryLimit,
                 timeout: CatchUpQueryTimeout,
-                linked.Token).ConfigureAwait(false);
+                kind: RetentionConstants.SystemEventKindRetentionDelete,
+                cancellationToken: linked.Token).ConfigureAwait(false);
 
-            lastDeleteAt = recentEvents
-                .Where(e => e.Kind == RetentionConstants.SystemEventKindRetentionDelete)
+            lastDeleteAt = recentDeleteEvents
                 .Select(e => (DateTimeOffset?)e.EndAt)
                 .Max();
         }
@@ -359,6 +370,17 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
                 // 書き込みゲート（Issue #151）: ライブ・drain と直列化する。緊急性より完遂を
                 // 優先するため、固定タイムアウトなし（cancellationToken のみで打ち切る）で待つ
                 // （LogStoreWriteGate の doc コメント参照）。
+                //
+                // 影響範囲の認識（PR #198 レビュー指摘）: 容量枯渇契機（OnCapacityExhausted）は
+                // CancellationToken.None の fire-and-forget であるため、この待ちはその経路では
+                // 実質無期限であり StopAsync でも中断できない。ゲートは正しく実装されていれば
+                // 必ず解放されるため通常は問題にならないが、万一ゲート解放のリークバグが将来
+                // 混入した場合、この経路は _executionGate を保持したまま永久待ちとなり、以後の
+                // あらゆる契機（定期実行・キャッチアップ）の削除実行を巻き添えにする——
+                // タイムアウトなしを選ぶ対価として明記しておく（現時点で対策——契機別トークンや
+                // ゲート待ちの上限——を足さないのは、リーク前提の防御が過剰であり、_executionGate
+                // の WaitAsync(TimeSpan.Zero) スキップにより「詰まる」事象自体はログ
+                // （retention-delete の実行ログ途絶）から診断可能なため）。
                 IDisposable? gateLease = _writeGate is null
                     ? null
                     : await _writeGate.AcquireAsync(cancellationToken).ConfigureAwait(false);

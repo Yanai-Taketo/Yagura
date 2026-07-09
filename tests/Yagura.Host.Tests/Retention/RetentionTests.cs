@@ -228,6 +228,50 @@ public sealed class RetentionTests : IDisposable
         Assert.Equal(0, store.DeleteCallCount);
     }
 
+    [Fact]
+    public async Task Start_ManyDowntimeEventsAccumulated_StillFindsBackdatedDeleteRecordAndSkips()
+    {
+        // PR #198 レビュー指摘の押し出し問題の回帰テスト: retention.delete の StartAt は
+        // 意図的な過去日付(cutoff)である一方、受信断イベントの StartAt は実時刻のため、
+        // 種別を問わない直近 N 件の走査では受信断が CatchUpEventQueryLimit 件を超えて
+        // 蓄積すると削除記録が恒常的に押し出され「記録なし」と誤認していた。
+        // Kind フィルタ(ILogStore.QuerySystemEventsAsync の契約拡張)によりこの状況でも
+        // 削除記録を発見し、キャッチアップをスキップできることを検証する。
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new ManualTimeProvider(baseline);
+        var store = new RecordingLogStore();
+
+        // 受信断イベントを上限超まで蓄積(StartAt は実時刻——新しい側に並ぶ)。
+        for (var i = 0; i < RetentionScheduler.CatchUpEventQueryLimit + 50; i++)
+        {
+            store.SystemEventsToReturn.Add(new SystemEvent(
+                "downtime.normal-stop",
+                StartAt: baseline.AddMinutes(-i - 1),
+                EndAt: baseline.AddMinutes(-i),
+                Approximate: false));
+        }
+
+        // 直近の削除実行: 2 時間前に実行、StartAt は cutoff(7 日前)へバックデート済み。
+        store.SystemEventsToReturn.Add(new SystemEvent(
+            RetentionConstants.SystemEventKindRetentionDelete,
+            StartAt: baseline.AddDays(-7).AddHours(-2),
+            EndAt: baseline.AddHours(-2),
+            Approximate: false));
+
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            new RetentionSchedulerOptions(RetentionDays: 7, RetentionSchedulerOptions.DefaultExecutionTimeOfDay),
+            timeProvider,
+            new FakeLogger<RetentionScheduler>(collector));
+
+        scheduler.Start();
+
+        await WaitUntilAsync(() => collector.GetSnapshot().Any(r => r.Message.Contains("[retention-catchup-skip]")));
+
+        Assert.Equal(0, store.DeleteCallCount);
+    }
+
     [Theory]
     [InlineData(0, true)]   // ちょうど閾値(1 日)経過 → 実行する(境界は実行側)
     [InlineData(-1, false)] // 閾値まで 1 分残っている → 実行しない
@@ -440,15 +484,21 @@ public sealed class RetentionTests : IDisposable
         public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default)
         {
             if (ThrowOnQuerySystemEvents)
             {
                 throw new InvalidOperationException("テスト用の読み取り失敗。");
             }
 
-            IReadOnlyList<SystemEvent> events =
-                SystemEventsToReturn.OrderByDescending(e => e.StartAt).Take(limit).ToList();
+            // 実 provider と同じ意味論で kind フィルタを適用する（Issue #150 の
+            // キャッチアップ判定が種別で絞って検索していることを、このフェイク越しにも
+            // 通過させるため——受信断イベントを混ぜたテストで押し出しが起きないことの検証に使う）。
+            IReadOnlyList<SystemEvent> events = SystemEventsToReturn
+                .Where(e => kind is null || e.Kind == kind)
+                .OrderByDescending(e => e.StartAt)
+                .Take(limit)
+                .ToList();
             return Task.FromResult(events);
         }
 
