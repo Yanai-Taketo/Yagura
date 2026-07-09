@@ -19,6 +19,14 @@ public static class ExternalSpoolUsageProbe
     /// スプールディレクトリ配下の <c>*.seg</c>（drain 中の <c>*.seg.draining</c> を含む）ファイルの
     /// 合計バイト数を返す。ディレクトリが存在しない場合は 0。
     /// </summary>
+    /// <remarks>
+    /// 列挙（<see cref="Directory.EnumerateFiles(string, string, SearchOption)"/>）とサイズ取得
+    /// （<see cref="FileInfo.Length"/>）の間には必ず時間差があり、その間に drain 処理が対象
+    /// ファイルを削除し得る（Issue #178）。これは drain が完了に近づいている正常な競合であり
+    /// エラーではないため、列挙後に消えたファイルは 0 バイト扱いでスキップする。列挙の開始後に
+    /// スプールディレクトリごと削除される競合（<see cref="Directory.Exists"/> の事前確認だけでは
+    /// 防げない）も同様に許容し、その時点までに積算済みの合計を返す。
+    /// </remarks>
     public static long GetSegmentBytesOnDisk(string spoolDirectory)
     {
         if (!Directory.Exists(spoolDirectory))
@@ -27,12 +35,36 @@ public static class ExternalSpoolUsageProbe
         }
 
         long total = 0;
-        foreach (var file in Directory.EnumerateFiles(spoolDirectory, "*.seg*", SearchOption.TopDirectoryOnly))
+        try
         {
-            total += new FileInfo(file).Length;
+            foreach (var file in Directory.EnumerateFiles(spoolDirectory, "*.seg*", SearchOption.TopDirectoryOnly))
+            {
+                total += TryGetFileLength(file);
+            }
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // 列挙中にスプールディレクトリごと削除された（drain 完了直後の掃除など）。
+            // これも drain 進行に伴う正常事象であり、ここまでに積算済みの合計を返せばよい。
         }
 
         return total;
+    }
+
+    /// <summary>
+    /// 列挙結果を得てから <see cref="FileInfo.Length"/> を読むまでの間に drain が当該ファイルを
+    /// 削除した場合、0 として扱う（ScenarioRunner を落とさない）。
+    /// </summary>
+    private static long TryGetFileLength(string filePath)
+    {
+        try
+        {
+            return new FileInfo(filePath).Length;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return 0;
+        }
     }
 
     /// <summary>
