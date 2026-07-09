@@ -71,6 +71,13 @@ public sealed class TcpSyslogListenerOptions
     public string BindAddress { get; init; } = DefaultBindAddress;
 
     /// <summary>
+    /// <see cref="BindAddress"/> が設定で明示指定された値か（<c>false</c> = 既定値のまま）。
+    /// 意味づけは <see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.BindAddressIsExplicit"/>
+    /// と同一（IPv6 不可時: 既定は IPv4 へ自動縮小 / 明示は fail-fast。PR #193 レビュー対応）。
+    /// </summary>
+    public bool BindAddressIsExplicit { get; init; }
+
+    /// <summary>
     /// bind するポート。既定は <see cref="DefaultPort"/>。
     /// テストでは 0 を指定すると OS がポートを採番する（<see cref="TcpSyslogListener.BoundPort"/> 参照）。
     /// </summary>

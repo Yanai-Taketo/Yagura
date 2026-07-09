@@ -128,13 +128,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
         var bindAddress = IPAddress.Parse(_options.BindAddress);
         if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
         {
-            // DualMode ソケット（Issue #133）。UdpClient(IPEndPoint) は指定エンドポイントの
-            // アドレスファミリ単独のソケットを作るため、DualMode を有効にするには
-            // AddressFamily 指定のコンストラクタで未 bind のソケットを作ってから
-            // 明示的に DualMode を立て、その後 Bind する必要がある。
-            _udpClient = new UdpClient(AddressFamily.InterNetworkV6);
-            _udpClient.Client.DualMode = true;
-            _udpClient.Client.Bind(new IPEndPoint(bindAddress, _options.Port));
+            _udpClient = CreateDualModeUdpClientOrFallBack();
         }
         else
         {
@@ -151,6 +145,78 @@ public sealed class UdpSyslogListener : IAsyncDisposable
         _receiveLoopTask = Task.Run(() => ReceiveLoopAsync(_stoppingCts.Token), CancellationToken.None);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// IPv6 ワイルドカード（<c>::</c>）向けの DualMode ソケットを作成する。IPv6 スタックが
+    /// 無効な環境（PR #193 レビュー指摘 Major）では:
+    /// 既定値（<see cref="UdpSyslogListenerOptions.BindAddressIsExplicit"/> = <c>false</c>）なら
+    /// IPv4 ワイルドカードへ自動縮小して警告ログを出し、明示指定なら復旧手順を含むエラーで
+    /// 起動を失敗させる（<see cref="DualStackBindAddress.ShouldFallBackToIPv4Wildcard"/> の
+    /// remarks 参照）。
+    /// </summary>
+    private UdpClient CreateDualModeUdpClientOrFallBack()
+    {
+        // 事前チェック: OS が IPv6 を提供しない環境ではソケット作成の実試行を待たずに分岐する。
+        if (!Socket.OSSupportsIPv6)
+        {
+            return HandleIPv6Unavailable(socketException: null);
+        }
+
+        // DualMode ソケット（Issue #133）。UdpClient(IPEndPoint) は指定エンドポイントの
+        // アドレスファミリ単独のソケットを作るため、DualMode を有効にするには
+        // AddressFamily 指定のコンストラクタで未 bind のソケットを作ってから
+        // 明示的に DualMode を立て、その後 Bind する必要がある。
+        UdpClient? client = null;
+        try
+        {
+            client = new UdpClient(AddressFamily.InterNetworkV6);
+            client.Client.DualMode = true;
+            client.Client.Bind(new IPEndPoint(IPAddress.IPv6Any, _options.Port));
+            return client;
+        }
+        catch (SocketException ex)
+        {
+            client?.Dispose();
+
+            // 縮小の対象は「IPv6 が使えない」場合のみ。ポート競合（AddressInUse）等の
+            // 別要因を IPv4 縮小で握り潰すと、ポート事故が黙って「IPv4 のみ受信」に化ける
+            // （DualStackBindAddress の remarks）。
+            if (ex.SocketErrorCode != SocketError.AddressFamilyNotSupported)
+            {
+                throw;
+            }
+
+            return HandleIPv6Unavailable(ex);
+        }
+        catch
+        {
+            client?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// IPv6 不可（事前チェックまたは bind 実試行での確定）時の分岐: 既定値なら IPv4 縮小、
+    /// 明示指定なら fail-fast。
+    /// </summary>
+    private UdpClient HandleIPv6Unavailable(SocketException? socketException)
+    {
+        if (_options.BindAddressIsExplicit)
+        {
+            throw new InvalidOperationException(
+                DualStackBindAddress.BuildExplicitIPv6WildcardUnavailableMessage(),
+                socketException);
+        }
+
+        // 警告はイベントログに届くレベル（Warning）で出す——既定構成の縮小は無言にしない。
+        _logger?.LogWarning(
+            socketException,
+            "この環境では IPv6 が利用できないため、UDP 受信リスナは既定の '::'（IPv4/IPv6 両受信）" +
+            "ではなく IPv4 のみ（0.0.0.0）で受信します。IPv6 の syslog を受信する必要がある場合は" +
+            " OS の IPv6 スタックを有効化してください。");
+
+        return new UdpClient(new IPEndPoint(IPAddress.Any, _options.Port));
     }
 
     /// <summary>

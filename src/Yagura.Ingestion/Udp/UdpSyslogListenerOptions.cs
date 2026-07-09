@@ -92,6 +92,15 @@ public sealed class UdpSyslogListenerOptions
     public string BindAddress { get; init; } = DefaultBindAddress;
 
     /// <summary>
+    /// <see cref="BindAddress"/> が設定で明示指定された値か（<c>false</c> = 既定値のまま。
+    /// PR #193 レビュー指摘への対応）。IPv6 スタックが無効な環境での挙動を分ける:
+    /// 既定値の <c>::</c> は IPv4 ワイルドカードへ自動縮小して起動を継続する（+ 警告ログ）が、
+    /// 明示指定の <c>::</c> は縮小せず、復旧手順を含むエラーで起動を失敗させる
+    /// （<see cref="Yagura.Ingestion.Net.DualStackBindAddress.ShouldFallBackToIPv4Wildcard"/> 参照）。
+    /// </summary>
+    public bool BindAddressIsExplicit { get; init; }
+
+    /// <summary>
     /// bind するポート。既定は <see cref="DefaultPort"/>。
     /// テストでは 0 を指定すると OS がポートを採番する
     /// （<see cref="UdpSyslogListener.BoundPort"/> で実際に束縛されたポートを取得できる）。

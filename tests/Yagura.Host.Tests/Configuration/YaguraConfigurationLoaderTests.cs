@@ -70,6 +70,10 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         Assert.Equal("yagura.db", result.Configuration.SqliteFileName);
         Assert.Empty(result.Warnings);
         Assert.Empty(result.UnknownKeys);
+
+        // bind アドレスは既定値のまま = 非明示（IPv6 不可の環境で IPv4 縮小が許される側。PR #193）。
+        Assert.False(result.Configuration.UdpBindAddressIsExplicit);
+        Assert.False(result.Configuration.TcpBindAddressIsExplicit);
     }
 
     // ------------------------------------------------------------------
@@ -789,6 +793,10 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Equal("::", result.Configuration.UdpBindAddress);
         Assert.Empty(result.Warnings);
+
+        // 明示指定フラグが立つ——IPv6 不可の環境では IPv4 へ縮小せず fail-fast する側（PR #193）。
+        Assert.True(result.Configuration.UdpBindAddressIsExplicit);
+        Assert.False(result.Configuration.TcpBindAddressIsExplicit);
     }
 
     [Fact]
@@ -843,6 +851,10 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Equal("::", result.Configuration.TcpBindAddress);
         Assert.Empty(result.Warnings);
+
+        // 明示指定フラグが立つ——IPv6 不可の環境では IPv4 へ縮小せず fail-fast する側（PR #193）。
+        Assert.True(result.Configuration.TcpBindAddressIsExplicit);
+        Assert.False(result.Configuration.UdpBindAddressIsExplicit);
     }
 
     // ------------------------------------------------------------------

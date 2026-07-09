@@ -161,6 +161,60 @@ public sealed class UdpSyslogListenerDualStackTests
         }
     }
 
+    [Fact]
+    public async Task ExplicitIPv6Wildcard_OnIPv6CapableMachine_BindsDualModeNormally()
+    {
+        // 明示指定の :: は、IPv6 が使える環境では既定と同じ DualMode で bind される
+        // （明示フラグが「IPv6 不可時の fail-fast」以外の挙動を変えないことの確認。PR #193）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new UdpSyslogListener(
+            new UdpSyslogListenerOptions { BindAddress = "::", BindAddressIsExplicit = true, Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await listener.StartAsync();
+        try
+        {
+            using var sender = new UdpClient(AddressFamily.InterNetworkV6);
+            await sender.SendAsync(
+                Encoding.ASCII.GetBytes("<34>explicit-wildcard-test"),
+                new IPEndPoint(IPAddress.IPv6Loopback, listener.BoundPort));
+
+            var datagram = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+            Assert.Equal("::1", datagram.SourceAddress);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DefaultBindAddress_PortInUse_ThrowsInsteadOfSilentlyFallingBackToIPv4()
+    {
+        // IPv4 縮小の条件は「IPv6 が使えない（AddressFamilyNotSupported）」に限る——
+        // ポート競合（AddressInUse）等の別要因まで縮小すると、ポート事故が黙って
+        // 「IPv4 のみ受信」に化ける（PR #193 レビュー対応の安全条件）。
+        using var occupant = new UdpClient(AddressFamily.InterNetworkV6);
+        occupant.Client.DualMode = true;
+        occupant.Client.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+        var occupiedPort = ((IPEndPoint)occupant.Client.LocalEndPoint!).Port;
+
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+
+        var listener = new UdpSyslogListener(
+            new UdpSyslogListenerOptions { Port = occupiedPort },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics);
+
+        await Assert.ThrowsAsync<SocketException>(() => listener.StartAsync());
+    }
+
     private static async Task<RawDatagram> ReadWithTimeoutAsync(ChannelReader<RawDatagram> reader, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);

@@ -255,12 +255,14 @@ public static class Program
         builder.Services.AddSingleton(new UdpSyslogListenerOptions
         {
             BindAddress = resolvedConfiguration.UdpBindAddress,
+            BindAddressIsExplicit = resolvedConfiguration.UdpBindAddressIsExplicit,
             Port = resolvedConfiguration.UdpPort,
             ReceiveBufferBytes = resolvedConfiguration.UdpReceiveBufferBytes,
         });
         builder.Services.AddSingleton(new TcpSyslogListenerOptions
         {
             BindAddress = resolvedConfiguration.TcpBindAddress,
+            BindAddressIsExplicit = resolvedConfiguration.TcpBindAddressIsExplicit,
             Port = resolvedConfiguration.TcpPort,
         });
 

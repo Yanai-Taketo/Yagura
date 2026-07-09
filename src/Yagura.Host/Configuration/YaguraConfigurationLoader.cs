@@ -106,7 +106,7 @@ public static class YaguraConfigurationLoader
         var warnings = new List<ConfigurationWarning>();
 
         // --- 受信: UDP bind アドレス（§1「縮小側で継続」） ---
-        var udpBindAddress = ResolveUdpBindAddress(options, warnings);
+        var (udpBindAddress, udpBindAddressIsExplicit) = ResolveUdpBindAddress(options, warnings);
 
         // --- 受信: UDP ポート（§1「起動失敗」——受信の成立に不可欠なキー） ---
         var udpPort = ResolveUdpPort(options);
@@ -115,7 +115,7 @@ public static class YaguraConfigurationLoader
         var udpReceiveBufferBytes = ResolveUdpReceiveBufferBytes(options, warnings);
 
         // --- 受信: TCP bind アドレス（§1「縮小側で継続」。UDP と同じ分類。M4-1） ---
-        var tcpBindAddress = ResolveTcpBindAddress(options, warnings);
+        var (tcpBindAddress, tcpBindAddressIsExplicit) = ResolveTcpBindAddress(options, warnings);
 
         // --- 受信: TCP ポート（§1「起動失敗」——UDP と同じ分類。M4-1） ---
         var tcpPort = ResolveTcpPort(options);
@@ -179,7 +179,13 @@ public static class YaguraConfigurationLoader
             RetentionDays: retentionDays,
             RetentionExecutionTimeOfDay: retentionExecutionTimeOfDay,
             StorageProvider: storageProvider,
-            SqlServerConnectionString: sqlServerConnectionString);
+            SqlServerConnectionString: sqlServerConnectionString)
+        {
+            // bind アドレスの明示指定フラグ（PR #193 レビュー対応。IPv6 不可の環境での
+            // 「既定は IPv4 縮小 / 明示は fail-fast」の分岐の入力——受信段へ引き渡す）。
+            UdpBindAddressIsExplicit = udpBindAddressIsExplicit,
+            TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
+        };
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
     }
@@ -231,12 +237,16 @@ public static class YaguraConfigurationLoader
     /// （既存 3 環境変数のみ維持。依頼範囲外）。不正値は §1「縮小側で継続」により
     /// loopback（127.0.0.1）へ縮小する。
     /// </summary>
-    private static string ResolveUdpBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    /// <returns>
+    /// 解決済みアドレスと、キーが明示指定されていたか（PR #193 レビュー対応——IPv6 不可の
+    /// 環境で「既定の <c>::</c> は IPv4 縮小 / 明示の <c>::</c> は fail-fast」を分けるための入力）。
+    /// </returns>
+    private static (string Address, bool IsExplicit) ResolveUdpBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
     {
         var raw = options.Ingestion?.Udp?.BindAddress;
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return UdpSyslogListenerOptions.DefaultBindAddress;
+            return (UdpSyslogListenerOptions.DefaultBindAddress, IsExplicit: false);
         }
 
         // IPAddress として解釈できる値を受け入れる（形式不正のみ縮小対象）。
@@ -245,7 +255,7 @@ public static class YaguraConfigurationLoader
         // 逃げ道）——解釈は受信段（DualStackBindAddress）が行い、本メソッドは形式検証のみ担う。
         if (IPAddress.TryParse(raw, out _))
         {
-            return raw;
+            return (raw, IsExplicit: true);
         }
 
         warnings.Add(new ConfigurationWarning(
@@ -254,7 +264,7 @@ public static class YaguraConfigurationLoader
             AppliedValue: IPAddress.Loopback.ToString(),
             Reason: "bind 先アドレスの形式が不正なため安全側（loopback）へ縮小"));
 
-        return IPAddress.Loopback.ToString();
+        return (IPAddress.Loopback.ToString(), IsExplicit: true);
     }
 
     /// <summary>
@@ -317,19 +327,20 @@ public static class YaguraConfigurationLoader
     /// <summary>
     /// TCP bind アドレスを解決する（M4-1）。UDP と同じ分類（§1「縮小側で継続」）を適用する:
     /// 環境変数による上書きは現時点で提供しない（既存方針を踏襲）。不正値は loopback へ縮小する。
+    /// 戻り値の意味は <see cref="ResolveUdpBindAddress"/> と同一。
     /// </summary>
-    private static string ResolveTcpBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    private static (string Address, bool IsExplicit) ResolveTcpBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
     {
         var raw = options.Ingestion?.Tcp?.BindAddress;
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return TcpSyslogListenerOptions.DefaultBindAddress;
+            return (TcpSyslogListenerOptions.DefaultBindAddress, IsExplicit: false);
         }
 
         // ワイルドカードの意味づけは UDP 側と同一（Issue #133。ResolveUdpBindAddress のコメント参照）。
         if (IPAddress.TryParse(raw, out _))
         {
-            return raw;
+            return (raw, IsExplicit: true);
         }
 
         warnings.Add(new ConfigurationWarning(
@@ -338,7 +349,7 @@ public static class YaguraConfigurationLoader
             AppliedValue: IPAddress.Loopback.ToString(),
             Reason: "bind 先アドレスの形式が不正なため安全側（loopback）へ縮小"));
 
-        return IPAddress.Loopback.ToString();
+        return (IPAddress.Loopback.ToString(), IsExplicit: true);
     }
 
     /// <summary>
