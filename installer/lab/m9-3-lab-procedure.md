@@ -410,7 +410,7 @@ Get-NetFirewallRule -DisplayName 'Yagura*' | Select-Object Name,DisplayName,Prof
 
 - 期待結果: DisplayVersion = `0.1.0`。件数・ハッシュが取れる。ファイアウォール規則は
   旧版が作成したもの(Issue #125 修正前のビルドなら 3 規則・Profile=Any、修正後の
-  ビルドなら 6 規則・Domain/Private)が一覧できる
+  ビルドなら 3 規則・Profile=Domain+Private 複合)が一覧できる
 - 採取してほしい出力: 上記全部(アップグレード後との比較対象。**規則一覧は Name 列 =
   規則 Id も含めて採取する**——アップグレード後に旧 Id の規則が消えたことの照合に使う)
 
@@ -463,12 +463,12 @@ Get-NetFirewallRule -DisplayName 'Yagura*' | Select-Object Name,DisplayName,Prof
 - 期待結果:
   - DisplayVersion = `0.1.1`・サービス Running・製品エントリは 1 件のみ(旧版が残らない)
   - **ファイアウォール規則が新版の規則のみに置き換わる(Issue #125)**: H-1 で採取した
-    旧 Id の規則が 1 件も残っておらず、新ビルドの 6 規則(3 系統 × Domain/Private)のみが
-    存在し、**Profile 列に Any / Public を含む規則が 1 件もない**こと。MajorUpgrade の
-    既定 Schedule(afterInstallValidate)は旧製品を全削除してから新製品をインストール
-    するため設計上は旧規則(Profile=Any)も除去されるはずだが、これはここで初めて
-    実証される——旧規則が残存した場合は Public 開放が固定化する回帰であり、必ず記録して
-    Issue 化する
+    旧規則が旧設定のまま残っておらず、新ビルドの 3 規則(各系統 1 本・Profile =
+    Domain+Private 複合)のみが存在し、**Profile 列に Any / Public を含む規則が
+    1 件もない**こと。MajorUpgrade の既定 Schedule(afterInstallValidate)は旧製品を
+    全削除してから新製品をインストールするため設計上は旧規則(Profile=Any)も除去される
+    はずだが、これはここで初めて実証される——旧規則が残存した場合は Public 開放が固定化
+    する回帰であり、必ず記録して Issue 化する
   - **yagura.json の SHA256 が H-1 と一致**(設定が保持される)・**yagura.db が同一ファイルの
     まま残り、UPG-SEQ 以前の既存レコード件数を含む**・スプールディレクトリが残る
   - `missing` = アップグレード中に失われた連番数。**受信断 ≒ missing × 0.1 秒**。

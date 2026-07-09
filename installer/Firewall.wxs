@@ -5,14 +5,26 @@
   - UDP 514 / TCP 514(受信)+ TCP 8514(閲覧)の受信許可のみ。管理リスナ 8515 は
     loopback 束縛のため規則を作らない(不要な穴を開けない)
   - プロファイルは Domain + Private 限定(Public を含む全プロファイルへは開放しない。
-    Issue #125)。WiX Firewall 拡張の fw:FirewallException/@Profile は単一値の列挙型
-    (domain/private/public/all のいずれか 1 つ。複数値の同時指定はスキーマ上サポート
-    されない — WiX 本体 Issue wixtoolset/issues#3161 で追跡中、2025-11-03 時点でも
-    未解決)であることを WiX 本体ソース(src/xsd/firewall/FirewallProfileType.xsd の
-    xs:enumeration、および src/ext/Firewall/wixext/FirewallCompiler.cs の Profile
-    属性パース処理)で確認した(2026-07-09)。そのため 3 系統それぞれを
-    Profile="domain" と Profile="private" の 2 要素に分けて記述する(規則数は
-    3→6 に増えるが、Windows ファイアウォール管理画面上の表示名は系統ごとに共通のまま)
+    Issue #125)。指定方式はプロパティ間接参照 + ビットマスク整数(下記)の 1 規則 /
+    1 系統で行う。以下は WiX 本体ソースで確認した制約(2026-07-09〜10):
+    (1) fw:FirewallException/@Profile の名前指定は単一値の列挙型(domain/private/
+        public/all のいずれか 1 つ。複数値の同時指定はスキーマ非対応 —
+        src/xsd/firewall/FirewallProfileType.xsd の xs:enumeration、
+        wixext/FirewallCompiler.cs の switch 処理。wixtoolset/issues#3161 で
+        追跡中・未解決)
+    (2) 同名規則 2 本(domain/private)への分割は不可: Firewall 拡張の custom action
+        (ca/firewall.cpp)は規則を Name で検索し(pNetFwRules->Item — "try to find
+        it (i.e., support reinstall)")、既存があれば新規作成ではなく更新するため、
+        同名 2 本目が 1 本目を上書きして片プロファイルだけが残る(PR #187 の CI
+        installer-e2e Full 実機で観測: Domain 側が消え Private のみ残存)
+    (3) 採用方式: @Profile はスキーマ上 PropertyReference を受理し
+        (FirewallProfileTypeUnion)、custom action はこの列を Formatted 整数として
+        読んで INetFwRule::put_Profiles へそのまま渡す(WcaGetRecordFormattedInteger
+        → put_Profiles。WiX 本体の MSI E2E テスト自身が PROFILE=2 のプロパティ渡しで
+        この経路を検証している)。put_Profiles は NET_FW_PROFILE_TYPE2 のビットマスクを
+        受け付けるため、YaguraFwProfile=3(= 0x1 DOMAIN | 0x2 PRIVATE)で
+        1 規則を Domain+Private の複合プロファイルにできる。プロパティ名を小文字混じり
+        (private property)にして msiexec コマンドラインからの上書きを不可にしている
   - YAGURA_FIREWALL=1 のときのみ規則コンポーネントをインストール(オプトアウト可)
   - 選択(YAGURA_FIREWALL の値)と作成した規則の一覧をデータルート直下の
     firewall-rules.ini に記録する。初回起動時のイベントログ転記(security.md §4.1)は
@@ -28,6 +40,11 @@
      xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
 
   <Fragment>
+    <!-- 規則のプロファイル(ビットマスク整数)。3 = NET_FW_PROFILE2_DOMAIN(0x1) |
+         NET_FW_PROFILE2_PRIVATE(0x2)。小文字混じりの private property のため
+         msiexec コマンドラインから変更できない(冒頭コメント (3) 参照)。 -->
+    <Property Id="YaguraFwProfile" Value="3" />
+
     <!--
       インストール記録(常にインストール): 規則作成のオプトイン/アウトの選択を残す。
       IniFile の Value 列は MSI の Formatted 型であり、実行時のプロパティ値
@@ -56,62 +73,35 @@
     <Component Id="FirewallRules" Directory="INSTALLFOLDER" Condition="YAGURA_FIREWALL = 1">
       <RegistryValue Root="HKLM" Key="SOFTWARE\Yagura" Name="FirewallRulesInstalled" Type="integer" Value="1" KeyPath="yes" />
 
-      <fw:FirewallException Id="YaguraSyslogUdp514Domain"
+      <fw:FirewallException Id="YaguraSyslogUdp514"
                             Name="Yagura Syslog (UDP 514)"
                             Description="!(loc.FwDescriptionUdp514)"
                             Grouping="Yagura"
                             Program="[#Yagura.Host.exe]"
                             Port="514"
                             Protocol="udp"
-                            Profile="domain" />
+                            Profile="[YaguraFwProfile]" />
 
-      <fw:FirewallException Id="YaguraSyslogUdp514Private"
-                            Name="Yagura Syslog (UDP 514)"
-                            Description="!(loc.FwDescriptionUdp514)"
-                            Grouping="Yagura"
-                            Program="[#Yagura.Host.exe]"
-                            Port="514"
-                            Protocol="udp"
-                            Profile="private" />
-
-      <fw:FirewallException Id="YaguraSyslogTcp514Domain"
+      <fw:FirewallException Id="YaguraSyslogTcp514"
                             Name="Yagura Syslog (TCP 514)"
                             Description="!(loc.FwDescriptionTcp514)"
                             Grouping="Yagura"
                             Program="[#Yagura.Host.exe]"
                             Port="514"
                             Protocol="tcp"
-                            Profile="domain" />
+                            Profile="[YaguraFwProfile]" />
 
-      <fw:FirewallException Id="YaguraSyslogTcp514Private"
-                            Name="Yagura Syslog (TCP 514)"
-                            Description="!(loc.FwDescriptionTcp514)"
-                            Grouping="Yagura"
-                            Program="[#Yagura.Host.exe]"
-                            Port="514"
-                            Protocol="tcp"
-                            Profile="private" />
-
-      <fw:FirewallException Id="YaguraViewerTcp8514Domain"
+      <fw:FirewallException Id="YaguraViewerTcp8514"
                             Name="Yagura Viewer (TCP 8514)"
                             Description="!(loc.FwDescriptionTcp8514)"
                             Grouping="Yagura"
                             Program="[#Yagura.Host.exe]"
                             Port="8514"
                             Protocol="tcp"
-                            Profile="domain" />
-
-      <fw:FirewallException Id="YaguraViewerTcp8514Private"
-                            Name="Yagura Viewer (TCP 8514)"
-                            Description="!(loc.FwDescriptionTcp8514)"
-                            Grouping="Yagura"
-                            Program="[#Yagura.Host.exe]"
-                            Port="8514"
-                            Protocol="tcp"
-                            Profile="private" />
+                            Profile="[YaguraFwProfile]" />
 
       <!-- 作成した規則の一覧(インストール記録。configuration.md §4.3)。
-           各系統は Domain/Private の 2 規則で構成される(Public は含まない。Issue #125)。 -->
+           各規則は Domain + Private の複合プロファイル(Public は含まない。Issue #125)。 -->
       <IniFile Id="FwRecordRule1" Action="addLine" Directory="YaguraDataRoot" Name="firewall-rules.ini"
                Section="Yagura.Firewall" Key="Rule1" Value="Yagura Syslog (UDP 514) / udp 514 / inbound allow / profile: domain,private" />
       <IniFile Id="FwRecordRule2" Action="addLine" Directory="YaguraDataRoot" Name="firewall-rules.ini"
