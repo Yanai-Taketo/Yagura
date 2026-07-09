@@ -119,7 +119,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 
 | 区分 | 主な内容 | 反映方式（目標。キー単位の確定値は詳細キー記録時に記す） |
 |---|---|---|
-| 受信 | ポート・bind 先・受信バッファ（M-2）・TCP 同時接続数上限（M-14）・TLS（opt-in） | リスナ再構成（無瞬断適用可能な項目は CF-4 で特定） |
+| 受信 | ポート・bind 先・受信バッファ（M-2）・TCP 同時接続数上限（M-14）・TLS（opt-in）・RFC 3164 TIMESTAMP の既定タイムゾーン（Issue #134） | リスナ再構成（無瞬断適用可能な項目は CF-4 で特定）。既定タイムゾーンはソケットの bind を伴わないため即時（下表参照） |
 | 流量制御 | 有効/無効・送信元別閾値（M-4。v0.1 は挿入点のみ） | 即時 |
 | スプール | 有効/無効（opt-out）・置き場所・上限（M-12） | 即時（置き場所のみサービス再起動） |
 | 永続化 | provider 選択・接続情報（資格情報は暗号化表現 §2）・組み込み DB の置き場所 | provider 切替は database.md §6.1 の切替手順による（備考: ウィザード経由のみ）。置き場所はサービス再起動 |
@@ -136,6 +136,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Ingestion:Udp:ReceiveBufferBytes` | 受信 | 再起動（同上。ソケット構築時に `SO_RCVBUF` を設定するためリスナ再構成が必要。M-2） | 既定値で継続（既定 **1 MiB = 1,048,576 バイト**——M-2 実測確定値（2026-07-05 開発機。architecture.md §3.1）。バイト数として不正、または下限 64 KiB（OS 既定値）未満・上限 256 MiB（安全弁）超過は既定値へ。受信の成立に不可欠なキーではない） |
 | `Ingestion:Tcp:BindAddress` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | 縮小側で継続（loopback へ縮小） |
 | `Ingestion:Tcp:Port` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | **起動失敗**（受信の成立に不可欠） |
+| `Ingestion:Rfc3164:DefaultTimeZone` | 受信 | 再起動（目標は即時——ソケットの bind を伴わず解析段の解釈のみに影響するため。現時点は `ParsingStage` の DI 構築時にのみ値が渡るため再起動。Issue #134） | 既定値で継続（**未設定時は UTC**——現状互換。値は Windows タイムゾーン ID（例 `Tokyo Standard Time`）または IANA タイムゾーン ID（例 `Asia/Tokyo`）を受理し、`TimeZoneInfo.FindSystemTimeZoneById` で解決できない値は UTC へフォールバックし警告する。**送信元付記の TZ（Issue #135。TIMESTAMP 直後の数値オフセットまたは `UTC`/`GMT`/`JST` 略号）が取れる場合はそちらが優先され、本設定は取れない場合のフォールバックとして使われる**——優先順位の詳細は [database.md](database.md) §2.2 参照） |
 | `Viewer:HttpPort` | UI | 再起動（同上） | 既定値で継続（既定 **8514**。CF-1 確定値。M6-1） |
 | `Viewer:PublicAccess` | UI | 再起動（目標はリスナ再構成。M6-1） | **縮小側で継続**（`Lan`/`LocalhostOnly` 以外の値は `LocalhostOnly` へ縮小——既定は開放側の `Lan` だが、不正値の縮小先は必ず狭い側。§1「公開範囲・bind 先の不正値は製品既定へ落とさない」の適用。M6-1） |
 | `Admin:HttpPort` | UI | 再起動（M6-1） | 既定値で継続（既定 **8515**。CF-1 確定値。bind 先（127.0.0.1/::1）を変える設定キーは設けない——§1 の不変条件。M6-1） |

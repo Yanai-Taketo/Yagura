@@ -33,6 +33,10 @@ internal static class YaguraConfigurationOptionsCloner
                     BindAddress = source.Ingestion.Tcp.BindAddress,
                     Port = source.Ingestion.Tcp.Port,
                 },
+                Rfc3164 = source.Ingestion.Rfc3164 is null ? null : new YaguraConfigurationOptions.IngestionOptions.Rfc3164Options
+                {
+                    DefaultTimeZone = source.Ingestion.Rfc3164.DefaultTimeZone,
+                },
             },
             Viewer = source.Viewer is null ? null : new YaguraConfigurationOptions.ViewerOptions
             {

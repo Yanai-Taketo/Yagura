@@ -17,6 +17,11 @@
 /// </param>
 /// <param name="TcpBindAddress">TCP 受信リスナの bind アドレス（検証・縮小適用済み。M4-1）。</param>
 /// <param name="TcpPort">TCP 受信リスナのポート（検証済み。M4-1）。</param>
+/// <param name="DefaultRfc3164TimeZone">
+/// RFC 3164 TIMESTAMP の既定タイムゾーン（検証済み。Issue #134）。未設定・不正値は
+/// <see cref="System.TimeZoneInfo.Utc"/>（現状互換）。送信元付記の TZ（Issue #135）が
+/// 取れる場合はそちらが優先され、本値は取れない場合のフォールバックとして使われる。
+/// </param>
 /// <param name="HttpPort">閲覧 HTTP リスナのポート（検証済み）。</param>
 /// <param name="ViewerPublicAccess">
 /// 閲覧リスナの公開範囲（既定 <see cref="Configuration.ViewerPublicAccess.Lan"/>。M6-1）。
@@ -55,6 +60,7 @@ public sealed record ResolvedYaguraConfiguration(
     int UdpReceiveBufferBytes,
     string TcpBindAddress,
     int TcpPort,
+    TimeZoneInfo DefaultRfc3164TimeZone,
     int HttpPort,
     ViewerPublicAccess ViewerPublicAccess,
     bool ViewerReverseDnsEnabled,

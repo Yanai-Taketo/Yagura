@@ -829,4 +829,303 @@ public class SyslogParserTests
         Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
         Assert.Equal(2026, record.DeviceTimestamp!.Value.Year);
     }
+
+    // ==================================================================
+    // Issue #134: RFC 3164 の既定タイムゾーン（送信元付記が無い場合に適用）
+    // ==================================================================
+
+    [Fact]
+    public void Parse_Rfc3164_NoDefaultTimeZoneArgument_InterpretsAsUtc()
+    {
+        // 既存呼び出し元との後方互換: 第 2 引数省略時は従来どおり UTC 固定。
+        var payload = "<13>Jan  1 00:00:00 host app: msg"u8.ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(TimeSpan.Zero, record.DeviceTimestamp!.Value.Offset);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_DefaultTimeZoneConfigured_AppliesConfiguredOffset()
+    {
+        // Issue #134: 既定タイムゾーンを設定すると、送信元付記の無い TIMESTAMP に適用される。
+        var payload = "<13>Jan  1 09:00:00 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+        var tokyo = TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time");
+
+        var record = SyslogParser.Parse(datagram, tokyo);
+
+        Assert.Equal(TimeSpan.FromHours(9), record.DeviceTimestamp!.Value.Offset);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.FromHours(9)), record.DeviceTimestamp);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_DefaultTimeZoneAcceptsIanaId()
+    {
+        // configuration.md: Windows タイムゾーン ID と IANA タイムゾーン ID の両方を受理する
+        // （.NET 6 以降、TimeZoneInfo.FindSystemTimeZoneById は Windows 上でも IANA ID を解決できる）。
+        var payload = "<13>Jan  1 09:00:00 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+        var tokyo = TimeZoneInfo.FindSystemTimeZoneById("Asia/Tokyo");
+
+        var record = SyslogParser.Parse(datagram, tokyo);
+
+        Assert.Equal(TimeSpan.FromHours(9), record.DeviceTimestamp!.Value.Offset);
+    }
+
+    // ==================================================================
+    // Issue #135: RFC 3164 のベンダ拡張（Cisco 等）を取りこぼさない
+    // ==================================================================
+
+    [Fact]
+    public void Parse_Rfc3164_TimestampWithMilliseconds_ParsesFractionalSecondsAndHeaderFields()
+    {
+        // "Mar  1 00:01:02.345" 形式。従来は '.' で HOSTNAME/TAG 分解が崩れていた。
+        var payload = "<13>Mar  1 00:01:02.345 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.Zero).AddTicks(3_450_000),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("msg", record.Message);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_TimestampWithSixDigitMicroseconds_ParsesFractionalSeconds()
+    {
+        var payload = "<13>Mar  1 00:01:02.123456 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.Zero).AddTicks(1_234_560),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_LeadingSequenceNumber_SkipsSequenceAndParsesTimestamp()
+    {
+        // Cisco `service sequence-numbers`: "<189>45: Mar  1 ..."。
+        var payload = "<189>45: Mar  1 00:01:02 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("msg", record.Message);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_SequenceNumberWithoutValidTimestamp_RollsBackToBestEffort()
+    {
+        // "45: " の直後が TIMESTAMP として成立しない場合、シーケンス番号スキップを含めて
+        // ロールバックし（pos は書き換えられない）、PRI 直後からの通常の best-effort に委ねる。
+        // "45:" 自体は TAG の一般規則（英数字 + ':'）に合致するため AppName として認識される——
+        // これは本 Issue で変更していない既存の TAG 判定ロジックの帰結であり、数字始まりの
+        // 自由記述本文を誤ってシーケンス番号と解釈して本文を破壊しないことの確認が本テストの主眼。
+        var payload = "<13>45: not a timestamp at all"u8.ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Null(record.DeviceTimestamp);
+        Assert.Null(record.Hostname);
+        Assert.Equal("45", record.AppName);
+        Assert.Equal("not a timestamp at all", record.Message);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_FourDigitYearVariant_ParsesExplicitYear()
+    {
+        // "Mmm dd yyyy hh:mm:ss" 形式（一部ベンダの 4 桁年変種）。
+        var payload = "<13>Mar  1 2030 00:01:02 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Equal(
+            new DateTimeOffset(2030, 3, 1, 0, 1, 2, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_VendorNumericTimeZoneOffset_TakesPrecedenceOverDefault()
+    {
+        // 送信元付記の数値 TZ（+HH:MM）は、既定タイムゾーン設定より優先される（Issue #134・#135 の統合設計）。
+        var payload = "<13>Mar  1 00:01:02 +09:00 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+        var berlin = TimeZoneInfo.FindSystemTimeZoneById("W. Europe Standard Time"); // UTC+1/+2 (DST)
+
+        var record = SyslogParser.Parse(datagram, berlin);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.FromHours(9)),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_VendorNumericTimeZoneOffsetCompact_IsRecognized()
+    {
+        // +HHMM（コロン無し）形式。
+        var payload = "<13>Mar  1 00:01:02 -0500 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.FromHours(-5)),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_VendorAbbreviationJst_TakesPrecedenceOverDefault()
+    {
+        // Issue #135 の具体例（Cisco show-timezone）。既定タイムゾーンより優先される。
+        var payload = "<13>Mar  1 00:01:02 JST host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+        var utcMinus5 = TimeZoneInfo.CreateCustomTimeZone("UTC-5", TimeSpan.FromHours(-5), "UTC-5", "UTC-5");
+
+        var record = SyslogParser.Parse(datagram, utcMinus5);
+
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.FromHours(9)),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_AmbiguousUsAbbreviationCst_IsNotResolvedAsTimeZone()
+    {
+        // 回帰確認（RFC 3164 §5.4 Example3 相当）: "CST" は曖昧な略号のため TZ として解決せず、
+        // 従来どおり HOSTNAME として読まれる——Cisco の clock timezone は任意の名称を任意の
+        // オフセットに割り当てられるため、略号から一意にオフセットを断定できない。
+        var payload = "<165>Aug 24 05:34:00 CST 1987 mymachine myproc[10]: %% do-nuts"u8.ToArray();
+        var receivedAt = new DateTimeOffset(1987, 8, 28, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(
+            new DateTimeOffset(1987, 8, 24, 5, 34, 0, TimeSpan.Zero),
+            record.DeviceTimestamp);
+        Assert.Equal("CST", record.Hostname);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_UnrecognizedTrailingToken_FallsBackToHostnameParsing()
+    {
+        // 数値でも既知略号でもないトークンは TZ として消費されず、従来どおり HOSTNAME として読まれる。
+        var payload = "<13>Mar  1 00:01:02 relay1 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(TimeSpan.Zero, record.DeviceTimestamp!.Value.Offset);
+        Assert.Equal("relay1", record.Hostname);
+    }
+
+    // ------------------------------------------------------------------
+    // 組み合わせ: 実機形式（Cisco IOS 相当）を想定した複合ケース
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_Rfc3164_CiscoStyleSequenceMsecAndVendorTimeZone_DecodesAllFields()
+    {
+        // シーケンス番号 + msec + 送信元 TZ（空白区切り） + ホスト名 + '%' 始まりの
+        // mnemonic 本文（TAG としては認識されず CONTENT 全体が Message に残る best-effort）の組み合わせ。
+        var payload = "<189>45: Mar  1 00:01:02.345 JST router1 %SYS-5-CONFIG_I: msg body"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+        var defaultUtc = TimeZoneInfo.Utc;
+
+        var record = SyslogParser.Parse(datagram, defaultUtc);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Equal(
+            new DateTimeOffset(2026, 3, 1, 0, 1, 2, TimeSpan.FromHours(9)).AddTicks(3_450_000),
+            record.DeviceTimestamp);
+        Assert.Equal("router1", record.Hostname);
+        Assert.Null(record.AppName); // '%' は非英数字のため TAG として認識しない
+        Assert.Equal("%SYS-5-CONFIG_I: msg body", record.Message);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_FourDigitYearWithMilliseconds_DecodesBoth()
+    {
+        var payload = "<13>Mar  1 2030 00:01:02.500 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(
+            new DateTimeOffset(2030, 3, 1, 0, 1, 2, TimeSpan.Zero).AddTicks(5_000_000),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_SequenceNumberAndFourDigitYearAndVendorOffset_DecodesAllFields()
+    {
+        var payload = "<13>7: Mar  1 2030 00:01:02 +09:00 host app: msg"u8.ToArray();
+        var receivedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var datagram = CreateDatagram(payload, receivedAt);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(
+            new DateTimeOffset(2030, 3, 1, 0, 1, 2, TimeSpan.FromHours(9)),
+            record.DeviceTimestamp);
+        Assert.Equal("host", record.Hostname);
+        Assert.Equal("app", record.AppName);
+        Assert.Equal("msg", record.Message);
+    }
+
+    [Fact]
+    public void Parse_Rfc3164_InvalidCalendarDateWithMilliseconds_FallsBackToBestEffort()
+    {
+        // 存在しない日付（2 月 30 日）は従来どおり TIMESTAMP 解析全体を諦める。
+        var payload = "<13>Feb 30 00:01:02.345 host app: msg"u8.ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.Null(record.DeviceTimestamp);
+        Assert.Null(record.Hostname);
+    }
 }

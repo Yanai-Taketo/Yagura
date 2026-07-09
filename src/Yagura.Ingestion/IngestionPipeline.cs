@@ -73,6 +73,10 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// （M5-1。<see cref="ICapacityExhaustionHandler"/> 参照）。<c>null</c> は「自走復旧を
     /// 行わない」構成（保持期間スケジューラ未構成時）を表す。
     /// </param>
+    /// <param name="defaultRfc3164TimeZone">
+    /// RFC 3164 TIMESTAMP の既定タイムゾーン（Issue #134。<see cref="ParsingStage"/> 経由で
+    /// <see cref="Parsing.SyslogParser.Parse"/> へそのまま渡す）。<c>null</c> は UTC（現状互換）。
+    /// </param>
     public IngestionPipeline(
         UdpSyslogListenerOptions udpListenerOptions,
         TcpSyslogListenerOptions tcpListenerOptions,
@@ -80,7 +84,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
         IIngressGate ingressGate,
         ILoggerFactory? loggerFactory = null,
         DiskSpool? spool = null,
-        ICapacityExhaustionHandler? capacityExhaustionHandler = null)
+        ICapacityExhaustionHandler? capacityExhaustionHandler = null,
+        TimeZoneInfo? defaultRfc3164TimeZone = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
@@ -124,6 +129,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
             _q2.Writer,
             spool,
             _metrics,
+            defaultRfc3164TimeZone,
             loggerFactory?.CreateLogger<ParsingStage>());
         _persistenceWriter = new PersistenceWriter(
             _q2.Reader,

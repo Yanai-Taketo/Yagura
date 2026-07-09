@@ -284,7 +284,8 @@ public static class Program
             new NoopIngressGate(),
             sp.GetRequiredService<ILoggerFactory>(),
             spool,
-            sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>()));
+            sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>(),
+            resolvedConfiguration.DefaultRfc3164TimeZone));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と

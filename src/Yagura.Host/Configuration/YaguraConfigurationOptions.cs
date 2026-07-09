@@ -46,6 +46,9 @@ public sealed class YaguraConfigurationOptions
         /// <summary>TCP 受信リスナの設定（M4-1）。</summary>
         public TcpOptions? Tcp { get; set; }
 
+        /// <summary>RFC 3164 TIMESTAMP 解釈の設定（Issue #134・#135）。</summary>
+        public Rfc3164Options? Rfc3164 { get; set; }
+
         public sealed class UdpOptions
         {
             /// <summary>bind するアドレス（文字列のまま保持し、検証段で <see cref="System.Net.IPAddress"/> 等へ変換する）。</summary>
@@ -69,6 +72,22 @@ public sealed class YaguraConfigurationOptions
 
             /// <summary>bind するポート。JSON の数値以外（文字列・範囲外）も受けられるよう <c>string?</c> で保持する。</summary>
             public string? Port { get; set; }
+        }
+
+        public sealed class Rfc3164Options
+        {
+            /// <summary>
+            /// RFC 3164 TIMESTAMP（年・タイムゾーンを持たない）の解釈に使う既定タイムゾーン
+            /// （Issue #134）。値は Windows タイムゾーン ID（例: <c>Tokyo Standard Time</c>）または
+            /// IANA タイムゾーン ID（例: <c>Asia/Tokyo</c>）——.NET 6 以降は
+            /// <see cref="System.TimeZoneInfo.FindSystemTimeZoneById(string)"/> が Windows 上でも
+            /// 両方の ID 体系を受理する（<c>Yagura.Ingestion.Tests</c> の
+            /// <c>SyslogParserRfc3164TimeZoneTests</c> で実機検証済み）。既定（未設定）は UTC
+            /// （現状互換）。TIMESTAMP に送信元付記の TZ（Issue #135）が取れた場合はそちらが優先され、
+            /// 本設定は取れない場合にのみ適用される。不正値は §1「既定値で継続」——UTC へ
+            /// フォールバックし警告する（受信の成立に不可欠なキーではない）。
+            /// </summary>
+            public string? DefaultTimeZone { get; set; }
         }
     }
 

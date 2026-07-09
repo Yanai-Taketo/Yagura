@@ -906,6 +906,74 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // RFC 3164 の既定タイムゾーン（Issue #134。Ingestion:Rfc3164:DefaultTimeZone）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_ConfigurationFileMissing_DefaultRfc3164TimeZoneDefaultsToUtc()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(TimeZoneInfo.Utc, result.Configuration.DefaultRfc3164TimeZone);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_DefaultRfc3164TimeZoneSetToWindowsId_IsAccepted()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Rfc3164": { "DefaultTimeZone": "Tokyo Standard Time" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("Tokyo Standard Time", result.Configuration.DefaultRfc3164TimeZone.Id);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_DefaultRfc3164TimeZoneSetToIanaId_IsAccepted()
+    {
+        // .NET 6 以降、TimeZoneInfo.FindSystemTimeZoneById は Windows 上でも IANA ID を解決できる。
+        WriteConfigurationFile("""{ "Ingestion": { "Rfc3164": { "DefaultTimeZone": "Asia/Tokyo" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(TimeSpan.FromHours(9), result.Configuration.DefaultRfc3164TimeZone.BaseUtcOffset);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_DefaultRfc3164TimeZoneUnresolvableId_FallsBackToUtcAndCollectsWarning()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Rfc3164": { "DefaultTimeZone": "Not/A/Real/Zone" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(TimeZoneInfo.Utc, result.Configuration.DefaultRfc3164TimeZone);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:Rfc3164:DefaultTimeZone", warning.Key);
+        Assert.Equal("Not/A/Real/Zone", warning.InvalidValue);
+        Assert.Equal(TimeZoneInfo.Utc.Id, warning.AppliedValue);
+        Assert.False(string.IsNullOrWhiteSpace(warning.Reason));
+    }
+
+    [Fact]
+    public void Load_DefaultRfc3164TimeZoneKey_IsKnown()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Rfc3164": { "DefaultTimeZone": "UTC" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Empty(result.UnknownKeys);
+    }
+
+    // ------------------------------------------------------------------
     // 未知キーの検出
     // ------------------------------------------------------------------
 

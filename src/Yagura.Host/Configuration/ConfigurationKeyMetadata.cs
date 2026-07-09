@@ -53,6 +53,11 @@ public static class ConfigurationKeyMetadata
             // M5-1 のレビューで追補した(KnownKeys との整合はテストで機械検証される)。
             ["Ingestion:Tcp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Ingestion:Tcp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
+            // RFC 3164 既定タイムゾーン（Issue #134）はソケットの bind を要さず、解析段
+            // （ParsingStage/SyslogParser）の解釈だけに影響するため、リスナ再構成は不要——
+            // Retention:* と同じ「即時」を目標とする。現時点の実効は他の即時目標キーと同様、
+            // ParsingStage の構築時（DI シングルトン）にのみ値が渡されるため再起動。
+            ["Ingestion:Rfc3164:DefaultTimeZone"] = ConfigurationReloadEffect.Immediate,
             ["Viewer:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
             // 公開範囲は bind 先の変更を伴うため、Viewer:HttpPort と同じ「リスナ再構成」区分
             // （§8 表「UI」区分の目標）に揃える。現時点の実効はポートと同じくサービス再起動

@@ -34,6 +34,7 @@ public static class ConfigurationChangePlanner
 
         CompareKey(changedKeys, "Ingestion:Udp:BindAddress", before.Ingestion?.Udp?.BindAddress, after.Ingestion?.Udp?.BindAddress);
         CompareKey(changedKeys, "Ingestion:Udp:Port", before.Ingestion?.Udp?.Port, after.Ingestion?.Udp?.Port);
+        CompareKey(changedKeys, "Ingestion:Rfc3164:DefaultTimeZone", before.Ingestion?.Rfc3164?.DefaultTimeZone, after.Ingestion?.Rfc3164?.DefaultTimeZone);
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
         CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);
         CompareKey(changedKeys, "Admin:HttpPort", before.Admin?.HttpPort, after.Admin?.HttpPort);
