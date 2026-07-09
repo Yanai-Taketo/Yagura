@@ -74,8 +74,13 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   `Wix5FirewallException` テーブルを WindowsInstaller COM で照合し、6 規則すべてで
   `Profile` 列が `1`(NET_FW_PROFILE2_DOMAIN)または `2`(NET_FW_PROFILE2_PRIVATE)のみで
   あること(`4` = Public・`0x7FFFFFFF` = All が含まれないこと)を確認済み(2026-07-09)。
-  **実機での `Get-NetFirewallRule` によるプロファイル表示確認は未実施**(管理者権限での
-  実インストールが要る。次回 Full E2E または M9-3 lab 手順で確認する)
+  実機での確認は E2E Full モードの `installed-state-evidence` ステップが行う——実
+  インストール後の `Get-NetFirewallRule` の結果に対し「3 系統すべてが Domain + Private の
+  ちょうど 2 規則で構成され、Public/Any を含む規則が存在しない」ことをアサーションする
+  (Profile 属性の欠落 = 既定 Any への逆戻りという本修正の核心的回帰を CI で自動検知する)。
+  **アップグレード経路(旧 Profile=Any 規則の除去)の実機確認は M9-3 lab 手順 §H の
+  管轄(未実施)**——MajorUpgrade の既定 Schedule から設計上は除去されるはずだが実証は
+  lab で行う
 - E2E スクリプトは開発機で `-DryRun` と `-SendVerifyOnly`(実ビルド出力の Yagura.Host に
   対する送出・照合)を検証済み。**Full モード(実インストール)の初回実行は CI
   (installer-e2e.yml)で行う**——GitHub ホストランナーの管理者権限の根拠は workflow 内の
