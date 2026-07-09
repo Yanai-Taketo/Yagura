@@ -347,10 +347,25 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                 command.Parameters.Add("$sourceAddress", SqliteType.Text).Value = sourceAddress;
             }
 
-            if (query.Severity is { } severityFilter)
+            if (query.SeverityAtMost is { } severityAtMost)
             {
-                whereClauses.Add("Severity = $severity");
-                command.Parameters.Add("$severity", SqliteType.Integer).Value = severityFilter;
+                // 閾値方式（Severity <= N。LogQuery.SeverityAtMost の doc コメント参照——
+                // syslog は数値が小さいほど深刻なため「N 以上の重大度」は「Severity <= N」になる。
+                // Severity が NULL（PRI 未解析）の行は比較が unknown になり自然に対象外となる。
+                whereClauses.Add("Severity <= $severityAtMost");
+                command.Parameters.Add("$severityAtMost", SqliteType.Integer).Value = severityAtMost;
+            }
+
+            if (query.Facility is { } facilityFilter)
+            {
+                whereClauses.Add("Facility = $facility");
+                command.Parameters.Add("$facility", SqliteType.Integer).Value = facilityFilter;
+            }
+
+            if (query.ParseStatus is { } parseStatusFilter)
+            {
+                whereClauses.Add("ParseStatus = $parseStatus");
+                command.Parameters.Add("$parseStatus", SqliteType.Integer).Value = (int)parseStatusFilter;
             }
 
             if (query.SearchText is { Length: > 0 } searchText)
@@ -368,6 +383,10 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
 
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
 
+            // Id DESC のタイブレーク（Issue #144）: ReceivedAt 単独では同一時刻（同一ミリ秒）の
+            // 行の相対順序が SQL 上未定義になる——UDP バースト・スタックトレースの分割送信等、
+            // syslog では同一時刻多発が日常的に起きる。Id は採番順（挿入順）と一致するため、
+            // 同時刻内は「新しく挿入された行が先」という決定的な順序になる。
             command.CommandText =
                 $"""
                 SELECT Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
@@ -375,7 +394,7 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                        StructuredData, Message
                 FROM LogRecords
                 {whereSql}
-                ORDER BY ReceivedAt DESC
+                ORDER BY ReceivedAt DESC, Id DESC
                 LIMIT $limit;
                 """;
             command.Parameters.Add("$limit", SqliteType.Integer).Value = query.Limit;

@@ -28,19 +28,32 @@
 <div class="mb-4">
     <YaguraCard>
         <MudGrid Spacing="2">
-            <MudItem xs="12" sm="6" md="3">
+            <MudItem xs="12" sm="6" md="4">
                 <YaguraDateTimeField Label="@FromLabel" @bind-Value="_from" />
             </MudItem>
-            <MudItem xs="12" sm="6" md="3">
+            <MudItem xs="12" sm="6" md="4">
                 <YaguraDateTimeField Label="@ToLabel" @bind-Value="_to" />
             </MudItem>
-            <MudItem xs="12" sm="6" md="3">
+            <MudItem xs="12" sm="6" md="4">
                 <YaguraTextField Label="@UiText.SearchFieldSource" @bind-Value="_sourceAddress" />
             </MudItem>
-            <MudItem xs="12" sm="6" md="3">
+            @* 重大度は完全一致ではなく閾値方式（Issue #148——「N 以上」の運用語彙を、選択値と、
+               より深刻な値をすべて含む条件として表現する。補足は HelpText で明示する）。 *@
+            <MudItem xs="12" sm="6" md="4">
                 <YaguraSelectField Label="@UiText.SearchFieldSeverity"
+                                   HelpText="@UiText.SearchFieldSeverityHelp"
                                    Options="@SeverityOptions"
                                    @bind-Value="_severityValue" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <YaguraSelectField Label="@UiText.SearchFieldFacility"
+                                   Options="@FacilityOptions"
+                                   @bind-Value="_facilityValue" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <YaguraSelectField Label="@UiText.SearchFieldParseStatus"
+                                   Options="@ParseStatusOptions"
+                                   @bind-Value="_parseStatusValue" />
             </MudItem>
             <MudItem xs="12" md="9">
                 <YaguraTextField Label="@UiText.SearchFieldText" @bind-Value="_searchText" />
@@ -50,8 +63,10 @@
                ボタン列に同じ 16px の下パディング（pb-4）を与えて押し上げる（2026-07-06 試用の
                「検索がずれて見える」フィードバック）。 *@
             <MudItem xs="12" md="3" Class="d-flex align-end pb-4">
-                @* 主ボタンは 1 ビューに 1 つ（ui.md §3.1）——本画面ではこの検索ボタンのみ。 *@
-                <YaguraButton Role="YaguraButtonRole.Primary" OnClick="RunSearchAsync" Disabled="@_searching">
+                @* 主ボタンは 1 ビューに 1 つ（ui.md §3.1）——本画面ではこの検索ボタンのみ。
+                   検索条件は URL クエリへ反映してから実行する（NavigateTo → OnParametersSetAsync
+                   が実クエリを実行する単一経路。URL 共有・ブックマーク対応——Issue #148）。 *@
+                <YaguraButton Role="YaguraButtonRole.Primary" OnClick="SubmitSearch" Disabled="@_searching">
                     @UiText.SearchButton
                 </YaguraButton>
             </MudItem>
@@ -246,15 +261,32 @@
     private const int OutageQueryLimit = 100;
     private const int ChartBucketCount = 24;
 
+    // ファシリティの選択肢（0〜23。RFC 5424 Table 1。UiText.FormatFacility と対応表を二重管理しない）。
+    private const int FacilityOptionCount = 24;
+
     private static readonly IReadOnlyList<YaguraSelectOption> SeverityOptions =
         Enumerable.Range(0, UiText.SeverityOptionLabels.Count)
             .Select(i => new YaguraSelectOption(i.ToString(CultureInfo.InvariantCulture), UiText.SeverityOptionLabels[i]))
             .ToList();
 
+    private static readonly IReadOnlyList<YaguraSelectOption> FacilityOptions =
+        Enumerable.Range(0, FacilityOptionCount)
+            .Select(i => new YaguraSelectOption(i.ToString(CultureInfo.InvariantCulture), UiText.FormatFacility(i)))
+            .ToList();
+
+    private static readonly IReadOnlyList<YaguraSelectOption> ParseStatusOptions =
+    [
+        new(nameof(ParseStatus.Parsed), UiText.ParseStatusOptionParsed),
+        new(nameof(ParseStatus.ParseFailed), UiText.ParseStatusOptionParseFailed),
+        new(nameof(ParseStatus.Incomplete), UiText.ParseStatusOptionIncomplete),
+    ];
+
     private DateTime? _from;
     private DateTime? _to;
     private string? _sourceAddress;
     private string? _severityValue;
+    private string? _facilityValue;
+    private string? _parseStatusValue;
     private string? _searchText;
     private bool _searching;
 
@@ -269,6 +301,42 @@
 
     private DateTimeOffset? _retentionHorizon;
     private IReadOnlyList<YaguraListenerEndpoint> _listeners = [];
+
+    // ---- 検索条件 ⇔ URL クエリの双方向反映（Issue #148。URL 共有・ブックマーク対応） ----
+    // SupplyParameterFromQuery: Router は同一ページ内でクエリだけが変わるナビゲーション
+    // （NavigateTo）でもこれらのパラメータを再供給し、OnParametersSetAsync を再実行する
+    // （.NET の標準機構。コンポーネントの再生成は起きない）。検索ボタン（SubmitSearch）は
+    // NavigateTo で URL を書き換えるだけにし、実際のクエリ実行は OnParametersSetAsync に
+    // 一本化する——NavigateTo → OnParametersSetAsync を唯一の実行経路にすることで二重実行を避ける。
+    // ダッシュボードからの導線（?source=<アドレス>。ui.md §4）・ブラウザの戻る/進むも同じ経路を通る。
+
+    [SupplyParameterFromQuery(Name = "from")]
+    [Parameter]
+    public string? FromQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "to")]
+    [Parameter]
+    public string? ToQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "source")]
+    [Parameter]
+    public string? SourceQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "severity")]
+    [Parameter]
+    public string? SeverityQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "facility")]
+    [Parameter]
+    public string? FacilityQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "parseStatus")]
+    [Parameter]
+    public string? ParseStatusQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "q")]
+    [Parameter]
+    public string? SearchTextQuery { get; set; }
 
     // 入力の解釈はサーバのタイムゾーン（ui.md §6 の契約の入力側。ラベルに明示する）。
     private static string ServerOffsetLabel =>
@@ -287,36 +355,113 @@
         _from is not null || _to is not null ||
         !string.IsNullOrWhiteSpace(_sourceAddress) ||
         _severityValue is not null ||
+        _facilityValue is not null ||
+        _parseStatusValue is not null ||
         !string.IsNullOrWhiteSpace(_searchText);
 
     private static RenderFragment NoResultsAction => builder =>
         builder.AddContent(0, UiText.SearchNoResultsNextAction);
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         var status = StatusReader.ReadCurrent();
         _listeners = status.Listeners;
         _retentionHorizon = status.RetentionDays is { } days
             ? DateTimeOffset.UtcNow - TimeSpan.FromDays(days)
             : null;
-
-        // ダッシュボードの送信元別受信状況からの導線（?source=<アドレス>。ui.md §4——
-        // 「静かになった装置に気づく → その装置のログを見る」の調査動線を 1 クリックにする。
-        // 2026-07-06 オーナー指示の UX 改善）。クエリ値は送信元アドレス欄の初期値になるだけで、
-        // 検索条件としての扱い（完全一致）はフォーム経由の入力と同一。
-        var query = QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
-        if (query.TryGetValue("source", out var sourceValues) &&
-            sourceValues.ToString() is { Length: > 0 } sourceFromQuery)
-        {
-            _sourceAddress = sourceFromQuery;
-        }
-
-        // 絞り込みの強制はしない——初期表示は条件なしの検索を自動実行する（architecture.md §6。
-        // 導線経由では送信元だけが初期条件に入った状態で同じ自動実行になる）。
-        await RunSearchAsync();
     }
 
-    private async Task RunSearchAsync()
+    protected override async Task OnParametersSetAsync()
+    {
+        // URL クエリを検索条件の正とする（初期表示・検索ボタン・ダッシュボードからの導線・
+        // ブラウザの戻る/進む、いずれもここへ集約される）。絞り込みの強制はしない——
+        // 条件なしなら条件なしの検索を自動実行する（architecture.md §6）。
+        // 不正な値（改ざん・手編集された URL）は黙って「条件なし」として扱う——例外は出さない。
+        _from = ParseServerWallClock(FromQuery);
+        _to = ParseServerWallClock(ToQuery);
+        _sourceAddress = string.IsNullOrEmpty(SourceQuery) ? null : SourceQuery;
+        _severityValue = string.IsNullOrEmpty(SeverityQuery) ? null : SeverityQuery;
+        _facilityValue = string.IsNullOrEmpty(FacilityQuery) ? null : FacilityQuery;
+        _parseStatusValue = string.IsNullOrEmpty(ParseStatusQuery) ? null : ParseStatusQuery;
+        _searchText = string.IsNullOrEmpty(SearchTextQuery) ? null : SearchTextQuery;
+
+        await ExecuteSearchAsync();
+    }
+
+    /// <summary>
+    /// 検索ボタンの押下ハンドラ。フォームの現在値を URL クエリへ反映して遷移するだけで、
+    /// 実際の検索実行は <see cref="OnParametersSetAsync"/>（NavigateTo で再供給される
+    /// SupplyParameterFromQuery パラメータ経由）に委ねる——二重実行を避ける単一経路。
+    /// </summary>
+    private void SubmitSearch() => Navigation.NavigateTo(BuildSearchUrl());
+
+    private string BuildSearchUrl()
+    {
+        var query = new Dictionary<string, string?>();
+
+        if (FromUtc is { } from)
+        {
+            query["from"] = FormatQueryTimestamp(from);
+        }
+
+        if (ToUtc is { } to)
+        {
+            query["to"] = FormatQueryTimestamp(to);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_sourceAddress))
+        {
+            query["source"] = _sourceAddress.Trim();
+        }
+
+        if (_severityValue is { Length: > 0 })
+        {
+            query["severity"] = _severityValue;
+        }
+
+        if (_facilityValue is { Length: > 0 })
+        {
+            query["facility"] = _facilityValue;
+        }
+
+        if (_parseStatusValue is { Length: > 0 })
+        {
+            query["parseStatus"] = _parseStatusValue;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            query["q"] = _searchText;
+        }
+
+        return QueryHelpers.AddQueryString("/search", query);
+    }
+
+    // 期間はサーバ UTC の往復形式（"O"）で URL に載せる——サーバのタイムゾーンに依存せず、
+    // 共有された URL がどの端末で開かれても同じ瞬間を指す（ui.md §6 の基準軸と同じ考え方）。
+    private static string FormatQueryTimestamp(DateTimeOffset value) =>
+        value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+
+    private static DateTime? ParseServerWallClock(string? query)
+    {
+        if (string.IsNullOrEmpty(query))
+        {
+            return null;
+        }
+
+        if (!DateTimeOffset.TryParse(
+                query,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind | DateTimeStyles.AssumeUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+
+        return TimeZoneInfo.ConvertTime(parsed, TimeZoneInfo.Local).DateTime;
+    }
+
+    private async Task ExecuteSearchAsync()
     {
         _searching = true;
         _detailVisible = false;
@@ -324,17 +469,15 @@
 
         try
         {
-            var severity = _severityValue is { } value
-                ? int.Parse(value, CultureInfo.InvariantCulture)
-                : (int?)null;
-
             var results = await LogStore.QueryAsync(new LogQuery(
                 Limit: SearchLimit,
                 Timeout: SearchTimeout,
                 ReceivedAtFrom: FromUtc,
                 ReceivedAtTo: ToUtc,
                 SourceAddress: string.IsNullOrWhiteSpace(_sourceAddress) ? null : _sourceAddress.Trim(),
-                Severity: severity,
+                SeverityAtMost: TryParseInt(_severityValue),
+                Facility: TryParseInt(_facilityValue),
+                ParseStatus: TryParseParseStatus(_parseStatusValue),
                 SearchText: string.IsNullOrWhiteSpace(_searchText) ? null : _searchText));
             _results = results;
 
@@ -345,6 +488,14 @@
             _searching = false;
         }
     }
+
+    private static int? TryParseInt(string? value) =>
+        value is { Length: > 0 } && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+
+    private static ParseStatus? TryParseParseStatus(string? value) =>
+        value is { Length: > 0 } && Enum.TryParse<ParseStatus>(value, out var parsed) ? parsed : null;
 
     private async Task LoadOutagesAndChartAsync(IReadOnlyList<LogRecordSummary> results)
     {
