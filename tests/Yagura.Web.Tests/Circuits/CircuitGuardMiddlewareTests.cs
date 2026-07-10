@@ -204,9 +204,8 @@ public sealed class CircuitGuardMiddlewareTests
             registry.Register(new CircuitRecord(
                 $"c{i}",
                 "127.0.0.1",
-                isAdmin,
                 DateTimeOffset.UtcNow,
-                new YaguraCircuitContext()));
+                new YaguraCircuitContext { IsAdminListener = isAdmin }));
         }
     }
 

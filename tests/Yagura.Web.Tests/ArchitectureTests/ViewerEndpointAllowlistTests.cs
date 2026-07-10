@@ -230,7 +230,11 @@ public sealed class ViewerEndpointAllowlistTests
         // いかなる書き込みエンドポイントも持たない」の許可リスト側の裏付け:
         // ListenerPortGuardEndpointMetadata.Admin を持つエンドポイントは閲覧許可リストに
         // 一切現れないことを確認する（本許可リストの構造上の不変条件）。
-        await using var harness = await ViewerHostHarness.StartAsync();
+        // windowsAuthEnabled: true — /admin/login/windows は Windows 認証有効時のみ登録される
+        // （AdminAuthEndpoints.MapAdminAuthEndpoints 参照）ため、本テストが検証する
+        // 「/admin/login/windows も含め管理系ルートが漏れていないこと」を確認するには
+        // 実際に登録された状態でハーネスを起動する必要がある。
+        await using var harness = await ViewerHostHarness.StartAsync(windowsAuthEnabled: true);
 
         var adminEndpointRoutes = harness.GetAllEndpoints()
             .OfType<RouteEndpoint>()

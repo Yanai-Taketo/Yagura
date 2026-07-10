@@ -34,9 +34,17 @@ namespace Yagura.Web.Administration;
 /// </remarks>
 internal static class AdminAuthEndpoints
 {
-    public static void MapAdminAuthEndpoints(this IEndpointRouteBuilder endpoints)
+    public static void MapAdminAuthEndpoints(this IEndpointRouteBuilder endpoints, bool windowsAuthEnabled)
     {
-        MapWindowsLogin(endpoints);
+        if (windowsAuthEnabled)
+        {
+            // Windows 認証が無効な構成では Negotiate スキーム自体が登録されないため、
+            // このエンドポイントに [Authorize(AuthenticationSchemes=Negotiate)] を課したまま
+            // 登録すると到達時に例外（500）になる。ログイン画面も Windows 認証が有効な場合
+            // にのみこの経路へリンクするため、無効時は登録自体を省略する。
+            MapWindowsLogin(endpoints);
+        }
+
         MapAppLogin(endpoints);
         MapLogout(endpoints);
     }

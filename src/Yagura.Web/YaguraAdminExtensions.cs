@@ -108,10 +108,17 @@ public static class YaguraAdminExtensions
     /// を除く全管理画面・管理系エンドポイントに
     /// <see cref="Administration.AdminAuthenticationExtensions.AdminPolicyName"/> の認可を課す。
     /// </param>
+    /// <param name="windowsAuthEnabled">
+    /// Windows 統合認証（<c>Admin:Authentication:Windows:Enabled</c>）の実効値。
+    /// <see langword="false"/> の場合、Negotiate スキーム自体が未登録のため
+    /// <c>/admin/login/windows</c> エンドポイントの登録自体を省略する
+    /// （<see cref="Administration.AdminAuthEndpoints.MapAdminAuthEndpoints"/> 参照）。
+    /// </param>
     public static IEndpointRouteBuilder MapYaguraAdmin(
         this IEndpointRouteBuilder endpoints,
         RazorComponentsEndpointConventionBuilder razorComponents,
-        bool adminAuthRequired = false)
+        bool adminAuthRequired = false,
+        bool windowsAuthEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(razorComponents);
@@ -136,7 +143,7 @@ public static class YaguraAdminExtensions
         });
 
         MapForwarderKitDownload(endpoints, adminAuthRequired);
-        endpoints.MapAdminAuthEndpoints();
+        endpoints.MapAdminAuthEndpoints(windowsAuthEnabled);
 
         return endpoints;
     }

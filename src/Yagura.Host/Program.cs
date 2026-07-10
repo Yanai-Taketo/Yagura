@@ -698,14 +698,34 @@ public static class Program
         // (Phase 1 のみで RequireForLoopback も RemoteBinding も無効な既定構成)との切り分けのみ行う。
         var adminAuthorizationRequired =
             resolvedConfiguration.AdminAuthRequireForLoopback || resolvedConfiguration.AdminRemoteBindingEnabled;
-        app.MapYaguraAdmin(razorComponents, adminAuthorizationRequired);
+        app.MapYaguraAdmin(razorComponents, adminAuthorizationRequired, resolvedConfiguration.AdminWindowsAuthEnabled);
 
         // 管理者アカウントストアのスキーマ初期化（ADR-0010 Phase 1。ILogStore と同じ
         // 「受信開始（Kestrel の listen 開始）より前に初期化を終える」順序——
         // IngestionHostedService.StartAsync が listen 開始前に必ず待たれる（上記コメント参照）
         // のと同じ理由で、ここ（app.RunAsync() 呼び出し前）で同期的に完了させる。
-        await app.Services.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>()
-            .InitializeAsync().ConfigureAwait(false);
+        var adminAccountStore = app.Services.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>();
+        await adminAccountStore.InitializeAsync().ConfigureAwait(false);
+
+        // 自己ロックアウトの footgun に対する起動時警告（RequireForLoopback=true +
+        // App 認証のみ有効 + アカウント未作成だと、GUI へ到達する手段が一切なくなる）。
+        // ハード起動失敗にはしない——それだと syslog 受信自体が止まってしまい、より悪い結果になる
+        // （復旧は設定ファイル編集で RequireForLoopback を false に戻すか、いずれにせよ設定変更が要る）。
+        if (resolvedConfiguration.AdminAuthRequireForLoopback &&
+            resolvedConfiguration.AdminAppAuthEnabled &&
+            !resolvedConfiguration.AdminWindowsAuthEnabled)
+        {
+            var hasAnyAccount = await adminAccountStore.HasAnyAccountAsync().ConfigureAwait(false);
+            if (!hasAnyAccount)
+            {
+                var lockoutLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.SelfLockout");
+                lockoutLogger.LogWarning(
+                    "[admin-self-lockout-risk] loopback 認証が必須（Admin:Authentication:RequireForLoopback=true）で、" +
+                    "アプリ独自認証のみが有効（Windows 認証は無効）ですが、管理者アカウントが1件も作成されていないため、" +
+                    "管理 UI へログインする手段がありません。復旧するには設定ファイルで " +
+                    "Admin:Authentication:RequireForLoopback を false に変更してから再起動してください。");
+            }
+        }
 
         // architecture.md §1.2 の起動順序（受信を最初に開く）は IngestionHostedService が
         // 担う。IHostedService.StartAsync は ASP.NET Core の規約により Kestrel が listen を

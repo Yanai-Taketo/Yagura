@@ -115,5 +115,5 @@ public sealed class CircuitRegistryTests
     }
 
     private static CircuitRecord NewRecord(string id, bool? isAdmin) =>
-        new(id, "127.0.0.1", isAdmin, T0, new YaguraCircuitContext { IsAdminListener = isAdmin });
+        new(id, "127.0.0.1", T0, new YaguraCircuitContext { IsAdminListener = isAdmin });
 }

@@ -16,7 +16,7 @@ public sealed class CircuitManagementServiceTests
     public void ListCircuits_ReturnsRemoteEstablishedAndLastActivity()
     {
         var registry = new CircuitRegistry();
-        var record = new CircuitRecord("c1", "127.0.0.1", isAdminListener: true, T0, new YaguraCircuitContext());
+        var record = new CircuitRecord("c1", "127.0.0.1", T0, new YaguraCircuitContext { IsAdminListener = true });
         registry.Register(record);
         registry.RecordActivity("c1", T0 + TimeSpan.FromMinutes(5));
 
@@ -34,7 +34,7 @@ public sealed class CircuitManagementServiceTests
     public async Task Disconnect_Accepted_RecordsAuditEvent()
     {
         var registry = new CircuitRegistry();
-        var record = new CircuitRecord("c1", "10.0.0.5", isAdminListener: false, T0, new YaguraCircuitContext());
+        var record = new CircuitRecord("c1", "10.0.0.5", T0, new YaguraCircuitContext { IsAdminListener = false });
         registry.Register(record);
 
         string? deliveredReason = null;

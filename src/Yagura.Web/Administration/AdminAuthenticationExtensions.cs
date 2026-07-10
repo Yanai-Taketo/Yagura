@@ -147,8 +147,14 @@ public static class AdminAuthenticationExtensions
             authBuilder.AddCookie(AppAuthenticationScheme, options =>
             {
                 options.Cookie.Name = "Yagura.AdminAuth";
-                // loopback/管理リスナのみが対象であり HTTPS は Phase 1 のスコープ外
-                // （ADR-0010 決定 1・4。リモートバインドは Phase 2）——SameSite=Strict のみを課す。
+                // SecurePolicy は既定値（SameAsRequest）のまま変更しない——意図的な判断
+                // （ADR-0010 Phase 2）。管理リスナの loopback ポートは平文 HTTP のままであり
+                // （決定 4。loopback の HTTPS 化は引き続きスコープ外）、リモートバインドは
+                // HTTPS 必須（fail-closed）。SameAsRequest なら、リモート HTTPS 経由で発行された
+                // Cookie には Secure 属性が付き、loopback HTTP 経由の認証（RequireForLoopback=true
+                // 時）は localhost 限定トラフィックでネットワークを経由しないため平文のままで
+                // 成立する。ここで SecurePolicy=Always に固定すると loopback HTTP 経由の認証済み
+                // 管理操作が機能しなくなるため、既定値を維持する。
                 options.Cookie.SameSite = SameSiteMode.Strict;
                 options.Cookie.HttpOnly = true;
                 options.LoginPath = LoginPath;
