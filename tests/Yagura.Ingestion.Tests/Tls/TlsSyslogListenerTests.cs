@@ -213,7 +213,14 @@ public sealed class TlsSyslogListenerTests
             var partial = Encoding.ASCII.GetBytes("20 <34>part");
             await sslStream.WriteAsync(partial);
             await sslStream.FlushAsync();
-            sslStream.Close();
+
+            // TcpSyslogListenerTests の同名テストと同じ理由で、SslStream 越しの正常クローズ
+            // （TLS close_notify を伴う）ではなく、ソケットの送信側を直接シャットダウンする
+            // （FIN を即座に送出——相手の読み取りループを確実かつ迅速に終端させる）。
+            // sslStream.Close()/DisposeAsync による正常クローズは CI 環境で完了までの時間が
+            // 揺らぎ、10 秒のタイムアウト内に Q1 到達を確認できず flaky になることを実機
+            // （GitHub Actions CI）で確認した——半クローズによる決定的な切断に変更した。
+            client.Client.Shutdown(SocketShutdown.Send);
 
             var datagram = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
 
