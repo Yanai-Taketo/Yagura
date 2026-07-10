@@ -90,6 +90,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
     private readonly IIngressGate _ingressGate;
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<TcpSyslogListener>? _logger;
+    private readonly TimeProvider _timeProvider;
 
     private TcpListener? _tcpListener;
     private Task? _acceptLoopTask;
@@ -106,7 +107,8 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         ChannelWriter<RawDatagram> q1Writer,
         IIngressGate ingressGate,
         IngestionMetrics metrics,
-        ILogger<TcpSyslogListener>? logger = null)
+        ILogger<TcpSyslogListener>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(q1Writer);
@@ -118,6 +120,10 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         _ingressGate = ingressGate;
         _metrics = metrics;
         _logger = logger;
+        // フレーミング進捗タイムアウト（§4.5 の B）の経過時間判定に使う時計。テストが
+        // FakeTimeProvider を注入して実時間なしで決定的に検証できるようにする（Issue #215。
+        // UdpSyslogListener の backoff 検証と同じ注入パターン）。
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -415,7 +421,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                         break;
                     }
 
-                    var receivedAt = DateTimeOffset.UtcNow;
+                    var receivedAt = _timeProvider.GetUtcNow();
                     lastFramingProgressAt ??= receivedAt;
 
                     // PR #169 レビュー指摘 2 への対応: 回復不能なフレーミング違反の例外が出ても、
@@ -519,10 +525,10 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                         // 取り直しは上の WriteAsync（Q1 満杯時は §3.1 の意図された読み取り停止で
                         // 長時間停滞し得る）の完了後に行う——停滞時間をフレーミング進捗の停滞と
                         // 誤判定して正常な送信元を切断しないため。
-                        lastFramingProgressAt = DateTimeOffset.UtcNow;
+                        lastFramingProgressAt = _timeProvider.GetUtcNow();
                     }
                     else if (framingProgressEnabled
-                        && DateTimeOffset.UtcNow - lastFramingProgressAt!.Value > _options.FramingProgressTimeout)
+                        && _timeProvider.GetUtcNow() - lastFramingProgressAt!.Value > _options.FramingProgressTimeout)
                     {
                         // オーナー決定 2026-07-09 の B: バイトは届いているのに有効なメッセージが
                         // 1 件も確定しないまま FramingProgressTimeout が経過した（低速トリクル・
@@ -546,7 +552,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                 if (incomplete is not null)
                 {
                     var datagram = new RawDatagram(
-                        ReceivedAt: DateTimeOffset.UtcNow,
+                        ReceivedAt: _timeProvider.GetUtcNow(),
                         SourceAddress: sourceAddress,
                         SourcePort: sourcePort,
                         Protocol: Protocol.Tcp,
