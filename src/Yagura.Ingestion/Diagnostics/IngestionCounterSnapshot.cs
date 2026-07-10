@@ -34,6 +34,11 @@
 /// <param name="TcpConnectionFramingTimeout">
 /// フレーミング進捗タイムアウトによる TCP 接続断の累積値（同上。既定 0）。
 /// </param>
+/// <param name="SpoolCorruptTailDiscardedBytes">
+/// スプールセグメント末尾の破損検出により読み捨てたバイト数の累積値（Issue #201。既定 0）。
+/// 単位は他の破棄系カウンタと異なりレコード数ではなくバイト数（破損した末尾はフレーム境界が
+/// 保証されずレコード数を数えられないため。<see cref="IngestionMetrics"/> remarks 参照）。
+/// </param>
 public sealed record IngestionCounterSnapshot(
     long InternalBufferDropped,
     long TcpConnectionRejected,
@@ -46,8 +51,9 @@ public sealed record IngestionCounterSnapshot(
     long TcpConnectionIdleTimeout = 0,
     long TcpMessageOversizedDiscarded = 0,
     long TcpConnectionResyncLimitExceeded = 0,
-    long TcpConnectionFramingTimeout = 0)
+    long TcpConnectionFramingTimeout = 0,
+    long SpoolCorruptTailDiscardedBytes = 0)
 {
     /// <summary>全カウンタが 0 の初期スナップショット（メタデータ領域が無い初回起動用）。</summary>
-    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 }

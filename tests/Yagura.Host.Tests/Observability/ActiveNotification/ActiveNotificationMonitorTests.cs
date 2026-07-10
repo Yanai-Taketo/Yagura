@@ -391,7 +391,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         // drain が実際に読んで照合したことを模す: 投入したマーカーで通知する。
         var segments = spool.TrySealActiveSegmentAndListDrainable();
         var segment = Assert.Single(segments);
-        var records = spool.ReadSegmentRecords(segment, out _);
+        var records = spool.ReadSegmentRecords(segment, out _, out _);
         var selfTestRecord = Assert.Single(records, r => r.Kind == SpoolRecordKind.SelfTest);
         tracker.OnSelfTestRecordDrained(selfTestRecord.SelfTestMarker!);
 

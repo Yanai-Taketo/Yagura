@@ -162,12 +162,21 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
 
         if (baseline is not null)
         {
+            // SpoolCorruptTailDiscardedBytes（Issue #201）は他 5 種と単位が異なる（レコード数では
+            // なくバイト数——IngestionMetrics remarks 参照）が、ここでは「> 0 か」の判定にしか
+            // 使わないため単位混在の影響を受けない——バイト単位の増分であっても取りこぼしが
+            // 発生した事実に変わりはなく、異常判定（LossObserved）を発火させるべき対象である。
+            // PR #199 レビューで指摘された「一時保管ゲージが 0 に戻っても一部喪失があれば
+            // 正常表示に戻さない」という原則（クラス remarks 参照）を、末尾破損の喪失にも
+            // 同様に適用する——末尾破損は一時保管ゲージでは表現されない喪失であるため、
+            // 本カウンタの増分を見逃すとゲージ復帰と同時に異常表示が消えてしまう。
             var lossIncrement =
                 (current.InternalBufferDropped - baseline.InternalBufferDropped) +
                 (current.SpoolWriteFailed - baseline.SpoolWriteFailed) +
                 (current.SpoolDiscarded - baseline.SpoolDiscarded) +
                 (current.PersistenceFailed - baseline.PersistenceFailed) +
-                (current.FlowControlDropped - baseline.FlowControlDropped);
+                (current.FlowControlDropped - baseline.FlowControlDropped) +
+                (current.SpoolCorruptTailDiscardedBytes - baseline.SpoolCorruptTailDiscardedBytes);
 
             if (lossIncrement > 0)
             {
@@ -209,6 +218,18 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         // 計器名は architecture.md §4.1.1 の一覧（IngestionMetrics の CreateCounter 呼び出し）と
         // 1 対 1 対応させる。IsLoss の区分は同 §4.1 の表の「意味」列に従う（スプール退避・
         // TCP 接続拒否は損失ではない）。
+        //
+        // 「スプール末尾破損破棄」（Issue #201）は他の 6 種と単位が異なる（レコード数ではなく
+        // バイト数——SpoolSegmentReader・IngestionMetrics remarks 参照）が、IsLoss: true とする
+        // 判断はここでも他と揃える——「サーバに届いた後、回収不能な形で失われた」という性質は
+        // 同質であり、単位差を理由にここで除外すると本来の目的（観測ギャップの解消。
+        // architecture.md §3.1「カウンタに計上されない喪失は重大」）が損なわれる。単位差の影響は
+        // 表示側（ui.md §7.2・UiText.CounterSpoolCorruptTailDiscarded がラベルへ「単位はバイト」を
+        // 明記）と Dashboard の「取りこぼし（累計）」集計（バイト値を件数へ単純加算する近似——
+        // 破損末尾は torn write 1 回分の範囲に収まり実運用では小さい値になる。Dashboard.razor の
+        // _lossTotal 計算のコメント参照）で吸収する。ベンチの厳密な送信数突合
+        // （tools/Yagura.Bench の CounterReconciler）には単位が混在するため含めない
+        // （同ファイルのコメント参照）。
         [
             new("yagura.ingestion.internal_buffer.dropped", snapshot.InternalBufferDropped, IsLoss: true),
             new("yagura.ingestion.tcp_connection.rejected", snapshot.TcpConnectionRejected, IsLoss: false),
@@ -217,5 +238,6 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
             new("yagura.ingestion.spool.discarded", snapshot.SpoolDiscarded, IsLoss: true),
             new("yagura.ingestion.persistence.failed", snapshot.PersistenceFailed, IsLoss: true),
             new("yagura.ingestion.flow_control.dropped", snapshot.FlowControlDropped, IsLoss: true),
+            new("yagura.ingestion.spool.corrupt_tail_discarded_bytes", snapshot.SpoolCorruptTailDiscardedBytes, IsLoss: true),
         ];
 }

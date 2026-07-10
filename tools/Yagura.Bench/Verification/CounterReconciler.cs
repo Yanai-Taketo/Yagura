@@ -81,6 +81,16 @@ public static class CounterReconciler
         // 進捗タイムアウト」は、メッセージ単位ではなく接続単位の事象（切断そのものは損失では
         // ない——§4.5「損失ではなく解釈の手がかり」）のため、本メッセージ数ベースの突合式には
         // 含めない。
+        //
+        // Issue #201 で追加した「スプール末尾破損破棄」（counters.SpoolCorruptTailDiscardedBytes）も
+        // 本式には含めない——他 7 種と異なり単位がバイトであり（レコード単位では数えられない。
+        // IngestionMetrics remarks 参照）、sentCount（送信メッセージ数）との厳密な等式比較を行う
+        // 本突合（difference == 0 の判定）へバイト値を足すと、突合が成立していても差分が非ゼロに
+        // 見えてしまい検証器自体が誤判定する。加えて本カウンタが非ゼロになるのは torn write
+        // （クラッシュ・強制終了時の末尾破損）発生時のみで、正常系のベンチシナリオでは常に 0 と
+        // なる想定のため、除外による突合精度への実害はない（Dashboard.razor の _lossTotal が
+        // 単純合計へ含める判断をしているのとは対照的——あちらは近似表示の許容範囲、こちらは
+        // 厳密な等式検証という要求水準の違いによる）。
         var accountedLoss =
             counters.InternalBufferDropped +
             counters.TcpConnectionRejected +

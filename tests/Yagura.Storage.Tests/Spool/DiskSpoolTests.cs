@@ -76,8 +76,9 @@ public sealed class DiskSpoolTests : IDisposable
         var segments = spool.TrySealActiveSegmentAndListDrainable();
         Assert.Single(segments);
 
-        var records = spool.ReadSegmentRecords(segments[0], out var corruptTailDetected);
+        var records = spool.ReadSegmentRecords(segments[0], out var corruptTailDetected, out var corruptTailBytes);
         Assert.False(corruptTailDetected);
+        Assert.Equal(0, corruptTailBytes);
         Assert.Single(records);
 
         var restored = records[0].LogRecord!;
@@ -123,10 +124,13 @@ public sealed class DiskSpoolTests : IDisposable
             stream.Write(partialLengthPrefix);
         }
 
-        var records = spool.ReadSegmentRecords(segmentPath, out var corruptTailDetected);
+        var records = spool.ReadSegmentRecords(segmentPath, out var corruptTailDetected, out var corruptTailBytes);
 
         Assert.True(corruptTailDetected);
         Assert.Equal(recordCount, records.Count);
+        // 破損末尾として読み捨てたのは、追記した中途半端な長さプレフィックス 4 バイトのみ
+        // （Issue #201: 破棄バイト数が正しく計上されることの固定化）。
+        Assert.Equal(4, corruptTailBytes);
         for (var i = 0; i < recordCount; i++)
         {
             Assert.Equal($"message-{i}", records[i].LogRecord!.Message);
@@ -160,11 +164,14 @@ public sealed class DiskSpoolTests : IDisposable
             stream.Write(new byte[] { 0x01, 0x02, 0x03 });        // 続く本体は 3 バイトしかない
         }
 
-        var records = spool.ReadSegmentRecords(segmentPath, out var corruptTailDetected);
+        var records = spool.ReadSegmentRecords(segmentPath, out var corruptTailDetected, out var corruptTailBytes);
 
         Assert.True(corruptTailDetected);
         var recovered = Assert.Single(records);
         Assert.Equal("good", recovered.LogRecord!.Message);
+        // 破損末尾として読み捨てたのは、追記した 7 バイト(長さプレフィックス 4 + 本体断片 3)
+        // （Issue #201: 破棄バイト数が正しく計上されることの固定化）。
+        Assert.Equal(7, corruptTailBytes);
     }
 
     [Fact]
@@ -194,13 +201,16 @@ public sealed class DiskSpoolTests : IDisposable
         bytes[^1] ^= 0xFF;
         File.WriteAllBytes(segmentPath, bytes);
 
-        var records = spool.ReadSegmentRecords(segmentPath, out var corruptTailDetected);
+        var records = spool.ReadSegmentRecords(segmentPath, out var corruptTailDetected, out var corruptTailBytes);
 
         Assert.True(corruptTailDetected);
         // 3 件目の CRC が壊れているため、1〜2 件目は回収できるが 3 件目は読めない。
         Assert.Equal(2, records.Count);
         Assert.Equal("good-0", records[0].LogRecord!.Message);
         Assert.Equal("good-1", records[1].LogRecord!.Message);
+        // 破損末尾として読み捨てたのは、CRC が壊れた 3 件目のフレーム全体
+        // （3 レコードは同じ長さのため、全体長の 1/3 が 1 フレーム分。Issue #201）。
+        Assert.Equal(bytes.Length / 3, corruptTailBytes);
     }
 
     [Fact]
@@ -212,9 +222,10 @@ public sealed class DiskSpoolTests : IDisposable
 
         var spool = OpenSpool(new DiskSpoolOptions { Directory = _directory });
 
-        var records = spool.ReadSegmentRecords(emptyFilePath, out var corruptTailDetected);
+        var records = spool.ReadSegmentRecords(emptyFilePath, out var corruptTailDetected, out var corruptTailBytes);
 
         Assert.Empty(records);
+        Assert.Equal(0, corruptTailBytes);
         Assert.False(corruptTailDetected);
     }
 
@@ -314,8 +325,9 @@ public sealed class DiskSpoolTests : IDisposable
         var segments = secondOpen.TrySealActiveSegmentAndListDrainable();
         Assert.Single(segments);
 
-        var records = secondOpen.ReadSegmentRecords(segments[0], out var corruptTailDetected);
+        var records = secondOpen.ReadSegmentRecords(segments[0], out var corruptTailDetected, out var corruptTailBytes);
         Assert.False(corruptTailDetected);
+        Assert.Equal(0, corruptTailBytes);
         Assert.Single(records);
         Assert.Equal("left-over-from-previous-run", records[0].LogRecord!.Message);
     }

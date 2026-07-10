@@ -236,12 +236,13 @@ public sealed class DiskSpool : IDisposable
     /// セグメントファイルを読み、正常なフレームを <see cref="SpoolRecord"/> として返す
     /// （architecture.md §3.2.1「レコード単位の破損検出」）。破損した末尾を検出した場合は
     /// <paramref name="corruptTailDetected"/> に <c>true</c> を返す（それ以前の正常な
-    /// レコードは全件回収済みで返す）。drain オーケストレーション（Yagura.Ingestion 側）が
-    /// フレーム形式の内部実装（<see cref="SpoolSegmentReader"/>）を直接参照せずに済むよう、
-    /// 本クラスがその窓口になる。
+    /// レコードは全件回収済みで返す）。<paramref name="corruptTailBytes"/> は読み捨てた
+    /// 破損末尾のバイト数（Issue #201。<see cref="SpoolSegmentReader.ReadValidRecords"/> 参照）。
+    /// drain オーケストレーション（Yagura.Ingestion 側）がフレーム形式の内部実装
+    /// （<see cref="SpoolSegmentReader"/>）を直接参照せずに済むよう、本クラスがその窓口になる。
     /// </summary>
-    public IReadOnlyList<SpoolRecord> ReadSegmentRecords(string segmentPath, out bool corruptTailDetected) =>
-        SpoolSegmentReader.ReadValidRecords(segmentPath, out corruptTailDetected);
+    public IReadOnlyList<SpoolRecord> ReadSegmentRecords(string segmentPath, out bool corruptTailDetected, out long corruptTailBytes) =>
+        SpoolSegmentReader.ReadValidRecords(segmentPath, out corruptTailDetected, out corruptTailBytes);
 
     /// <summary>
     /// drain が確定書き込みを終えたセグメントを削除する（architecture.md §3.2.4

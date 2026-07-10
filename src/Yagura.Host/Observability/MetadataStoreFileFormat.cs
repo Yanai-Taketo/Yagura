@@ -52,6 +52,11 @@ internal sealed class MetadataStoreFileFormat
         public long? TcpConnectionResyncLimitExceeded { get; set; }
 
         public long? TcpConnectionFramingTimeout { get; set; }
+
+        // Issue #201 で追加。上と同じく additive-only（旧バージョンのファイルにはキーが無いため
+        // null を 0 として扱う）。単位は他フィールドと異なりバイト（IngestionCounterSnapshot.
+        // SpoolCorruptTailDiscardedBytes・IngestionMetrics remarks 参照）。
+        public long? SpoolCorruptTailDiscardedBytes { get; set; }
     }
 
     internal sealed class StopEventFileFormat

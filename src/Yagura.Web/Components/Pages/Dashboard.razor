@@ -342,6 +342,17 @@
         _spoolEvacuatedTotal = status.Counters
             .Where(c => c.InstrumentName == "yagura.ingestion.spool.evacuated")
             .Sum(c => c.Value);
+        // 「取りこぼし（累計）」は IsLoss な全カウンタの単純合計（Issue #201 まで単位は
+        // 全種「件」で統一されていた）。Issue #201 で追加した「スプール末尾破損破棄」のみ
+        // 単位がバイト（レコード単位では数えられないため。SystemStatusReader.
+        // BuildCounterReadings のコメント参照）——本来なら異なる単位を同じ合計へ混ぜるべきでは
+        // ないが、(a) この値が非ゼロになるのは torn write（クラッシュ・強制終了時の末尾破損）
+        // 発生時のみで、1 回の発生量はフレーム 1 件分程度に収まる（実運用で「件」総数を
+        // 大きく歪める規模にはならない）、(b) 代替（バイト単位を除外して合計する）は
+        // architecture.md §3.1「カウンタに計上されない喪失は重大」の観測ギャップを閲覧面で
+        // 再現することになり本末転倒、の 2 点から、単純合計へ含める判断とした（Issue #201
+        // PR での明示の判断）。詳細な内訳確認（バイト値そのもの）は SystemStatus 画面の
+        // カウンタ一覧（ラベルに「単位はバイト」と明記済み）で行う。
         _lossTotal = status.Counters.Where(c => c.IsLoss).Sum(c => c.Value);
         _lossBaselineSinceOpen ??= _lossTotal;
     }
