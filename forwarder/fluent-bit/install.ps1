@@ -206,7 +206,7 @@ if ($dryRun.ExitCode -ne 0) {
 Log "Config validated (--dry-run ok)."
 
 # --- 4. Register Windows service (delayed auto start) -----------------------
-# The Fluent Bit MSI (verified with 4.0.14) registers a 'fluent-bit' service
+# The Fluent Bit MSI (verified with 5.0.8) registers a 'fluent-bit' service
 # pointing at the stock config. Passing a quoted binPath through sc.exe from
 # PowerShell 5.1 is unreliable (quote mangling), so instead of editing the
 # existing service we delete and recreate it via New-Service, which takes the
