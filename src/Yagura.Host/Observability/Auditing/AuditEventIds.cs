@@ -54,6 +54,14 @@ public static class AuditEventIds
     public static readonly EventId AdminHttpsCertificatePrivateKeyAccessGranted =
         new(2009, "AdminHttpsCertificatePrivateKeyAccessGranted");
 
+    /// <summary>
+    /// TLS 受信（RFC 5425。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ付与した
+    /// （security.md §6。<see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型。
+    /// 付与対象・拇印を記録し秘密鍵そのものは記録しない。Issue #137）。レベルは情報。
+    /// </summary>
+    public static readonly EventId IngestionTlsCertificatePrivateKeyAccessGranted =
+        new(2010, "IngestionTlsCertificatePrivateKeyAccessGranted");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

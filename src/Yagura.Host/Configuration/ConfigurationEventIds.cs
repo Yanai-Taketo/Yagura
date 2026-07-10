@@ -54,4 +54,20 @@ public static class ConfigurationEventIds
     /// </summary>
     public static readonly EventId AdminHttpsCertificateUnavailableAtStartup =
         new(1013, "AdminHttpsCertificateUnavailableAtStartup");
+
+    /// <summary>
+    /// TLS 受信（<c>Ingestion:Tls:Enabled</c>。RFC 5425。opt-in。Issue #137）が有効なのに、
+    /// 実際の証明書ストア参照（<c>Ingestion:Tls:CertificateThumbprint</c>）が失敗した（拇印が
+    /// 未設定・不正形式・証明書が見つからない・秘密鍵にアクセスできない）場合の起動時警告
+    /// （security.md §6）。<b>起動は中止しない</b>——TLS 受信の bind エントリのみを開かずに
+    /// 縮小継続する（<see cref="AdminHttpsCertificateUnavailableAtStartup"/> と同型の扱い）。
+    /// 平文 UDP/TCP 受信は一切影響を受けない（ADR-0004 決定 3。TLS の障害は平文経路に影響しない）。
+    /// レベルは警告——受信全体の機能停止ではなく TLS 面のみの縮退のため。
+    /// </summary>
+    /// <remarks>
+    /// 採番の経緯: 1015 まで既存実装（ADR-0010 Phase 2）が使用済みのため、additive-only 規約に
+    /// 従い次の 1016 を採る。
+    /// </remarks>
+    public static readonly EventId IngestionTlsCertificateUnavailableAtStartup =
+        new(1016, "IngestionTlsCertificateUnavailableAtStartup");
 }

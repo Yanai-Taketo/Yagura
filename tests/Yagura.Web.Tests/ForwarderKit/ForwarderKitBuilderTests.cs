@@ -381,4 +381,59 @@ public sealed class ForwarderKitBuilderTests
         var preamble = System.Text.Encoding.UTF8.GetPreamble();
         return bytes.Length >= preamble.Length && bytes.AsSpan(0, preamble.Length).SequenceEqual(preamble);
     }
+
+    // ---- 転送方式（Issue #156: UDP/TCP。TLS 送信はキットから除外——オーナー決定 2026-07-11） ----
+
+    [Fact]
+    public void Build_ModeUdp_ConfHasNoTlsConfigLinesAndNoPemEntry()
+    {
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var conf = ReadEntry(archive, "fluent-bit-yagura.conf");
+
+        // Fluent Bit の設定行（インデント付き "tls" キー）が生成されないこと。
+        Assert.DoesNotContain("    tls", conf);
+        Assert.DoesNotContain(archive.Entries, e => e.FullName == "yagura-tls-ca.pem");
+    }
+
+    [Fact]
+    public void Build_ModeUdp_GeneratedTxt_DestinationSlugIsUdp()
+    {
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var generatedTxt = ReadEntry(archive, "GENERATED.txt");
+
+        Assert.Contains("Destination: 192.0.2.10:514/udp", generatedTxt);
+    }
+
+    [Fact]
+    public void Build_ModeTcp_ConfHasModeTcp_AndGeneratedTxtSlugIsTcp()
+    {
+        var request = CreateRequest(ForwarderKitMode.Tcp);
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var conf = ReadEntry(archive, "fluent-bit-yagura.conf");
+        var generatedTxt = ReadEntry(archive, "GENERATED.txt");
+
+        Assert.Contains("Mode                tcp", conf);
+        Assert.DoesNotContain("    tls", conf);
+        Assert.Contains("Destination: 192.0.2.10:514/tcp", generatedTxt);
+    }
+
+    private static ForwarderKitRequest CreateRequest(ForwarderKitMode mode)
+    {
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", 514, "System,Application", msiBundle: null,
+            mode, out var request, out _);
+        Assert.True(ok);
+        return request!;
+    }
 }

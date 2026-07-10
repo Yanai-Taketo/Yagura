@@ -93,6 +93,16 @@ public sealed class IngestionHostedService : IHostedService
         _logger.LogInformation("UDP syslog listener started on port {Port}.", _pipeline.BoundPort);
         _logger.LogInformation("TCP syslog listener started on port {Port}.", _pipeline.TcpBoundPort);
 
+        // TLS 受信（RFC 5425。opt-in。Issue #137）: 構成されている場合のみ出力する
+        // （TlsBoundPort は TLS 受信が未構成——証明書未解決を含む——の間は null。
+        // UDP/TCP と同じ文面規約に揃え、E2E テスト・実機確認での起動待ちマーカーとして使える
+        // ようにする——本行が出ない場合は「TLS 受信は構成されていない/縮小継続した」ことを
+        // 意味する）。
+        if (_pipeline.TlsBoundPort is { } tlsBoundPort)
+        {
+            _logger.LogInformation("TLS syslog listener started on port {Port}.", tlsBoundPort);
+        }
+
         // architecture.md §4.4: 受信開始が確定した時点で、前回終了までの記録から受信断区間を
         // 判定する（区間の確定は起動時に行う。§4.4「区間の確定は起動時に行い、保存は通常の
         // パイプラインを通す」）。DB 初期化前でも呼び出せるよう、書き込み自体は

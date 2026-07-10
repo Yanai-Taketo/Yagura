@@ -168,6 +168,7 @@ public static class YaguraAdminExtensions
             bool? includeMsi,
             bool? msiVersionMismatchAcknowledged,
             string? architecture,
+            string? mode,
             IAuditRecorder auditRecorder,
             TimeProvider timeProvider,
             IForwarderMsiSource msiSource) =>
@@ -206,11 +207,14 @@ public static class YaguraAdminExtensions
                     msiVersionMismatchAcknowledged == true);
             }
 
+            var forwardMode = ParseForwardMode(mode);
+
             if (!ForwarderKitRequest.TryCreate(
                     host,
                     port ?? ForwarderKitConstraints.DefaultPort,
                     channels,
                     msiBundle,
+                    forwardMode,
                     out var request,
                     out var error))
             {
@@ -306,6 +310,21 @@ public static class YaguraAdminExtensions
                 return false;
         }
     }
+
+    /// <summary>
+    /// クエリ文字列の <c>mode</c> を <see cref="ForwarderKitMode"/> へ解決する（Issue #156）。
+    /// 未指定・空文字・未知の値は既定（<see cref="ForwarderKitMode.Udp"/>）として扱う——
+    /// <see cref="TryParseArchitecture"/> と異なり、モードは新規追加のクエリパラメータであり、
+    /// 既に配布済みの URL（mode 未指定）が既定と同じ挙動になることが後方互換そのものであるため、
+    /// 「未知の値をエラーにする」必要性が薄い(URL を手打ちする利用者は想定しない——画面からの
+    /// 遷移のみを正規経路とする)。TLS 送信はキットから除外済み（オーナー決定 2026-07-11。
+    /// security.md §6.1）のため、<c>tls</c> は認識せず既定の UDP へ落とす。
+    /// </summary>
+    private static ForwarderKitMode ParseForwardMode(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "tcp" => ForwarderKitMode.Tcp,
+        _ => ForwarderKitMode.Udp,
+    };
 
     /// <summary>
     /// 監査 Detail の構造化文字列（ADR-0008 設計条件 6・9・委任 #5）。既存の host/port/channels に

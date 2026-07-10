@@ -1023,6 +1023,27 @@ public static class UiText
     /// <summary>ポート入力のラベル。</summary>
     public const string ForwarderKitPortLabel = "ポート";
 
+    // ---- 転送方式（Issue #156: Udp（既定）/ Tcp。TLS 送信はキットから除外——オーナー決定 2026-07-11） ----
+
+    /// <summary>転送方式選択の見出し。</summary>
+    public const string ForwarderKitModeTitle = "転送方式";
+
+    /// <summary>転送方式選択の説明。</summary>
+    public const string ForwarderKitModeNote =
+        "UDP は既定で単純ですが、MTU を超えるイベントは断片化により失われることがあります。" +
+        "TCP は断片化損失を避けられますが、注意点があります（選択時に表示）。";
+
+    /// <summary>転送方式: UDP（既定）。</summary>
+    public const string ForwarderKitModeUdp = "UDP（既定）";
+
+    /// <summary>転送方式: TCP。</summary>
+    public const string ForwarderKitModeTcp = "TCP";
+
+    /// <summary>TCP 選択時の注記（RFC 6587 octet-counting 非対応の制約——Issue #156）。</summary>
+    public const string ForwarderKitModeTcpNote =
+        "Fluent Bit の out_syslog は TCP で RFC 6587 の octet-counting に対応していません（LF 区切り）。" +
+        "複数行を含むイベント本文（Security 監査ログ等）が複数レコードに分かれて届く場合があります。";
+
     /// <summary>チャネル選択の見出し。</summary>
     public const string ForwarderKitChannelsTitle = "収集チャネル";
 

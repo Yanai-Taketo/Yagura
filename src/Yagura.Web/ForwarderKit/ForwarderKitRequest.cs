@@ -12,12 +12,14 @@ public sealed class ForwarderKitRequest
         string host,
         int port,
         IReadOnlyList<string> channels,
-        ForwarderMsiBundle? msiBundle)
+        ForwarderMsiBundle? msiBundle,
+        ForwarderKitMode mode)
     {
         Host = host;
         Port = port;
         Channels = channels;
         MsiBundle = msiBundle;
+        Mode = mode;
     }
 
     /// <summary>宛先ホスト（IP アドレスまたはホスト名）。</summary>
@@ -25,6 +27,11 @@ public sealed class ForwarderKitRequest
 
     /// <summary>宛先ポート。</summary>
     public int Port { get; }
+
+    /// <summary>
+    /// 転送方式（既定 <see cref="ForwarderKitMode.Udp"/>。TCP は Issue #156 で追加）。
+    /// </summary>
+    public ForwarderKitMode Mode { get; }
 
     /// <summary>
     /// 正規化済みの収集チャネル一覧（<see cref="ForwarderKitConstraints.KnownChannels"/> の
@@ -68,6 +75,21 @@ public sealed class ForwarderKitRequest
         string? channels,
         ForwarderMsiBundle? msiBundle,
         out ForwarderKitRequest? request,
+        out ForwarderKitValidationError? error) =>
+        TryCreate(host, port, channels, msiBundle, ForwarderKitMode.Udp, out request, out error);
+
+    /// <summary>
+    /// <see cref="TryCreate(string?, int, string?, ForwarderMsiBundle?, out ForwarderKitRequest?, out ForwarderKitValidationError?)"/>
+    /// の転送方式指定版（Issue #156 で UDP/TCP を選択可能にした）。
+    /// </summary>
+    /// <param name="mode">転送方式（既定 <see cref="ForwarderKitMode.Udp"/>）。</param>
+    public static bool TryCreate(
+        string? host,
+        int port,
+        string? channels,
+        ForwarderMsiBundle? msiBundle,
+        ForwarderKitMode mode,
+        out ForwarderKitRequest? request,
         out ForwarderKitValidationError? error)
     {
         request = null;
@@ -104,7 +126,7 @@ public sealed class ForwarderKitRequest
         }
 
         error = null;
-        request = new ForwarderKitRequest(trimmedHost, port, normalizedChannels, msiBundle);
+        request = new ForwarderKitRequest(trimmedHost, port, normalizedChannels, msiBundle, mode);
         return true;
     }
 
@@ -161,6 +183,26 @@ public sealed class ForwarderKitRequest
             .ToList();
         return true;
     }
+}
+
+/// <summary>
+/// フォワーダキットの転送方式（<c>install.ps1 -Mode</c>・<c>fluent-bit-yagura.conf</c> の
+/// <c>@@MODE@@</c> と同じ語彙を使う）。
+/// </summary>
+/// <remarks>
+/// <b>TLS 送信は見送り（オーナー決定 2026-07-11。Issue #137）</b>: Yagura は RFC 5425 準拠の
+/// syslog over TLS 受信に対応するが、Fluent Bit の <c>out_syslog</c> は TLS 有効時も RFC 6587
+/// octet-counting フレーミングを実装しないため、キットから TLS 送信を提供すると「選ぶと無音で
+/// 失う」組み合わせを生む。Fluent Bit が octet-counting に対応するまでキットの TLS 送信は
+/// 導入しない（再評価トリガ。security.md §6.1・ADR-0008 改訂履歴 3）。
+/// </remarks>
+public enum ForwarderKitMode
+{
+    /// <summary>UDP（既定。MTU 超のフラグメンテーション損失に注意——Issue #156）。</summary>
+    Udp,
+
+    /// <summary>TCP（RFC 6587 の LF 区切り。octet-counting 非対応——Issue #156 の既知の制約）。</summary>
+    Tcp,
 }
 
 /// <summary>

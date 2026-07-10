@@ -46,6 +46,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.AdminAccountLockedOut => "管理者アカウントをロックアウト",
         AuditEventKind.AdminLoginSucceeded => "管理 UI へサインイン",
         AuditEventKind.AdminHttpsCertificatePrivateKeyAccessGranted => "管理 UI HTTPS 証明書の秘密鍵アクセス権を付与",
+        AuditEventKind.IngestionTlsCertificatePrivateKeyAccessGranted => "TLS 受信証明書の秘密鍵アクセス権を付与",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

@@ -111,4 +111,11 @@ public enum AuditEventKind
     /// （ADR-0010 Phase 2 決定 4。イベント ID 2009）。記録内容は証明書拇印・付与先アカウントのみ。
     /// </summary>
     AdminHttpsCertificatePrivateKeyAccessGranted,
+
+    /// <summary>
+    /// 管理操作: TLS 受信（RFC 5425。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ付与
+    /// （security.md §6。<see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型の起動時
+    /// 自動操作。イベント ID 2010。Issue #137）。記録内容は証明書拇印・付与先アカウントのみ。
+    /// </summary>
+    IngestionTlsCertificatePrivateKeyAccessGranted,
 }

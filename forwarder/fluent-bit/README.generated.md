@@ -1,15 +1,16 @@
 <!-- このファイルは管理 UI（/admin/forwarder-kit）が生成するキットの README テンプレートです。
      @@YAGURA_HOST@@ / @@YAGURA_PORT@@ / @@CHANNELS@@ / @@GENERATED_AT@@ / @@FLUENTBIT_VERSION@@ /
-     @@YAGURA_VERSION@@ / @@MSI_SECTION@@ は Yagura.Web.ForwarderKit.ForwarderKitBuilder が
-     生成時に置換します（@@MSI_SECTION@@ は MSI 同梱時 / 非同梱時で内容を出し分けます
-     ——ADR-0008 設計条件 9）。
+     @@YAGURA_VERSION@@ / @@MSI_SECTION@@ / @@MODE_LABEL@@ は
+     Yagura.Web.ForwarderKit.ForwarderKitBuilder が生成時に置換します（@@MSI_SECTION@@ は MSI
+     同梱時 / 非同梱時で内容を出し分けます——ADR-0008 設計条件 9。@@MODE_LABEL@@ は
+     転送方式（udp/tcp）で内容を出し分けます——Issue #156）。
      手動配布用の静的キットの説明は forwarder/fluent-bit/README.md を参照してください。 -->
 # Yagura フォワーダキット（宛先設定済み）
 
 このキットは、生成時点の Yagura サーバの宛先を設定済みの Fluent Bit 配布キットです
 （[ADR-0008](../../docs/adr/0008-forwarder-kit-generation.md)）。**`install.ps1` はパラメータなしで実行できます。**
 
-- 宛先: `@@YAGURA_HOST@@:@@YAGURA_PORT@@`（syslog / UDP）
+- 宛先: `@@YAGURA_HOST@@:@@YAGURA_PORT@@`（@@MODE_LABEL@@）
 - 収集チャネル: `@@CHANNELS@@`
 - 生成日時: `@@GENERATED_AT@@`
 - 検証済み Fluent Bit 版: **@@FLUENTBIT_VERSION@@**

@@ -577,4 +577,44 @@ public sealed class TcpFrameDecoderTests
 
         Assert.True(decoder.HasPendingIncompleteData);
     }
+
+    // ------------------------------------------------------------------
+    // RequireOctetCounting（RFC 5425 §4.3。syslog over TLS は octet-counting のみを許容する。
+    // Issue #137）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Push_RequireOctetCounting_FirstByteIsDigit_DeterminesOctetCountingWithoutThrowing()
+    {
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { RequireOctetCounting = true });
+
+        var messages = decoder.Push(Ascii("9 <34>hello"));
+
+        Assert.Equal(FramingMode.OctetCounting, decoder.Mode);
+        Assert.Single(messages);
+        Assert.Equal("<34>hello", Encoding.ASCII.GetString(messages[0]));
+    }
+
+    [Fact]
+    public void Push_RequireOctetCounting_FirstByteIsNotDigit_ThrowsUnrecoverableCorruption()
+    {
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { RequireOctetCounting = true });
+
+        var ex = Assert.Throws<TcpFrameSizeExceededException>(() => decoder.Push(Ascii("<34>hello\n")));
+
+        Assert.Equal(TcpFrameViolationKind.UnrecoverableCorruption, ex.Kind);
+        Assert.Empty(ex.CompletedMessages);
+    }
+
+    [Fact]
+    public void Push_RequireOctetCountingFalse_FirstByteIsNotDigit_StillAllowsNonTransparent()
+    {
+        // 既定（false）は平文 TCP 受信の従来どおりの寛容な挙動を維持する——後方互換の確認。
+        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions { RequireOctetCounting = false });
+
+        var messages = decoder.Push(Ascii("<34>hello\n"));
+
+        Assert.Equal(FramingMode.NonTransparent, decoder.Mode);
+        Assert.Single(messages);
+    }
 }

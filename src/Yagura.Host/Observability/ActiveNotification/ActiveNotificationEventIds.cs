@@ -116,4 +116,28 @@ public static class ActiveNotificationEventIds
     /// </summary>
     public static readonly EventId AdminHttpsCertificateUnavailableWhileRunning =
         new(1015, "AdminHttpsCertificateUnavailableWhileRunning");
+
+    // 1016（TLS 受信証明書の起動時解決失敗）は Yagura.Host.Configuration.ConfigurationEventIds
+    // 側に定義（設定検証・起動時の事象であり周期監視の管轄ではないため。1013 と同じ住み分け）。
+
+    /// <summary>
+    /// TLS 受信（<c>Ingestion:Tls:Enabled</c>。RFC 5425。opt-in。security.md §6。Issue #137）の
+    /// 証明書の有効期限が接近している。閾値は <see cref="AdminHttpsCertificateExpiryApproaching"/>
+    /// と同じ <see cref="ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow"/>
+    /// （仮値 30 日）を流用する——TLS 受信・管理 UI HTTPS のいずれも「期限接近の事前警告」という
+    /// 同じ目的の閾値であり、別の値を採用すべき設計上の根拠が無いため。レベル: 警告。
+    /// </summary>
+    public static readonly EventId IngestionTlsCertificateExpiryApproaching =
+        new(1017, "IngestionTlsCertificateExpiryApproaching");
+
+    /// <summary>
+    /// TLS 受信証明書が稼働中に使用不能になった——証明書ストアからの削除・秘密鍵アクセス不能・
+    /// 有効期限切れへの遷移（security.md §6）。<b>管理 UI HTTPS（1015）との非対称に注意</b>:
+    /// TLS 受信はこの状態でも新規ハンドシェイクを拒否しない——起動時に読み込み済みの証明書を
+    /// そのまま提示し続ける（「止めない」判断。TlsSyslogListener の remarks 参照）。本通知は
+    /// 状態の可視化のみを目的とし、リスナの挙動を変えない。レベル: 警告（受信自体は継続——
+    /// 1015 と異なり「機能停止を伴う事象」ではないため、他の 1000 番台の警告と同じ扱い）。
+    /// </summary>
+    public static readonly EventId IngestionTlsCertificateUnavailableWhileRunning =
+        new(1018, "IngestionTlsCertificateUnavailableWhileRunning");
 }

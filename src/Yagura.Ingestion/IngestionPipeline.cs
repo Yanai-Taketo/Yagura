@@ -1,10 +1,12 @@
-﻿using System.Threading.Channels;
+﻿using System.Security.Cryptography.X509Certificates;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Parsing;
 using Yagura.Ingestion.Persistence;
 using Yagura.Ingestion.Tcp;
+using Yagura.Ingestion.Tls;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
@@ -29,6 +31,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private readonly Channel<LogRecord> _q2;
     private readonly UdpSyslogListener _udpListener;
     private readonly TcpSyslogListener _tcpListener;
+    private readonly TlsSyslogListener? _tlsListener;
     private readonly ParsingStage _parsingStage;
     private readonly PersistenceWriter _persistenceWriter;
     private readonly SpoolDrainCoordinator? _drainCoordinator;
@@ -91,6 +94,18 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// 同一インスタンスを呼び出し側（ホスト）が共有する想定。<c>null</c>（既定）は「自己検証を
     /// 行わない」構成（<paramref name="spool"/> が <c>null</c> の縮退運転時など）を表す。
     /// </param>
+    /// <param name="tlsListenerOptions">
+    /// TLS 受信（RFC 5425。opt-in。Issue #137）の構成。<c>null</c>（既定）は「TLS 受信を構成しない」
+    /// ——設定で無効化されている、または起動時に証明書を解決できず縮小継続した構成を表す
+    /// （呼び出し側のホストが判断する。security.md §6）。非 <c>null</c> の場合は
+    /// <paramref name="tlsCertificateSelector"/> も必ず指定すること。
+    /// </param>
+    /// <param name="tlsCertificateSelector">
+    /// TLS 受信のハンドシェイクで提示する証明書を返す関数（<see cref="TlsSyslogListener"/> の
+    /// remarks 参照——期限切れでも呼び出し元の判断でそのまま返し続けてよい。「止めない」は本クラスの
+    /// 責務ではなくホスト側の証明書解決の責務）。<paramref name="tlsListenerOptions"/> が非 <c>null</c>
+    /// のときのみ使用する。
+    /// </param>
     public IngestionPipeline(
         UdpSyslogListenerOptions udpListenerOptions,
         TcpSyslogListenerOptions tcpListenerOptions,
@@ -101,12 +116,22 @@ public sealed class IngestionPipeline : IAsyncDisposable
         ICapacityExhaustionHandler? capacityExhaustionHandler = null,
         TimeZoneInfo? defaultRfc3164TimeZone = null,
         LogStoreWriteGate? writeGate = null,
-        SpoolSelfTestTracker? selfTestTracker = null)
+        SpoolSelfTestTracker? selfTestTracker = null,
+        TlsSyslogListenerOptions? tlsListenerOptions = null,
+        Func<X509Certificate2?>? tlsCertificateSelector = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
         ArgumentNullException.ThrowIfNull(logStore);
         ArgumentNullException.ThrowIfNull(ingressGate);
+
+        if (tlsListenerOptions is not null && tlsCertificateSelector is null)
+        {
+            throw new ArgumentException(
+                $"{nameof(tlsListenerOptions)} を指定する場合は {nameof(tlsCertificateSelector)} も" +
+                "必ず指定すること（TLS 受信は証明書なしにハンドシェイクを開始できない）。",
+                nameof(tlsCertificateSelector));
+        }
 
         _metrics = new IngestionMetrics();
         _logger = loggerFactory?.CreateLogger<IngestionPipeline>();
@@ -145,6 +170,19 @@ public sealed class IngestionPipeline : IAsyncDisposable
             ingressGate,
             _metrics,
             loggerFactory?.CreateLogger<TcpSyslogListener>());
+
+        // TLS 受信（Issue #137）は opt-in——tlsListenerOptions が null の間は構成しない
+        // （§4.1「受信は最初に開く」の対象から外れる。ホスト側が有効/無効を判断する）。
+        _tlsListener = tlsListenerOptions is null
+            ? null
+            : new TlsSyslogListener(
+                tlsListenerOptions,
+                _q1.Writer,
+                ingressGate,
+                _metrics,
+                tlsCertificateSelector!,
+                loggerFactory?.CreateLogger<TlsSyslogListener>());
+
         _parsingStage = new ParsingStage(
             _q1.Reader,
             _q2.Writer,
@@ -187,6 +225,12 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public int TcpBoundPort => _tcpListener.BoundPort;
 
     /// <summary>
+    /// 実際に束縛された TLS 受信ポート（TLS 受信が構成されている場合のみ。<see cref="StartListenerAsync"/>
+    /// 後に有効。Issue #137）。TLS 受信が構成されていない場合は <c>null</c>。
+    /// </summary>
+    public int? TlsBoundPort => _tlsListener?.BoundPort;
+
+    /// <summary>
     /// 計測点。テストからの検証・DI 登録に使う。
     /// </summary>
     public IngestionMetrics Metrics => _metrics;
@@ -204,7 +248,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// </remarks>
     public async Task StartListenerAsync(CancellationToken cancellationToken = default)
     {
-        var startedListeners = new List<Func<Task>>(2);
+        var startedListeners = new List<Func<Task>>(3);
         try
         {
             await _udpListener.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -212,6 +256,15 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
             await _tcpListener.StartAsync(cancellationToken).ConfigureAwait(false);
             startedListeners.Add(() => _tcpListener.StopAsync());
+
+            if (_tlsListener is not null)
+            {
+                // TLS 受信（Issue #137）も同じ原子的起動の対象に含める——TLS の bind 失敗で
+                // UDP/TCP まで巻き添えでロールバックされる（「両方成功」か「全停止」のいずれか
+                // という本メソッドの不変条件を 3 リスナへ拡張する）。
+                await _tlsListener.StartAsync(cancellationToken).ConfigureAwait(false);
+                startedListeners.Add(() => _tlsListener.StopAsync());
+            }
         }
         catch (Exception ex)
         {
@@ -291,7 +344,13 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// </summary>
     public async Task StopListenersAsync()
     {
-        await Task.WhenAll(_udpListener.StopAsync(), _tcpListener.StopAsync()).ConfigureAwait(false);
+        var stopTasks = new List<Task>(3) { _udpListener.StopAsync(), _tcpListener.StopAsync() };
+        if (_tlsListener is not null)
+        {
+            stopTasks.Add(_tlsListener.StopAsync());
+        }
+
+        await Task.WhenAll(stopTasks).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -340,6 +399,11 @@ public sealed class IngestionPipeline : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         await _udpListener.DisposeAsync().ConfigureAwait(false);
         await _tcpListener.DisposeAsync().ConfigureAwait(false);
+        if (_tlsListener is not null)
+        {
+            await _tlsListener.DisposeAsync().ConfigureAwait(false);
+        }
+
         _metrics.Dispose();
     }
 }

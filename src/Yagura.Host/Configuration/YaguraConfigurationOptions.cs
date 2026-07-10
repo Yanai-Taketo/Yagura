@@ -46,6 +46,9 @@ public sealed class YaguraConfigurationOptions
         /// <summary>TCP 受信リスナの設定（M4-1）。</summary>
         public TcpOptions? Tcp { get; set; }
 
+        /// <summary>TLS 受信リスナの設定（syslog over TLS。RFC 5425。opt-in。Issue #137）。</summary>
+        public TlsOptions? Tls { get; set; }
+
         /// <summary>RFC 3164 TIMESTAMP 解釈の設定（Issue #134・#135）。</summary>
         public Rfc3164Options? Rfc3164 { get; set; }
 
@@ -72,6 +75,29 @@ public sealed class YaguraConfigurationOptions
 
             /// <summary>bind するポート。JSON の数値以外（文字列・範囲外）も受けられるよう <c>string?</c> で保持する。</summary>
             public string? Port { get; set; }
+        }
+
+        public sealed class TlsOptions
+        {
+            /// <summary>
+            /// TLS 受信を有効化する（既定 <c>false</c>。opt-in。security.md §6）。<c>true</c> でも
+            /// <see cref="CertificateThumbprint"/> が解決できなければ、TLS 受信の bind エントリのみを
+            /// 開かずに縮小継続する（configuration.md §4.1 と同型。平文 UDP/TCP には影響しない）。
+            /// </summary>
+            public string? Enabled { get; set; }
+
+            /// <summary>bind するアドレス（文字列のまま保持。既定は TCP と同じ <c>::</c>）。</summary>
+            public string? BindAddress { get; set; }
+
+            /// <summary>bind するポート（既定 6514。RFC 5425 の標準ポート）。</summary>
+            public string? Port { get; set; }
+
+            /// <summary>
+            /// Windows 証明書ストア（ローカルコンピューター・<c>My</c>）内の証明書を選択する拇印
+            /// （SHA-1、40 桁の 16 進表記。configuration.md §6・<c>Admin:Https:CertificateThumbprint</c>
+            /// と同型——参照方式を共有するが設定キーは独立させる。security.md §6）。
+            /// </summary>
+            public string? CertificateThumbprint { get; set; }
         }
 
         public sealed class Rfc3164Options

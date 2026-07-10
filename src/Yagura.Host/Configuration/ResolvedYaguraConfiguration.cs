@@ -86,6 +86,16 @@
 /// SQL Server provider 選択時の接続文字列（<see cref="StorageProvider"/> が
 /// <see cref="Configuration.StorageProvider.SqlServer"/> のときのみ非 null）。
 /// </param>
+/// <param name="IngestionTlsEnabled">
+/// TLS 受信の有効/無効（既定 <c>false</c>。opt-in。security.md §6。Issue #137）。
+/// </param>
+/// <param name="IngestionTlsBindAddress">TLS 受信リスナの bind アドレス（検証・縮小適用済み）。</param>
+/// <param name="IngestionTlsPort">TLS 受信リスナのポート（検証済み。既定 6514）。</param>
+/// <param name="IngestionTlsCertificateThumbprint">
+/// TLS 受信証明書拇印（正規化済み・大文字 16 進 40 桁。未設定/不正値は <see langword="null"/>）。
+/// <see cref="IngestionTlsEnabled"/> が <c>true</c> でも本値が <c>null</c> の場合、TLS 受信の
+/// bind エントリは開かずに縮小継続する（Program 側の判断。configuration.md §4.1 と同型）。
+/// </param>
 public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
@@ -113,7 +123,11 @@ public sealed record ResolvedYaguraConfiguration(
     int? RetentionDays,
     TimeOnly RetentionExecutionTimeOfDay,
     StorageProvider StorageProvider,
-    string? SqlServerConnectionString)
+    string? SqlServerConnectionString,
+    bool IngestionTlsEnabled,
+    string IngestionTlsBindAddress,
+    int IngestionTlsPort,
+    string? IngestionTlsCertificateThumbprint)
 {
     /// <summary>
     /// <see cref="UdpBindAddress"/> が設定ファイルで明示指定された値か（<c>false</c> = 既定値。
@@ -128,4 +142,10 @@ public sealed record ResolvedYaguraConfiguration(
     /// <see cref="UdpBindAddressIsExplicit"/> と同一）。
     /// </summary>
     public bool TcpBindAddressIsExplicit { get; init; }
+
+    /// <summary>
+    /// <see cref="IngestionTlsBindAddress"/> が設定ファイルで明示指定された値か（意味づけは
+    /// <see cref="UdpBindAddressIsExplicit"/> と同一。Issue #137）。
+    /// </summary>
+    public bool IngestionTlsBindAddressIsExplicit { get; init; }
 }

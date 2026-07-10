@@ -51,4 +51,20 @@ public sealed class TcpFrameDecoderOptions
     /// 既定は <see cref="DefaultMaxResyncBytes"/>。0 以下で無効化。
     /// </summary>
     public int MaxResyncBytes { get; init; } = DefaultMaxResyncBytes;
+
+    /// <summary>
+    /// <c>true</c> の場合、接続の最初のバイトが数字（octet-counting の判別条件）でなければ
+    /// non-transparent-framing への自動判別を行わず、直ちに
+    /// <see cref="TcpFrameViolationKind.UnrecoverableCorruption"/> の
+    /// <see cref="TcpFrameSizeExceededException"/> を送出する（既定 <c>false</c>——平文 TCP
+    /// 受信は RFC 6587 の両方式を許容する従来どおりの動作）。
+    /// </summary>
+    /// <remarks>
+    /// RFC 5425（syslog over TLS。Issue #137）§4.3 は
+    /// 「TLS を使う場合、両端は必ず octet-counting を実装しなければならない
+    /// （<c>Sender and receiver MUST support the octet-counting…</c>。non-transparent-framing の
+    /// 使用は規定しない）」と定める。TLS 受信リスナ（<c>Yagura.Ingestion.Tls.TlsSyslogListener</c>）は
+    /// 本フラグを <c>true</c> にして <see cref="TcpFrameDecoder"/> を構成し、この要求を強制する。
+    /// </remarks>
+    public bool RequireOctetCounting { get; init; }
 }

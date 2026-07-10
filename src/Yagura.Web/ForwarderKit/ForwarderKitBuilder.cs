@@ -132,18 +132,19 @@ public static class ForwarderKitBuilder
         return memoryStream.ToArray();
     }
 
+    /// <summary>転送方式の文字列表現（install.ps1 の <c>-Mode</c> の語彙と揃える）。</summary>
+    private static string ModeSlug(ForwarderKitMode mode) => mode switch
+    {
+        ForwarderKitMode.Tcp => "tcp",
+        _ => "udp",
+    };
+
     private static string SubstituteConf(string template, ForwarderKitRequest request) =>
         template
             .Replace("@@YAGURA_HOST@@", request.Host)
             .Replace("@@YAGURA_PORT@@", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Replace("@@CHANNELS@@", request.ChannelsValue)
-            // Issue #156 added a udp/tcp @@MODE@@ placeholder to the shared conf template
-            // (forwarder/fluent-bit/fluent-bit-yagura.conf, embedded here — ADR-0008 委任 #1) so the
-            // static/manual kit's install.ps1 -Mode parameter can select it. ForwarderKitRequest has
-            // no Mode field yet, so the generated kit always substitutes "udp" here, preserving its
-            // existing behavior unchanged. Adding a Mode choice to the generated kit (request/builder/
-            // admin UI) is out of scope for #156 and tracked as a follow-up.
-            .Replace("@@MODE@@", "udp");
+            .Replace("@@MODE@@", ModeSlug(request.Mode));
 
     private static string SubstituteReadme(string template, ForwarderKitRequest request, DateTimeOffset generatedAt)
     {
@@ -153,12 +154,19 @@ public static class ForwarderKitBuilder
             .Replace("@@CHANNELS@@", request.ChannelsValue)
             .Replace("@@GENERATED_AT@@", FormatTimestamp(generatedAt))
             .Replace("@@FLUENTBIT_VERSION@@", ForwarderKitConstraints.VerifiedFluentBitVersion)
-            .Replace("@@YAGURA_VERSION@@", YaguraVersion);
+            .Replace("@@YAGURA_VERSION@@", YaguraVersion)
+            .Replace("@@MODE_LABEL@@", BuildModeLabel(request.Mode));
 
         // MSI 同梱時 / 非同梱時で案内を出し分ける（ADR-0008 委任 #7・README.generated.md の
         // @@MSI_SECTION@@ プレースホルダ。プレースホルダ方式で Builder が差し込む）。
         return substituted.Replace("@@MSI_SECTION@@", BuildMsiReadmeSection(request));
     }
+
+    private static string BuildModeLabel(ForwarderKitMode mode) => mode switch
+    {
+        ForwarderKitMode.Tcp => "syslog / TCP",
+        _ => "syslog / UDP",
+    };
 
     /// <summary>
     /// README の MSI セクション（同梱時: 同梱済みである旨 + 来歴 + 免責。非同梱時: 既存の
@@ -239,7 +247,7 @@ public static class ForwarderKitBuilder
         var builder = new StringBuilder();
         builder.AppendLine("# Yagura forwarder kit - generation metadata (ADR-0008)");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Generated-At: {FormatTimestamp(generatedAt)}");
-        builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Destination: {request.Host}:{request.Port}/udp");
+        builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Destination: {request.Host}:{request.Port}/{ModeSlug(request.Mode)}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Channels: {request.ChannelsValue}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Yagura-Version: {YaguraVersion}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Fluent-Bit-Verified: {ForwarderKitConstraints.VerifiedFluentBitVersion}");

@@ -147,6 +147,16 @@ public sealed class TcpFrameDecoder
         {
             // RFC 6587 §3.4.1/§3.4.2: 接続最初のバイトで方式を判別し、以後固定する。
             _mode = IsAsciiDigit(chunk[0]) ? FramingMode.OctetCounting : FramingMode.NonTransparent;
+
+            if (_options.RequireOctetCounting && _mode == FramingMode.NonTransparent)
+            {
+                // RFC 5425 §4.3（syslog over TLS。Issue #137）: octet-counting のみを許容する。
+                // この時点ではまだメッセージは 1 件も確定していないため CompletedMessages は
+                // 空のままでよい（既定値。TcpFrameSizeExceededException のフィールド初期値参照）。
+                throw new TcpFrameSizeExceededException(
+                    "RFC 5425 は syslog over TLS で octet-counting フレーミングのみを許容するが、" +
+                    "接続の最初のバイトが数字ではなく non-transparent-framing と判別された（不正な接続）。");
+            }
         }
 
         return _mode == FramingMode.OctetCounting

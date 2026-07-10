@@ -220,4 +220,29 @@ public sealed class ForwarderKitRequestTests
             OfficialHashMatch: OfficialHashMatchResult.Unverified,
             VersionMismatch: versionMismatch,
             VersionMismatchAcknowledged: acknowledged);
+
+    // ---- 転送方式（Issue #156: Udp（既定）/ Tcp。TLS 送信はキットから除外——オーナー決定 2026-07-11） ----
+
+    [Fact]
+    public void TryCreate_NoModeSpecified_DefaultsToUdp()
+    {
+        var ok = ForwarderKitRequest.TryCreate("192.0.2.10", 514, "System", out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Equal(ForwarderKitMode.Udp, request!.Mode);
+    }
+
+    [Fact]
+    public void TryCreate_ModeTcp_Succeeds()
+    {
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", 514, "System", msiBundle: null,
+            ForwarderKitMode.Tcp,
+            out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Equal(ForwarderKitMode.Tcp, request!.Mode);
+    }
 }
