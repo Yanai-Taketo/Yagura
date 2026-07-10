@@ -21,6 +21,11 @@
       ピンポイントに再現するため）。M4-3 で追加。
     -->
     <InternalsVisibleTo Include="Yagura.Storage.Tests" />
+    <!--
+      スキーマ移行の適合テスト（v1 -> v2。Issue #145/#146/#147）が現行スキーマバージョン定数
+      （CurrentSchemaVersion）と照合順序定数（SearchCollation）を検証で参照するため。
+    -->
+    <InternalsVisibleTo Include="Yagura.Storage.ConformanceTests" />
   </ItemGroup>
 
 </Project>

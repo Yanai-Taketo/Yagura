@@ -33,8 +33,11 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（database.md §1.2 契約 1「スキーマ管理」）。
+    /// v2（Issue #145・#147・#146 SQLite 側）: 絞り込み列の複合索引を追加した
+    /// （database.md §8 DB-6 決定）。列長・COLLATE の変更は SQL Server 側のみ
+    /// （SQLite の TEXT は既に無制限——database.md §4）。
     /// </summary>
-    internal const int CurrentSchemaVersion = 1;
+    internal const int CurrentSchemaVersion = 2;
 
     private readonly string _databasePath;
     private readonly string _connectionString;
@@ -131,7 +134,24 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                         ParseStatus INTEGER NOT NULL
                     );
 
-                    CREATE INDEX IF NOT EXISTS IX_LogRecords_ReceivedAt ON LogRecords (ReceivedAt);
+                    -- v2（Issue #145・database.md §8 DB-6 決定）: 単一列索引 IX_LogRecords_ReceivedAt は
+                    -- 複合索引 IX_LogRecords_ReceivedAt_Id に包含される（先頭列が同じ B-tree のため、
+                    -- ReceivedAt 単体の範囲検索・ORDER BY にも同じ索引が使える）。冗長な単一列索引は
+                    -- 書き込みコストを増やすだけのため削除する。DROP/CREATE とも IF EXISTS/IF NOT EXISTS
+                    -- のため、新規作成・既存 v1 DB からの移行のどちらでも安全に収束する（冪等性）。
+                    DROP INDEX IF EXISTS IX_LogRecords_ReceivedAt;
+                    CREATE INDEX IF NOT EXISTS IX_LogRecords_ReceivedAt_Id ON LogRecords (ReceivedAt DESC, Id DESC);
+
+                    -- 絞り込み列の複合索引（Issue #145 症状 1: Severity 絞り込み・SourceAddress 絞り込みが
+                    -- ReceivedAt 単一索引に乗らずフルスキャンする問題）。ReceivedAt を第 2 列に含めることで、
+                    -- 絞り込み（Severity は閾値方式 Severity <= N——Issue #148）と ORDER BY ReceivedAt DESC の
+                    -- 両方を 1 つの索引で支える（希少 severity のフルスキャンを避ける）。
+                    CREATE INDEX IF NOT EXISTS IX_LogRecords_Severity_ReceivedAt ON LogRecords (Severity, ReceivedAt DESC);
+
+                    -- QuerySourceActivityAsync の GROUP BY SourceAddress（Issue #145 症状 1 後段:
+                    -- 送信元別集計が索引なしで毎回フルスキャン+集約する問題）と、QueryAsync の
+                    -- SourceAddress 完全一致条件の両方に使う。
+                    CREATE INDEX IF NOT EXISTS IX_LogRecords_SourceAddress_ReceivedAt ON LogRecords (SourceAddress, ReceivedAt DESC);
 
                     CREATE TABLE IF NOT EXISTS SystemEvents (
                         Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,6 +168,14 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                         Id INTEGER PRIMARY KEY CHECK (Id = 1),
                         Version INTEGER NOT NULL
                     );
+
+                    -- 観測性（database.md §5.4「適用したスキーマ版と適用日時を事後に問い合わせ可能な
+                    -- 形で保持する」）: 版が上がるたびに 1 行追記する（SchemaVersion は現在値のみを
+                    -- 保持する単一行のため、履歴として別テーブルに残す）。
+                    CREATE TABLE IF NOT EXISTS SchemaMigrationHistory (
+                        Version INTEGER PRIMARY KEY,
+                        AppliedAt TEXT NOT NULL
+                    );
                     """;
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -157,23 +185,17 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
 
             if (recordedVersion is null)
             {
-                // 初回作成（このデータベースファイルが今回新規に作られた、または
-                // SchemaVersion 表が存在しない過去バージョンから引き継いだ）。
-                // 現行バージョンをそのまま記録する——v0.1 時点で唯一のバージョンが v1 のため、
-                // 「移行」ではなく「新規作成の完了記録」として書き込む。
-                await using var insertVersion = connection.CreateCommand();
-                insertVersion.Transaction = transaction;
-                insertVersion.CommandText = "INSERT INTO SchemaVersion (Id, Version) VALUES (1, $version);";
-                insertVersion.Parameters.AddWithValue("$version", CurrentSchemaVersion);
-                await insertVersion.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                // 初回作成（このデータベースファイルが今回新規に作られた）。上の DDL ブロックが
+                // 既に v2 形状（複合索引を含む）で作成済みのため、現行バージョンをそのまま記録する。
+                await RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken)
+                    .ConfigureAwait(false);
             }
             else if (recordedVersion.Value < CurrentSchemaVersion)
             {
-                // 移行フレーム: v0.1 時点では適用すべき移行スクリプトが存在しない
-                // （CurrentSchemaVersion = 1 が唯一のバージョンのため、この分岐には入らない）。
-                // 将来のバージョン追加時は、ここに recordedVersion から CurrentSchemaVersion までの
-                // 移行ステップを順に適用し、最後に SchemaVersion.Version を更新する
-                // （適用済み移行の再適用を避ける冪等性は、この version 比較そのものが担保する）。
+                // 既存 v1 データベースからの移行。将来のバージョン追加時は、ここに
+                // recordedVersion から CurrentSchemaVersion までの移行ステップを順に適用し、
+                // 最後に SchemaVersion.Version を更新する（適用済み移行の再適用を避ける冪等性は、
+                // この version 比較そのものが担保する）。
                 await ApplyMigrationsAsync(connection, transaction, recordedVersion.Value, cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -203,21 +225,59 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
     }
 
     /// <summary>
-    /// スキーマ版間移行の適用点（database.md §1.2 契約 1）。v0.1 時点では
-    /// <see cref="CurrentSchemaVersion"/> が唯一のバージョン（1）であるため、本メソッドは
-    /// 到達しない土台のみである。将来バージョンを追加する際は
-    /// <c>fromVersion</c> から <see cref="CurrentSchemaVersion"/> までの移行ステップを
-    /// ここに追加し、各ステップ適用後に SchemaVersion.Version を更新する。
+    /// スキーマ版間移行の適用点（database.md §1.2 契約 1）。<c>fromVersion</c> から
+    /// <see cref="CurrentSchemaVersion"/> までの移行ステップを順に適用し、各ステップ適用後に
+    /// <see cref="RecordSchemaVersionAppliedAsync"/> で版と適用日時を記録する。
     /// </summary>
-    private static Task ApplyMigrationsAsync(
+    private static async Task ApplyMigrationsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         int fromVersion,
         CancellationToken cancellationToken)
     {
-        // 現時点で適用すべき移行スクリプトは存在しない（CurrentSchemaVersion = 1 が唯一）。
-        throw new NotSupportedException(
-            $"スキーマバージョン {fromVersion} から {CurrentSchemaVersion} への移行スクリプトは未定義です。");
+        if (fromVersion < 2)
+        {
+            // v1 -> v2（Issue #145・database.md §8 DB-6 決定）: 索引 DDL 自体は
+            // InitializeAsync 冒頭の「スキーマ確認」ブロックで新規作成・既存 DB のどちらに対しても
+            // 既に冪等に収束済み（CREATE INDEX IF NOT EXISTS / DROP INDEX IF EXISTS）。
+            // このバージョン間移行で残る作業は SchemaVersion の更新と適用記録の追記のみ。
+            // SQLite 側は列長・COLLATE の変更を伴わない（TEXT は元々無制限——database.md §4。
+            // 自由文検索の非 ASCII 大文字小文字非区別は DB-9 の性能実測後に別途扱う）。
+            await RecordSchemaVersionAppliedAsync(connection, transaction, 2, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// 適用したスキーマ版と適用日時を記録する（database.md §5.4「適用したスキーマ版と適用日時を
+    /// 事後に問い合わせ可能な形で保持する」の SQLite 実体化）。<c>SchemaVersion</c>（現在値のみ・
+    /// 単一行）と <c>SchemaMigrationHistory</c>（版ごとの適用日時の追記）の両方を更新する。
+    /// </summary>
+    private static async Task RecordSchemaVersionAppliedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        var appliedAt = DateTimeOffset.UtcNow.UtcDateTime.ToString("O");
+
+        await using var upsertVersion = connection.CreateCommand();
+        upsertVersion.Transaction = transaction;
+        upsertVersion.CommandText =
+            """
+            INSERT INTO SchemaVersion (Id, Version) VALUES (1, $version)
+            ON CONFLICT(Id) DO UPDATE SET Version = excluded.Version;
+            """;
+        upsertVersion.Parameters.AddWithValue("$version", version);
+        await upsertVersion.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var insertHistory = connection.CreateCommand();
+        insertHistory.Transaction = transaction;
+        insertHistory.CommandText =
+            "INSERT OR IGNORE INTO SchemaMigrationHistory (Version, AppliedAt) VALUES ($version, $appliedAt);";
+        insertHistory.Parameters.AddWithValue("$version", version);
+        insertHistory.Parameters.AddWithValue("$appliedAt", appliedAt);
+        await insertHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -371,12 +431,15 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
             if (query.SearchText is { Length: > 0 } searchText)
             {
                 // 自由文検索: Message に対する部分一致・大文字小文字を区別しない
-                // （DB-6 確定までの暫定規則。LogQuery のドキュメント参照）。
-                // SQLite の LIKE は既定で ASCII の大文字小文字を区別しない
-                // （公式ドキュメント "The LIKE operator" — www.sqlite.org/lang_expr.html:
+                // （database.md §8 DB-6 決定。2026-07-09 オーナー決定で規則は確定済み。
+                // LogQuery のドキュメント参照）。SQLite の LIKE は既定で ASCII の大文字小文字を
+                // 区別しない（公式ドキュメント "The LIKE operator" — www.sqlite.org/lang_expr.html:
                 // "the LIKE operator is case sensitive by default for unicode characters that
                 // are beyond the ASCII range... the operator is not case sensitive... for ASCII
-                // characters"。確認日 2026-07-05）。ワイルドカード文字 %・_ はエスケープする。
+                // characters"。確認日 2026-07-05）——ASCII 範囲は DB-6 の blocking 要件を満たす。
+                // 非 ASCII の大文字小文字非区別は database.md §4 の第一候補（アプリ定義比較関数）の
+                // 性能実測（DB-9）が済むまで未実装（現状のまま ASCII 限定 LIKE を維持）。
+                // ワイルドカード文字 %・_ はエスケープする。
                 whereClauses.Add("Message LIKE $searchText ESCAPE '\\'");
                 command.Parameters.Add("$searchText", SqliteType.Text).Value = "%" + EscapeLikePattern(searchText) + "%";
             }

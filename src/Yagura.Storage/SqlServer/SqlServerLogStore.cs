@@ -43,8 +43,20 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（<see cref="Sqlite.SqliteLogStore.CurrentSchemaVersion"/> と同じ意味）。
+    /// v2（Issue #145・#147・#146。database.md §8 DB-6 決定・§5.4）: 絞り込み列の複合索引の追加、
+    /// ヘッダ列（Hostname/AppName/ProcId/MsgId）の NVARCHAR(MAX) 化、対象 NVARCHAR 列への
+    /// COLLATE <see cref="SearchCollation"/> の明示を行う。
     /// </summary>
-    internal const int CurrentSchemaVersion = 1;
+    internal const int CurrentSchemaVersion = 2;
+
+    /// <summary>
+    /// 自由文検索の一致規則（database.md §1.2 DB-6・§5.4）を実装する列単位 COLLATE。
+    /// Windows 照合順序 version 100・大文字小文字非区別（CI）・アクセント区別（AS）・
+    /// かな種区別（KS）・全角/半角区別（WS）・補助文字対応（SC）。§5.4 の却下案検討を経て確定
+    /// （KS/WS を明示し、大文字小文字以外を区別する側に固定することで「折り畳むのは大文字小文字のみ」
+    /// という DB-6 の規則を過不足なく実装する）。
+    /// </summary>
+    internal const string SearchCollation = "Latin1_General_100_CI_AS_KS_WS_SC";
 
     // SERVERPROPERTY('EngineEdition') の値（Microsoft Learn "SERVERPROPERTY (Transact-SQL)" の
     // Edition テーブル。確認日 2026-07-05）: "4 = Express (For Express, Express with Tools, and
@@ -100,48 +112,69 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             throw ex.ToLogStoreWriteException("スキーマ初期化のための接続");
         }
 
+        // database.md §5.2「途中失敗からの安全な再実行」: テーブル/索引作成・版間移行・
+        // 版の記録を単一トランザクションにまとめる（SqliteLogStore.InitializeAsync と同じ方式）。
+        // ALTER COLUMN を伴う v1 -> v2 移行（大テーブルでの所要時間・ロック挙動は DB-10 実機検証待ち。
+        // database.md §5.4）もこのトランザクションの範囲に含む——失敗時は全体がロールバックされ、
+        // 再実行時は sys.columns / sys.indexes の状態確認により未完了分のみが適用される。
+        await using var transaction = (SqlTransaction)await connection
+            .BeginTransactionAsync(cancellationToken)
+            .ConfigureAwait(false);
+
         try
         {
+            // 並行初期化の直列化: 複数の呼び出しが同時に InitializeAsync へ到達した場合、
+            // IF OBJECT_ID 判定と CREATE TABLE / ALTER COLUMN の間に他者が割り込むと
+            // 「既に存在する」エラーや競合が起こり得る。sp_getapplock（@LockOwner = 'Transaction' は
+            // トランザクション終了時に自動解放される——Microsoft Learn "sp_getapplock (Transact-SQL)"。
+            // 確認日 2026-07-10）でスキーマ管理全体を排他し、後着は先着の完了を待ってから
+            // 冪等判定（適用済みなら何もしない）に入る。
+            await using (var lockCommand = connection.CreateCommand())
+            {
+                lockCommand.Transaction = transaction;
+                lockCommand.CommandText =
+                    "EXEC sp_getapplock @Resource = N'Yagura.SchemaInitialization', @LockMode = 'Exclusive', @LockOwner = 'Transaction';";
+                await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await EnsureCollationAvailableAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+
             await using (var command = connection.CreateCommand())
             {
+                command.Transaction = transaction;
                 command.CommandText =
-                    """
+                    $"""
                     IF OBJECT_ID(N'dbo.LogRecords', N'U') IS NULL
                     BEGIN
                         CREATE TABLE dbo.LogRecords (
                             Id BIGINT IDENTITY(1,1) PRIMARY KEY,
                             ReceivedAt DATETIME2(7) NOT NULL,
-                            SourceAddress NVARCHAR(255) NOT NULL,
+                            SourceAddress NVARCHAR(255) COLLATE {SearchCollation} NOT NULL,
                             SourcePort INT NOT NULL,
                             Protocol INT NOT NULL,
                             DeviceTimestamp DATETIME2(7) NULL,
                             Facility INT NULL,
                             Severity INT NULL,
-                            Hostname NVARCHAR(255) NULL,
-                            AppName NVARCHAR(255) NULL,
-                            ProcId NVARCHAR(255) NULL,
-                            MsgId NVARCHAR(255) NULL,
-                            StructuredData NVARCHAR(MAX) NULL,
-                            Message NVARCHAR(MAX) NULL,
+                            Hostname NVARCHAR(MAX) COLLATE {SearchCollation} NULL,
+                            AppName NVARCHAR(MAX) COLLATE {SearchCollation} NULL,
+                            ProcId NVARCHAR(MAX) COLLATE {SearchCollation} NULL,
+                            MsgId NVARCHAR(MAX) COLLATE {SearchCollation} NULL,
+                            StructuredData NVARCHAR(MAX) COLLATE {SearchCollation} NULL,
+                            Message NVARCHAR(MAX) COLLATE {SearchCollation} NULL,
                             Raw VARBINARY(MAX) NULL,
                             ParseStatus INT NOT NULL
                         );
-                    END;
-
-                    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_LogRecords_ReceivedAt' AND object_id = OBJECT_ID(N'dbo.LogRecords'))
-                    BEGIN
-                        CREATE INDEX IX_LogRecords_ReceivedAt ON dbo.LogRecords (ReceivedAt);
                     END;
 
                     IF OBJECT_ID(N'dbo.SystemEvents', N'U') IS NULL
                     BEGIN
                         CREATE TABLE dbo.SystemEvents (
                             Id BIGINT IDENTITY(1,1) PRIMARY KEY,
-                            Kind NVARCHAR(255) NOT NULL,
+                            Kind NVARCHAR(255) COLLATE {SearchCollation} NOT NULL,
                             StartAt DATETIME2(7) NOT NULL,
                             EndAt DATETIME2(7) NOT NULL,
                             Approximate BIT NOT NULL,
-                            Details NVARCHAR(MAX) NULL
+                            Details NVARCHAR(MAX) COLLATE {SearchCollation} NULL
                         );
                     END;
 
@@ -157,28 +190,49 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                             Version INT NOT NULL
                         );
                     END;
+
+                    IF OBJECT_ID(N'dbo.SchemaMigrationHistory', N'U') IS NULL
+                    BEGIN
+                        CREATE TABLE dbo.SchemaMigrationHistory (
+                            Version INT NOT NULL PRIMARY KEY,
+                            AppliedAt DATETIME2(7) NOT NULL
+                        );
+                    END;
                     """;
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            var recordedVersion = await ReadSchemaVersionAsync(connection, cancellationToken).ConfigureAwait(false);
+            var recordedVersion = await ReadSchemaVersionAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
             if (recordedVersion is null)
             {
-                await using var insertVersion = connection.CreateCommand();
-                insertVersion.CommandText = "INSERT INTO dbo.SchemaVersion (Id, Version) VALUES (1, @version);";
-                insertVersion.Parameters.AddWithValue("@version", CurrentSchemaVersion);
-                await insertVersion.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                // 新規作成: 上の DDL が直接 v2 形状（NVARCHAR(MAX)・COLLATE 済み）で作成しているため、
+                // 列の移行作業は不要——現行バージョンをそのまま記録する。
+                await RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken)
+                    .ConfigureAwait(false);
             }
             else if (recordedVersion.Value < CurrentSchemaVersion)
             {
-                // 移行フレーム（SqliteLogStore.ApplyMigrationsAsync と同じ土台）。
-                // v0.1 時点では CurrentSchemaVersion = 1 が唯一のため到達しない。
-                throw new NotSupportedException(
-                    $"スキーマバージョン {recordedVersion.Value} から {CurrentSchemaVersion} への移行スクリプトは未定義です。");
+                await ApplyMigrationsAsync(connection, transaction, recordedVersion.Value, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
-            // recordedVersion.Value == CurrentSchemaVersion の場合: 既に適用済みのため何もしない。
+            // recordedVersion.Value == CurrentSchemaVersion の場合: 既に適用済みのため列移行は行わない。
+
+            // 索引の作成は列の COLLATE/長さが確定した後でなければならない（SourceAddress を含む
+            // 複合索引を先に作ると、後続の ALTER COLUMN が「索引がこの列に依存している」として
+            // 失敗し得る——database.md §5.4「当該列に索引がある場合は再構築を伴う」）。新規作成・
+            // 移行のどちらの経路でもこの時点で列は確定しているため、ここで一括して確定させる。
+            await EnsureLogRecordIndexesAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlException ex) when (SqlServerFailureClassifier.Classify(ex) == LogStoreFailureKind.CapacityExhausted)
+        {
+            // database.md §5.2「原因種別で提示内容を書き分ける」: 容量不足は実行可能な SQL では
+            // 解決しない物理的対処が要るため、権限不足（SchemaPermissionException・SQL 提示）とは
+            // 別経路で報告する。
+            throw BuildCapacityExhaustedSchemaException(ex);
         }
         catch (SqlException ex) when (SqlServerFailureClassifier.IsPermissionFailure(ex))
         {
@@ -189,6 +243,218 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             throw ex.ToLogStoreWriteException("スキーマ初期化");
         }
     }
+
+    /// <summary>
+    /// <see cref="SearchCollation"/> が接続先インスタンスに実在することを確認する
+    /// （database.md §5.4「配備先インスタンスの sys.fn_helpcollations() に実在することの確認を、
+    /// 実装バッチのスキーマ管理（接続検証）に含める」）。
+    /// </summary>
+    private static async Task EnsureCollationAvailableAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM sys.fn_helpcollations() WHERE name = @collation;";
+        command.Parameters.Add("@collation", System.Data.SqlDbType.NVarChar, 128).Value = SearchCollation;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        if (result is null or DBNull)
+        {
+            throw new LogStoreWriteException(
+                LogStoreFailureKind.Permanent,
+                $"照合順序 '{SearchCollation}' が接続先の SQL Server インスタンスに存在しません " +
+                "(sys.fn_helpcollations() で確認できませんでした)。database.md §5.4 が要求する自由文検索の " +
+                "一致規則を適用できないため、SQL Server のバージョン・エディションを確認してください。");
+        }
+    }
+
+    /// <summary>
+    /// スキーマ版間移行の適用点（<see cref="Sqlite.SqliteLogStore"/> の同名メソッドと同じ役割）。
+    /// </summary>
+    private static async Task ApplyMigrationsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        int fromVersion,
+        CancellationToken cancellationToken)
+    {
+        if (fromVersion < 2)
+        {
+            // v1 -> v2（Issue #146・#147・database.md §5.4）: 対象 NVARCHAR 列へ COLLATE を明示し、
+            // ヘッダ列（Hostname/AppName/ProcId/MsgId）は同時に NVARCHAR(MAX) へ拡張する
+            // （Issue #147。列ごとに sys.columns で適用済みかを確認してから ALTER する——
+            // database.md §5.2「現在の列照合順序を確認し、適用済みなら何もしない」の実体化。
+            // 大テーブルでの ALTER COLUMN 1 回ごとの所要時間・ロック挙動は DB-10 の実機検証対象で
+            // あり、本移行は「正しく収束すること」を優先し、分割実行の要否は DB-10 の結果を待つ）。
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "SourceAddress", "NVARCHAR(255)", expectMaxLength: false, isNullable: false, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "Hostname", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "AppName", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "ProcId", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "MsgId", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "StructuredData", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "Message", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.SystemEvents", "Kind", "NVARCHAR(255)", expectMaxLength: false, isNullable: false, cancellationToken).ConfigureAwait(false);
+            await EnsureColumnCollationAsync(connection, transaction, "dbo.SystemEvents", "Details", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
+
+            await RecordSchemaVersionAppliedAsync(connection, transaction, 2, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// 指定列が目標の型（<paramref name="expectMaxLength"/> が真なら NVARCHAR(MAX)）・
+    /// <see cref="SearchCollation"/> に既に一致しているかを <c>sys.columns</c> で確認し、
+    /// 一致していなければ <c>ALTER TABLE ... ALTER COLUMN</c> を適用する（database.md §5.2 の
+    /// 冪等性要件——「現在の列照合順序を確認し、適用済みなら何もしない」）。
+    /// </summary>
+    private static async Task EnsureColumnCollationAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        string tableName,
+        string columnName,
+        string targetSqlType,
+        bool expectMaxLength,
+        bool isNullable,
+        CancellationToken cancellationToken)
+    {
+        short currentMaxLength = 0;
+        string? currentCollation = null;
+
+        await using (var checkCommand = connection.CreateCommand())
+        {
+            checkCommand.Transaction = transaction;
+            checkCommand.CommandText =
+                """
+                SELECT max_length, collation_name
+                FROM sys.columns
+                WHERE object_id = OBJECT_ID(@table) AND name = @column;
+                """;
+            checkCommand.Parameters.Add("@table", System.Data.SqlDbType.NVarChar, 256).Value = tableName;
+            checkCommand.Parameters.Add("@column", System.Data.SqlDbType.NVarChar, 128).Value = columnName;
+
+            await using var reader = await checkCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                currentMaxLength = reader.GetInt16(0);
+                currentCollation = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+        }
+
+        // NVARCHAR(MAX) は sys.columns.max_length = -1 として現れる（Microsoft Learn "sys.columns"
+        // の記載どおり）。長さ変更が不要な列（SourceAddress・Kind）は expectMaxLength = false のため
+        // 長さの一致判定を常に true とし、COLLATE の一致のみで冪等性を判定する。
+        var lengthAlreadyCorrect = !expectMaxLength || currentMaxLength == -1;
+        var collationAlreadyCorrect = string.Equals(currentCollation, SearchCollation, StringComparison.Ordinal);
+
+        if (lengthAlreadyCorrect && collationAlreadyCorrect)
+        {
+            // database.md §5.2「適用済みなら何もしない」。
+            return;
+        }
+
+        var nullability = isNullable ? "NULL" : "NOT NULL";
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.Transaction = transaction;
+        alterCommand.CommandText =
+            $"ALTER TABLE {tableName} ALTER COLUMN {columnName} {targetSqlType} COLLATE {SearchCollation} {nullability};";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// v2 の索引集合を確定させる（Issue #145）。列の COLLATE/長さが確定した後（新規作成直後、
+    /// または <see cref="ApplyMigrationsAsync"/> 完了後）に呼び出すこと——<see cref="EnsureColumnCollationAsync"/>
+    /// のドキュメント参照。<c>IF (NOT) EXISTS</c> による冪等な収束のため、呼び出しごとに毎回
+    /// 実行しても安全（かつ安価）。
+    /// </summary>
+    private static async Task EnsureLogRecordIndexesAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            -- v1 の単一列索引は複合索引 IX_LogRecords_ReceivedAt_Id に包含される（先頭列が同じ）ため、
+            -- 冗長な書き込みコストを避けるために削除する。
+            IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_LogRecords_ReceivedAt' AND object_id = OBJECT_ID(N'dbo.LogRecords'))
+            BEGIN
+                DROP INDEX IX_LogRecords_ReceivedAt ON dbo.LogRecords;
+            END;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_LogRecords_ReceivedAt_Id' AND object_id = OBJECT_ID(N'dbo.LogRecords'))
+            BEGIN
+                CREATE INDEX IX_LogRecords_ReceivedAt_Id ON dbo.LogRecords (ReceivedAt DESC, Id DESC);
+            END;
+
+            -- Issue #145 症状 1: Severity 絞り込み（閾値方式 Severity <= N——Issue #148）が
+            -- 索引に乗らずフルスキャンする問題。
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_LogRecords_Severity_ReceivedAt' AND object_id = OBJECT_ID(N'dbo.LogRecords'))
+            BEGIN
+                CREATE INDEX IX_LogRecords_Severity_ReceivedAt ON dbo.LogRecords (Severity, ReceivedAt DESC);
+            END;
+
+            -- Issue #145 症状 1 後段: QuerySourceActivityAsync の GROUP BY SourceAddress、
+            -- および QueryAsync の SourceAddress 完全一致条件の両方に使う。
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_LogRecords_SourceAddress_ReceivedAt' AND object_id = OBJECT_ID(N'dbo.LogRecords'))
+            BEGIN
+                CREATE INDEX IX_LogRecords_SourceAddress_ReceivedAt ON dbo.LogRecords (SourceAddress, ReceivedAt DESC);
+            END;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 適用したスキーマ版と適用日時を記録する（database.md §5.4「適用したスキーマ版と適用日時を
+    /// 事後に問い合わせ可能な形で保持する」の SQL Server 実体化。
+    /// <see cref="Sqlite.SqliteLogStore"/> の同名メソッドと同じ役割）。
+    /// </summary>
+    private static async Task RecordSchemaVersionAppliedAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using (var upsertVersion = connection.CreateCommand())
+        {
+            upsertVersion.Transaction = transaction;
+            upsertVersion.CommandText =
+                """
+                IF EXISTS (SELECT 1 FROM dbo.SchemaVersion WHERE Id = 1)
+                    UPDATE dbo.SchemaVersion SET Version = @version WHERE Id = 1;
+                ELSE
+                    INSERT INTO dbo.SchemaVersion (Id, Version) VALUES (1, @version);
+                """;
+            upsertVersion.Parameters.AddWithValue("@version", version);
+            await upsertVersion.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var insertHistory = connection.CreateCommand();
+        insertHistory.Transaction = transaction;
+        insertHistory.CommandText =
+            """
+            IF NOT EXISTS (SELECT 1 FROM dbo.SchemaMigrationHistory WHERE Version = @version)
+            BEGIN
+                INSERT INTO dbo.SchemaMigrationHistory (Version, AppliedAt) VALUES (@version, SYSUTCDATETIME());
+            END;
+            """;
+        insertHistory.Parameters.AddWithValue("@version", version);
+        await insertHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 容量枯渇によるスキーマ初期化・移行の失敗を組み立てる（database.md §5.2「原因種別で提示内容を
+    /// 書き分ける」）。権限不足（<see cref="BuildSchemaPermissionException"/>）とは異なり、
+    /// 提示すべきは実行可能な SQL ではなく物理的対処である。
+    /// </summary>
+    private static LogStoreWriteException BuildCapacityExhaustedSchemaException(SqlException ex) =>
+        new(
+            LogStoreFailureKind.CapacityExhausted,
+            $"スキーマ初期化・移行に必要な領域が不足しています (SqlErrorNumber={ex.Number})。" +
+            "権限不足と異なりこの状態は実行可能な SQL では解決しません——ディスクの空き容量確保、" +
+            "データファイル/ログファイルの増設、または保持期間短縮による事前のログ削除など、" +
+            "物理的な対処が必要です（database.md §5.2）。",
+            ex);
 
     // SqlServerFailureClassifier.IsPermissionFailure が true を返すエラー番号のうち、
     // 4060（CannotOpenDatabase）は「DB 不在」と「ログインに CONNECT 権限がない」の 2 通りの
@@ -259,9 +525,13 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         return new SchemaPermissionException(missingPermission, remediationSql);
     }
 
-    private static async Task<int?> ReadSchemaVersionAsync(SqlConnection connection, CancellationToken cancellationToken)
+    private static async Task<int?> ReadSchemaVersionAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT Version FROM dbo.SchemaVersion WHERE Id = 1;";
 
         var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
@@ -327,10 +597,14 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             var deviceTimestamp = command.Parameters.Add("@deviceTimestamp", System.Data.SqlDbType.DateTime2);
             var facility = command.Parameters.Add("@facility", System.Data.SqlDbType.Int);
             var severity = command.Parameters.Add("@severity", System.Data.SqlDbType.Int);
-            var hostname = command.Parameters.Add("@hostname", System.Data.SqlDbType.NVarChar, 255);
-            var appName = command.Parameters.Add("@appName", System.Data.SqlDbType.NVarChar, 255);
-            var procId = command.Parameters.Add("@procId", System.Data.SqlDbType.NVarChar, 255);
-            var msgId = command.Parameters.Add("@msgId", System.Data.SqlDbType.NVarChar, 255);
+            // Issue #147: Hostname/AppName/ProcId/MsgId は NVARCHAR(MAX) 列（v2 スキーマ）のため
+            // パラメータの Size 指定も撤廃する（Size=255 のまま残すと、DDL 側を MAX 化しても
+            // パラメータ側で 255 文字に黙って切り詰められる——ADO.NET のパラメータ長は列長と独立に
+            // 効くため、両方を揃える必要がある）。
+            var hostname = command.Parameters.Add("@hostname", System.Data.SqlDbType.NVarChar, -1);
+            var appName = command.Parameters.Add("@appName", System.Data.SqlDbType.NVarChar, -1);
+            var procId = command.Parameters.Add("@procId", System.Data.SqlDbType.NVarChar, -1);
+            var msgId = command.Parameters.Add("@msgId", System.Data.SqlDbType.NVarChar, -1);
             var structuredData = command.Parameters.Add("@structuredData", System.Data.SqlDbType.NVarChar, -1);
             var message = command.Parameters.Add("@message", System.Data.SqlDbType.NVarChar, -1);
             var raw = command.Parameters.Add("@raw", System.Data.SqlDbType.VarBinary, -1);
@@ -440,11 +714,12 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
 
             if (query.SearchText is { Length: > 0 } searchText)
             {
-                // 自由文検索: SqliteLogStore と同じ暫定規則（DB-6 確定まで）——Message に対する
-                // 部分一致・大文字小文字を区別しない。SQL Server の既定の大文字小文字を区別しない
-                // 照合順序（case-insensitive collation）では LIKE も大文字小文字を区別しない
-                // （Microsoft Learn の一般的な既定 collation の動作。Yagura の既定インストールでは
-                // サーバの既定照合順序をそのまま使う——文字列列に列単位の照合順序を明示しない）。
+                // 自由文検索: Message に対する部分一致・大文字小文字を区別しない
+                // （database.md §1.2 DB-6。2026-07-09 オーナー決定で規則は確定済み）。
+                // v2 スキーマで Message 列に COLLATE Latin1_General_100_CI_AS_KS_WS_SC を明示した
+                // ため（database.md §5.4）、LIKE の大文字小文字非区別（かつアクセント・かな種・
+                // 全角/半角は区別する）はサーバの既定照合順序に依存せず列単位で保証される
+                // （Issue #146 の解消——配備先の既定照合順序が CS でも本クエリの挙動は変わらない）。
                 whereClauses.Add("Message LIKE @searchText ESCAPE '\\'");
                 command.Parameters.Add("@searchText", System.Data.SqlDbType.NVarChar, -1).Value =
                     "%" + EscapeLikePattern(searchText) + "%";
