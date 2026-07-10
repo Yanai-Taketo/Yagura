@@ -100,19 +100,22 @@ public sealed class ExternalSpoolUsageProbeTests
             var filePath = Path.Combine(spoolDirectory, "segment-000.seg");
             File.WriteAllBytes(filePath, new byte[512]);
 
-            // わずかに遅延させてから削除する。GetSegmentBytesOnDisk の列挙とサイズ取得の間で
-            // 削除が起きる窓を狙うが、当たらなくても最終的にファイルは消え drain 完了として
-            // 扱われるべきである（例外を投げずに true を返す）。
+            // 削除フェーズ（drain 処理を模した背景タスク）を完了まで待ってから、最終判定として
+            // WaitForDrainCompletionAsync を呼ぶ。以前は削除タスクと WaitForDrainCompletionAsync の
+            // 固定タイムアウト（3秒）を同時に走らせていたため、CI ランナー負荷時に ThreadPool の
+            // スレッド割当が遅延して削除がタイムアウト内に間に合わず flaky になっていた
+            // （Issue #207）。削除の完了を先に確定させることで、以降の判定を非決定要素から切り離す。
             var deleteTask = Task.Run(async () =>
             {
                 await Task.Delay(5);
                 File.Delete(filePath);
             });
 
+            await deleteTask;
+
+            // この時点でファイルは確実に削除済みのため、drain 完了判定は非決定的な競合に依存しない。
             var completed = await ExternalSpoolUsageProbe
                 .WaitForDrainCompletionAsync(spoolDirectory, TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(5));
-
-            await deleteTask;
 
             Assert.True(completed, "ファイル削除後も drain 完了（使用量 0）と判定されなかった。");
         }
