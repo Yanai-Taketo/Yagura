@@ -80,6 +80,7 @@ public sealed class ForwarderKitScreenRenderTests
             new FakeForwarderMsiSource(@"C:\ProgramData\Yagura\forwarder", ForwarderMsiLookup.NotFound()));
 
         Assert.Contains(@"C:\ProgramData\Yagura\forwarder", html);
+        // 既定は x64（ForwarderKitScreen 初期選択）。
         Assert.Contains(string.Format(UiText.ForwarderKitMsiNotFoundFormat, ForwarderMsiConstraints.FileNamePattern), html);
         // チェックボックスは出さない。
         Assert.DoesNotContain(UiText.ForwarderKitMsiIncludeCheckbox, html);
@@ -103,6 +104,19 @@ public sealed class ForwarderKitScreenRenderTests
         // チェックボックス自体は表示されるが、オプトインのため初期状態は未チェック
         // ——チェック時のみ表示される詳細（ファイル名・版・SHA256）は出ていないはず。
         Assert.DoesNotContain(details.Sha256, html);
+    }
+
+    [Fact]
+    public async Task InitialRender_MsiArchitectureSelector_DefaultsToX64()
+    {
+        // ADR-0009 決定7・委任 #4: 収集対象端末のアーキ選択は既定で x64（迷ったら x64）。
+        var html = await RenderAsync(new FakeNicCandidateSource([]));
+
+        Assert.Contains(UiText.ForwarderKitMsiArchitectureTitle, html);
+        Assert.Contains(UiText.ForwarderKitMsiArchitectureX64, html);
+        Assert.Contains(UiText.ForwarderKitMsiArchitectureArm64, html);
+        Assert.Contains("value=\"x64\"", html);
+        Assert.Contains("value=\"arm64\"", html);
     }
 
     [Fact]
@@ -141,6 +155,6 @@ public sealed class ForwarderKitScreenRenderTests
     {
         public string FolderPath => folderPath;
 
-        public ForwarderMsiLookup Lookup() => lookup;
+        public ForwarderMsiLookup Lookup(ForwarderMsiArchitecture architecture) => lookup;
     }
 }

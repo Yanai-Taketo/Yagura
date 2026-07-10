@@ -162,6 +162,53 @@ public sealed class ForwarderKitDownloadEndpointTests
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
     }
 
+    // ---- アーキ選択（ADR-0009 決定7・委任 #4） ----
+
+    [Fact]
+    public async Task Download_IncludeMsiTrue_ArchitectureArm64_SingleMatchingVersion_Returns200WithMsiEntry()
+    {
+        var msiFileName = "fluent-bit-" + ForwarderKitConstraints.VerifiedFluentBitVersion + "-winarm64.msi";
+        var tempPath = CreateTempMsiFile(msiFileName);
+
+        var msiSource = new FakeForwarderMsiSource(
+            Path.GetDirectoryName(tempPath)!,
+            ForwarderMsiLookup.Single(new ForwarderMsiDetails(
+                tempPath,
+                msiFileName,
+                ForwarderKitConstraints.VerifiedFluentBitVersion,
+                "dummy-sha",
+                5)));
+
+        await using var harness = await ViewerHostHarness.StartAsync(msiSource);
+        using var client = new HttpClient { BaseAddress = harness.GetBaseAddress() };
+
+        var response = await client.GetAsync(
+            "/admin/forwarder-kit/download?host=192.0.2.10&port=514&channels=System&includeMsi=true&architecture=arm64");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("with-msi.zip", response.Content.Headers.ContentDisposition?.ToString() ?? string.Empty);
+
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+        Assert.NotNull(archive.GetEntry(msiFileName));
+    }
+
+    [Fact]
+    public async Task Download_IncludeMsiTrue_InvalidArchitecture_Returns400()
+    {
+        var msiSource = new FakeForwarderMsiSource(
+            @"C:\ProgramData\Yagura\forwarder",
+            ForwarderMsiLookup.NotFound());
+
+        await using var harness = await ViewerHostHarness.StartAsync(msiSource);
+        using var client = new HttpClient { BaseAddress = harness.GetBaseAddress() };
+
+        var response = await client.GetAsync(
+            "/admin/forwarder-kit/download?host=192.0.2.10&port=514&channels=System&includeMsi=true&architecture=mips");
+
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private static string CreateTempMsiFile(string fileName)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"yagura-forwarder-msi-test-{Guid.NewGuid():N}");
@@ -175,6 +222,6 @@ public sealed class ForwarderKitDownloadEndpointTests
     {
         public string FolderPath => folderPath;
 
-        public ForwarderMsiLookup Lookup() => lookup;
+        public ForwarderMsiLookup Lookup(ForwarderMsiArchitecture architecture) => lookup;
     }
 }

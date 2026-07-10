@@ -85,7 +85,20 @@ Yagura は受信・永続化・Web UI を **単一の Windows サービスプロ
 
 ## インストール
 
-[Releases](https://github.com/Yanai-Taketo/Yagura/releases) から MSI（約 45 MB）をダウンロードして実行します。改ざん確認用に `.sha256` チェックサムを添付しています。
+[Releases](https://github.com/Yanai-Taketo/Yagura/releases) から、お使いの環境に合う MSI（`Yagura-<版>-x64.msi` または `Yagura-<版>-arm64.msi`。約 45 MB）をダウンロードして実行します。改ざん確認用に `.sha256` チェックサムを添付しています。
+
+### 対応アーキテクチャ
+
+| アーキ | 対応状況 | 対象環境 |
+|---|---|---|
+| **x64** | 対応（Supported） | Windows Server 全般 + Windows 10/11 クライアント |
+| **ARM64** | 試験的（Experimental） | Windows 11 on Arm 等のクライアント OS のみ（Windows Server の ARM64 は現時点で一般提供されていないため対象外） |
+
+**迷ったら x64 を選んでください。** 通常の Windows PC・Windows Server はほぼ x64 です。ARM64 は Arm デバイスでの試用・開発機での動作確認・小規模エッジ用途を主な対象とし、x64 と同水準の実機 lab 継続検証は対象外です（起動・受信・閲覧・観測性カウンタ出力・スプール発動からの復旧までは確認済み）。不具合報告は受け付けますが、修正時期・SLA は約束しません。判断根拠・対象環境の定義は [ADR-0009](docs/adr/0009-architecture-support.md) を参照してください。
+
+**自分の環境のアーキを確認する方法**: 「設定 > システム > バージョン情報」の「システムの種類」を確認します。「x64 ベース プロセッサ」なら x64 版、「ARM ベース プロセッサ」なら ARM64 版の MSI を選んでください。
+
+Windows イベントログの転送元となる収集対象端末（Fluent Bit を導入する側）のアーキ対応は、Yagura サーバ本体のアーキとは独立の話題です。x64・ARM64 の両方に対応しています（詳細は [転送ガイド](docs/guides/forward-windows-eventlog.md) の「対応アーキテクチャ」を参照）。
 
 ゼロ設定ファーストランは 3 ステップです。
 

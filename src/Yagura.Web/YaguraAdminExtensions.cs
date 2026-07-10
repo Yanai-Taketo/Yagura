@@ -167,6 +167,7 @@ public static class YaguraAdminExtensions
             string? channels,
             bool? includeMsi,
             bool? msiVersionMismatchAcknowledged,
+            string? architecture,
             IAuditRecorder auditRecorder,
             TimeProvider timeProvider,
             IForwarderMsiSource msiSource) =>
@@ -175,18 +176,25 @@ public static class YaguraAdminExtensions
 
             if (includeMsi == true)
             {
-                var lookup = msiSource.Lookup();
+                if (!TryParseArchitecture(architecture, out var msiArchitecture))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await context.Response.WriteAsync("architecture must be 'x64' or 'arm64'.").ConfigureAwait(false);
+                    return;
+                }
+
+                var lookup = msiSource.Lookup(msiArchitecture);
                 if (lookup.State != ForwarderMsiLookupState.Single)
                 {
                     context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                    await context.Response.WriteAsync(FormatMsiLookupError(lookup.State)).ConfigureAwait(false);
+                    await context.Response.WriteAsync(FormatMsiLookupError(lookup.State, msiArchitecture)).ConfigureAwait(false);
                     return;
                 }
 
                 var details = lookup.Details!;
                 var effectiveVersion = ForwarderMsiFilter.ResolveEffectiveVersion(details.ProductVersion, details.FileName);
                 var versionMismatch = !ForwarderMsiFilter.MatchesVerifiedVersion(effectiveVersion, ForwarderKitConstraints.VerifiedFluentBitVersion);
-                var officialHashMatch = ForwarderMsiFilter.MatchesOfficialHash(details.Sha256, ForwarderMsiConstraints.OfficialSha256ForVerifiedVersion);
+                var officialHashMatch = ForwarderMsiFilter.MatchesOfficialHash(details.Sha256, ForwarderMsiConstraints.GetOfficialSha256(msiArchitecture));
 
                 msiBundle = new ForwarderMsiBundle(
                     details.FilePath,
@@ -259,13 +267,45 @@ public static class YaguraAdminExtensions
         _ => "invalid request.",
     };
 
-    /// <summary>MSI 配置フォルダの検出状態が単一でない場合の応答文言（ADR-0008 設計条件 9）。</summary>
-    private static string FormatMsiLookupError(ForwarderMsiLookupState state) => state switch
+    /// <summary>
+    /// MSI 配置フォルダの検出状態が単一でない場合の応答文言（ADR-0008 設計条件 9・
+    /// ADR-0009 決定7・委任 #4——検出パターンをアーキ別に出す）。
+    /// </summary>
+    private static string FormatMsiLookupError(ForwarderMsiLookupState state, ForwarderMsiArchitecture architecture)
     {
-        ForwarderMsiLookupState.NotFound => "includeMsi=true was requested, but no MSI was found in the placement folder.",
-        ForwarderMsiLookupState.Multiple => "includeMsi=true was requested, but multiple MSIs were found in the placement folder.",
-        _ => "invalid msi state.",
-    };
+        var pattern = ForwarderMsiConstraints.GetFileNamePattern(architecture);
+        return state switch
+        {
+            ForwarderMsiLookupState.NotFound => $"includeMsi=true was requested, but no MSI matching '{pattern}' was found in the placement folder.",
+            ForwarderMsiLookupState.Multiple => $"includeMsi=true was requested, but multiple MSIs matching '{pattern}' were found in the placement folder.",
+            _ => "invalid msi state.",
+        };
+    }
+
+    /// <summary>
+    /// クエリ文字列の <c>architecture</c> を <see cref="ForwarderMsiArchitecture"/> へ解決する
+    /// （ADR-0009 決定7・委任 #4）。未指定・空文字は x64（既定。「迷ったら x64」——ADR-0009
+    /// 委任 #7 と同じ既定思想）として扱い後方互換を保つ。<c>x64</c>/<c>win64</c> と
+    /// <c>arm64</c>/<c>winarm64</c> のみを受理し、大文字小文字は区別しない。
+    /// </summary>
+    private static bool TryParseArchitecture(string? value, out ForwarderMsiArchitecture architecture)
+    {
+        switch (value?.Trim().ToLowerInvariant())
+        {
+            case null or "":
+            case "x64":
+            case "win64":
+                architecture = ForwarderMsiArchitecture.Win64;
+                return true;
+            case "arm64":
+            case "winarm64":
+                architecture = ForwarderMsiArchitecture.WinArm64;
+                return true;
+            default:
+                architecture = ForwarderMsiArchitecture.Win64;
+                return false;
+        }
+    }
 
     /// <summary>
     /// 監査 Detail の構造化文字列（ADR-0008 設計条件 6・9・委任 #5）。既存の host/port/channels に
@@ -285,7 +325,15 @@ public static class YaguraAdminExtensions
                 _ => "unverified",
             };
 
+            var archValue = ForwarderMsiFilter.TryGetArchitecture(bundle.FileName) switch
+            {
+                ForwarderMsiArchitecture.WinArm64 => "arm64",
+                ForwarderMsiArchitecture.Win64 => "x64",
+                _ => "unknown",
+            };
+
             detail +=
+                $" msiArch={archValue}" +
                 $" msiVersion={bundle.ProductVersion ?? "unknown"}" +
                 $" msiSha256={bundle.Sha256}" +
                 $" officialHashMatch={officialMatchValue}" +

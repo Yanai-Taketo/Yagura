@@ -257,7 +257,7 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     {
         public string FolderPath => @"C:\ProgramData\Yagura\forwarder";
 
-        public Yagura.Web.ForwarderKit.ForwarderMsiLookup Lookup() =>
+        public Yagura.Web.ForwarderKit.ForwarderMsiLookup Lookup(Yagura.Web.ForwarderKit.ForwarderMsiArchitecture architecture) =>
             Yagura.Web.ForwarderKit.ForwarderMsiLookup.NotFound();
     }
 

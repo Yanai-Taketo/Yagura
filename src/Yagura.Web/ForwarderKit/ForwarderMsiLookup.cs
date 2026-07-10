@@ -1,6 +1,22 @@
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
+/// フォワーダキットが対応する収集対象端末のアーキテクチャ（ADR-0009 決定7・委任 #4）。
+/// Yagura サーバ本体のアーキ（ADR-0009 決定1〜2）とは独立の論点——収集対象端末は
+/// サーバとは別のマシンであり、サーバが x64 でも ARM64 端末向けキットを生成できる
+/// （逆も同様）。x86 は対象外（サーバ側の x86 不採用（ADR-0009）とは独立に、収集対象
+/// 端末側の x86 需要も本 PR 時点では確認されていないため——ADR-0008 委任 #4）。
+/// </summary>
+public enum ForwarderMsiArchitecture
+{
+    /// <summary>64bit x86（Fluent Bit の <c>win64</c> ビルド）。</summary>
+    Win64,
+
+    /// <summary>ARM64（Fluent Bit の <c>winarm64</c> ビルド。2026-07-10 ライブ確認で公式提供を確認済み）。</summary>
+    WinArm64,
+}
+
+/// <summary>
 /// <see cref="IForwarderMsiSource.Lookup"/> の結果種別（ADR-0008 設計条件 9）。
 /// </summary>
 public enum ForwarderMsiLookupState

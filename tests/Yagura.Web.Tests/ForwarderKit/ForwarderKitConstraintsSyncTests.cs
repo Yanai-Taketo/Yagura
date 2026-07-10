@@ -56,6 +56,24 @@ public sealed class ForwarderKitConstraintsSyncTests
     }
 
     /// <summary>
+    /// install.ps1 の <c>Get-LocalMsiFilenamePattern</c>（ADR-0009 決定7・委任 #4）が、
+    /// <see cref="ForwarderMsiConstraints.FileNamePattern"/> / <see cref="ForwarderMsiConstraints.FileNamePatternArm64"/>
+    /// と同一のファイル名パターン文字列を使っていることを固定する。
+    /// </summary>
+    [Fact]
+    public void MsiArchitectureFileNamePatterns_MatchInstallScriptLocalArchDetection()
+    {
+        var installScript = ReadInstallScript();
+
+        Assert.Contains(
+            "\"" + ForwarderMsiConstraints.FileNamePattern + "\"",
+            installScript);
+        Assert.Contains(
+            "\"" + ForwarderMsiConstraints.FileNamePatternArm64 + "\"",
+            installScript);
+    }
+
+    /// <summary>
     /// 指定パラメータ名の直前にある <c>[ValidatePattern('...')]</c> の正規表現文字列を抽出する。
     /// </summary>
     private static string ExtractValidatePattern(string script, string parameterName)
