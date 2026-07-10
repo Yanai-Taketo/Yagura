@@ -29,7 +29,11 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// が同一の <see cref="_selfTestTracker"/> インスタンスへ通知する（<c>Yagura.Host.Program</c> が
 /// 両者へ同一インスタンスを渡す構成）。<see cref="RunAsync"/> のループが包括的な例外保護を持つため
 /// （PR #188 レビュー指摘への対応）、本メソッドが自前の例外処理を怠っても監視ループ自体が
-/// 無警告で恒久停止することはない。
+/// 無警告で恒久停止することはない。**タイムアウト時、drain の進捗（消化済みセグメントの削除の
+/// 累積カウンタ <see cref="DiskSpool.DeletedSegmentsTotal"/> の増分）が直近に観測されているかで
+/// バックログ起因（EventId 1010。警告）と経路障害の疑い（EventId 1009。エラー）を判別する
+/// （Issue #202。PR #200 レビューのフォローアップ）**——詳細は
+/// <c>EvaluateSpoolSelfTestAsync</c> の remarks 参照。
 /// </para>
 /// <para>
 /// <b>スプール無効・縮退運転中の扱い</b>: <see cref="_spool"/> または <see cref="_selfTestTracker"/>
@@ -70,6 +74,9 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private long? _lastSpoolEvacuatedTotal;
     private DateTimeOffset? _evacuationStreakStartAt;
     private DateTimeOffset? _lastSelfTestInjectedAt;
+    private long? _lastSelfTestObservedDeletedSegments;
+    private DateTimeOffset? _lastSelfTestDrainProgressObservedAt;
+    private bool _selfTestFailureLatched;
 
     private CancellationTokenSource? _stoppingCts;
     private Task? _loopTask;
@@ -342,10 +349,52 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// opt-out・縮退運転）の間は投入・判定のいずれも行わない（クラス remarks 参照）。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <b>実行順序</b>: タイムアウト判定を新規投入より先に行う——「直前に投入したマーカーが
     /// 期待時間内に drain へ合流したか」を、次のマーカーで上書きする前に確認する必要がある
     /// （<see cref="SpoolSelfTestTracker.BeginNewMarker"/> は未照合のまま残っていても上書きする
     /// 設計のため、判定の機会は投入直前の一度しかない）。
+    /// </para>
+    /// <para>
+    /// <b>バックログ起因の判別（Issue #202。PR #200 レビューのフォローアップ）</b>: drain は FIFO
+    /// のため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する持続的な
+    /// 速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しないことがある。
+    /// 検討した 3 案（Issue #202）: ①投入時点のバックログ量を記録して判定に使う、②drain の進行
+    /// （セグメント消化）を観測する、③タイムアウト値をバックログ量に比例させて再設計する。
+    /// ①は「バックログが深い」ことと「経路が壊れている」ことを判別できない（両方とも投入時点の
+    /// バックログは深いまま観測される）ため単独では使えない。③はバックログ量と所要時間の比例関係が
+    /// 実測（M-16 も含め）で未検証であり、誤った比例式は「タイムアウトを長く取りすぎて実障害の
+    /// 検知が遅れる」方向に倒れるリスクが①以上に高い。採用したのは②——drain がセグメントを消化・
+    /// 削除するたびに単調増加する累積カウンタ（<see cref="DiskSpool.DeletedSegmentsTotal"/>）を
+    /// 周期ごとに観測し、前回周期から増えていれば drain の進捗の直接証拠として扱う
+    /// （<see cref="EvaluateSpoolEvacuationContinuation"/> が <c>SpoolEvacuated</c> 累積カウンタで
+    /// 行う継続判定と同じパターン）。<see cref="DiskSpool.CurrentUsageBytes"/> の周期サンプリング
+    /// 差分（純増減）を使わないのは PR #211 レビュー指摘への対応——持続的な速度不足（追記速度が
+    /// 消化速度を恒常的に上回る状態）では、drain が実際にセグメントを消化していても任意の 1 分
+    /// サンプルで純減少が一度も観測されず「進捗なし = 1009」に誤分類される。まさに本判別が対象と
+    /// する高負荷滞留の場面で機能しないため、追記と混ざらない削除専用の累積カウンタへ分離した。
+    /// 判定は「直近 <see cref="ActiveNotificationConstants.SelfTestTimeout"/> 以内に進捗を観測
+    /// したか」で行う——観測していれば未消化バックログの滞留（EventId 1010。警告）、していなければ
+    /// 経路障害の疑い（EventId 1009。エラー。従来どおり）とする。drain は 1 セグメントの書込失敗で
+    /// 以降のセグメントの消化を止める設計（<see cref="Yagura.Ingestion.Persistence.SpoolDrainCoordinator"/>
+    /// の FIFO 順次処理）のため、この判定は「進捗が観測される限り経路は生きている」という近似では
+    /// なく、「特定セグメントで恒久的に詰まれば以降の進捗も止まる」という構造上の性質に支えられて
+    /// いる——判定を先送りし続けて実障害の検知が沈黙する事態（本節の留意事項）は、進捗が実際に
+    /// 途絶えた時点で 1009 へ切り替わることで避ける（進捗のたびに再発火する 1010 と異なり、1010 は
+    /// 1009 の発火を止めない——両者は独立したトリガキーで抑制窓を持つ）。
+    /// </para>
+    /// <para>
+    /// <b>1009 へのエスカレーションはマーカー単位でラッチする（PR #211 レビュー指摘への対応）</b>:
+    /// 未照合マーカーは次回投入（最大 1 日後）まで残り、タイムアウト判定は毎周期評価され続ける
+    /// ため、ラッチが無いと「進捗途絶で 1009 → 単発の進捗で 1010 へ回帰 → 再途絶で 1009 → …」の
+    /// 振動（flapping）が起こり得る。同一の根本原因に対して独立した抑制窓を持つ 2 つの ID が交互に
+    /// 再発火するノイズを避けるため、<b>一度 1009 と判定した後は、当該マーカーの追跡が終わる
+    /// （照合される・次のマーカーで上書きされる）まで 1010 へ戻さない</b>——進捗が丸ごと
+    /// 期待時間分途絶えた事実は「経路のどこかが詰まった疑い」の観測であり、その後の単発進捗は
+    /// 疑いを晴らす証拠として弱い（マーカー自身は依然未照合のまま）。マーカーが実際に照合されれば
+    /// 経路の健全性はそこで実証され、次のマーカーの投入時にラッチは解除される（新しい検証は白紙から
+    /// 判定する）。
+    /// </para>
     /// </remarks>
     private async Task EvaluateSpoolSelfTestAsync(CancellationToken cancellationToken)
     {
@@ -356,28 +405,64 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         var now = _timeProvider.GetUtcNow();
 
+        // drain 進捗の観測（上記 remarks 参照）: drain がセグメントを消化・削除するたびに単調増加
+        // する累積カウンタを前回周期と比較する。追記（実トラフィックの退避・本メソッド自身の投入）
+        // はこのカウンタに影響しないため、追記と削除が同一周期内に混在していても取りこぼさない
+        // （PR #211 レビュー指摘への対応——使用量の純増減サンプリングは持続的な速度不足下で
+        // 進捗を見落とす）。
+        var deletedSegmentsTotal = _spool.DeletedSegmentsTotal;
+        if (_lastSelfTestObservedDeletedSegments is { } lastDeletedSegments &&
+            deletedSegmentsTotal > lastDeletedSegments)
+        {
+            _lastSelfTestDrainProgressObservedAt = now;
+        }
+
+        _lastSelfTestObservedDeletedSegments = deletedSegmentsTotal;
+
         if (_selfTestTracker.IsPendingTimedOut(now, ActiveNotificationConstants.SelfTestTimeout))
         {
-            // 文言は「経路の障害」と断定しない（PR #200 レビュー指摘への対応）: drain は FIFO の
-            // ため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する
-            // 持続的な速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しない。
-            // その場合はスプール退避継続の警告（EventId 1004）が並行して出ている可能性が高いため、
-            // 切り分けの手がかりとして文言に含め、現在のスプール使用率も添える。バックログ起因を
-            // 判定に加味する改善（投入時点のバックログ記録・判定の先送り等）はフォローアップ
-            // Issue に委ねる。
+            // 一度 1009（経路障害の疑い）と判定したら、当該マーカーの追跡が終わるまで 1010 へ
+            // 戻さない（ラッチ。remarks 参照——単発の進捗回復で 1009/1010 が交互に再発火する
+            // 振動を避ける）。ラッチは次のマーカー投入時に解除される。
+            var recentDrainProgress = !_selfTestFailureLatched &&
+                _lastSelfTestDrainProgressObservedAt is { } progressAt &&
+                now - progressAt < ActiveNotificationConstants.SelfTestTimeout;
             var usageRatio = _spool.UsageRatio;
-            NotifyIfDue("spool-self-test-timeout", () =>
-                _logger.LogError(
-                    ActiveNotificationEventIds.SpoolSelfTestFailed,
-                    "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
-                    "期待時間 {Timeout} 以内に完了しませんでした（architecture.md §3.2.5。現在のスプール使用率" +
-                    " {UsageRatio:P0}）。スプール経路（書込 → セグメント読出 → 逆直列化 → drain 合流判定）の障害、" +
-                    "または未消化バックログの滞留（保存先の持続的な速度不足。§3.2.2——この場合はスプール退避継続の" +
-                    "警告（イベント ID 1004）が並行して出ている可能性が高い）が考えられます。" +
-                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
-                    ActiveNotificationConstants.SelfTestTimeout,
-                    usageRatio,
-                    ActiveNotificationConstants.SuppressionWindow));
+
+            if (recentDrainProgress)
+            {
+                NotifyIfDue("spool-self-test-timeout-backlog", () =>
+                    _logger.LogWarning(
+                        ActiveNotificationEventIds.SpoolSelfTestTimeoutBacklog,
+                        "[spool-self-test-timeout-backlog] スプールの定期自己検証（合成レコードの投入 → drain 合流" +
+                        "判定）が期待時間 {Timeout} 以内に完了しませんでしたが、同じ期待時間内に drain の進捗" +
+                        "（消化済みセグメントの削除）を観測しているため、経路は生きており未消化バックログの滞留" +
+                        "（保存先の持続的な速度不足。architecture.md §3.2.2 が正常な運用状態と明記——スプール" +
+                        "退避継続の警告 イベント ID 1004 が並行して出ている可能性が高い）と判定しました" +
+                        "（architecture.md §3.2.5。Issue #202）。現在のスプール使用率 {UsageRatio:P0}。" +
+                        "進捗が途絶えた場合は経路障害の疑いとしてイベント ID 1009 で改めて警告します。" +
+                        "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                        ActiveNotificationConstants.SelfTestTimeout,
+                        usageRatio,
+                        ActiveNotificationConstants.SuppressionWindow));
+            }
+            else
+            {
+                _selfTestFailureLatched = true;
+                NotifyIfDue("spool-self-test-timeout", () =>
+                    _logger.LogError(
+                        ActiveNotificationEventIds.SpoolSelfTestFailed,
+                        "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
+                        "期待時間 {Timeout} 以内に完了せず、同じ期間内に drain の進捗（消化済みセグメントの削除）も" +
+                        "観測されませんでした（architecture.md §3.2.5。現在のスプール使用率 {UsageRatio:P0}）。" +
+                        "未消化バックログの滞留であれば drain の進捗が観測されるはずのため、本通知はスプール経路" +
+                        "（書込 → セグメント読出 → 逆直列化 → drain 合流判定）の障害が疑われる場合に絞って発火" +
+                        "します（バックログ起因との判別は Issue #202）。同種の警告は {SuppressionWindow} の間は" +
+                        "再表示を抑制します。",
+                        ActiveNotificationConstants.SelfTestTimeout,
+                        usageRatio,
+                        ActiveNotificationConstants.SuppressionWindow));
+            }
         }
 
         if (_lastSelfTestInjectedAt is { } lastInjectedAt &&
@@ -388,6 +473,10 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         _lastSelfTestInjectedAt = now;
+
+        // 新しいマーカーの検証は白紙から判定する——前マーカーで 1009 へエスカレートしていた
+        // ラッチはここで解除する（remarks 参照）。
+        _selfTestFailureLatched = false;
 
         // 登録 → 書込 → 失敗時は登録取消、の順序（PR #200 レビュー指摘への対応）。
         // 書込に失敗したマーカーを未照合のまま残すと、drain に照合される見込みが無いまま

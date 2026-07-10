@@ -35,6 +35,7 @@ public sealed class DiskSpool : IDisposable
     private FileStream? _activeSegmentStream;
     private int _segmentSequence;
     private long _currentUsageBytes;
+    private long _deletedSegmentsTotal;
 
     private DiskSpool(DiskSpoolOptions options)
     {
@@ -48,6 +49,24 @@ public sealed class DiskSpool : IDisposable
     public long CurrentUsageBytes
     {
         get { lock (_gate) { return _currentUsageBytes; } }
+    }
+
+    /// <summary>
+    /// このプロセスで <see cref="DeleteSegment"/> により実際に削除されたセグメントの累積数
+    /// （単調増加。プロセス内累積のみで再起動をまたぐ永続化はしない）。
+    /// </summary>
+    /// <remarks>
+    /// 自己検証タイムアウトのバックログ起因判別（architecture.md §3.2.5。Issue #202・PR #211
+    /// レビュー対応）が「drain の進捗」の観測に使う。<see cref="CurrentUsageBytes"/> の周期
+    /// サンプリング差分（純増減）では、持続的な速度不足（追記速度が消化速度を恒常的に上回る
+    /// 状態。§3.2.2）下で drain が実際にセグメントを消化していても純減少が一度も観測されず
+    /// 「進捗なし」に誤分類されるため、追記と混ざらない単調増加の累積カウンタとして分離した。
+    /// <see cref="DeleteSegment"/> は drain（<c>SpoolDrainCoordinator</c>）が DB 書き込み確定後に
+    /// のみ呼ぶため、本カウンタの増分は drain 消化の直接証拠になる。
+    /// </remarks>
+    public long DeletedSegmentsTotal
+    {
+        get { lock (_gate) { return _deletedSegmentsTotal; } }
     }
 
     /// <summary>
@@ -258,6 +277,10 @@ public sealed class DiskSpool : IDisposable
             {
                 length = new FileInfo(segmentPath).Length;
                 File.Delete(segmentPath);
+
+                // 実在したファイルを削除できた場合のみ数える（存在しないパスの no-op 削除を
+                // 「drain の進捗」に数えない。DeletedSegmentsTotal の remarks 参照）。
+                _deletedSegmentsTotal++;
             }
 
             _currentUsageBytes = Math.Max(0, _currentUsageBytes - length);

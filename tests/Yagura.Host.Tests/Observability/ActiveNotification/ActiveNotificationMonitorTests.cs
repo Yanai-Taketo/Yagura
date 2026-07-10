@@ -537,6 +537,175 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // 自己検証タイムアウトのバックログ起因判別（EventId 1010。Issue #202。
+    // PR #200 レビューのフォローアップ）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestTimeout_WithRecentDrainProgress_WarnsWithBacklogEventId1010_NotFailure1009()
+    {
+        // 高負荷滞留シナリオ: 投入時点で未消化バックログが深く、drain は生きていて実際に
+        // セグメントを消化しているが、FIFO のため自己検証マーカーの合流が期待時間に間に合わない。
+        var spool = await OpenSpoolWithLargeQuotaAsync();
+        var backlogSegmentA = await AppendAndSealSegmentAsync(spool);
+        _ = await AppendAndSealSegmentAsync(spool); // 未削除のまま残す 2 件目の未消化セグメント。
+
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        // t=0: マーカーを投入する（バックログの末尾に置かれ、drain が追いつくまで合流しない）。
+        await monitor.EvaluateOnceAsync();
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id is 1009 or 1010);
+
+        // t=5分: drain が先頭セグメント（マーカーより古いバックログ）を 1 件消化・削除しつつ、
+        // 同じ観測窓内に実トラフィックの退避（追記）が消化量を上回って続く状況を模す——
+        // 使用量は純増する（§3.2.2 の「持続的な速度不足」の定義そのもの。PR #211 レビュー指摘への
+        // 対応——使用量の純増減サンプリングではこのシナリオで進捗が観測できず 1009 に誤分類される。
+        // マーカー自体はまだ照合しない。FIFO でまだ手前に未消化分が残っている想定）。
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        var usageBeforeWindow = spool.CurrentUsageBytes;
+        spool.DeleteSegment(backlogSegmentA);
+        _ = await AppendAndSealSegmentAsync(spool);
+        _ = await AppendAndSealSegmentAsync(spool);
+        Assert.True(spool.CurrentUsageBytes > usageBeforeWindow); // 追記速度 > 消化速度の成立確認。
+        await monitor.EvaluateOnceAsync();
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id is 1009 or 1010);
+
+        // t=10分（期待時間ちょうど）: マーカーはまだ未照合だが、直近（5 分前）に drain の進捗
+        // （消化済みセグメント削除の累積カウンタの増分）を観測しているため、使用量が純増していても
+        // 経路障害ではなくバックログの滞留と判定される。
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id is 1009 or 1010);
+        Assert.Equal(1010, record.Id.Id);
+        Assert.Equal(LogLevel.Warning, record.Level);
+        Assert.Contains("[spool-self-test-timeout-backlog]", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestTimeout_BacklogPresentButNeverDrains_WarnsWithFailureEventId1009()
+    {
+        // 真の経路障害シナリオ: バックログが存在し、追記（実トラフィックの退避）も続いている点は
+        // 高負荷滞留と同じだが、drain が一切進まない（セグメントが 1 件も消化・削除されない）。
+        // 「バックログの存在」や「追記の継続」だけでは判定を和らげず、「消化の進捗」の有無で
+        // 判別することの確認。
+        var spool = await OpenSpoolWithLargeQuotaAsync();
+        _ = await AppendAndSealSegmentAsync(spool);
+        _ = await AppendAndSealSegmentAsync(spool);
+
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        await monitor.EvaluateOnceAsync();
+
+        // drain 側で一切セグメントを消化しないまま、追記だけが続いて期待時間が経過する
+        // （追記は進捗と誤認されないことの確認を兼ねる）。
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        _ = await AppendAndSealSegmentAsync(spool);
+        await monitor.EvaluateOnceAsync();
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id is 1009 or 1010);
+        Assert.Equal(1009, record.Id.Id);
+        Assert.Equal(LogLevel.Error, record.Level);
+        Assert.Contains("[spool-self-test-timeout]", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestTimeout_DrainProgressStalls_EscalatesFromBacklogToFailure()
+    {
+        // 進捗停止シナリオ: 最初は drain が進んでいて「バックログの滞留」（1010）と判定されるが、
+        // その後 drain の進捗が完全に途絶えると、進捗が「直近」と呼べなくなった時点で経路障害の
+        // 疑い（1009）へ切り替わる——判定を先送りし続けて実障害の検知が沈黙しないことの確認。
+        var spool = await OpenSpoolWithLargeQuotaAsync();
+        var backlogSegmentA = await AppendAndSealSegmentAsync(spool);
+
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        // t=0: マーカー投入。
+        await monitor.EvaluateOnceAsync();
+
+        // t=5分: 1 度だけ drain の進捗を観測させる。
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        spool.DeleteSegment(backlogSegmentA);
+        await monitor.EvaluateOnceAsync();
+
+        // t=10分: 直近（5 分前）の進捗によりバックログ判定（1010）。
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await monitor.EvaluateOnceAsync();
+        Assert.Contains(collector.GetSnapshot(), r => r.Id.Id == 1010);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
+
+        // それ以降、drain の進捗が一切再発しないまま十分な時間が経過する
+        // （進捗観測から期待時間 = 10 分を超えて「直近」と呼べなくなる）。
+        timeProvider.Advance(TimeSpan.FromMinutes(10));
+        await monitor.EvaluateOnceAsync();
+
+        Assert.Contains(collector.GetSnapshot(), r => r.Id.Id == 1009);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SelfTestEscalatedTo1009_SingleProgressDoesNotRevertTo1010_UntilNextMarkerResets()
+    {
+        // 振動（flapping）防止シナリオ（PR #211 レビュー指摘への対応）: 一度 1009（経路障害の
+        // 疑い）へエスカレートした後は、単発の進捗が観測されても当該マーカーの追跡が終わるまで
+        // 1010 へ戻さない（ラッチ）。次のマーカー投入でラッチが解除され、新しい検証は白紙から
+        // 1010 判定に戻れることも確認する。
+        var spool = await OpenSpoolWithLargeQuotaAsync();
+        var backlogSegmentA = await AppendAndSealSegmentAsync(spool);
+        var backlogSegmentB = await AppendAndSealSegmentAsync(spool);
+
+        var collector = new FakeLogCollector();
+        var tracker = new SpoolSelfTestTracker();
+        var monitor = CreateMonitor(spool, collector, out var timeProvider, selfTestTracker: tracker);
+
+        // t=0: マーカー A を投入。
+        await monitor.EvaluateOnceAsync();
+
+        // t=10分: 進捗なしでタイムアウト → 1009 発火（ラッチ成立）。
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestTimeout);
+        await monitor.EvaluateOnceAsync();
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1009);
+
+        // t=11分: 単発の進捗（drain がセグメントを 1 件消化）が観測される——ラッチにより 1010 へは
+        // 戻らない（1009 は抑制窓内のため再発火もしない）。
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        spool.DeleteSegment(backlogSegmentA);
+        await monitor.EvaluateOnceAsync();
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1010);
+
+        // t=26分（抑制窓 15 分の経過後）: 依然としてラッチが効いており、直近に進捗があっても
+        // 1010 ではなく 1009 が再発火する（同一の根本原因に対して 2 つの ID が交互に発火しない）。
+        timeProvider.Advance(TimeSpan.FromMinutes(15));
+        await monitor.EvaluateOnceAsync();
+        Assert.Equal(2, collector.GetSnapshot().Count(r => r.Id.Id == 1009));
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1010);
+
+        // t=1日: 次のマーカー B の投入でラッチが解除される（投入直前の判定でマーカー A の 1009 が
+        // もう一度発火し得るのは従来どおり）。
+        timeProvider.Advance(ActiveNotificationConstants.SelfTestInterval - TimeSpan.FromMinutes(26));
+        await monitor.EvaluateOnceAsync();
+
+        // マーカー B の窓で進捗を観測させ、タイムアウトに至る——ラッチ解除により白紙から
+        // 1010（バックログの滞留）と判定される。
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        spool.DeleteSegment(backlogSegmentB);
+        await monitor.EvaluateOnceAsync();
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        await monitor.EvaluateOnceAsync();
+
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1010);
+    }
+
+    // ------------------------------------------------------------------
     // Start/StopAsync のライフサイクル（周期ループが実際に評価を呼ぶこと）
     // ------------------------------------------------------------------
 
@@ -633,6 +802,47 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         }
 
         return spool;
+    }
+
+    /// <summary>
+    /// バックログ起因判別テスト（EventId 1010。Issue #202）用: 上限が実質無制限のスプールを開く
+    /// （使用率ではなく「進捗の有無」だけを検証したいテストのため、上限到達で経路を汚さない）。
+    /// </summary>
+    private async Task<DiskSpool> OpenSpoolWithLargeQuotaAsync()
+    {
+        var directory = Path.Combine(_spoolDirectory, $"backlog-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var spool = DiskSpool.TryOpen(
+            new DiskSpoolOptions { Directory = directory, QuotaBytes = long.MaxValue / 2 },
+            out _);
+        Assert.NotNull(spool);
+        _openedSpools.Add(spool);
+
+        // TryOpen は非同期 API ではないが、他ヘルパーとの呼び出し形を揃えるため Task を返す。
+        await Task.CompletedTask;
+        return spool;
+    }
+
+    /// <summary>
+    /// 1 件の通常ログを追記し、アクティブセグメントを封止してセグメントファイルを 1 つ確定させる
+    /// （drain がまだ消化していない「未消化バックログのセグメント」を模す）。以後の追記は新しい
+    /// アクティブセグメントへ向かうため、呼ぶたびに独立したセグメントを作れる——
+    /// <see cref="DiskSpool.DeleteSegment"/> で個別に「drain が消化・削除した」ことを模せる。
+    /// </summary>
+    /// <returns>封止したセグメントファイルのパス（新しく封止された、最も新しいセグメント）。</returns>
+    /// <remarks>
+    /// <see cref="DiskSpool.TrySealActiveSegmentAndListDrainable"/> はディレクトリ内の drain 対象
+    /// セグメントを毎回すべて列挙する（累積リスト）ため、本メソッドを複数回呼んでも、返る値は
+    /// 「今回新たに封止した 1 件」を古い順ソートの末尾として取り出す。
+    /// </remarks>
+    private static async Task<string> AppendAndSealSegmentAsync(DiskSpool spool)
+    {
+        var result = await spool.TryAppendAsync(SpoolRecord.ForLog(SampleLogRecord()));
+        Assert.Equal(SpoolAppendResult.Appended, result);
+
+        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        Assert.NotEmpty(segments);
+        return segments[^1];
     }
 
     private static LogRecord SampleLogRecord() => new(
