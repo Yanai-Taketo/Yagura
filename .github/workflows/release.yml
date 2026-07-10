@@ -1,0 +1,371 @@
+# リリース用ワークフロー(ADR-0009 決定5・決定6 Phase1。委任事項6)。
+#
+# x64・ARM64 の RID マトリクスで MSI をビルドし、ARM64 は windows-11-arm ホストランナー
+# (実アーキ)でスモーク(起動・受信・閲覧・観測性カウンタ出力・スプール発動→drain の 1
+# サイクル。決定6 Phase1 完了条件①②)を通してから GitHub Release を作成する。
+# x64 は決定2 のとおり実機 lab・installer-e2e.yml(重い E2E)が別途品質を担保しているが、
+# 本ワークフローでも公開直前の Full E2E を最小限のゲートとして通す(壊れた MSI を公開しない)。
+#
+# ADR-0009 決定6「Phase 0 の完了を、ARM64 配布物(MSI・Release 資産)の公開および入口文書での
+# 対応表明の前提条件とする」——Phase 0 は PR #185 で合格済み(windows-11-arm 実アーキでの
+# publish・PE ヘッダ確認・起動〜閲覧・カウンタ出力を確認)。本ワークフローは Phase 1(ビルド・
+# リリース基盤)にあたる。
+#
+# .github/workflows/adr-0009-arm64-phase0-gate.yml(Phase 0 ゲート専用。恒久 CI ステップではない
+# 前提でワークフローコメントに明記済み)は、本ワークフローの smoke-arm64 ジョブが同水準以上の
+# 検証(実 MSI インストール経由の起動・受信・閲覧・カウンタ確認 + スプールサイクル)を行うため
+# 本 PR で削除し、置き換える。
+#
+# トリガ: バージョンタグ push(v*)+ 手動 dispatch(ADR-0009 決定5)。手動 dispatch は既定で
+# ビルド・スモークのみを行い GitHub Release は作成しない(publish_release 入力で明示 opt-in)
+# ——実装 PR での動作確認(gh workflow run)が実リリースを誤って切らないようにするため。
+# pull_request(本ファイル自身の変更のみ)は installer-e2e.yml・
+# adr-0009-arm64-phase0-gate.yml(削除済み)と同じ設計: workflow_dispatch は GitHub の制約上
+# 既定ブランチにファイルが存在しないと呼び出せない(PR #185 で実機確認済みの制約)ため、
+# 導入 PR 自身の上で実行し run URL を PR に記録できる経路として残す。create-release ジョブは
+# push(タグ)/workflow_dispatch 以外のイベントでは if 条件により実行されないため、
+# pull_request 実行で実リリースが誤って切られることはない。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'true で GitHub Release を実際に作成・公開する(既定 false = ビルド・スモークの動作確認のみ)'
+        type: boolean
+        default: false
+
+# 最小権限: ワークフロー既定は read とし、Release 作成に必要な contents: write は
+# create-release ジョブのみに付与する(conventions.md「リリース workflow の GITHUB_TOKEN には
+# contents: write を明示付与する」の要求を、書込が実際に要るジョブに限定して満たす。
+# PR #212 レビュー指摘の最小化対応)。
+permissions:
+  contents: read
+
+jobs:
+  # ADR-0009 決定4・決定5: x64・ARM64 の RID マトリクスで publish + MSI ビルドを行う。
+  # ARM64 のビルド自体は x64 ランナー上でのクロス publish で足りる(実アーキ実行が要るのは
+  # 後続の smoke-arm64 ジョブ)。
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # バージョンはタグ(v*)から取る。workflow_dispatch(タグなし)実行時は Package.wxs の
+      # Version をそのまま使う(conventions.md「リリース」: バージョンは chore(release) PR で
+      # 事前に Package.wxs へ焼き込む運用——550475b 等の前例と同じ)。
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $wxsMatch = Select-String -Path installer/Package.wxs -Pattern 'Version="(\d+\.\d+\.\d+)"' | Select-Object -First 1
+          if ($null -eq $wxsMatch) {
+            throw 'installer/Package.wxs から Version を読み取れなかった'
+          }
+          $wxsVersion = $wxsMatch.Matches[0].Groups[1].Value
+
+          $tagVersion = $null
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tagVersion = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          }
+
+          if ($null -ne $tagVersion -and $tagVersion -ne $wxsVersion) {
+            throw "タグのバージョン($tagVersion)と installer/Package.wxs の Version($wxsVersion)が一致しない。chore(release) PR で Package.wxs を先に更新すること。"
+          }
+
+          $version = if ($null -ne $tagVersion) { $tagVersion } else { $wxsVersion }
+          Write-Host "resolved version = $version (source: $(if ($null -ne $tagVersion) { 'git tag' } else { 'Package.wxs (workflow_dispatch)' }))"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # ADR-0009 決定5: publish 出力に含まれるネイティブ依存にも脆弱性スキャン/監査を適用する。
+      # 実装: Directory.Build.props(リポジトリ共通)が NuGetAuditMode=all +
+      # WarningsAsErrors(NU1900-1904)を既定で有効化しており、restore/build/publish のたびに
+      # 適用される(conventions.md「CI」の「依存パッケージの脆弱性スキャンを CI に組み込み、
+      # 検出時は PR をブロックする」と同じ仕組み)。この監査はパッケージ ID・バージョン単位の
+      # 脆弱性データベース照合であり RID(win-x64/win-arm64)に依存しないため、x64・ARM64
+      # いずれの restore でも同じ監査が働く。本ステップは restore を明示的に単独実行し、
+      # 監査結果をログ上で見える形にする(下の Build ステップでも同じ restore が走るため
+      # 二重にはなるが、失敗時の切り分けを容易にする)。
+      - name: Dependency vulnerability audit (${{ matrix.arch }})
+        run: dotnet restore installer/Yagura.Installer.wixproj -p:YaguraArch=${{ matrix.arch }}
+
+      - name: Build MSI (${{ matrix.arch }})
+        run: dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=${{ matrix.arch }} --no-restore
+
+      # 成果物命名(ADR-0009 決定4): 全アーキで明示サフィックス + バージョンを冠する
+      # (例 Yagura-0.3.0-x64.msi)。SHA256 チェックサムは既存リリース資産と同じ書式
+      # (大文字 16 進 + 半角スペース 2 個 + ファイル名。v0.1.0 以降の前例 Yagura-<version>.msi.sha256
+      # と同一書式であることを実際のリリース資産で確認済み)。
+      - name: Package release artifact (${{ matrix.arch }})
+        id: artifact
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $arch = '${{ matrix.arch }}'
+          $version = '${{ steps.version.outputs.version }}'
+          $srcMsi = "installer/bin/Release/ja-JP/Yagura-$arch.msi"
+          if (-not (Test-Path -Path $srcMsi)) {
+            throw "MSI not found: $srcMsi"
+          }
+
+          $destDir = 'release-out'
+          New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+          $destName = "Yagura-$version-$arch.msi"
+          $destPath = Join-Path $destDir $destName
+          Copy-Item -Path $srcMsi -Destination $destPath
+
+          $hash = (Get-FileHash -Path $destPath -Algorithm SHA256).Hash
+          $shaPath = "$destPath.sha256"
+          [System.IO.File]::WriteAllText($shaPath, "$hash  $destName`n", (New-Object System.Text.UTF8Encoding($false)))
+
+          Write-Host "artifact=$destName sha256=$hash"
+          "name=$destName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload build artifact (${{ matrix.arch }})
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-msi-${{ matrix.arch }}
+          path: release-out/
+          if-no-files-found: error
+
+  # ADR-0009 決定5・決定6 Phase1 完了条件①: 起動・受信・閲覧・観測性カウンタ出力のスモークを
+  # windows-11-arm ホストランナー(実アーキ)で行う。実 MSI インストール経由の Full E2E を使い、
+  # installer-e2e.yml(x64)と同じスクリプト・同じ検証水準にする(決定2「設計原則は全アーキ共通」)。
+  smoke-arm64:
+    needs: build
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Download ARM64 MSI artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: release-msi-arm64
+          path: release-out
+
+      - name: Locate MSI
+        id: msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path release-out -Filter '*.msi' | Select-Object -First 1
+          if ($null -eq $msi) { throw 'ARM64 MSI artifact not found' }
+          "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # Full E2E(installer/e2e/Invoke-YaguraInstallerE2E.ps1): サイレントインストール →
+      # サービス起動 → UDP 受信 → 閲覧照合 → 対話フレームワーク配信確認 → 観測性カウンタ出力
+      # 確認(本 PR で追加) → アンインストール → 残置物確認。management 権限は GitHub 公式の
+      # 「Windows virtual machines are configured to run as administrators with UAC disabled」
+      # (installer-e2e.yml のコメントと同じ根拠)が windows-11-arm にも適用される前提。
+      - name: Run installer E2E (ARM64, real MSI install)
+        shell: pwsh
+        run: |
+          ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 `
+            -MsiPath '${{ steps.msi.outputs.path }}' `
+            -OutputDir 'e2e-results-arm64'
+
+      - name: Upload ARM64 E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-arm64-e2e-results
+          path: e2e-results-arm64/
+          if-no-files-found: warn
+
+      # ADR-0009 決定6 Phase1 完了条件②: スプール発動 → drain 追いつきの 1 サイクルを ARM64
+      # 実アーキ上で通過させる。Yagura.Bench の SpoolActivationRecovery シナリオ(tools/Yagura.Bench/
+      # README.md)をそのまま使う——本体プロセスを子プロセスとして実バイナリで起動し、スプール
+      # 容量を縮小(--spool-quota-bytes)して意図的に発動させ、drain 完了(ExternalSpoolUsageProbe
+      # がスプール使用量 0 を確認)までを検証器が突合する。self-contained の publish 出力ではなく
+      # フレームワーク依存ビルド(dotnet build)を使うが、CLR の JIT は実行ホストのネイティブ
+      # ISA(ARM64)へコンパイルするため「ARM64 実アーキ上での実行」という要件は満たす
+      # (self-contained は配布形態の話であり実行アーキの話ではない)。
+      - name: Build Yagura.Bench (ARM64 runner, native JIT)
+        run: dotnet build tools/Yagura.Bench/Yagura.Bench.csproj -c Release
+
+      - name: Spool activation -> drain smoke (ARM64, 1 cycle)
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          dotnet tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll `
+            SpoolActivationRecovery --spool-quota-bytes 2097152 --burst-count 5000 `
+            --output-dir bench-results-arm64
+          if ($LASTEXITCODE -ne 0) {
+            throw "SpoolActivationRecovery failed on ARM64 (exit $LASTEXITCODE) - see bench-results-arm64/"
+          }
+          Write-Host 'OK: spool activation -> drain cycle reconciled on ARM64 real hardware'
+
+      # 委任事項3(縮小版実測): ARM64 の持続流量目安を最低限記録する。M 系(architecture.md §7)の
+      # 基準値は x64 CI ランナーで確定済みのものであり ARM64 へは転用しない(ADR-0009 決定6
+      # 委任事項3)。本ステップは「試験的」表記の裏付けとなる参考値の採取のみが目的で、
+      # CI のブロッキング判定には使わない(比較基準を持たないため)。
+      - name: Sustained throughput reference sample (ARM64, informational)
+        shell: pwsh
+        run: |
+          dotnet tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll `
+            SustainedZeroDrop --transport udp --rate 1000 --duration 10 `
+            --output-dir bench-results-arm64
+          Write-Host "exit code: $LASTEXITCODE (informational - not blocking. ADR-0009 委任事項3)"
+
+      - name: Upload ARM64 bench evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-arm64-bench-results
+          path: bench-results-arm64/
+          if-no-files-found: warn
+
+  # x64 は決定2で「実機lab・回帰ベンチを維持」と定められているが、公開直前に壊れた MSI を
+  # 誤って配布しないための最小ゲートとして Full E2E を通す(installer-e2e.yml の重い検証とは
+  # 独立に、リリース対象そのものを検証する)。
+  smoke-x64:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download x64 MSI artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: release-msi-x64
+          path: release-out
+
+      - name: Locate MSI
+        id: msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path release-out -Filter '*.msi' | Select-Object -First 1
+          if ($null -eq $msi) { throw 'x64 MSI artifact not found' }
+          "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Run installer E2E (x64, real MSI install)
+        shell: pwsh
+        run: |
+          ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 `
+            -MsiPath '${{ steps.msi.outputs.path }}' `
+            -OutputDir 'e2e-results-x64'
+
+      - name: Upload x64 E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-x64-e2e-results
+          path: e2e-results-x64/
+          if-no-files-found: warn
+
+  # GitHub Release の作成。タグ push では常に公開する。workflow_dispatch では
+  # publish_release=true の場合のみ(既定 false = ビルド・スモークの動作確認のみで実リリースは
+  # 切らない)。
+  create-release:
+    needs: [build, smoke-arm64, smoke-x64]
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true')
+    runs-on: windows-latest
+    # GitHub Release の作成・資産アップロードに必要な書込権限は本ジョブのみに付与する
+    # (build/smoke 系ジョブは read で足りる。最小権限の原則)。
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: release-msi-*
+          path: release-out
+          merge-multiple: true
+
+      - name: List artifacts
+        shell: pwsh
+        run: Get-ChildItem -Path release-out -Recurse | Format-Table FullName, Length
+
+      # ADR-0009 決定2・決定6 Phase1 完了条件③: Release Notes に検証水準の非対称性の定型文言
+      # (x64=対応/ARM64=試験的の要約 + ADR-0009 へのリンク)を、最初の ARM64 MSI 公開より前に
+      # 追加する。以後の全リリースで継続する(README 全面更新は ADR-0009 決定6 Phase3。
+      # 告知定型文はそれを待たず Phase1 で先行させる)。
+      - name: Compose release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $version = '${{ needs.build.outputs.version }}'
+          $notes = @"
+          ## アーキテクチャ対応 (ADR-0009)
+
+          | アーキ | 検証水準 | 対象環境 |
+          |---|---|---|
+          | x64 | 対応(Supported) | Windows Server 全般 + Windows 10/11 クライアント |
+          | ARM64 | 試験的(Experimental) | Windows 11 on Arm 等のクライアント OS のみ(Windows Server の ARM64 は対象外) |
+
+          ARM64 は起動・受信・閲覧・観測性カウンタ出力・スプール発動→drain 追いつきの実機スモークまでを
+          検証水準としており、x64 のような実機 lab E2E・CI 回帰ベンチは対象外です。不具合は受け付けますが
+          修正 SLA は約束しません。詳細は [ADR-0009](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/adr/0009-architecture-support.md) を参照してください。
+
+          **迷ったら x64 を選んでください。** 自分の環境のアーキを確認するには「設定 > システム > バージョン情報」の「システムの種類」を確認してください。
+
+          ## ダウンロード
+
+          | ファイル | 対象 |
+          |---|---|
+          | ``Yagura-$version-x64.msi`` | x64(対応) |
+          | ``Yagura-$version-arm64.msi`` | ARM64(試験的) |
+
+          各 ``.msi.sha256`` はチェックサム検証用です。
+          "@
+          $notesPath = "$env:RUNNER_TEMP/release-notes.md"
+          [System.IO.File]::WriteAllText($notesPath, $notes, (New-Object System.Text.UTF8Encoding($false)))
+          "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $version = '${{ needs.build.outputs.version }}'
+          $tag = "v$version"
+          $notesPath = '${{ steps.notes.outputs.path }}'
+          $files = Get-ChildItem -Path release-out -File | ForEach-Object { $_.FullName }
+
+          $existing = gh release view $tag --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title "Yagura $tag" --notes-file $notesPath
+          }

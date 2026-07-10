@@ -38,9 +38,12 @@ jobs:
           global-json-file: global.json
 
       # MSI ビルド(installer/README.md の手順と同一)。内部で Yagura.Host を
-      # self-contained (win-x64) で publish してから WiX が焼く。
+      # self-contained (win-x64) で publish してから WiX が焼く。本ワークフローは
+      # x64 専用のまま維持する(ADR-0009 決定5「installer-e2e.yml 相当の重い E2E は
+      # 当面 x64 のみに残す」)。ARM64 は .github/workflows/release.yml の smoke-arm64
+      # ジョブ(windows-11-arm 実アーキ)が担う。
       - name: Build MSI
-        run: dotnet build installer/Yagura.Installer.wixproj -c Release
+        run: dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=x64
 
       # 管理者権限の根拠(実体検証済みの公式記載):
       # GitHub 公式ドキュメント「GitHub-hosted runners reference」の
@@ -58,12 +61,13 @@ jobs:
       - name: Run installer E2E
         shell: pwsh
         run: |
-          # MSI パスは実出力から解決する(既定は installer/bin/Release/ja-JP/Yagura.msi
-          # だが、WiX SDK の出力パス構成の変化に頑健にする)。
-          $msi = Get-ChildItem -Path installer/bin -Recurse -Filter Yagura.msi |
+          # MSI パスは実出力から解決する(既定は installer/bin/Release/ja-JP/Yagura-x64.msi。
+          # ADR-0009 決定4 で成果物命名にアーキサフィックスが付いた——WiX SDK の出力パス構成の
+          # 変化にも頑健にするため Filter は "Yagura-*.msi" のワイルドカードにする)。
+          $msi = Get-ChildItem -Path installer/bin -Recurse -Filter Yagura-*.msi |
             Select-Object -First 1
           if ($null -eq $msi) {
-            throw 'Yagura.msi not found under installer/bin'
+            throw 'Yagura-*.msi not found under installer/bin'
           }
           Write-Host "MSI: $($msi.FullName)"
           ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 `

@@ -83,10 +83,32 @@
     <!-- チェックボックス ON のとき既定ブラウザで閲覧 URL を開く。
          WixShellExec は Util 拡張の custom action で、実装は ShellExecuteW にターゲットを
          そのまま渡す(wixtoolset/wix v7.0.0 の src/ext/Util/ca/shellexecca.cpp を直接確認。
-         URL は OS のプロトコル関連付けで既定ブラウザが開く。確認日 2026-07-06)。 -->
+         URL は OS のプロトコル関連付けで既定ブラウザが開く。確認日 2026-07-06)。
+
+         BinaryRef はアーキ別に存在する(WixToolset.Util.wixext は x86/x64/arm64 それぞれの
+         ネイティブ CA バイナリを Wix4UtilCA_X86 / Wix4UtilCA_X64 / Wix4UtilCA_A64 として
+         同梱する)。util:ServiceConfig・util:InternetShortcut・Firewall 拡張の CustomAction は
+         拡張の wixlib フラグメントが InstallerPlatform に応じて自動解決するが、本 CustomAction
+         は素の <CustomAction BinaryRef="..."> で自前記述しているため手動で解決する必要がある。
+         ADR-0009 決定4 の懸念(BinaryRef のアーキ依存内部参照名)はここに実在した——
+         ARM64 ビルド(-p:YaguraArch=arm64)を実ビルドし、WindowsInstaller COM で CustomAction
+         テーブルを照合したところ、拡張自動生成分はすべて Wix4UtilCA_A64/Wix5FWCA_A64 に
+         解決される一方、本行は x64 決め打ちのままだった(確認日 2026-07-10)。$(sys.BUILDARCH)
+         は WiX 標準のプリプロセッサ変数で、InstallerPlatform(-arch/-p:InstallerPlatform)と
+         連動して x86/x64/arm64 に解決される(docs.firegiant.com/wix/schema/wxsyntax/
+         preprocessorvariables/、確認日 2026-07-10)。 -->
+    <?if $(sys.BUILDARCH) = x86 ?>
+    <?define YaguraUtilCABinaryRef = Wix4UtilCA_X86 ?>
+    <?elseif $(sys.BUILDARCH) = x64 ?>
+    <?define YaguraUtilCABinaryRef = Wix4UtilCA_X64 ?>
+    <?elseif $(sys.BUILDARCH) = arm64 ?>
+    <?define YaguraUtilCABinaryRef = Wix4UtilCA_A64 ?>
+    <?else?>
+    <?error 未対応の sys.BUILDARCH です: $(sys.BUILDARCH) ?>
+    <?endif?>
     <Property Id="WixShellExecTarget" Value="http://localhost:8514/" />
     <CustomAction Id="LaunchYaguraViewer"
-                  BinaryRef="Wix4UtilCA_X64"
+                  BinaryRef="$(YaguraUtilCABinaryRef)"
                   DllEntry="WixShellExec"
                   Execute="immediate"
                   Return="check"

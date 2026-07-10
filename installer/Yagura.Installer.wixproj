@@ -13,17 +13,33 @@
 <Project Sdk="WixToolset.Sdk/7.0.0">
 
   <PropertyGroup>
-    <InstallerPlatform>x64</InstallerPlatform>
+    <!-- ADR-0009 決定4: アーキ別パラメータ化。既定は x64(現状の挙動を変えない)。
+         -p:YaguraArch=arm64 で ARM64 ビルドに切り替える(InstallerPlatform・publish RID・
+         成果物名が連動)。WiX の InstallerPlatform は x86/x64/arm64 の 3 値を公式にサポートする
+         (docs.firegiant.com/wix/schema/wxs/package/ の InstallerPlatform 属性。x86 は
+         ADR-0009 決定1 により本プロジェクトでは不採用のため未対応のまま)。 -->
+    <YaguraArch Condition="'$(YaguraArch)' == ''">x64</YaguraArch>
+    <InstallerPlatform Condition="'$(YaguraArch)' == 'x64'">x64</InstallerPlatform>
+    <InstallerPlatform Condition="'$(YaguraArch)' == 'arm64'">arm64</InstallerPlatform>
+    <!-- publish 対象 RID(.NET Runtime Identifier)。win-x64/win-arm64 いずれもポータブル RID
+         として有効(.NET RID catalog「Windows RIDs」節。ADR-0009 決定1 で確認済み)。 -->
+    <YaguraPublishRid Condition="'$(YaguraArch)' == 'x64'">win-x64</YaguraPublishRid>
+    <YaguraPublishRid Condition="'$(YaguraArch)' == 'arm64'">win-arm64</YaguraPublishRid>
+
     <!-- 主対象は日本語圏の Windows 管理者(ADR-0005 決定 1 と同じ判断)。
          WixToolset.UI.wixext は ja-JP の翻訳文字列を同梱している(公式ドキュメント
          「WixUI dialog library > Localization > Translated strings」に ja-JP が明記。
          確認日 2026-07-06)。 -->
     <Cultures>ja-JP</Cultures>
-    <OutputName>Yagura</OutputName>
+    <!-- 成果物命名(ADR-0009 決定4): 全アーキで明示サフィックスとする。x64 の無サフィックス名は
+         維持しない(棚卸しの機械可読性を後方互換より優先。ADR-0008 設計条件 9 と同じ判断基準)。
+         リリースワークフロー側でバージョンを冠したファイル名(例 Yagura-0.3.0-x64.msi)へ
+         リネームする(既存リリース資産 Yagura-<version>.msi と同じ運用の踏襲)。 -->
+    <OutputName>Yagura-$(YaguraArch)</OutputName>
 
-    <!-- Yagura.Host の publish 出力(MSI に収める実体)。既定はプロジェクト直下の
-         publish フォルダ。-p:YaguraPublishDir=... で差し替え可能。 -->
-    <YaguraPublishDir Condition="'$(YaguraPublishDir)' == ''">$(MSBuildProjectDirectory)\publish</YaguraPublishDir>
+    <!-- Yagura.Host の publish 出力(MSI に収める実体)。既定はアーキ別サブフォルダ
+         (x64/arm64 の publish 出力を取り違えないため)。-p:YaguraPublishDir=... で差し替え可能。 -->
+    <YaguraPublishDir Condition="'$(YaguraPublishDir)' == ''">$(MSBuildProjectDirectory)\publish\$(YaguraArch)</YaguraPublishDir>
     <DefineConstants>$(DefineConstants);PublishDir=$(YaguraPublishDir)</DefineConstants>
 
     <!-- WiX v7 の Open Source Maintenance Fee (OSMF) EULA 承諾。公式ドキュメント
@@ -50,9 +66,10 @@
   </ItemGroup>
 
   <!--
-    Yagura.Host を self-contained(win-x64)で publish してから MSI を焼く。
-    self-contained の判断: ゼロ設定ファーストラン(CLAUDE.md 方針 2)と「追加のサーバ製品なし」
-    (ADR-0002)の思想から、対象サーバに .NET ランタイムの事前導入を要求しない。
+    Yagura.Host を self-contained(既定 RID は $(YaguraPublishRid)。ADR-0009 決定4)で
+    publish してから MSI を焼く。self-contained の判断: ゼロ設定ファーストラン
+    (CLAUDE.md 方針 2)と「追加のサーバ製品なし」(ADR-0002)の思想から、対象サーバに
+    .NET ランタイムの事前導入を要求しない。
     -p:SkipYaguraHostPublish=true で publish 済み出力の再利用が可能。
   -->
   <Target Name="PublishYaguraHost" BeforeTargets="CoreCompile" Condition="'$(SkipYaguraHostPublish)' != 'true'">
@@ -62,7 +79,7 @@
       <_YaguraDotnetExe Condition="'$(DOTNET_HOST_PATH)' != ''">$(DOTNET_HOST_PATH)</_YaguraDotnetExe>
       <_YaguraDotnetExe Condition="'$(_YaguraDotnetExe)' == ''">dotnet</_YaguraDotnetExe>
     </PropertyGroup>
-    <Exec Command="&quot;$(_YaguraDotnetExe)&quot; publish &quot;$(MSBuildProjectDirectory)\..\src\Yagura.Host\Yagura.Host.csproj&quot; -c Release -r win-x64 --self-contained true -o &quot;$(YaguraPublishDir)&quot;" />
+    <Exec Command="&quot;$(_YaguraDotnetExe)&quot; publish &quot;$(MSBuildProjectDirectory)\..\src\Yagura.Host\Yagura.Host.csproj&quot; -c Release -r $(YaguraPublishRid) --self-contained true -o &quot;$(YaguraPublishDir)&quot;" />
   </Target>
 
   <Target Name="EnsurePublishOutput" BeforeTargets="CoreCompile" AfterTargets="PublishYaguraHost">

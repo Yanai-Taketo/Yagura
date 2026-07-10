@@ -1,19 +1,33 @@
 # Yagura MSI インストーラ
 
 WiX Toolset 7(WixToolset.Sdk 7.0.0)による MSI インストーラプロジェクト(M9-1。Issue #74)。
+ADR-0009 決定4 によりアーキ別パラメータ化済み(x64 既定 / ARM64 は `-p:YaguraArch=arm64`)。
 
 ## ビルド手順
 
 ```powershell
-dotnet build installer\Yagura.Installer.wixproj -c Release
+# x64(既定。省略時と同じ)
+dotnet build installer\Yagura.Installer.wixproj -c Release -p:YaguraArch=x64
+
+# ARM64(ADR-0009 決定4。x64 ホストからのクロスビルドで足りる——WiX の InstallerPlatform=arm64
+# ビルド自体はネイティブ ARM64 環境を要求しない。実行時の動作確認は windows-11-arm 実アーキで行う)
+dotnet build installer\Yagura.Installer.wixproj -c Release -p:YaguraArch=arm64
 ```
 
-- ビルドは自動で `dotnet publish src\Yagura.Host -c Release -r win-x64 --self-contained true` を
-  実行し(出力先 `installer\publish\`)、その出力一式を MSI に収める。publish 済み出力を
-  再利用する場合は `-p:SkipYaguraHostPublish=true` を付ける
-- 成果物: `installer\bin\Release\ja-JP\Yagura.msi`(約 43 MB。self-contained のため .NET
-  ランタイムの事前導入は不要)。**MSI はビルド環境ごとに再現しない**ため、サイズ・SHA256 の
-  byte-exact 値をドキュメントに書かない(docs/development/conventions.md「リリース」)
+- ビルドは自動で `dotnet publish src\Yagura.Host -c Release -r <win-x64|win-arm64> --self-contained true`
+  を実行し(出力先 `installer\publish\<x64|arm64>\`。アーキごとにサブフォルダを分け、
+  取り違えを防ぐ)、その出力一式を MSI に収める。publish 済み出力を再利用する場合は
+  `-p:SkipYaguraHostPublish=true` を付ける
+- 成果物: `installer\bin\Release\ja-JP\Yagura-<x64|arm64>.msi`(x64 は約 43 MB。self-contained
+  のため .NET ランタイムの事前導入は不要)。**リリース成果物の命名は全アーキで明示サフィックス
+  とする**(x64 の無サフィックス名は維持しない。ADR-0009 決定4)。リリースワークフロー
+  (`.github/workflows/release.yml`)がバージョンを冠した名前(例 `Yagura-0.3.0-x64.msi`)へ
+  リネームして公開する。**MSI はビルド環境ごとに再現しない**ため、サイズ・SHA256 の byte-exact
+  値をドキュメントに書かない(docs/development/conventions.md「リリース」)
+- アーキ別ビルドを同じ作業ツリーで連続して行う場合、MSBuild の増分ビルド判定が
+  `installer\obj` 配下のキャッシュを誤って再利用することがある(実ビルドで確認、2026-07-10)。
+  `installer\obj`・`installer\bin` を削除してからビルドし直すこと(CI のマトリクスビルドは
+  ジョブごとに独立した作業ディレクトリのため影響を受けない)
 - **本プロジェクトは Yagura.sln に含めていない**: CI(ci.yml)は sln を対象にビルドしており、
   sln へ追加すると ci.yml に触れずに CI のビルド対象が変わるため(M9-1 では CI への組み込みを
   スコープ外とした)。CI への組み込みは後続 Issue で行う
@@ -34,7 +48,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | データルート作成 + ACL | `%ProgramData%\Yagura` を作成し、native `PermissionEx`(MsiLockPermissionsEx)の SDDL で「SYSTEM/Administrators = フル、サービスアカウント = 変更、継承無効化」を適用(security.md §5) |
 | フォワーダ MSI 配置フォルダ作成 + ACL | `%ProgramData%\Yagura\forwarder` を作成し、データルートとは独立した SDDL(`ForwarderFolder` コンポーネント)で「SYSTEM/Administrators = フル、サービスアカウント = **読み取りのみ**、継承無効化」を適用(ADR-0008 設計条件 9・security.md §5.1・Issue #171)。データルートの ACL をそのまま継承すると生じるサービスアカウントの書込可を明示的に断つ |
 | ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可 3 規則(WixToolset.Firewall.wixext)。**各規則のプロファイルは Domain + Private の複合に限定**(Public は含まない。`Profile="[YaguraFwProfile]"` のプロパティ間接参照でビットマスク整数 `3` = Domain\|Private を Firewall 拡張の custom action へ渡す。方式の根拠と制約は Firewall.wxs 冒頭コメント参照)。管理 8515 は loopback 専用のため規則を作らない |
-| 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_FIREWALL=""` |
+| 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura-x64.msi /qn YAGURA_FIREWALL=""` |
 | インストール記録 | 選択(`RulesRequested`)と作成規則一覧をデータルート直下の `firewall-rules.ini` に記録(初回起動時のイベントログ転記は Host 側の後続 Issue) |
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
 | 完了画面 | 閲覧 URL(http://localhost:8514/)+ 管理 URL(http://localhost:8515/admin)の案内(併記) + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`。開くのは閲覧 URL) |
@@ -72,9 +86,33 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   (`*.summary.json`。RunId・各手順の合否・所要時間・実行環境)+ msiexec 詳細ログ。
   CI 実行記録(workflow run と artifact)を基準 1 の証拠としてリンクする
 
+## ARM64 対応(ADR-0009 決定4・委任事項2)
+
+- **BinaryRef のアーキ依存(実ビルドで発見・修正)**: `LaunchYaguraViewer` カスタムアクションの
+  `BinaryRef` を `Wix4UtilCA_X64` に決め打ちしていたため、ARM64 ビルドでも x64 版 CA バイナリを
+  参照する不具合があった(ARM64 実機では x64 ネイティブ DLL を msiexec.exe(ARM64)にロードできず
+  実行時失敗になり得る)。`util:ServiceConfig`・`util:InternetShortcut`・Firewall 拡張の
+  CustomAction は拡張の wixlib フラグメントが InstallerPlatform に応じて自動的に
+  `Wix4UtilCA_A64`/`Wix5FWCA_A64` へ解決していた一方、素の `<CustomAction BinaryRef="...">` は
+  自動解決されないことを WindowsInstaller COM での CustomAction テーブル照合で確認した
+  (確認日 2026-07-10)。WiX 標準のプリプロセッサ変数 `$(sys.BUILDARCH)` で `Wix4UtilCA_X86` /
+  `Wix4UtilCA_X64` / `Wix4UtilCA_A64` を切り替えるよう `Package.wxs` を修正し、x64・ARM64
+  それぞれのビルドで CustomAction テーブルの `Source` が正しいアーキの Binary を指すことを
+  再ビルド後に確認済み
+- **誤アーキ MSI 実行時の利用者体験(実機確認)**: 本開発機(x64)で ARM64 版 `Yagura-arm64.msi` を
+  `msiexec /i /qn` で実行したところ、Windows Installer 標準のエラー **1633**
+  (`ERROR_INSTALL_PLATFORM_UNSUPPORTED`)で即座に失敗し、ログに次のメッセージが出力されることを
+  確認した(確認日 2026-07-10):
+  `このインストール パッケージはこの種類のプロセッサでサポートされていません。製品の製造元に問い合わせてください。`
+  この判定は WiX が MSI の SummaryInformation `Template` プロパティに書き込むアーキマーカー
+  (x64 ビルドは `x64;1041`、ARM64 ビルドは `Arm64;1041` — 実ビルドで確認)を Windows Installer
+  が自動照合する既定動作であり、追加のローンチコンディションなしで「対応していないプロセッサです」
+  という利用者が自力で状況を理解できるメッセージが出る。したがって本 PR では追加のローンチ
+  コンディションを実装しない(既定動作で十分と判断)
+
 ## 検証状態
 
-- ローカルビルド + WiX 標準の ICE 検証(ビルドに内蔵)を通過(警告 0)
+- ローカルビルド + WiX 標準の ICE 検証(ビルドに内蔵)を通過(警告 0。x64・ARM64 両方)
 - MSI テーブルの内容検証済み(ServiceInstall / Wix4ServiceConfig / MsiLockPermissionsEx /
   Wix5FirewallException / IniFile / Upgrade / ControlEvent を WindowsInstaller COM で照合)
 - **ファイアウォール規則のプロファイル限定(Issue #125)**: ローカルビルドした MSI の

@@ -43,14 +43,17 @@ H(アップグレード)は C〜G の検証を 0.1.0 環境で終えてから行
 ### 1.1 MSI 2 バージョンのビルド
 
 ```powershell
+# 注: ADR-0009 決定4 により MSI のビルド出力名はアーキサフィックス付き
+#     (Yagura-x64.msi / Yagura-arm64.msi)になった。本 lab は x64 対象。
+
 # (1) v0.1.0(現状のまま)
 dotnet build installer\Yagura.Installer.wixproj -c Release
-Copy-Item installer\bin\Release\ja-JP\Yagura.msi C:\work\Yagura-0.1.0.msi
+Copy-Item installer\bin\Release\ja-JP\Yagura-x64.msi C:\work\Yagura-0.1.0.msi
 
 # (2) v0.1.1(アップグレード検証用): installer\Package.wxs の
 #     <Package ... Version="0.1.0" を Version="0.1.1" に書き換えて再ビルド
 dotnet build installer\Yagura.Installer.wixproj -c Release
-Copy-Item installer\bin\Release\ja-JP\Yagura.msi C:\work\Yagura-0.1.1.msi
+Copy-Item installer\bin\Release\ja-JP\Yagura-x64.msi C:\work\Yagura-0.1.1.msi
 
 # 書き換えは検証後に元へ戻す(コミットしない)
 git -C . checkout -- installer/Package.wxs
