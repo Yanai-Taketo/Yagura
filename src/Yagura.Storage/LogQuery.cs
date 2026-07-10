@@ -44,6 +44,15 @@ namespace Yagura.Storage;
 /// 一覧用の軽量射影として返す <see cref="LogRecordSummary.Message"/> の先頭文字数
 /// （database.md §2.1「一覧は先頭 N 文字の射影」。M-10 の仮値 200 を暫定使用）。
 /// </param>
+/// <param name="Cursor">
+/// カーソル（キーセット）ページングの位置（database.md §1.2「対話的検索」・DB-11。Issue #144）。
+/// 指定すると、このカーソルより過去（<c>ORDER BY ReceivedAt DESC, Id DESC</c> の意味で後ろ）の
+/// 行だけを返す——「続きを読む」（前回の最終行から先頭ページと同じ条件で続きを取得する）用途。
+/// <c>null</c>（既定）は先頭ページ（従来どおり最新から）を意味する。詳細は
+/// <see cref="LogQueryCursor"/> の doc コメントを参照。他の条件（時間範囲・送信元等）とは
+/// AND で組み合わさる——例えば <see cref="ReceivedAtFrom"/> と併用すれば「指定範囲内の続き」
+/// になる。
+/// </param>
 public sealed record LogQuery(
     int Limit,
     TimeSpan Timeout,
@@ -57,7 +66,8 @@ public sealed record LogQuery(
     // 既定値はここに直接リテラルで書く必要がある（C# の言語仕様上、プライマリコンストラクタの
     // 既定パラメータ値はレコード本体で宣言する定数を前方参照できない）。値そのものの定義は
     // DefaultMessageProjectionLength を正とする——この既定値変更時は両方を同時に更新すること。
-    int MessageProjectionLength = 200)
+    int MessageProjectionLength = 200,
+    LogQueryCursor? Cursor = null)
 {
     /// <summary>
     /// 一覧射影の先頭文字数の既定値（M-10 の仮値 200。database.md §2.1）。

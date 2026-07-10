@@ -749,6 +749,18 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                     "%" + EscapeLikePattern(searchText) + "%";
             }
 
+            if (query.Cursor is { } cursor)
+            {
+                // カーソル（キーセット）ページング（database.md §1.2・DB-11。Issue #144）:
+                // 複合索引 IX_LogRecords_ReceivedAt_Id（ReceivedAt DESC, Id DESC）と同じ並びで
+                // 「カーソルより過去」の行だけに絞るシーク条件。OFFSET は使わない。
+                whereClauses.Add(
+                    "(ReceivedAt < @cursorReceivedAt OR (ReceivedAt = @cursorReceivedAt AND Id < @cursorId))");
+                command.Parameters.Add("@cursorReceivedAt", System.Data.SqlDbType.DateTime2).Value =
+                    cursor.ReceivedAt.UtcDateTime;
+                command.Parameters.Add("@cursorId", System.Data.SqlDbType.BigInt).Value = cursor.Id;
+            }
+
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
 
             // Id DESC のタイブレーク（Issue #144）: ReceivedAt 単独では同一時刻（同一ミリ秒）の
