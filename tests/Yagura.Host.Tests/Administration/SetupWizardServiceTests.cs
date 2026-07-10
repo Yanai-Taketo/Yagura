@@ -110,6 +110,28 @@ public sealed class SetupWizardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Apply_TcpPortAndRetentionDaysChanged_AppearInChangedKeysAndAudit()
+    {
+        // Issue #210 回帰テスト: ConfigurationChangePlanner.Compare が Ingestion:Tcp:Port と
+        // Retention:Days を比較していなかったため、SetupWizardService.ApplyValues が現に
+        // 書き換えるこれらのキーがウィザード確定のたびに「検出された変更」（UI 表示・監査記録
+        // security.md §4.1 の 2001）から欠落していた（#191 の ReverseDns より到達可能性が
+        // 高いギャップとして PR #209 で発見・記録）。
+        var service = new SetupWizardService(_dataRoot, _audit);
+        var snapshot = await ConfirmAllStepsAsync(service);
+
+        var result = await service.ApplyAsync(snapshot.ApplyIdempotencyToken!, operatorAddress: "127.0.0.1");
+
+        Assert.Equal(WizardApplyOutcome.Applied, result.Outcome);
+        Assert.Contains("Ingestion:Tcp:Port", result.ChangedKeys);
+        Assert.Contains("Retention:Days", result.ChangedKeys);
+
+        var recorded = Assert.Single(_audit.RecordedEvents);
+        Assert.Contains("Ingestion:Tcp:Port", recorded.Detail);
+        Assert.Contains("Retention:Days", recorded.Detail);
+    }
+
+    [Fact]
     public async Task Apply_SameTokenTwice_DoesNotApplyTwice()
     {
         var service = new SetupWizardService(_dataRoot, _audit);

@@ -16,23 +16,20 @@
 /// <para>
 /// 比較するキーは <see cref="ConfigurationKeyMetadata"/> に登録済みのキーと同期させる
 /// （M4-3 でスプール 3 キーを追加。Issue #191 で <c>Viewer:ReverseDns:Enabled</c> の
-/// 比較漏れを追加修正——PR #190 の調査で発見され、本 Issue に記録されていた既知ギャップ）。
+/// 比較漏れを追加修正——PR #190 の調査で発見され、本 Issue に記録されていた既知ギャップ。
+/// Issue #210 で残りの 5 キー（<c>Ingestion:Udp:ReceiveBufferBytes</c>・
+/// <c>Ingestion:Tcp:BindAddress</c>・<c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・
+/// <c>Retention:ExecutionTimeOfDay</c>）の比較漏れを追加修正）。
 /// 新しいキーを <see cref="YaguraConfigurationOptions"/> に追加する際は、本クラスの
 /// 比較ロジックと <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
 /// </para>
 /// <para>
-/// <b>Issue #191 対応時点の既知の残ギャップ</b>: 本メソッドが比較する 11 キーは
-/// <see cref="ConfigurationKeyMetadata.RegisteredKeys"/>（18 キー）の真部分集合であり、
-/// <c>Ingestion:Udp:ReceiveBufferBytes</c>・<c>Ingestion:Tcp:BindAddress</c>・
-/// <c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・<c>Retention:ExecutionTimeOfDay</c>
-/// は未比較のまま残っている（<c>Storage:Provider</c>・<c>Storage:SqlServer:ConnectionString</c>
-/// は database.md §6.1 の専用切替手順が扱うため、通常の差分適用の対象外——意図的な除外）。
-/// このうち <c>Ingestion:Tcp:Port</c> と <c>Retention:Days</c> は
-/// <see cref="Administration.SetupWizardService.ApplyAsync"/> が現に書き換える値であり、
-/// 初期セットアップウィザードでこれらを変更しても <see cref="ConfigurationChangePlan.ChangedKeys"/>
-/// に現れず、UI 表示・監査記録（security.md §4.1 の 2001）の差分要約から欠落する
-/// （ReverseDns より実害の到達可能性が高い）。Issue #191 のスコープ外として本 PR では
-/// 修正しない（対応 PR の body に別 Issue 起票の要否を記録した）。
+/// <b>意図的な除外</b>: <see cref="ConfigurationKeyMetadata.RegisteredKeys"/> のうち
+/// <c>Storage:Provider</c>・<c>Storage:SqlServer:ConnectionString</c> の 2 キーは本メソッドの
+/// 比較対象に含めない——database.md §6.1 の専用切替手順が扱うため、通常の差分適用の対象外
+/// である。それ以外の登録済みキーは全て比較する。この網羅性は
+/// <c>ConfigurationChangePlannerTests</c> のリフレクションによる機械検証テストで担保する
+/// （新しいキーの追加時に本メソッドへの追加を忘れると、当該テストが失敗して検出する）。
 /// </para>
 /// </remarks>
 public static class ConfigurationChangePlanner
@@ -49,6 +46,9 @@ public static class ConfigurationChangePlanner
 
         CompareKey(changedKeys, "Ingestion:Udp:BindAddress", before.Ingestion?.Udp?.BindAddress, after.Ingestion?.Udp?.BindAddress);
         CompareKey(changedKeys, "Ingestion:Udp:Port", before.Ingestion?.Udp?.Port, after.Ingestion?.Udp?.Port);
+        CompareKey(changedKeys, "Ingestion:Udp:ReceiveBufferBytes", before.Ingestion?.Udp?.ReceiveBufferBytes, after.Ingestion?.Udp?.ReceiveBufferBytes);
+        CompareKey(changedKeys, "Ingestion:Tcp:BindAddress", before.Ingestion?.Tcp?.BindAddress, after.Ingestion?.Tcp?.BindAddress);
+        CompareKey(changedKeys, "Ingestion:Tcp:Port", before.Ingestion?.Tcp?.Port, after.Ingestion?.Tcp?.Port);
         CompareKey(changedKeys, "Ingestion:Rfc3164:DefaultTimeZone", before.Ingestion?.Rfc3164?.DefaultTimeZone, after.Ingestion?.Rfc3164?.DefaultTimeZone);
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
         CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);
@@ -58,6 +58,8 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
         CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);
         CompareKey(changedKeys, "Spool:QuotaBytes", before.Spool?.QuotaBytes, after.Spool?.QuotaBytes);
+        CompareKey(changedKeys, "Retention:Days", before.Retention?.Days, after.Retention?.Days);
+        CompareKey(changedKeys, "Retention:ExecutionTimeOfDay", before.Retention?.ExecutionTimeOfDay, after.Retention?.ExecutionTimeOfDay);
 
         var requiredEffect = ConfigurationReloadEffect.Immediate;
         foreach (var key in changedKeys)
