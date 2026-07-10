@@ -1,4 +1,5 @@
-﻿using Yagura.Host.Configuration;
+﻿using System.Reflection;
+using Yagura.Host.Configuration;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -12,20 +13,29 @@ namespace Yagura.Host.Tests.Configuration;
 /// が返ることを確認する。
 /// </remarks>
 /// <remarks>
-/// <b>網羅性テストについて（Issue #191）</b>: <c>YaguraConfigurationOptionsClonerTests</c>
+/// <b>網羅性テストについて（Issue #191 / #210）</b>: <c>YaguraConfigurationOptionsClonerTests</c>
 /// や <c>RetentionTests</c> の <c>KnownKeys</c> ⇔ <see cref="ConfigurationKeyMetadata"/> 双方向
 /// 同期テストと同種の「<see cref="ConfigurationChangePlanner.Compare"/> が
 /// <see cref="ConfigurationKeyMetadata.RegisteredKeys"/> を全て比較している」ことを機械検証する
-/// テストの追加を検討したが、本 Issue の対応時点で <c>Compare</c> は
-/// <c>Ingestion:Udp:ReceiveBufferBytes</c>・<c>Ingestion:Tcp:BindAddress</c>・
-/// <c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・<c>Retention:ExecutionTimeOfDay</c> の
-/// 比較も欠いており（<see cref="ConfigurationChangePlanner"/> のクラスコメント参照）、厳密な
-/// 網羅性テストを追加すると本 Issue のスコープ外のキーまで一度に修正する必要が生じる。
-/// そのため本 Issue では個別キー（<c>Viewer:ReverseDns:Enabled</c>）の回帰テストのみを追加し、
-/// 網羅性テストは残ギャップの解消時（別 Issue）に導入する。
+/// テスト（<see cref="Compare_EveryRegisteredKey_ExceptProviderSwitchKeys_IsDetectedAsChanged"/>）
+/// は Issue #191 対応時点では PR #209 で試作されたが、当時は <c>Compare</c> が本テストの対象と
+/// なる 5 キー（<c>Ingestion:Udp:ReceiveBufferBytes</c>・<c>Ingestion:Tcp:BindAddress</c>・
+/// <c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・<c>Retention:ExecutionTimeOfDay</c>）の比較を
+/// 欠いており即座に失敗するため見送られた。Issue #210 で当該 5 キーの比較漏れを修正したことで
+/// 有効化した——以後、新しい設定キーの追加時に本メソッドへの追加を忘れると、このテストが
+/// 個別キー名を知らなくても機械的に検出する。
 /// </remarks>
 public sealed class ConfigurationChangePlannerTests
 {
+    /// <summary>
+    /// <see cref="ConfigurationChangePlanner"/> のクラスコメントに記載の意図的な除外
+    /// （database.md §6.1 の専用切替手順が扱う provider 切替キー）。
+    /// </summary>
+    private static readonly string[] ProviderSwitchKeys =
+    [
+        "Storage:Provider",
+        "Storage:SqlServer:ConnectionString",
+    ];
     [Fact]
     public void Compare_NoChanges_ReturnsImmediateAndNoChangedKeys()
     {
@@ -222,9 +232,13 @@ public sealed class ConfigurationChangePlannerTests
     [InlineData("Ingestion:Udp:BindAddress", ConfigurationReloadEffect.ListenerReconfiguration)]
     [InlineData("Ingestion:Udp:Port", ConfigurationReloadEffect.ListenerReconfiguration)]
     [InlineData("Ingestion:Udp:ReceiveBufferBytes", ConfigurationReloadEffect.ListenerReconfiguration)]
+    [InlineData("Ingestion:Tcp:BindAddress", ConfigurationReloadEffect.ListenerReconfiguration)]
+    [InlineData("Ingestion:Tcp:Port", ConfigurationReloadEffect.ListenerReconfiguration)]
     [InlineData("Viewer:HttpPort", ConfigurationReloadEffect.RestartRequired)]
     [InlineData("Viewer:ReverseDns:Enabled", ConfigurationReloadEffect.Immediate)]
     [InlineData("Storage:SqliteFileName", ConfigurationReloadEffect.RestartRequired)]
+    [InlineData("Retention:Days", ConfigurationReloadEffect.Immediate)]
+    [InlineData("Retention:ExecutionTimeOfDay", ConfigurationReloadEffect.Immediate)]
     public void GetReloadEffect_KnownKeys_ReturnsDeclaredEffect(string key, ConfigurationReloadEffect expected)
     {
         Assert.Equal(expected, ConfigurationKeyMetadata.GetReloadEffect(key));
@@ -234,5 +248,194 @@ public sealed class ConfigurationChangePlannerTests
     public void GetReloadEffect_UnknownKey_Throws()
     {
         Assert.Throws<KeyNotFoundException>(() => ConfigurationKeyMetadata.GetReloadEffect("Nonexistent:Key"));
+    }
+
+    // ------------------------------------------------------------------
+    // 残り 5 キーの比較漏れ回帰テスト（Issue #210。PR #209 の調査で発見・記録された
+    // 既知ギャップの修正確認）。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Compare_UdpReceiveBufferBytesChanged_DetectsChangeAsListenerReconfiguration()
+    {
+        var before = new YaguraConfigurationOptions
+        {
+            Ingestion = new YaguraConfigurationOptions.IngestionOptions
+            {
+                Udp = new YaguraConfigurationOptions.IngestionOptions.UdpOptions { ReceiveBufferBytes = "4194304" },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Ingestion = new YaguraConfigurationOptions.IngestionOptions
+            {
+                Udp = new YaguraConfigurationOptions.IngestionOptions.UdpOptions { ReceiveBufferBytes = "8388608" },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Ingestion:Udp:ReceiveBufferBytes" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.ListenerReconfiguration, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_TcpBindAddressChanged_DetectsChangeAsListenerReconfiguration()
+    {
+        var before = new YaguraConfigurationOptions
+        {
+            Ingestion = new YaguraConfigurationOptions.IngestionOptions
+            {
+                Tcp = new YaguraConfigurationOptions.IngestionOptions.TcpOptions { BindAddress = "0.0.0.0" },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Ingestion = new YaguraConfigurationOptions.IngestionOptions
+            {
+                Tcp = new YaguraConfigurationOptions.IngestionOptions.TcpOptions { BindAddress = "192.168.1.10" },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Ingestion:Tcp:BindAddress" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.ListenerReconfiguration, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_TcpPortChanged_DetectsChangeAsListenerReconfiguration()
+    {
+        // Issue #210: SetupWizardService.ApplyValues が現に書き換える到達可能なキー
+        // （ウィザード経由の回帰テストは SetupWizardServiceTests 側にも追加する）。
+        var before = new YaguraConfigurationOptions
+        {
+            Ingestion = new YaguraConfigurationOptions.IngestionOptions
+            {
+                Tcp = new YaguraConfigurationOptions.IngestionOptions.TcpOptions { Port = "514" },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Ingestion = new YaguraConfigurationOptions.IngestionOptions
+            {
+                Tcp = new YaguraConfigurationOptions.IngestionOptions.TcpOptions { Port = "5140" },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Ingestion:Tcp:Port" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.ListenerReconfiguration, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_RetentionDaysChanged_DetectsChangeAsImmediate()
+    {
+        // Issue #210: SetupWizardService.ApplyValues が現に書き換える到達可能なキー
+        // （ウィザード経由の回帰テストは SetupWizardServiceTests 側にも追加する）。
+        var before = new YaguraConfigurationOptions
+        {
+            Retention = new YaguraConfigurationOptions.RetentionOptions { Days = "30" },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Retention = new YaguraConfigurationOptions.RetentionOptions { Days = "90" },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Retention:Days" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.Immediate, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_RetentionExecutionTimeOfDayChanged_DetectsChangeAsImmediate()
+    {
+        var before = new YaguraConfigurationOptions
+        {
+            Retention = new YaguraConfigurationOptions.RetentionOptions { ExecutionTimeOfDay = "02:15" },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Retention = new YaguraConfigurationOptions.RetentionOptions { ExecutionTimeOfDay = "03:30" },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Retention:ExecutionTimeOfDay" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.Immediate, plan.RequiredEffect);
+    }
+
+    // ------------------------------------------------------------------
+    // 網羅性テスト（Issue #210。PR #209 で試作され、当時は既存 5 漏れで即失敗するため
+    // 見送られていたもの。本 Issue で Compare が全キーを比較するようになったため有効化する）。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Compare_EveryRegisteredKey_ExceptProviderSwitchKeys_IsDetectedAsChanged()
+    {
+        foreach (var key in ConfigurationKeyMetadata.RegisteredKeys)
+        {
+            if (ProviderSwitchKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var before = new YaguraConfigurationOptions();
+            var after = new YaguraConfigurationOptions();
+            SetValueByKeyPath(after, key, "changed-value");
+
+            var plan = ConfigurationChangePlanner.Compare(before, after);
+
+            Assert.Equal(new[] { key }, plan.ChangedKeys);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="keyPath"/>（<c>:</c> 区切りの JSON キーパス）が指す
+    /// <see cref="YaguraConfigurationOptions"/> の CLR プロパティ階層をリフレクションで辿り、
+    /// 末端の <see langword="string"/> プロパティへ <paramref name="value"/> を設定する
+    /// （中間の <c>*Options</c> ネストインスタンスは必要に応じて生成する）。キーパスの各区分は
+    /// <see cref="YaguraConfigurationOptions"/> のプロパティ名と一致する設計（本メソッドが
+    /// プロパティ未検出で例外を投げること自体が、キー命名とプロパティ命名の乖離を検出する）。
+    /// </summary>
+    private static void SetValueByKeyPath(YaguraConfigurationOptions root, string keyPath, string value)
+    {
+        var segments = keyPath.Split(':');
+        object current = root;
+        var currentType = typeof(YaguraConfigurationOptions);
+
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var property = currentType.GetProperty(segments[i])
+                ?? throw new InvalidOperationException(
+                    $"キー '{keyPath}' の区分 '{segments[i]}' に対応するプロパティが {currentType.Name} に見つかりません。" +
+                    "ConfigurationKeyMetadata のキー文字列と YaguraConfigurationOptions のプロパティ名は一致させる設計です。");
+
+            if (i == segments.Length - 1)
+            {
+                if (property.PropertyType != typeof(string))
+                {
+                    throw new NotSupportedException(
+                        $"未対応のプロパティ型です: {property.DeclaringType?.Name}.{property.Name} ({property.PropertyType})。" +
+                        "本テストのウォーカーを更新してください。");
+                }
+
+                property.SetValue(current, value);
+                return;
+            }
+
+            var nested = property.GetValue(current);
+            if (nested is null)
+            {
+                nested = Activator.CreateInstance(property.PropertyType)
+                    ?? throw new InvalidOperationException($"{property.PropertyType} のインスタンス化に失敗しました。");
+                property.SetValue(current, nested);
+            }
+
+            current = nested;
+            currentType = property.PropertyType;
+        }
     }
 }
