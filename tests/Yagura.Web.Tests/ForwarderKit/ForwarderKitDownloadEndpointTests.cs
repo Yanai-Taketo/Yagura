@@ -36,15 +36,14 @@ public sealed class ForwarderKitDownloadEndpointTests
     }
 
     [Fact]
-    public async Task Download_ModeTls_Returns200WithTlsOutputInConf()
+    public async Task Download_ModeTcp_Returns200WithModeTcpInConf()
     {
-        // Issue #137: mode=tls は Fluent Bit の Mode を tcp に固定したうえで tls On を注入する
-        // （生成 UI は CA 証明書を同梱しないため tls.verify Off で生成される——エンドポイント側の
-        // 結線のみを確認する。tls.verify On + tls.ca_file の内容確認は ForwarderKitBuilderTests）。
+        // Issue #156: mode=tcp。TLS 送信はキットから除外済み（オーナー決定 2026-07-11）のため
+        // tls 系の行は生成されない。
         await using var harness = await ViewerHostHarness.StartAsync();
         using var client = new HttpClient { BaseAddress = harness.GetBaseAddress() };
 
-        var response = await client.GetAsync("/admin/forwarder-kit/download?host=192.0.2.10&port=6514&channels=System&mode=tls");
+        var response = await client.GetAsync("/admin/forwarder-kit/download?host=192.0.2.10&port=514&channels=System&mode=tcp");
 
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
 
@@ -55,14 +54,35 @@ public sealed class ForwarderKitDownloadEndpointTests
         var conf = await reader.ReadToEndAsync();
 
         Assert.Contains("Mode                tcp", conf);
-        Assert.Contains("tls                 On", conf);
-        Assert.Contains("tls.verify          Off", conf);
+        Assert.DoesNotContain("    tls", conf);
+    }
+
+    [Fact]
+    public async Task Download_ModeTls_TreatedAsUdp_NoTlsInConf()
+    {
+        // TLS 送信はキットから除外済み（オーナー決定 2026-07-11）——mode=tls を手打ちしても
+        // 既定の UDP へ落ち、tls 系の設定行は生成されない（無音で失う組み合わせを作らない）。
+        await using var harness = await ViewerHostHarness.StartAsync();
+        using var client = new HttpClient { BaseAddress = harness.GetBaseAddress() };
+
+        var response = await client.GetAsync("/admin/forwarder-kit/download?host=192.0.2.10&port=6514&channels=System&mode=tls");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+        var confEntry = archive.GetEntry("fluent-bit-yagura.conf") ?? throw new InvalidOperationException("conf entry not found");
+        using var reader = new StreamReader(confEntry.Open(), System.Text.Encoding.UTF8);
+        var conf = await reader.ReadToEndAsync();
+
+        Assert.Contains("Mode                udp", conf);
+        Assert.DoesNotContain("    tls", conf);
+        Assert.Null(archive.GetEntry("yagura-tls-ca.pem"));
     }
 
     [Fact]
     public async Task Download_ModeOmitted_DefaultsToUdp_ZipStillHasSixEntries()
     {
-        // mode 未指定は既定（udp）——Issue #137 以前と挙動が変わらないことの回帰確認。
+        // mode 未指定は既定（udp）——mode パラメータ導入前と挙動が変わらないことの回帰確認。
         await using var harness = await ViewerHostHarness.StartAsync();
         using var client = new HttpClient { BaseAddress = harness.GetBaseAddress() };
 

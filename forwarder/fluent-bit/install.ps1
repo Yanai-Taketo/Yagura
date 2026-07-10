@@ -49,59 +49,17 @@
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -YaguraPort 514 -Channels "System,Application"
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -Mode tcp   (see TCP framing caveat below)
-#   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -Mode tls -TlsCaFile C:\certs\yagura-ca.pem
 #   powershell -NoProfile -File install.ps1                                   (pre-configured kit)
 #
-# -Mode (udp / tcp / tls, default udp): udp is subject to IP fragmentation loss
-# for events larger than the path MTU (silent, no error on the sending side --
-# see Issue #156). tcp avoids that, but Fluent Bit's out_syslog plugin does not
+# -Mode (udp / tcp, default udp): udp is subject to IP fragmentation loss for
+# events larger than the path MTU (silent, no error on the sending side -- see
+# Issue #156). tcp avoids that, but Fluent Bit's out_syslog plugin does not
 # support RFC 6587 octet-counting framing over TCP; it terminates every message
 # with a single LF instead (verified against the out_syslog source, 2026-07-09).
 # Yagura's TCP receiver treats embedded LF bytes in a multi-line Windows event
 # body (e.g. Security audit "\r\n"-separated fields) as message boundaries too,
 # so a tcp-mode event containing embedded newlines can arrive split into several
 # records. See docs/guides/forward-windows-eventlog.md for the full trade-off.
-#
-# -Mode tls (Issue #137): sends to Yagura's syslog-over-TLS receiver (RFC 5425,
-# opt-in on the Yagura side, default port 6514). "Mode" only accepts udp/tcp in
-# out_syslog; TLS is layered on top of Mode=tcp via a separate "tls On" switch,
-# not a Mode value (fluentbit.io/manual/data-pipeline/outputs/syslog, checked
-# 2026-07-10). -YaguraPort defaults to 6514 automatically when -Mode tls is
-# selected and -YaguraPort is not explicitly passed.
-#
-# *** KNOWN INCOMPATIBILITY (confirmed by live testing, 2026-07-11): Fluent
-# Bit's out_syslog does NOT implement RFC 6587 octet-counting over TCP transport
-# -- not even with TLS enabled. It always terminates messages with a single LF
-# (the same limitation documented above for -Mode tcp). RFC 5425 section 4.3
-# mandates octet-counting for syslog-over-TLS, and Yagura's TLS receiver
-# enforces this strictly (a non-digit first byte is treated as a fatal framing
-# violation and the connection is torn down immediately). CONSEQUENCE: as of
-# Fluent Bit 5.0.8, -Mode tls completes the TLS handshake successfully but
-# every subsequent message is rejected by Yagura post-handshake -- and because
-# out_syslog does not wait for or check any response, Fluent Bit has no way to
-# detect this and will NOT retry or report an error for the rejected messages
-# (silent loss from the sender's point of view; confirmed via lab test:
-# messages sent over two separate keep-alive connections were both rejected by
-# Yagura with no corresponding failure logged on the Fluent Bit side). Yagura's
-# own log records a warning per rejected connection (an "unrecoverable framing
-# corruption" warning), and this is NOT the same code path as a TLS handshake
-# failure (the TLS handshake itself succeeds, so the
-# yagura.ingestion.tcp.tls_handshake_failure counter is not incremented) --
-# operators must watch for this distinct warning.
-# Until Fluent Bit gains octet-counting support (or Yagura's TLS receiver
-# relaxes RFC 5425 strictness, which is out of scope here), -Mode tls should be
-# treated as encryption-capable-but-not-currently-interoperable with Fluent
-# Bit. Senders that do implement octet-counting over TLS (e.g. rsyslog,
-# syslog-ng, NXLog) are not affected by this limitation.
-# -TlsVerify (default true): verifies the Yagura server's certificate against
-# -TlsCaFile (or the OS trust store if omitted). Fluent Bit does not provide
-# self-signed certificate generation, and neither does Yagura (security.md
-# section 6 decision) -- if Yagura's TLS receive certificate is self-signed or issued by
-# an internal CA not in the OS trust store, pass -TlsCaFile pointing at a PEM
-# copy of that certificate/CA, or verification will fail (connection refused,
-# not silently trusted). -TlsVerify:$false disables verification entirely
-# (encrypts the channel but does not authenticate the server) -- only use this
-# for lab/throwaway setups; the script logs a loud warning when it is used.
 #
 # Exit codes: 0 = success, 1 = failure, 3010 = success but reboot required (from msiexec).
 
@@ -123,21 +81,9 @@ param(
 
     # udp (default): simple, but IP-fragments (and can silently drop) events
     # larger than the path MTU. tcp: avoids that, at the cost of the LF-framing
-    # caveat documented above and in the guide. tls: syslog over TLS (RFC 5425,
-    # Issue #137) -- see the -Mode tls note above.
-    [ValidateSet('udp', 'tcp', 'tls')]
+    # caveat documented above and in the guide.
+    [ValidateSet('udp', 'tcp')]
     [string]$Mode = "udp",
-
-    # syslog-over-TLS (RFC 5425) server/CA certificate to trust, PEM format
-    # (Fluent Bit's tls.ca_file). Only meaningful with -Mode tls. Left empty:
-    # Fluent Bit falls back to the OS trust store, which will not trust a
-    # self-signed or internal-CA-issued Yagura certificate.
-    [string]$TlsCaFile = "",
-
-    # Only meaningful with -Mode tls. $true (default): verify the server
-    # certificate (Fluent Bit tls.verify On). $false: encrypt without
-    # verifying the peer -- logs a loud warning; lab/throwaway use only.
-    [bool]$TlsVerify = $true,
 
     [string]$MsiPath = "",
 
@@ -145,15 +91,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-# -Mode tls defaults -YaguraPort to 6514 (RFC 5425) when the caller did not
-# explicitly pass -YaguraPort (still 514 in the parameter default above, which
-# is the udp/tcp default -- ValidateRange does not let us branch the default by
-# another parameter's value, so this is resolved here instead).
-if ($Mode -eq "tls" -and -not $PSBoundParameters.ContainsKey('YaguraPort')) {
-    $YaguraPort = 6514
-}
-
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configDir = "C:\ProgramData\fluent-bit-yagura"
 $fluentBitExe = "C:\Program Files\fluent-bit\bin\fluent-bit.exe"
@@ -207,9 +144,6 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
 }
 foreach ($f in @($confTemplate, $luaTemplate)) {
     if (-not (Test-Path $f)) { Fail ("Kit file not found: " + $f) }
-}
-if ($Mode -eq "tls" -and -not [string]::IsNullOrEmpty($TlsCaFile) -and -not (Test-Path $TlsCaFile)) {
-    Fail ("-TlsCaFile not found: " + $TlsCaFile)
 }
 
 $rebootRequired = $false
@@ -392,50 +326,16 @@ if ($isPreConfigured) {
     }
     $normalizedChannels = Get-NormalizedChannels $Channels
     $modeValue = $Mode.ToLowerInvariant()
-
-    # Fluent Bit's out_syslog has no "tls" Mode value (docs.fluentbit.io/manual/
-    # data-pipeline/outputs/syslog, checked 2026-07-10): TLS is layered on top of
-    # Mode tcp via a separate "tls On" switch. The Yagura-level -Mode tls is
-    # translated to Mode=tcp in the conf, with the tls.* keys injected via
-    # @@TLS_BLOCK@@ below.
-    $fluentBitModeValue = if ($modeValue -eq "tls") { "tcp" } else { $modeValue }
-
-    $tlsBlockLines = @()
-    if ($modeValue -eq "tls") {
-        $tlsVerifyValue = if ($TlsVerify) { "On" } else { "Off" }
-        $tlsBlockLines += ("    tls                 On")
-        $tlsBlockLines += ("    tls.verify          " + $tlsVerifyValue)
-        if (-not [string]::IsNullOrEmpty($TlsCaFile)) {
-            $tlsBlockLines += ("    tls.ca_file         " + (Resolve-Path $TlsCaFile).ProviderPath)
-        }
-    }
-    $tlsBlock = $tlsBlockLines -join "`n"
-
     $conf = $conf.Replace("@@YAGURA_HOST@@", $YaguraHost)
     $conf = $conf.Replace("@@YAGURA_PORT@@", [string]$YaguraPort)
     $conf = $conf.Replace("@@CHANNELS@@", $normalizedChannels)
-    $conf = $conf.Replace("@@MODE@@", $fluentBitModeValue)
-    $conf = $conf.Replace("@@TLS_BLOCK@@", $tlsBlock)
+    $conf = $conf.Replace("@@MODE@@", $modeValue)
 }
 
 # UTF-8 without BOM: Fluent Bit's config parser does not expect a BOM.
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText($confTarget, $conf, $utf8NoBom)
 Copy-Item -Path $luaTemplate -Destination (Join-Path $configDir "winevt-severity.lua") -Force
-
-# Generated kit (ADR-0008) with a TLS CA/server certificate embedded by the
-# admin at generation time (Yagura.Web.ForwarderKit.ForwarderKitBuilder):
-# the conf's tls.ca_file already points at this file's deployed path
-# (C:\ProgramData\fluent-bit-yagura\yagura-tls-ca.pem); copy it there if
-# present next to the script. Harmless no-op for udp/tcp kits and for the
-# static kit (which references -TlsCaFile at its original location instead
-# via @@TLS_BLOCK@@ substitution above, so it never carries this file).
-$tlsCaTemplate = Join-Path $scriptDir "yagura-tls-ca.pem"
-if (Test-Path $tlsCaTemplate) {
-    Copy-Item -Path $tlsCaTemplate -Destination (Join-Path $configDir "yagura-tls-ca.pem") -Force
-    Log "TLS CA/server certificate (yagura-tls-ca.pem) deployed alongside the config."
-}
-
 if ($isPreConfigured) {
     Log ("Config deployed to " + $configDir + " (pre-configured kit; destination baked in by the template)")
 } else {
@@ -444,28 +344,6 @@ if ($isPreConfigured) {
         Log ("WARN: -Mode tcp uses LF-delimited framing, not RFC 6587 octet-counting (Fluent Bit's " +
              "out_syslog plugin does not support it). Multi-line event bodies with embedded newlines " +
              "can arrive split into multiple records. See docs/guides/forward-windows-eventlog.md.")
-    }
-    if ($modeValue -eq "tls") {
-        Log ("WARN: -Mode tls uses Fluent Bit's out_syslog TCP transport, which does not implement RFC 6587 " +
-             "octet-counting framing (same LF-only limitation as -Mode tcp -- see above). RFC 5425 requires " +
-             "octet-counting for syslog-over-TLS, and Yagura's TLS receiver enforces this strictly. " +
-             "CONFIRMED BY LIVE TESTING (2026-07-11, Fluent Bit 5.0.8): the TLS handshake succeeds, but " +
-             "every message sent afterward is rejected by Yagura -- and Fluent Bit does not detect or " +
-             "retry the rejection (silent loss from this sender's point of view). Until Fluent Bit " +
-             "implements octet-counting, -Mode tls encrypts the channel but does NOT reliably deliver " +
-             "messages to Yagura. Senders that implement octet-counting over TLS (rsyslog, syslog-ng, " +
-             "NXLog) are not affected.")
-        if (-not $TlsVerify) {
-            Log ("WARN: -TlsVerify:`$false -- the channel is encrypted but the Yagura server's certificate " +
-                 "is NOT verified (no protection against an on-path attacker presenting a different " +
-                 "certificate). Use only for lab/throwaway setups; for production use -TlsVerify:`$true " +
-                 "(default) with -TlsCaFile pointing at Yagura's TLS receive certificate/CA.")
-        } elseif ([string]::IsNullOrEmpty($TlsCaFile)) {
-            Log ("WARN: -Mode tls with -TlsVerify:`$true and no -TlsCaFile -- Fluent Bit will only trust " +
-                 "certificates chaining to the Windows OS trust store. If Yagura's TLS receive certificate " +
-                 "is self-signed or issued by an internal CA not in that store, the connection will fail " +
-                 "verification. Pass -TlsCaFile pointing at a PEM copy of that certificate/CA.")
-        }
     }
 }
 

@@ -1,11 +1,8 @@
 # Fluent Bit 配布キット
 
 Windows 端末・サーバのイベントログを Fluent Bit(Apache-2.0)経由で Yagura へ
-syslog(RFC 5424 / UDP・TCP(平文)・TLS(暗号化。syslog over TLS。RFC 5425)、
-`install.ps1 -Mode` で選択)転送するための、サイレント導入可能な配布キット。
-**`-Mode tls` は現時点の Fluent Bit(`out_syslog`)では Yagura へメッセージを配送できない
-既知の非互換がある**(2026-07-11 実機検証。詳細は
-[利用者ガイド](../../docs/guides/forward-windows-eventlog.md)の「TLS を使う」参照)。
+syslog(RFC 5424 / UDP または TCP、`install.ps1 -Mode`で選択)転送するための、
+サイレント導入可能な配布キット。
 
 **収集対象端末のアーキテクチャ**: Fluent Bit は Windows x64(`win64`)・ARM64(`winarm64`)の
 MSI を公式提供している(ADR-0009 決定7)。`install.ps1` は導入先端末のアーキを自動判定し、

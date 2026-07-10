@@ -215,11 +215,6 @@ public static class YaguraAdminExtensions
                     channels,
                     msiBundle,
                     forwardMode,
-                    // 生成 UI は CA 証明書の同梱手段を持たない（GET クエリでは複数行 PEM を安全に
-                    // 運べないため——ForwarderKitBuilder のコメント参照）。TLS 選択時は常に
-                    // tls.verify Off（暗号化のみ）で生成し、検証を要する場合は静的キットの
-                    // install.ps1 -Mode tls -TlsCaFile へ誘導する（README.generated.md の注記）。
-                    tlsCaCertificatePem: null,
                     out var request,
                     out var error))
             {
@@ -317,17 +312,17 @@ public static class YaguraAdminExtensions
     }
 
     /// <summary>
-    /// クエリ文字列の <c>mode</c> を <see cref="ForwarderKitMode"/> へ解決する（Issue #137）。
+    /// クエリ文字列の <c>mode</c> を <see cref="ForwarderKitMode"/> へ解決する（Issue #156）。
     /// 未指定・空文字・未知の値は既定（<see cref="ForwarderKitMode.Udp"/>）として扱う——
     /// <see cref="TryParseArchitecture"/> と異なり、モードは新規追加のクエリパラメータであり、
     /// 既に配布済みの URL（mode 未指定）が既定と同じ挙動になることが後方互換そのものであるため、
-    /// 「未知の値をエラーにする」必要性が薄い(Issue #137 実装時点で URL を手打ちする利用者は
-    /// 想定しない——画面からの遷移のみを正規経路とする)。
+    /// 「未知の値をエラーにする」必要性が薄い(URL を手打ちする利用者は想定しない——画面からの
+    /// 遷移のみを正規経路とする)。TLS 送信はキットから除外済み（オーナー決定 2026-07-11。
+    /// security.md §6.1）のため、<c>tls</c> は認識せず既定の UDP へ落とす。
     /// </summary>
     private static ForwarderKitMode ParseForwardMode(string? value) => value?.Trim().ToLowerInvariant() switch
     {
         "tcp" => ForwarderKitMode.Tcp,
-        "tls" => ForwarderKitMode.Tls,
         _ => ForwarderKitMode.Udp,
     };
 

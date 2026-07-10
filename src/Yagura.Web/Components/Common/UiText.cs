@@ -1023,7 +1023,7 @@ public static class UiText
     /// <summary>ポート入力のラベル。</summary>
     public const string ForwarderKitPortLabel = "ポート";
 
-    // ---- 転送方式（Issue #137: Udp（既定）/ Tcp / Tls） ----
+    // ---- 転送方式（Issue #156: Udp（既定）/ Tcp。TLS 送信はキットから除外——オーナー決定 2026-07-11） ----
 
     /// <summary>転送方式選択の見出し。</summary>
     public const string ForwarderKitModeTitle = "転送方式";
@@ -1031,7 +1031,7 @@ public static class UiText
     /// <summary>転送方式選択の説明。</summary>
     public const string ForwarderKitModeNote =
         "UDP は既定で単純ですが、MTU を超えるイベントは断片化により失われることがあります。" +
-        "TCP・TLS は断片化損失を避けられますが、それぞれ注意点があります（選択時に表示）。";
+        "TCP は断片化損失を避けられますが、注意点があります（選択時に表示）。";
 
     /// <summary>転送方式: UDP（既定）。</summary>
     public const string ForwarderKitModeUdp = "UDP（既定）";
@@ -1039,27 +1039,10 @@ public static class UiText
     /// <summary>転送方式: TCP。</summary>
     public const string ForwarderKitModeTcp = "TCP";
 
-    /// <summary>転送方式: TLS（syslog over TLS。RFC 5425）。</summary>
-    public const string ForwarderKitModeTls = "TLS（暗号化。RFC 5425）";
-
     /// <summary>TCP 選択時の注記（RFC 6587 octet-counting 非対応の制約——Issue #156）。</summary>
     public const string ForwarderKitModeTcpNote =
         "Fluent Bit の out_syslog は TCP で RFC 6587 の octet-counting に対応していません（LF 区切り）。" +
         "複数行を含むイベント本文（Security 監査ログ等）が複数レコードに分かれて届く場合があります。";
-
-    /// <summary>
-    /// TLS 選択時の注記（証明書検証の限界に加え、Fluent Bit の既知の非互換——2026-07-11 実機検証。
-    /// Issue #137）。
-    /// </summary>
-    public const string ForwarderKitModeTlsNote =
-        "既知の非互換（2026-07-11 実機検証）: 現在の Fluent Bit（out_syslog）は TLS 有効時も " +
-        "octet-counting フレーミングに対応しておらず、Yagura の TLS 受信（RFC 5425 準拠）へ" +
-        "メッセージを配送できません。TLS 暗号化が必要な場合は rsyslog・syslog-ng 等の別実装を" +
-        "検討してください。詳細は導入ガイドを参照してください。" +
-        "また、宛先の Yagura サーバで TLS 受信（既定ポート 6514）が有効化されている必要があります。" +
-        "この生成キットは Yagura サーバの証明書を検証しません（tls.verify Off で暗号化のみ）。" +
-        "証明書を検証したい場合は、手動配布用の静的キット（forwarder/fluent-bit/README.md）の " +
-        "install.ps1 -Mode tls -TlsCaFile を使用してください。";
 
     /// <summary>チャネル選択の見出し。</summary>
     public const string ForwarderKitChannelsTitle = "収集チャネル";

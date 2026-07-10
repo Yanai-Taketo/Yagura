@@ -29,6 +29,23 @@ public sealed class TlsSyslogListenerOptions
     /// <summary>フレーミング進捗タイムアウトの既定値（<see cref="TcpSyslogListenerOptions.DefaultFramingProgressTimeout"/> と同一）。</summary>
     public static readonly TimeSpan DefaultFramingProgressTimeout = TcpSyslogListenerOptions.DefaultFramingProgressTimeout;
 
+    /// <summary>
+    /// TLS ハンドシェイクの完了猶予（仮値。PR #225 レビュー指摘 High）。
+    /// </summary>
+    /// <remarks>
+    /// <b>未認証 DoS の遮断</b>: <see cref="TlsSyslogListener"/> は Accept 後にまず
+    /// <see cref="System.Net.Security.SslStream.AuthenticateAsServerAsync(System.Net.Security.SslServerAuthenticationOptions, System.Threading.CancellationToken)"/>
+    /// を呼ぶが、ClientHello を送らない（または途中で黙る）接続はハンドシェイクが完了しないまま
+    /// 同時接続枠（<see cref="MaxConcurrentConnections"/>）を占有し続ける。アイドルタイムアウト・
+    /// フレーミング進捗タイムアウトはいずれも<b>ハンドシェイク成功後</b>の読み取りループにしか
+    /// 効かないため、ハンドシェイク段階の無言接続を回収する専用の天井が要る（slowloris 型の
+    /// 未認証資源枯渇。平文 TCP には存在しない、TLS 固有の攻撃面）。
+    /// 既定値 15 秒は、正常なクライアントの TLS ハンドシェイク（RTT 数往復 + 証明書検証）には
+    /// 十分な余裕を持たせつつ、無言接続を短時間で回収する値としての暫定値
+    /// （<see cref="TimeSpan.Zero"/> 以下で無効化。主にテスト用途）。
+    /// </remarks>
+    public static readonly TimeSpan DefaultHandshakeTimeout = TimeSpan.FromSeconds(15);
+
     /// <summary>bind するアドレス。既定は <see cref="DefaultBindAddress"/>。</summary>
     public string BindAddress { get; init; } = DefaultBindAddress;
 
@@ -55,4 +72,12 @@ public sealed class TlsSyslogListenerOptions
 
     /// <summary>フレーミング進捗タイムアウト。既定は <see cref="DefaultFramingProgressTimeout"/>。</summary>
     public TimeSpan FramingProgressTimeout { get; init; } = DefaultFramingProgressTimeout;
+
+    /// <summary>
+    /// TLS ハンドシェイクの完了猶予。既定は <see cref="DefaultHandshakeTimeout"/>。
+    /// この時間内に <c>AuthenticateAsServerAsync</c> が完了しない接続は破棄し、TLS ハンドシェイク
+    /// 失敗として計上する（PR #225 レビュー指摘 High——未認証 DoS の遮断）。
+    /// <see cref="TimeSpan.Zero"/> 以下で無効化（主にテスト用途）。
+    /// </summary>
+    public TimeSpan HandshakeTimeout { get; init; } = DefaultHandshakeTimeout;
 }

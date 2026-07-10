@@ -220,6 +220,18 @@ public sealed class TlsSyslogListener : IAsyncDisposable
 
                 await using var sslStream = new SslStream(networkStream, leaveInnerStreamOpen: false);
 
+                // TLS ハンドシェイクの完了猶予（PR #225 レビュー指摘 High——未認証 DoS の遮断）:
+                // ClientHello を送らない（または途中で黙る）接続がハンドシェイク段階のまま同時接続枠を
+                // 占有し続けることを防ぐ。アイドル・フレーミング進捗タイムアウトはハンドシェイク成功後の
+                // 読み取りループにしか効かないため、ハンドシェイク専用の天井を張る（TlsSyslogListenerOptions
+                // 参照）。stoppingToken にリンクした CTS へ CancelAfter で猶予を設定する。
+                var handshakeTimeoutEnabled = _options.HandshakeTimeout > TimeSpan.Zero;
+                using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                if (handshakeTimeoutEnabled)
+                {
+                    handshakeCts.CancelAfter(_options.HandshakeTimeout);
+                }
+
                 try
                 {
                     // サーバ認証のみ（相互 TLS はスコープ外。security.md §6・Issue #137 オーナー決定
@@ -234,7 +246,24 @@ public sealed class TlsSyslogListener : IAsyncDisposable
                         CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                     };
 
-                    await sslStream.AuthenticateAsServerAsync(authOptions, stoppingToken).ConfigureAwait(false);
+                    await sslStream.AuthenticateAsServerAsync(authOptions, handshakeCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (handshakeTimeoutEnabled
+                    && handshakeCts.IsCancellationRequested
+                    && !stoppingToken.IsCancellationRequested)
+                {
+                    // ハンドシェイクが猶予時間内に完了しなかった（未認証 DoS の疑い。無言・低速な
+                    // ClientHello 待ち）。他のハンドシェイク失敗と同じカウンタで計上し、送信元別に
+                    // 観測可能にする（専用カウンタを増やさない——「TLS ハンドシェイクが成立しなかった」
+                    // という単一の事象の一種）。ログはタイムアウトである旨を区別できる文言にする。
+                    _metrics.RecordTlsHandshakeFailure(sourceAddress);
+                    _logger?.LogWarning(
+                        "TLS 接続 {SourceAddress}:{SourcePort} のハンドシェイクが猶予時間 {HandshakeTimeout} 以内に" +
+                        "完了しなかったため切断します（未認証接続の資源占有を防ぐ）。",
+                        sourceAddress,
+                        sourcePort,
+                        _options.HandshakeTimeout);
+                    return;
                 }
                 catch (Exception ex) when (ex is AuthenticationException or IOException or OperationCanceledException)
                 {

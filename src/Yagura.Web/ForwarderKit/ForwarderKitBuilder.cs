@@ -31,12 +31,6 @@ public static class ForwarderKitBuilder
         public const string LuaFilter = "winevt-severity.lua";
         public const string Readme = "README.md";
         public const string Generated = "GENERATED.txt";
-
-        /// <summary>
-        /// TLS 受信（<see cref="ForwarderKitMode.Tls"/>）選択時、<see cref="ForwarderKitRequest.TlsCaCertificatePem"/>
-        /// が指定されていれば同梱する CA/サーバ証明書のファイル名（Issue #137）。
-        /// </summary>
-        public const string TlsCaCertificate = "yagura-tls-ca.pem";
     }
 
     /// <summary>
@@ -82,11 +76,6 @@ public static class ForwarderKitBuilder
 
         return BuildArchive(conf, installScript, uninstallScript, luaFilter, readme, msiBytes, request, generatedAt, generatedTxt);
     }
-
-    private static byte[]? ResolveTlsCaCertificateBytes(ForwarderKitRequest request) =>
-        request is { Mode: ForwarderKitMode.Tls, TlsCaCertificatePem: { } pem }
-            ? Encoding.UTF8.GetBytes(pem)
-            : null;
 
     /// <summary>
     /// 同梱有無を反映したファイル名（例 <c>yagura-forwarder-kit-20260707-with-msi.zip</c> /
@@ -134,12 +123,6 @@ public static class ForwarderKitBuilder
                 WriteBinaryEntry(archive, bundle.FileName, msiBytes, generatedAt);
             }
 
-            var tlsCaCertificateBytes = ResolveTlsCaCertificateBytes(request);
-            if (tlsCaCertificateBytes is not null)
-            {
-                WriteBinaryEntry(archive, EntryNames.TlsCaCertificate, tlsCaCertificateBytes, generatedAt);
-            }
-
             if (generatedTxt is not null)
             {
                 WriteEntry(archive, EntryNames.Generated, generatedTxt, generatedAt, includeBom: true);
@@ -153,41 +136,15 @@ public static class ForwarderKitBuilder
     private static string ModeSlug(ForwarderKitMode mode) => mode switch
     {
         ForwarderKitMode.Tcp => "tcp",
-        ForwarderKitMode.Tls => "tls",
         _ => "udp",
     };
 
-    private static string SubstituteConf(string template, ForwarderKitRequest request)
-    {
-        // Fluent Bit の out_syslog に Mode = tls という値は無い（docs.fluentbit.io/manual/
-        // data-pipeline/outputs/syslog、確認日 2026-07-10）——TLS は Mode tcp + tls On の組み合わせで
-        // 有効化する（install.ps1 の同ロジックと揃える。Issue #137）。
-        var fluentBitModeValue = request.Mode == ForwarderKitMode.Tls ? "tcp" : ModeSlug(request.Mode);
-
-        var tlsBlockLines = new List<string>();
-        if (request.Mode == ForwarderKitMode.Tls)
-        {
-            var hasCaCertificate = request.TlsCaCertificatePem is not null;
-            tlsBlockLines.Add("    tls                 On");
-            // CA/サーバ証明書が同梱されていれば検証する（tls.verify On + tls.ca_file）。
-            // 未指定の場合、OS 既定の信頼ストアには Yagura の自己署名/内部 CA 証明書が
-            // 含まれないため検証は失敗する——本製品は自己署名証明書の生成支援を提供しない
-            // 設計判断（configuration.md §6）と同じ理由で、検証済み CA を持たない導入時の
-            // 既定は「暗号化のみ・検証なし」に倒し、生成 README/GENERATED.txt で明示する。
-            tlsBlockLines.Add("    tls.verify          " + (hasCaCertificate ? "On" : "Off"));
-            if (hasCaCertificate)
-            {
-                tlsBlockLines.Add("    tls.ca_file         C:\\ProgramData\\fluent-bit-yagura\\" + EntryNames.TlsCaCertificate);
-            }
-        }
-
-        return template
+    private static string SubstituteConf(string template, ForwarderKitRequest request) =>
+        template
             .Replace("@@YAGURA_HOST@@", request.Host)
             .Replace("@@YAGURA_PORT@@", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Replace("@@CHANNELS@@", request.ChannelsValue)
-            .Replace("@@MODE@@", fluentBitModeValue)
-            .Replace("@@TLS_BLOCK@@", string.Join("\n", tlsBlockLines));
-    }
+            .Replace("@@MODE@@", ModeSlug(request.Mode));
 
     private static string SubstituteReadme(string template, ForwarderKitRequest request, DateTimeOffset generatedAt)
     {
@@ -198,8 +155,7 @@ public static class ForwarderKitBuilder
             .Replace("@@GENERATED_AT@@", FormatTimestamp(generatedAt))
             .Replace("@@FLUENTBIT_VERSION@@", ForwarderKitConstraints.VerifiedFluentBitVersion)
             .Replace("@@YAGURA_VERSION@@", YaguraVersion)
-            .Replace("@@MODE_LABEL@@", BuildModeLabel(request.Mode))
-            .Replace("@@TLS_NOTE@@", BuildTlsReadmeNote(request));
+            .Replace("@@MODE_LABEL@@", BuildModeLabel(request.Mode));
 
         // MSI 同梱時 / 非同梱時で案内を出し分ける（ADR-0008 委任 #7・README.generated.md の
         // @@MSI_SECTION@@ プレースホルダ。プレースホルダ方式で Builder が差し込む）。
@@ -209,40 +165,8 @@ public static class ForwarderKitBuilder
     private static string BuildModeLabel(ForwarderKitMode mode) => mode switch
     {
         ForwarderKitMode.Tcp => "syslog / TCP",
-        ForwarderKitMode.Tls => "syslog over TLS / TCP",
         _ => "syslog / UDP",
     };
-
-    /// <summary>
-    /// TLS 選択時のみ表示する注記（CA 証明書の同梱有無で内容を出し分ける。Issue #137）。
-    /// TLS 以外では空文字列——README.generated.md 側の <c>@@TLS_NOTE@@</c> 行は空行になる。
-    /// </summary>
-    private static string BuildTlsReadmeNote(ForwarderKitRequest request)
-    {
-        if (request.Mode != ForwarderKitMode.Tls)
-        {
-            return string.Empty;
-        }
-
-        if (request.TlsCaCertificatePem is not null)
-        {
-            return
-                """
-                > **TLS 検証: 有効。** Yagura サーバの CA/サーバ証明書がキットに同梱されており
-                > （`yagura-tls-ca.pem`）、`install.ps1` がこれを配置して `tls.verify On` で
-                > 検証します。証明書を更新した場合はキットを再生成してください。
-                """;
-        }
-
-        return
-            """
-            > **TLS 検証: 無効（`tls.verify Off`）。** このキットには Yagura サーバの証明書が
-            > 同梱されていません——通信は暗号化されますが、サーバの真正性は検証されません
-            > （経路上の攻撃者が別の証明書を提示しても検知できません）。管理 UI の生成画面で
-            > Yagura の TLS 受信証明書（PEM 形式）を貼り付けてキットを再生成すると、検証を
-            > 有効化できます。
-            """;
-    }
 
     /// <summary>
     /// README の MSI セクション（同梱時: 同梱済みである旨 + 来歴 + 免責。非同梱時: 既存の
@@ -328,11 +252,6 @@ public static class ForwarderKitBuilder
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Yagura-Version: {YaguraVersion}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Fluent-Bit-Verified: {ForwarderKitConstraints.VerifiedFluentBitVersion}");
         builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Msi-Bundled: {(request.IncludeMsi ? "true" : "false")}");
-
-        if (request.Mode == ForwarderKitMode.Tls)
-        {
-            builder.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Tls-Ca-Certificate-Bundled: {(request.TlsCaCertificatePem is not null ? "true" : "false")}");
-        }
 
         if (request.MsiBundle is { } bundle)
         {

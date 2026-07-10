@@ -45,12 +45,6 @@ public static class ForwarderKitConstraints
     /// <summary>静的キットと同じ既定ポート（<c>forward-windows-eventlog.md</c>）。</summary>
     public const int DefaultPort = 514;
 
-    /// <summary>
-    /// TLS 受信（RFC 5425。opt-in。Issue #137）選択時の既定ポート——<c>install.ps1 -Mode tls</c>
-    /// の既定と同一（<c>Yagura.Ingestion.Tls.TlsSyslogListenerOptions.DefaultPort</c>）。
-    /// </summary>
-    public const int DefaultTlsPort = 6514;
-
     /// <summary>収集チャネルとして選択できる既知の値（この順序が正規化後の並び順になる）。</summary>
     public static readonly IReadOnlyList<string> KnownChannels = ["System", "Application", "Security"];
 

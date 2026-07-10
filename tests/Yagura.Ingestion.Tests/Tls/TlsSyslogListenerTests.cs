@@ -332,4 +332,97 @@ public sealed class TlsSyslogListenerTests
             await listener.StopAsync();
         }
     }
+
+    // ------------------------------------------------------------------
+    // TLS ハンドシェイクタイムアウト（PR #225 レビュー指摘 High——未認証 DoS の遮断）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task SilentClient_HandshakeTimesOut_RecordsFailureAndClosesConnection()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var meterCollector = new MetricCollector<long>(metrics.TlsHandshakeFailureCounter, timeProvider: null);
+        using var testCertificate = IssueTestCertificate();
+
+        var listener = new TlsSyslogListener(
+            new TlsSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                // 短い猶予で決定的に検証する（実時間ベースの CancelAfter。無言接続を素早く回収する）。
+                HandshakeTimeout = TimeSpan.FromMilliseconds(300),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics,
+            () => testCertificate.Certificate);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+
+            // TCP 接続は確立するが、ClientHello を一切送らず黙る（未認証 DoS の模擬）。
+            // サーバ側はハンドシェイク猶予（300ms）超過で接続を破棄し、TLS ハンドシェイク失敗として
+            // 計上するはず。
+            await meterCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+            var measurements = meterCollector.GetMeasurementSnapshot();
+            Assert.Equal(1, measurements.Sum(m => m.Value));
+
+            // 接続がサーバ側で回収され、同時接続枠が解放されること（DoS 遮断の実効）。
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (listener.CurrentConnectionCount > 0 && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.Equal(0, listener.CurrentConnectionCount);
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ValidClient_CompletesHandshakeWithinTimeout_IsNotAffected()
+    {
+        // 正常なクライアントは猶予内にハンドシェイクを完了し、タイムアウトの巻き添えにならないこと
+        // （HandshakeTimeout が正常系を壊さない回帰確認）。
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var testCertificate = IssueTestCertificate();
+
+        var listener = new TlsSyslogListener(
+            new TlsSyslogListenerOptions
+            {
+                BindAddress = "127.0.0.1",
+                Port = 0,
+                HandshakeTimeout = TimeSpan.FromSeconds(15),
+            },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics,
+            () => testCertificate.Certificate);
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await using var sslStream = await ConnectAndAuthenticateClientAsync(client, listener.BoundPort);
+
+            var frame = Encoding.ASCII.GetBytes("9 <34>hello");
+            await sslStream.WriteAsync(frame);
+            await sslStream.FlushAsync();
+
+            var datagram = await ReadWithTimeoutAsync(q1.Reader, TimeSpan.FromSeconds(10));
+            Assert.Equal("<34>hello", Encoding.ASCII.GetString(datagram.Payload));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
 }

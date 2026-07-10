@@ -13,15 +13,13 @@ public sealed class ForwarderKitRequest
         int port,
         IReadOnlyList<string> channels,
         ForwarderMsiBundle? msiBundle,
-        ForwarderKitMode mode,
-        string? tlsCaCertificatePem)
+        ForwarderKitMode mode)
     {
         Host = host;
         Port = port;
         Channels = channels;
         MsiBundle = msiBundle;
         Mode = mode;
-        TlsCaCertificatePem = tlsCaCertificatePem;
     }
 
     /// <summary>宛先ホスト（IP アドレスまたはホスト名）。</summary>
@@ -31,17 +29,9 @@ public sealed class ForwarderKitRequest
     public int Port { get; }
 
     /// <summary>
-    /// 転送方式（既定 <see cref="ForwarderKitMode.Udp"/>。Issue #137 で Tcp/Tls を追加）。
+    /// 転送方式（既定 <see cref="ForwarderKitMode.Udp"/>。TCP は Issue #156 で追加）。
     /// </summary>
     public ForwarderKitMode Mode { get; }
-
-    /// <summary>
-    /// TLS 受信（<see cref="ForwarderKitMode.Tls"/>）選択時、Fluent Bit の <c>tls.ca_file</c> として
-    /// キットへ同梱する CA/サーバ証明書（PEM 形式。<see langword="null"/> = 同梱しない——
-    /// この場合 <c>tls.verify Off</c> で生成し、生成 README・GENERATED.txt に明記する。ADR-0008
-    /// 設計条件 8「秘密情報を含めない」に抵触しない——CA/サーバ証明書は公開情報であり秘密ではない）。
-    /// </summary>
-    public string? TlsCaCertificatePem { get; }
 
     /// <summary>
     /// 正規化済みの収集チャネル一覧（<see cref="ForwarderKitConstraints.KnownChannels"/> の
@@ -86,24 +76,19 @@ public sealed class ForwarderKitRequest
         ForwarderMsiBundle? msiBundle,
         out ForwarderKitRequest? request,
         out ForwarderKitValidationError? error) =>
-        TryCreate(host, port, channels, msiBundle, ForwarderKitMode.Udp, tlsCaCertificatePem: null, out request, out error);
+        TryCreate(host, port, channels, msiBundle, ForwarderKitMode.Udp, out request, out error);
 
     /// <summary>
     /// <see cref="TryCreate(string?, int, string?, ForwarderMsiBundle?, out ForwarderKitRequest?, out ForwarderKitValidationError?)"/>
-    /// の転送方式指定版（Issue #137。<paramref name="mode"/> に <see cref="ForwarderKitMode.Tls"/>
-    /// を指定した場合のみ <paramref name="tlsCaCertificatePem"/> を参照する）。
+    /// の転送方式指定版（Issue #156 で UDP/TCP を選択可能にした）。
     /// </summary>
     /// <param name="mode">転送方式（既定 <see cref="ForwarderKitMode.Udp"/>）。</param>
-    /// <param name="tlsCaCertificatePem">
-    /// TLS 受信選択時に同梱する CA/サーバ証明書（PEM 形式。空白のみ・未指定は「同梱しない」）。
-    /// </param>
     public static bool TryCreate(
         string? host,
         int port,
         string? channels,
         ForwarderMsiBundle? msiBundle,
         ForwarderKitMode mode,
-        string? tlsCaCertificatePem,
         out ForwarderKitRequest? request,
         out ForwarderKitValidationError? error)
     {
@@ -140,17 +125,8 @@ public sealed class ForwarderKitRequest
             return false;
         }
 
-        var trimmedPem = string.IsNullOrWhiteSpace(tlsCaCertificatePem) ? null : tlsCaCertificatePem.Trim();
-        if (mode != ForwarderKitMode.Tls)
-        {
-            // TLS 以外のモードでは無視する（画面切り替え時に残った入力値をそのまま送っても
-            // 生成物へ混入しない——ADR-0008 設計条件 8 の「秘密情報を含めない」以前に、
-            // 無関係なモードでの取り違えを構造で防ぐ）。
-            trimmedPem = null;
-        }
-
         error = null;
-        request = new ForwarderKitRequest(trimmedHost, port, normalizedChannels, msiBundle, mode, trimmedPem);
+        request = new ForwarderKitRequest(trimmedHost, port, normalizedChannels, msiBundle, mode);
         return true;
     }
 
@@ -210,9 +186,16 @@ public sealed class ForwarderKitRequest
 }
 
 /// <summary>
-/// フォワーダキットの転送方式（Issue #137 で Tcp/Tls を追加。既存の「モード」概念は
-/// <c>install.ps1 -Mode</c>・<c>fluent-bit-yagura.conf</c> の <c>@@MODE@@</c> と同じ語彙を使う）。
+/// フォワーダキットの転送方式（<c>install.ps1 -Mode</c>・<c>fluent-bit-yagura.conf</c> の
+/// <c>@@MODE@@</c> と同じ語彙を使う）。
 /// </summary>
+/// <remarks>
+/// <b>TLS 送信は見送り（オーナー決定 2026-07-11。Issue #137）</b>: Yagura は RFC 5425 準拠の
+/// syslog over TLS 受信に対応するが、Fluent Bit の <c>out_syslog</c> は TLS 有効時も RFC 6587
+/// octet-counting フレーミングを実装しないため、キットから TLS 送信を提供すると「選ぶと無音で
+/// 失う」組み合わせを生む。Fluent Bit が octet-counting に対応するまでキットの TLS 送信は
+/// 導入しない（再評価トリガ。security.md §6.1・ADR-0008 改訂履歴 3）。
+/// </remarks>
 public enum ForwarderKitMode
 {
     /// <summary>UDP（既定。MTU 超のフラグメンテーション損失に注意——Issue #156）。</summary>
@@ -220,11 +203,6 @@ public enum ForwarderKitMode
 
     /// <summary>TCP（RFC 6587 の LF 区切り。octet-counting 非対応——Issue #156 の既知の制約）。</summary>
     Tcp,
-
-    /// <summary>
-    /// syslog over TLS（RFC 5425。TCP 6514 既定。Yagura 側は opt-in——security.md §6。Issue #137）。
-    /// </summary>
-    Tls,
 }
 
 /// <summary>

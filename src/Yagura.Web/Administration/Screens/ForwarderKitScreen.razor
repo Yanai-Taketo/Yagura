@@ -92,22 +92,10 @@
                    @onchange="() => SelectForwardMode(ForwarderKitMode.Tcp)" />
             @UiText.ForwarderKitModeTcp
         </label>
-        <label class="yagura-checkbox-row d-block mb-1">
-            <input type="radio"
-                   name="forwarder-kit-mode"
-                   value="tls"
-                   checked="@(_selectedForwardMode == ForwarderKitMode.Tls)"
-                   @onchange="() => SelectForwardMode(ForwarderKitMode.Tls)" />
-            @UiText.ForwarderKitModeTls
-        </label>
     </div>
     @if (_selectedForwardMode == ForwarderKitMode.Tcp)
     {
         <MudText Typo="Typo.caption" Color="Color.Warning" role="alert">@UiText.ForwarderKitModeTcpNote</MudText>
-    }
-    else if (_selectedForwardMode == ForwarderKitMode.Tls)
-    {
-        <MudText Typo="Typo.caption" Color="Color.Warning" role="alert">@UiText.ForwarderKitModeTlsNote</MudText>
     }
 </MudPaper>
 
@@ -307,25 +295,11 @@
     }
 
     /// <summary>
-    /// 転送方式を切り替える（Issue #137）。ポート欄がまだ「モード切替前の既定値」のまま
-    /// （手動で書き換えられていない）場合に限り、新しいモードの既定ポート（TLS = 6514、
-    /// それ以外 = 514）へ追従させる——install.ps1 -Mode tls の「明示指定がなければ 6514 を既定に
-    /// する」挙動と同じ考え方。既に手動編集済みのポートは上書きしない。
+    /// 転送方式を切り替える（Issue #156）。UDP・TCP はいずれも既定ポート 514 のため、ポート欄の
+    /// 追従は不要（TLS 送信はキットから除外済み——オーナー決定 2026-07-11。security.md §6.1）。
     /// </summary>
     private void SelectForwardMode(ForwarderKitMode mode)
     {
-        var previousDefault = _selectedForwardMode == ForwarderKitMode.Tls
-            ? ForwarderKitConstraints.DefaultTlsPort
-            : ForwarderKitConstraints.DefaultPort;
-
-        if (int.TryParse(_portText, out var currentPort) && currentPort == previousDefault)
-        {
-            var newDefault = mode == ForwarderKitMode.Tls
-                ? ForwarderKitConstraints.DefaultTlsPort
-                : ForwarderKitConstraints.DefaultPort;
-            _portText = newDefault.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-
         _selectedForwardMode = mode;
     }
 
@@ -407,11 +381,11 @@
             query += $"&msiVersionMismatchAcknowledged={(versionMismatchAcknowledged ? "true" : "false")}";
         }
 
-        // 既定（udp）は Issue #137 以前と同じクエリ文字列を保つ——後方互換
+        // 既定（udp）は mode パラメータ導入前と同じクエリ文字列を保つ——後方互換
         // （ForwarderKitScreenDownloadQueryTests の既存スナップショットを崩さない）。
         if (mode != ForwarderKitMode.Udp)
         {
-            var modeValue = mode == ForwarderKitMode.Tls ? "tls" : "tcp";
+            var modeValue = "tcp";
             query += $"&mode={modeValue}";
         }
 
