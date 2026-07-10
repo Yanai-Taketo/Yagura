@@ -48,7 +48,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | データルート作成 + ACL | `%ProgramData%\Yagura` を作成し、native `PermissionEx`(MsiLockPermissionsEx)の SDDL で「SYSTEM/Administrators = フル、サービスアカウント = 変更、継承無効化」を適用(security.md §5) |
 | フォワーダ MSI 配置フォルダ作成 + ACL | `%ProgramData%\Yagura\forwarder` を作成し、データルートとは独立した SDDL(`ForwarderFolder` コンポーネント)で「SYSTEM/Administrators = フル、サービスアカウント = **読み取りのみ**、継承無効化」を適用(ADR-0008 設計条件 9・security.md §5.1・Issue #171)。データルートの ACL をそのまま継承すると生じるサービスアカウントの書込可を明示的に断つ |
 | ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可 3 規則(WixToolset.Firewall.wixext)。**各規則のプロファイルは Domain + Private の複合に限定**(Public は含まない。`Profile="[YaguraFwProfile]"` のプロパティ間接参照でビットマスク整数 `3` = Domain\|Private を Firewall 拡張の custom action へ渡す。方式の根拠と制約は Firewall.wxs 冒頭コメント参照)。管理 8515 は loopback 専用のため規則を作らない |
-| 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_FIREWALL=""` |
+| 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura-x64.msi /qn YAGURA_FIREWALL=""` |
 | インストール記録 | 選択(`RulesRequested`)と作成規則一覧をデータルート直下の `firewall-rules.ini` に記録(初回起動時のイベントログ転記は Host 側の後続 Issue) |
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
 | 完了画面 | 閲覧 URL(http://localhost:8514/)の案内 + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`) |

@@ -25,7 +25,8 @@
     -OutputDir へ保存する(ADR-0006 基準 1 の証拠形式)。msiexec の詳細ログも同じ場所に残す。
 
 .PARAMETER MsiPath
-    検証対象の MSI(Full / DryRun モード)。例: installer\bin\Release\ja-JP\Yagura.msi
+    検証対象の MSI(Full / DryRun モード)。例: installer\bin\Release\ja-JP\Yagura-x64.msi
+    (ADR-0009 決定4 で成果物命名にアーキサフィックスが付いた。ARM64 は Yagura-arm64.msi)
 
 .PARAMETER DryRun
     msiexec・サービス操作・ネットワーク送受信を一切行わず、手順の流れと
@@ -37,11 +38,11 @@
 
 .EXAMPLE
     # CI / lab(管理者 PowerShell)
-    .\Invoke-YaguraInstallerE2E.ps1 -MsiPath ..\bin\Release\ja-JP\Yagura.msi -OutputDir .\results
+    .\Invoke-YaguraInstallerE2E.ps1 -MsiPath ..\bin\Release\ja-JP\Yagura-x64.msi -OutputDir .\results
 
 .EXAMPLE
     # 開発機: ドライラン
-    .\Invoke-YaguraInstallerE2E.ps1 -MsiPath ..\bin\Release\ja-JP\Yagura.msi -DryRun
+    .\Invoke-YaguraInstallerE2E.ps1 -MsiPath ..\bin\Release\ja-JP\Yagura-x64.msi -DryRun
 
 .EXAMPLE
     # 開発機: 送出・照合のみ(YAGURA_UDP_PORT=51514 / YAGURA_HTTP_PORT=58514 で起動した Host に対して)
