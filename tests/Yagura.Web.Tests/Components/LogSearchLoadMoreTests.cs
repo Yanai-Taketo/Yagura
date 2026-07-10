@@ -78,6 +78,7 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
         var expectedCursorSource = firstPage[^1];
 
         FindLoadMoreButton(cut).Click();
+        WaitForLoadMoreToSettle(cut);
 
         Assert.Equal(2, _store.Queries.Count);
         var secondQuery = _store.Queries[1];
@@ -99,6 +100,7 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
         Assert.Equal("10.0.0.9", _store.Queries[^1].SourceAddress);
 
         FindLoadMoreButton(cut).Click();
+        WaitForLoadMoreToSettle(cut);
 
         var loadMoreQuery = _store.Queries[^1];
         Assert.Equal("10.0.0.9", loadMoreQuery.SourceAddress);
@@ -115,6 +117,7 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
         var uriBeforeLoadMore = navigation.Uri;
 
         FindLoadMoreButton(cut).Click();
+        WaitForLoadMoreToSettle(cut);
 
         Assert.Equal(uriBeforeLoadMore, navigation.Uri);
         Assert.DoesNotContain("cursor", navigation.Uri, StringComparison.OrdinalIgnoreCase);
@@ -127,15 +130,30 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
         // 先頭ページから再開する——カーソルは画面ローカルの状態であり、新検索を跨いで残らない。
         var cut = RenderLogSearch();
         FindLoadMoreButton(cut).Click();
+        // LoadMoreAsync は QueryAsync 完了後もチャート/受信断区間の再計算（LoadOutagesAndChartAsync）
+        // を await し続ける——ここで完全な決着を待たずに次の操作へ進むと、その残り処理が
+        // NavigateTo 後の新検索と非決定的に競合しうる（実測: CI で 1 度再現した）。
+        WaitForLoadMoreToSettle(cut);
         Assert.Equal(2, _store.Queries.Count);
 
         var navigation = _ctx.Services.GetRequiredService<NavigationManager>();
         navigation.NavigateTo(navigation.GetUriWithQueryParameter("source", "10.0.0.1"));
 
-        var newSearchQuery = _store.Queries[^1];
+        // 新検索のクエリが記録されるまで待つ（新検索の実行自体も非同期のため）。
+        cut.WaitForAssertion(() => Assert.Contains(_store.Queries, q => q.SourceAddress == "10.0.0.1"));
+        var newSearchQuery = _store.Queries.Last(q => q.SourceAddress == "10.0.0.1");
         Assert.Null(newSearchQuery.Cursor);
-        Assert.Equal("10.0.0.1", newSearchQuery.SourceAddress);
     }
+
+    /// <summary>
+    /// 「さらに読み込む」クリック後の非同期処理（<c>LoadMoreAsync</c>——結果の追記に加えて
+    /// 時間軸チャート・受信断区間の再計算まで）が完全に決着するのを待つ。ボタンの表示が
+    /// 「読み込み中…」から抜けたことをもって決着の合図とする——<c>_loadingMore</c> は
+    /// <c>LoadMoreAsync</c> の <c>finally</c> でのみ <c>false</c> に戻るため。
+    /// </summary>
+    private static void WaitForLoadMoreToSettle(IRenderedComponent<ProviderHost> cut) =>
+        cut.WaitForAssertion(() =>
+            Assert.DoesNotContain(UiText.SearchLoadingMoreButton, cut.Markup, StringComparison.Ordinal));
 
     /// <summary>
     /// <see cref="LogSearch"/> を <c>MudPopoverProvider</c> と同居させて描画する。非空の検索結果を
