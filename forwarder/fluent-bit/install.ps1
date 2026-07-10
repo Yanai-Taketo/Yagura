@@ -2,7 +2,9 @@
 #
 # Installs Fluent Bit from an MSI placed next to this script (or -MsiPath),
 # deploys the pre-configured forwarding config + Lua filter, registers
-# Fluent Bit as a Windows service (auto start) and starts it.
+# Fluent Bit as a Windows service (auto start) and starts it. When an older
+# Fluent Bit is already installed and the kit carries a newer MSI, the engine
+# is upgraded in place (see step 1 below).
 #
 # Designed for unattended push (Intune / SCCM / GPO startup script) and
 # manual admin execution. ASCII-only on purpose: avoids PowerShell 5.1
@@ -121,26 +123,35 @@ foreach ($f in @($confTemplate, $luaTemplate)) {
 
 $rebootRequired = $false
 
-# --- 1. Install Fluent Bit MSI (skipped when already installed) -------------
-if (Test-Path $fluentBitExe) {
-    Log ("Fluent Bit already installed: " + $fluentBitExe)
-} else {
-    if ([string]::IsNullOrEmpty($MsiPath)) {
-        $msi = Get-ChildItem -Path $scriptDir -Filter "fluent-bit-*-win64.msi" |
-            Sort-Object Name | Select-Object -Last 1
-        if ($null -eq $msi) {
-            Fail "No fluent-bit-*-win64.msi found next to the script. Place the MSI there or pass -MsiPath."
-        }
-        $MsiPath = $msi.FullName
-    }
-    if (-not (Test-Path $MsiPath)) { Fail ("MSI not found: " + $MsiPath) }
+# --- 1. Install or upgrade Fluent Bit MSI ------------------------------------
+# Fresh machine: the MSI next to the script (or -MsiPath) is required and installed.
+# Already installed: compare the installed engine version (fluent-bit.exe
+# ProductVersion) with the version in the kit MSI's file name, and run the MSI
+# only when the kit carries a NEWER version (in-place major upgrade -- verified
+# with 4.0.14 -> 5.0.8 on 2026-07-10: msiexec /i over the old version exits 0,
+# replaces the engine and preserves the kit's service definition; install.ps1
+# recreates and restarts the service afterwards anyway). Without this
+# comparison, rerunning a new kit on a machine that already has an older
+# Fluent Bit would silently keep the old engine and only update config/service
+# (PR #206 review, Issue #129 acceptance criterion).
+# If either version cannot be determined, be conservative: keep the existing
+# engine untouched (previous behavior) and say so loudly.
 
-    Log ("Installing MSI silently: " + $MsiPath)
+function Get-ParsedVersion([string]$raw) {
+    # Accept "5.0.8" (kit MSI file name) and "4.0.14.0" (exe ProductVersion) alike.
+    if ([string]::IsNullOrEmpty($raw)) { return $null }
+    $m = [regex]::Match($raw, '^\d+(\.\d+){1,3}')
+    if (-not $m.Success) { return $null }
+    return [version]$m.Value
+}
+
+function Invoke-FluentBitMsi([string]$msiFile, [string]$action) {
+    Log ($action + " MSI silently: " + $msiFile)
     $proc = Start-Process -FilePath "msiexec.exe" `
-        -ArgumentList @("/i", ('"{0}"' -f $MsiPath), "/quiet", "/norestart") `
+        -ArgumentList @("/i", ('"{0}"' -f $msiFile), "/quiet", "/norestart") `
         -Wait -PassThru
     if ($proc.ExitCode -eq 3010) {
-        $rebootRequired = $true
+        $script:rebootRequired = $true
         Log "msiexec exit 3010 (success, reboot required)."
     } elseif ($proc.ExitCode -ne 0) {
         Fail ("msiexec failed with exit code " + $proc.ExitCode)
@@ -148,7 +159,57 @@ if (Test-Path $fluentBitExe) {
     if (-not (Test-Path $fluentBitExe)) {
         Fail ("Fluent Bit executable not found after install: " + $fluentBitExe)
     }
-    Log "MSI install completed."
+    Log ($action + " completed (engine version: " +
+         (Get-Item $fluentBitExe).VersionInfo.ProductVersion + ").")
+}
+
+# Resolve the kit MSI (explicit -MsiPath wins; otherwise newest by name next to
+# the script). On a fresh machine a missing MSI is fatal; on an installed
+# machine it just means "config/service update only" (idempotent rerun).
+$resolvedMsiPath = $null
+if (-not [string]::IsNullOrEmpty($MsiPath)) {
+    if (-not (Test-Path $MsiPath)) { Fail ("MSI not found: " + $MsiPath) }
+    $resolvedMsiPath = (Get-Item $MsiPath).FullName
+} else {
+    $msi = Get-ChildItem -Path $scriptDir -Filter "fluent-bit-*-win64.msi" |
+        Sort-Object Name | Select-Object -Last 1
+    if ($null -ne $msi) { $resolvedMsiPath = $msi.FullName }
+}
+
+if (-not (Test-Path $fluentBitExe)) {
+    if ($null -eq $resolvedMsiPath) {
+        Fail "No fluent-bit-*-win64.msi found next to the script. Place the MSI there or pass -MsiPath."
+    }
+    Invoke-FluentBitMsi $resolvedMsiPath "Install"
+} elseif ($null -eq $resolvedMsiPath) {
+    Log ("Fluent Bit already installed: " + $fluentBitExe + " (no MSI in the kit; config/service update only)")
+} else {
+    $installedVersion = Get-ParsedVersion ((Get-Item $fluentBitExe).VersionInfo.ProductVersion)
+    $kitVersion = Get-ParsedVersion ([regex]::Match((Split-Path -Leaf $resolvedMsiPath),
+        '^fluent-bit-(.+)-win64\.msi$').Groups[1].Value)
+    if ($null -eq $installedVersion -or $null -eq $kitVersion) {
+        Log ("WARN: could not compare versions (installed: '" +
+             (Get-Item $fluentBitExe).VersionInfo.ProductVersion + "', kit MSI: '" +
+             (Split-Path -Leaf $resolvedMsiPath) + "'); keeping the existing engine untouched.")
+    } elseif ($kitVersion -gt $installedVersion) {
+        Log ("Existing Fluent Bit " + $installedVersion + " is older than the kit MSI (" + $kitVersion + "); upgrading.")
+        # Stop the service before replacing the engine. Upgrading while the
+        # service is running does succeed (verified), but leaves the service in
+        # a transient StopPending state via the Windows Installer restart
+        # manager, which then breaks the Stop-Service call in the service
+        # recreation step below (verified 2026-07-10). Stopping first keeps the
+        # whole run deterministic; the service is recreated and started later.
+        $runningService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if ($null -ne $runningService -and $runningService.Status -ne "Stopped") {
+            Log ("Stopping service '" + $ServiceName + "' before the engine upgrade.")
+            Stop-Service -Name $ServiceName -Force
+            (Get-Service -Name $ServiceName).WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
+        }
+        Invoke-FluentBitMsi $resolvedMsiPath "Upgrade"
+    } else {
+        Log ("Fluent Bit already installed (version " + $installedVersion +
+             " >= kit MSI " + $kitVersion + "); skipping MSI.")
+    }
 }
 
 # --- 2. Deploy config + Lua filter ------------------------------------------
@@ -206,7 +267,7 @@ if ($dryRun.ExitCode -ne 0) {
 Log "Config validated (--dry-run ok)."
 
 # --- 4. Register Windows service (delayed auto start) -----------------------
-# The Fluent Bit MSI (verified with 4.0.14) registers a 'fluent-bit' service
+# The Fluent Bit MSI (verified with 5.0.8) registers a 'fluent-bit' service
 # pointing at the stock config. Passing a quoted binPath through sc.exe from
 # PowerShell 5.1 is unreliable (quote mangling), so instead of editing the
 # existing service we delete and recreate it via New-Service, which takes the

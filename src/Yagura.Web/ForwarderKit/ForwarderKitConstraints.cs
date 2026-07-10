@@ -55,7 +55,7 @@ public static class ForwarderKitConstraints
     /// 検証済み Fluent Bit 版（<c>docs/guides/forward-windows-eventlog.md</c> §検証済み環境・
     /// <c>forwarder/fluent-bit/README.generated.md</c> と同期——ADR-0008 委任 #3）。
     /// </summary>
-    public const string VerifiedFluentBitVersion = "4.0.14";
+    public const string VerifiedFluentBitVersion = "5.0.8";
 
     /// <summary>宛先ホストの検証（コンパイル済み・スレッドセーフ）。</summary>
     public static readonly Regex HostRegex = new(HostPattern, RegexOptions.Compiled);
@@ -92,12 +92,22 @@ public static class ForwarderMsiConstraints
     /// 対応する公式配布 MSI の SHA256（16 進小文字）。
     /// </summary>
     /// <remarks>
-    /// <b>実装 PR で確定するまでのプレースホルダ</b>: 値は <see langword="null"/>（未設定）とする。
+    /// <para>
+    /// <b>2026-07-10 ライブ検証で確定</b>: <c>https://packages.fluentbit.io/windows/</c>
+    /// （公式配布ドメイン・HTTPS/TLS 検証済み）から <c>fluent-bit-5.0.8-win64.msi</c> を取得し、
+    /// <c>Get-FileHash -Algorithm SHA256</c> で算出した値。Fluent Bit は個別パッケージ向けの
+    /// 署名済みチェックサムファイル（<c>.sha256</c> 等）を公開していないため、「公式ハッシュ」の
+    /// 実体は「公式ドメインから TLS 経由で取得した実ファイルの実測値」である
+    /// （conventions.md の実体検証原則：公式ドキュメント引用または実機確認）。
+    /// </para>
+    /// <para>
+    /// 版を上げる場合は、同じ手順で新版のハッシュを live 再取得してから更新すること。
     /// 偽のハッシュ値をハードコードすると「一致した」という誤った安心を生むため、確定した
-    /// 公式ハッシュを live 検証できるまでは <see langword="null"/> のまま保つ——未設定時は
+    /// 値を live 検証できない間は <see langword="null"/> のまま保つ——未設定時は
     /// <see cref="ForwarderMsiFilter.MatchesOfficialHash"/> が
     /// <see cref="OfficialHashMatchResult.Unverified"/> を返し、生成画面・README で
     /// 「公式ハッシュとの照合は未実施」の旨を出す（安全側。ADR-0008 設計条件 9）。
+    /// </para>
     /// </remarks>
-    public const string? OfficialSha256ForVerifiedVersion = null;
+    public const string? OfficialSha256ForVerifiedVersion = "f0649d52bd681d6a4ed4234a669a6d2b09ce1945ca8efcee59b1b807222374d8";
 }
