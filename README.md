@@ -75,9 +75,13 @@ Yagura は受信・永続化・Web UI を **単一の Windows サービスプロ
 
 ## スクリーンショット
 
-![ダッシュボード（ライトテーマ）。受信状況とカウンタの概況を表示](docs/images/dashboard-light.png)
+![ダッシュボード（ライトテーマ）。受信量の推移、重大度別の受信件数、受信量上位の送信元を表示](docs/images/dashboard-light.png)
 
-![ログ検索（ライトテーマ）。重大度の色分け表示と受信断の時間軸、検索結果の一覧](docs/images/search-light.png)
+![ログ検索（ライトテーマ）。期間・送信元・重大度・本文などの絞り込みフォーム、受信量の時間軸、CSV エクスポート、重大度の色分け付き検索結果の一覧](docs/images/search-light.png)
+
+![システム状態（ライトテーマ）。保存済みログ件数・保存先の使用量と、取りこぼしの発生箇所別カウンタの一覧](docs/images/status-light.png)
+
+![フォワーダ配布キットの生成（管理画面・ライトテーマ）。宛先・収集チャネルを選び、自機宛の設定入りキット（ZIP）を生成](docs/images/forwarder-kit-light.png)
 
 ## インストール
 
