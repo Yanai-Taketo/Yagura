@@ -129,6 +129,85 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task SpooledSelfTestRecord_NotifiesSelfTestTracker_WithMatchingMarker()
+    {
+        // 定期自己検証（architecture.md §3.2.5。Issue #152）の照合機構: drain が自己検証の
+        // 合成レコードを破棄する際、SpoolSelfTestTracker へ通知することを検証する。
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(_spool);
+
+        var tracker = new SpoolSelfTestTracker();
+        var marker = tracker.BeginNewMarker(DateTimeOffset.UtcNow);
+
+        await _spool.TryAppendAsync(SpoolRecord.ForSelfTest(marker));
+
+        var store = new FlakyLogStore(failFirstNAttempts: 0);
+        var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        using var metrics = new IngestionMetrics();
+        var coordinator = new SpoolDrainCoordinator(_spool, q2.Reader, store, metrics, selfTestTracker: tracker);
+
+        using var stoppingCts = new CancellationTokenSource();
+        var runTask = Task.Run(() => coordinator.RunAsync(stoppingCts.Token));
+
+        // 照合済み（未照合が解消される = タイムアウト判定が false のまま）になるまで待つ。
+        await WaitUntilAsync(() => !tracker.IsPendingTimedOut(DateTimeOffset.UtcNow, TimeSpan.Zero), TimeSpan.FromSeconds(15));
+
+        stoppingCts.Cancel();
+        await runTask;
+
+        Assert.False(tracker.IsPendingTimedOut(DateTimeOffset.UtcNow, TimeSpan.Zero));
+        Assert.Empty(store.WrittenRecords);
+    }
+
+    [Fact]
+    public async Task SpooledSelfTestRecord_NoTrackerPassed_DrainStillDiscardsWithoutError()
+    {
+        // トラッカー未指定（null）でも drain 自体の識別・破棄動作は変わらない
+        // （検証の有無は drain の正しさに影響しない。SpoolDrainCoordinator の remarks 参照）。
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(_spool);
+
+        await _spool.TryAppendAsync(SpoolRecord.ForSelfTest("unobserved-marker"));
+
+        var normalRecord = new LogRecord(
+            ReceivedAt: DateTimeOffset.UtcNow,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.Parsed,
+            Message: "normal-record-2");
+        await _spool.TryAppendAsync(SpoolRecord.ForLog(normalRecord));
+
+        var store = new FlakyLogStore(failFirstNAttempts: 0);
+        var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        using var metrics = new IngestionMetrics();
+        var coordinator = new SpoolDrainCoordinator(_spool, q2.Reader, store, metrics);
+
+        using var stoppingCts = new CancellationTokenSource();
+        var runTask = Task.Run(() => coordinator.RunAsync(stoppingCts.Token));
+
+        await WaitUntilAsync(() => store.WrittenRecords.Count >= 1, TimeSpan.FromSeconds(15));
+
+        stoppingCts.Cancel();
+        await runTask;
+
+        Assert.Single(store.WrittenRecords);
+        Assert.Equal("normal-record-2", store.WrittenRecords[0].Message);
+    }
+
+    [Fact]
     public async Task DrainSegmentWriteFailure_SegmentIsNotReAppendedToSpool_OnlyOriginalSegmentRemains()
     {
         _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);

@@ -62,4 +62,14 @@ public static class ActiveNotificationEventIds
     /// （その周期の監視が実行できなかった = 部分的な機能停止を伴う事象。security.md §4.3 の割当方針）。
     /// </summary>
     public static readonly EventId EvaluationFailed = new(1008, "ActiveNotificationEvaluationFailed");
+
+    /// <summary>
+    /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）が失敗した——合成レコードの
+    /// 投入自体に失敗した、または投入した合成レコードが期待時間内に drain へ合流判定されなかった
+    /// （<see cref="ActiveNotificationConstants.SelfTestTimeout"/>）。レベル: エラー（障害時専用
+    /// 経路——スプール退避・drain——が平常時に検証できていない = 実障害時の救済経路が機能する
+    /// 保証を失っている状態のため。security.md §4.3 の割当方針「機能停止を伴う事象」に相当する）。
+    /// 1009 以降は additive-only（security.md §4.3）で本クラスに定義する最初の ID。
+    /// </summary>
+    public static readonly EventId SpoolSelfTestFailed = new(1009, "SpoolSelfTestFailed");
 }

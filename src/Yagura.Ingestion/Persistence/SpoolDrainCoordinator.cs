@@ -33,6 +33,15 @@ namespace Yagura.Ingestion.Persistence;
 /// （§2.2・§3.2.1）。書き込み成功 → 削除の間でクラッシュした場合、次回起動時に
 /// 同じセグメントが再度 drain され重複が発生し得るが、これは仕様として許容する。
 /// </para>
+/// <para>
+/// <b>定期自己検証の照合（§3.2.5。Issue #152）</b>: <see cref="SpoolRecordKind.SelfTest"/> の
+/// 合成レコードを DB 書き込み直前で破棄するのは drain の常時動作だが、破棄する前に
+/// <see cref="Yagura.Storage.Spool.SpoolSelfTestTracker"/>（渡されていれば）へマーカーを通知する。
+/// 投入側（<c>Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor</c>）と
+/// 同一インスタンスを共有することで、「投入 → drain の実機構に読ませる → 合流判定」の照合が
+/// 成立する。トラッカー未指定（<c>null</c>）でも drain 自体の識別・破棄動作は変わらない
+/// （検証の有無は drain の正しさに影響しない）。
+/// </para>
 /// </remarks>
 public sealed class SpoolDrainCoordinator
 {
@@ -43,6 +52,7 @@ public sealed class SpoolDrainCoordinator
     private readonly ILogger<SpoolDrainCoordinator> _logger;
     private readonly ICapacityExhaustionHandler? _capacityExhaustionHandler;
     private readonly LogStoreWriteGate? _writeGate;
+    private readonly SpoolSelfTestTracker? _selfTestTracker;
 
     public SpoolDrainCoordinator(
         DiskSpool spool,
@@ -51,7 +61,8 @@ public sealed class SpoolDrainCoordinator
         IngestionMetrics metrics,
         ILogger<SpoolDrainCoordinator>? logger = null,
         ICapacityExhaustionHandler? capacityExhaustionHandler = null,
-        LogStoreWriteGate? writeGate = null)
+        LogStoreWriteGate? writeGate = null,
+        SpoolSelfTestTracker? selfTestTracker = null)
     {
         ArgumentNullException.ThrowIfNull(spool);
         ArgumentNullException.ThrowIfNull(q2Reader);
@@ -65,6 +76,7 @@ public sealed class SpoolDrainCoordinator
         _logger = logger ?? NullLogger<SpoolDrainCoordinator>.Instance;
         _capacityExhaustionHandler = capacityExhaustionHandler;
         _writeGate = writeGate;
+        _selfTestTracker = selfTestTracker;
     }
 
     /// <summary>
@@ -152,7 +164,17 @@ public sealed class SpoolDrainCoordinator
         }
 
         // 自己検証用の合成レコード（§3.2.5）は DB 書き込みの直前で破棄する——
-        // この識別・破棄は定期検証時だけでなく drain の常時動作である。
+        // この識別・破棄は定期検証時だけでなく drain の常時動作である。破棄する前に、
+        // 定期自己検証（Issue #152）の照合対象としてトラッカーへ通知する——「drain の
+        // 実機構に読ませて照合する」ことの実体はこの通知である（トラッカーが無い、または
+        // 投入していないマーカーであれば黙って無視される。§3.2.5）。
+        foreach (var selfTestMarker in records
+            .Where(r => r.Kind == SpoolRecordKind.SelfTest)
+            .Select(r => r.SelfTestMarker!))
+        {
+            _selfTestTracker?.OnSelfTestRecordDrained(selfTestMarker);
+        }
+
         var logRecords = records
             .Where(r => r.Kind == SpoolRecordKind.Normal)
             .Select(r => r.LogRecord!)

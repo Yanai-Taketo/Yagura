@@ -18,12 +18,25 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// 即座に警告する（発生から次の周期評価までの遅延を避ける）。
 /// </para>
 /// <para>
-/// <b>自己検証の失敗（architecture.md §3.2.5）は本クラスに含めない</b>: 自己検証の機構自体が
-/// 未実装（後続 Issue #152）であり、実装済みの検知点が無い。本クラスは
-/// <see cref="EvaluateOnceAsync"/> に新しい評価メソッドを追加するだけで拡張できる構造にして
-/// あり、#152 はその評価メソッドを 1 つ追加する形で乗せられる想定（最終報告に詳細を記す）。
-/// <see cref="RunAsync"/> のループが包括的な例外保護を持つため（PR #188 レビュー指摘への対応）、
-/// 追加する評価メソッドが自前の例外処理を怠っても、監視ループ自体が無警告で恒久停止することはない。
+/// <b>自己検証の投入・タイムアウト判定（architecture.md §3.2.5。Issue #152）</b>:
+/// 想定どおり <see cref="EvaluateOnceAsync"/> に評価メソッド（<c>EvaluateSpoolSelfTestAsync</c>）
+/// を 1 つ追加する形で実装した。本メソッドは 2 つの役割を持つ——①
+/// <see cref="ActiveNotificationConstants.SelfTestInterval"/>（仮値 1 日）ごとに合成レコード
+/// （<see cref="SpoolRecord.ForSelfTest"/>）を <see cref="_spool"/> へ投入し、②直前に投入した
+/// マーカーが <see cref="ActiveNotificationConstants.SelfTestTimeout"/>（仮値 10 分）以内に
+/// drain へ合流判定されたか（<see cref="Yagura.Storage.Spool.SpoolSelfTestTracker"/> 経由）を
+/// 判定する。合流判定の実体は drain 側（<c>Yagura.Ingestion.Persistence.SpoolDrainCoordinator</c>）
+/// が同一の <see cref="_selfTestTracker"/> インスタンスへ通知する（<c>Yagura.Host.Program</c> が
+/// 両者へ同一インスタンスを渡す構成）。<see cref="RunAsync"/> のループが包括的な例外保護を持つため
+/// （PR #188 レビュー指摘への対応）、本メソッドが自前の例外処理を怠っても監視ループ自体が
+/// 無警告で恒久停止することはない。
+/// </para>
+/// <para>
+/// <b>スプール無効・縮退運転中の扱い</b>: <see cref="_spool"/> または <see cref="_selfTestTracker"/>
+/// が <c>null</c>（スプール opt-out、またはスプール領域を開けなかった縮退運転。§1.2）の間は
+/// 自己検証そのものを行わない——投入対象（スプール）が存在しないため投入せず、かつ「投入できて
+/// いない」ことを重ねて警告もしない（縮退運転自体は別の通知——EventId 1001——で既にカバー済みで
+/// あり、本メソッドが黙って何もしないことは「警告の二重化を避ける」意図的な設計である）。
 /// </para>
 /// <para>
 /// <b>ライフサイクルは <see cref="Yagura.Host.Retention.RetentionScheduler"/> と同じ形</b>: 独立の
@@ -48,6 +61,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly IngestionMetrics _metrics;
     private readonly IMonitoredVolumeInfo _volumeInfo;
     private readonly IExpressCapacityChecker _expressChecker;
+    private readonly SpoolSelfTestTracker? _selfTestTracker;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
@@ -55,6 +69,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     private long? _lastSpoolEvacuatedTotal;
     private DateTimeOffset? _evacuationStreakStartAt;
+    private DateTimeOffset? _lastSelfTestInjectedAt;
 
     private CancellationTokenSource? _stoppingCts;
     private Task? _loopTask;
@@ -65,7 +80,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         IMonitoredVolumeInfo volumeInfo,
         IExpressCapacityChecker expressChecker,
         TimeProvider? timeProvider = null,
-        ILogger<ActiveNotificationMonitor>? logger = null)
+        ILogger<ActiveNotificationMonitor>? logger = null,
+        SpoolSelfTestTracker? selfTestTracker = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -77,6 +93,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _expressChecker = expressChecker;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<ActiveNotificationMonitor>.Instance;
+        _selfTestTracker = selfTestTracker;
     }
 
     /// <summary>周期監視ループを開始する。</summary>
@@ -176,6 +193,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateSpoolEvacuationContinuation();
         EvaluateMonitoredVolumesFreeSpace();
         await EvaluateExpressCapacityAsync(cancellationToken).ConfigureAwait(false);
+        await EvaluateSpoolSelfTestAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>スプール使用量の上限接近・到達（architecture.md §3.2.3・§4.6）。</summary>
@@ -314,6 +332,97 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     reading.UsageRatio,
                     reading.DatabaseSizeBytes,
                     reading.MaxDatabaseSizeBytes,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+    }
+
+    /// <summary>
+    /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）。
+    /// <see cref="_spool"/> または <see cref="_selfTestTracker"/> が <c>null</c>（スプール
+    /// opt-out・縮退運転）の間は投入・判定のいずれも行わない（クラス remarks 参照）。
+    /// </summary>
+    /// <remarks>
+    /// <b>実行順序</b>: タイムアウト判定を新規投入より先に行う——「直前に投入したマーカーが
+    /// 期待時間内に drain へ合流したか」を、次のマーカーで上書きする前に確認する必要がある
+    /// （<see cref="SpoolSelfTestTracker.BeginNewMarker"/> は未照合のまま残っていても上書きする
+    /// 設計のため、判定の機会は投入直前の一度しかない）。
+    /// </remarks>
+    private async Task EvaluateSpoolSelfTestAsync(CancellationToken cancellationToken)
+    {
+        if (_spool is null || _selfTestTracker is null)
+        {
+            return;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+
+        if (_selfTestTracker.IsPendingTimedOut(now, ActiveNotificationConstants.SelfTestTimeout))
+        {
+            // 文言は「経路の障害」と断定しない（PR #200 レビュー指摘への対応）: drain は FIFO の
+            // ため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する
+            // 持続的な速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しない。
+            // その場合はスプール退避継続の警告（EventId 1004）が並行して出ている可能性が高いため、
+            // 切り分けの手がかりとして文言に含め、現在のスプール使用率も添える。バックログ起因を
+            // 判定に加味する改善（投入時点のバックログ記録・判定の先送り等）はフォローアップ
+            // Issue に委ねる。
+            var usageRatio = _spool.UsageRatio;
+            NotifyIfDue("spool-self-test-timeout", () =>
+                _logger.LogError(
+                    ActiveNotificationEventIds.SpoolSelfTestFailed,
+                    "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
+                    "期待時間 {Timeout} 以内に完了しませんでした（architecture.md §3.2.5。現在のスプール使用率" +
+                    " {UsageRatio:P0}）。スプール経路（書込 → セグメント読出 → 逆直列化 → drain 合流判定）の障害、" +
+                    "または未消化バックログの滞留（保存先の持続的な速度不足。§3.2.2——この場合はスプール退避継続の" +
+                    "警告（イベント ID 1004）が並行して出ている可能性が高い）が考えられます。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    ActiveNotificationConstants.SelfTestTimeout,
+                    usageRatio,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+
+        if (_lastSelfTestInjectedAt is { } lastInjectedAt &&
+            now - lastInjectedAt < ActiveNotificationConstants.SelfTestInterval)
+        {
+            // 前回投入からまだ周期（仮値 1 日）に達していない。
+            return;
+        }
+
+        _lastSelfTestInjectedAt = now;
+
+        // 登録 → 書込 → 失敗時は登録取消、の順序（PR #200 レビュー指摘への対応）。
+        // 書込に失敗したマーカーを未照合のまま残すと、drain に照合される見込みが無いまま
+        // タイムアウト通知（別トリガキー）が次回投入（最大 1 日後）まで抑制窓ごとに反復発火する。
+        // 登録自体は書込より先に行う——書込成功の確認より先に drain がレコードを読んで照合を
+        // 通知し得るため、成功後に登録する方式は偽タイムアウトの競合を持つ
+        // （SpoolSelfTestTracker.CancelPending の remarks 参照）。
+        var marker = _selfTestTracker.BeginNewMarker(now);
+
+        SpoolAppendResult result;
+        try
+        {
+            result = await _spool.TryAppendAsync(SpoolRecord.ForSelfTest(marker), cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // キャンセル・想定外例外のいずれでも、書き込まれた確証の無いマーカーを未照合のまま
+            // 残さない（例外はループ側の包括保護（EventId 1008）またはキャンセル処理に委ねる）。
+            _selfTestTracker.CancelPending(marker);
+            throw;
+        }
+
+        if (result != SpoolAppendResult.Appended)
+        {
+            // 投入自体が失敗した——登録を取り消し、タイムアウトを待たず即座に警告する
+            // （書込失敗はそれ自体が経路の破損を示す一次シグナルであり、次の判定機会まで
+            // 待つ理由がない。通知は本 1 系統に一本化され、タイムアウト通知は発生しない）。
+            _selfTestTracker.CancelPending(marker);
+            NotifyIfDue("spool-self-test-write-failed", () =>
+                _logger.LogError(
+                    ActiveNotificationEventIds.SpoolSelfTestFailed,
+                    "[spool-self-test-write-failed] スプールの定期自己検証用レコードの書き込みに失敗しました" +
+                    "（結果: {Result}。architecture.md §3.2.5）。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    result,
                     ActiveNotificationConstants.SuppressionWindow));
         }
     }

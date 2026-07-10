@@ -84,6 +84,13 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// 直列化する。<c>null</c> はゲートなし（排他なし。テスト等で並行を意識しない構成向け——
     /// 本番結線（<c>Yagura.Host.Program</c>）は常に非 <c>null</c> を渡す）。
     /// </param>
+    /// <param name="selfTestTracker">
+    /// 定期自己検証（architecture.md §3.2.5。Issue #152）の照合状態。<see cref="SpoolDrainCoordinator"/>
+    /// へそのまま渡し、drain が自己検証の合成レコードを破棄するたびに通知させる。投入側
+    /// （<c>Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor</c>）と
+    /// 同一インスタンスを呼び出し側（ホスト）が共有する想定。<c>null</c>（既定）は「自己検証を
+    /// 行わない」構成（<paramref name="spool"/> が <c>null</c> の縮退運転時など）を表す。
+    /// </param>
     public IngestionPipeline(
         UdpSyslogListenerOptions udpListenerOptions,
         TcpSyslogListenerOptions tcpListenerOptions,
@@ -93,7 +100,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
         DiskSpool? spool = null,
         ICapacityExhaustionHandler? capacityExhaustionHandler = null,
         TimeZoneInfo? defaultRfc3164TimeZone = null,
-        LogStoreWriteGate? writeGate = null)
+        LogStoreWriteGate? writeGate = null,
+        SpoolSelfTestTracker? selfTestTracker = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
@@ -164,7 +172,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 _metrics,
                 loggerFactory?.CreateLogger<SpoolDrainCoordinator>(),
                 capacityExhaustionHandler,
-                writeGate);
+                writeGate,
+                selfTestTracker);
     }
 
     /// <summary>
