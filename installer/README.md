@@ -49,12 +49,13 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | フォワーダ MSI 配置フォルダ作成 + ACL | `%ProgramData%\Yagura\forwarder` を作成し、データルートとは独立した SDDL(`ForwarderFolder` コンポーネント)で「SYSTEM/Administrators = フル、サービスアカウント = **読み取りのみ**、継承無効化」を適用(ADR-0008 設計条件 9・security.md §5.1・Issue #171)。データルートの ACL をそのまま継承すると生じるサービスアカウントの書込可を明示的に断つ |
 | ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可 3 規則(WixToolset.Firewall.wixext)。**各規則のプロファイルは Domain + Private の複合に限定**(Public は含まない。`Profile="[YaguraFwProfile]"` のプロパティ間接参照でビットマスク整数 `3` = Domain\|Private を Firewall 拡張の custom action へ渡す。方式の根拠と制約は Firewall.wxs 冒頭コメント参照)。管理 8515 は loopback 専用のため規則を作らない |
 | 規則のオプトアウト | セットアップ UI のチェックボックス、またはサイレント時 `msiexec /i Yagura-x64.msi /qn YAGURA_FIREWALL=""` |
+| opt-in プロパティの記憶(remember property) | `YAGURA_FIREWALL` / `YAGURA_DESKTOP_SHORTCUT` はどちらも「修復(Repair)・アップグレード実行時はダイアログを経由しない」ため、対策なしだと既定値 `1` に戻ってしまう(Issue #203)。WiX 公式の "remember property" パターン(`RegistrySearch` で `HKLM\SOFTWARE\Yagura` の記憶値を読み戻し、無条件コンポーネントで毎回書き込む)により、初回インストールで選んだ値(既定 ON のオプトアウトを含む)を修復・アップグレードでも保持する。詳細は Package.wxs / Firewall.wxs のコメント参照 |
 | インストール記録 | 選択(`RulesRequested`)と作成規則一覧をデータルート直下の `firewall-rules.ini` に記録(初回起動時のイベントログ転記は Host 側の後続 Issue) |
 | イベントログソース | ソース `Yagura` を Application ログへ事前登録(`util:EventSource`。Program.cs の M9 申し送り) |
 | 完了画面 | 閲覧 URL(http://localhost:8514/)+ 管理 URL(http://localhost:8515/admin)の案内(併記) + 「今すぐブラウザで開く」チェックボックス(`WixShellExec`。開くのは閲覧 URL) |
 | スタートメニュー | 「Yagura ログ閲覧」(.url、http://localhost:8514/、無条件)+ 「Yagura 管理」(.url、http://localhost:8515/admin、無条件) |
 | デスクトップ | 「Yagura」(.url、http://localhost:8514/。閲覧 UI。**opt-in・既定 ON**)。perMachine(ALLUSERS=1)のため作成先は **`%PUBLIC%\Desktop` = 全ユーザー共有のパブリック デスクトップ**(特定ユーザーのデスクトップではない。learn.microsoft.com/windows/win32/msi/desktopfolder、確認日 2026-07-09)。この性質はセットアップ画面(`YaguraShortcutDlg`)の注記でも利用者に明示する |
-| ショートカットのオプトアウト | セットアップ UI の `YaguraShortcutDlg` チェックボックス、またはサイレント時 `msiexec /i Yagura.msi /qn YAGURA_DESKTOP_SHORTCUT=""`(デスクトップの閲覧ショートカットのみ対象。管理 UI のスタートメニューリンクは無条件のためオプトアウト不可) |
+| ショートカットのオプトアウト | セットアップ UI の `YaguraShortcutDlg` チェックボックス、またはサイレント時 `msiexec /i Yagura-x64.msi /qn YAGURA_DESKTOP_SHORTCUT=""`(デスクトップの閲覧ショートカットのみ対象。管理 UI のスタートメニューリンクは無条件のためオプトアウト不可) |
 | アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される。`forwarder` フォルダの ACL も新製品インストール時に `PermissionEx` が再実行され再適用される |
 | アンインストール | 規則・ショートカット(スタートメニュー・デスクトップとも)・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除)。`forwarder` フォルダも同じ規則(MSI 未配置で空なら削除、配置済みで非空なら ACL ごと保持) |
 
@@ -73,7 +74,10 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
     Domain+Private 複合で Public/Any を含まないこと・データルート・firewall-rules.ini)
     → UDP 514 へ syslog 送出 → 閲覧リスナ(http://localhost:8514/)の
     HTML で照合 → アンインストール(`msiexec /x /qn`)→ 残置物確認(サービス・規則・
-    スタートメニュー消滅、**データルート保持** = 上の責務表どおり)
+    スタートメニュー・`HKLM\SOFTWARE\Yagura` キー消滅、**データルート保持** = 上の責務表
+    どおり)→ 修復時の opt-out 記憶検証(Issue #203。主フローとは独立: オプトアウト
+    インストール → プロパティ無指定で修復 `msiexec /fa /qn` → 規則・デスクトップ
+    ショートカットが復活しないことを確認 → アンインストール → HKLM キー消滅確認)
   - `-DryRun`: msiexec・サービス操作を行わず手順と出力の配管のみ検証(開発機用)
   - `-SendVerifyOnly -UdpPort <p> -ViewerBaseUrl <url>`: 送出・照合部分のみを起動済みの
     Yagura.Host に対して実行(開発機用。管理者権限不要)
@@ -158,3 +162,43 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
     次回実行での確認を申し送る。E2E スクリプトの残置物確認(`residue-startmenu-removed`)は
     現状「スタートメニューのフォルダ消滅」のみを見ており、デスクトップ側の確認は含まれて
     いない(次項参照)
+- **修復(Repair)時の opt-in プロパティ記憶(Issue #203)**: WiX 公式の "remember property"
+  パターン(robmensching.com/articles/the-remember-property-pattern/、確認日 2026-07-10。
+  機構自体は WixToolset.Sdk 7.0.0 のソース(`ParsePropertyElement` / `ParseRegistrySearchElement`。
+  src/wix/WixToolset.Core/Compiler.cs)で直接確認)を `YAGURA_FIREWALL` / `YAGURA_DESKTOP_SHORTCUT`
+  へ導入。`YaguraFwProfile`(#187 でプロパティ化したビットマスク)はどのダイアログからも
+  変更されない固定値のため対象外と判断した(Firewall.wxs のコメント参照)。
+  - 静的検証: ローカルビルドした MSI を WindowsInstaller COM で照合し、`AppSearch` テーブルに
+    `YAGURA_FIREWALL` → `YaguraFirewallOptInSearch` / `YAGURA_DESKTOP_SHORTCUT` →
+    `YaguraDesktopShortcutOptInSearch` の 2 行が存在し、対応する `RegLocator`(HKLM の
+    `SOFTWARE\Yagura\FirewallOptIn` / `DesktopShortcutOptIn` を raw 型で検索)へつながっている
+    こと、`Registry` テーブルに同じ場所へ `[YAGURA_FIREWALL]` / `[YAGURA_DESKTOP_SHORTCUT]` を
+    書き込む行が Condition なしの `FirewallInstallRecord` / `DesktopShortcutInstallRecord`
+    コンポーネント(明示 `KeyPath`)に属することを確認済み(2026-07-10)
+  - **実機検証済み(2026-07-10。管理者権限での実インストール)**: `msiexec /i ... YAGURA_FIREWALL=""
+    YAGURA_DESKTOP_SHORTCUT=""` でオプトアウトインストール → `msiexec /fa ... /qn`
+    (**プロパティ無指定**。ARP の「修復」実行時と同じ入力条件 — YaguraFirewallDlg /
+    YaguraShortcutDlg を経由しないため)で修復 → `Get-NetFirewallRule` に Yagura の 3 規則が
+    **再作成されないこと**・デスクトップショートカットが**再作成されないこと**・
+    `HKLM\SOFTWARE\Yagura` の記憶値が空文字列のまま保たれることを確認(修正前の設計であれば
+    既定値 `1` に戻り規則・ショートカットが復活する形の回帰)。既定(opt-in)側の
+    「修復しても規則・ショートカットが消えない」ことも同じ手順で確認済み(remember property が
+    opt-in 方向にも正しく機能する退行防止確認)
+  - この実機シナリオは installer/e2e/Invoke-YaguraInstallerE2E.ps1 の手順 7
+    (`repair-remember-optout-*`)として自動化し、CI(installer-e2e.yml)で継続検知する
+    (Issue #125 の Profile ビットマスク回帰に E2E アサーションを追加した #187 と同じ方針)
+  - **アンインストール後の `HKLM\SOFTWARE\Yagura` 残置なしを実機確認済み(2026-07-10。
+    PR #214 レビュー指摘への対応)**: 記憶値の導入によりオプトアウト側でも本キーが作られる
+    ようになったが、キー配下の値はすべて MSI 管理のため、Registry Table の公式仕様
+    ("the installer removes a registry key after removing the last value or subkey under
+    the key"。learn.microsoft.com/windows/win32/msi/registry-table)によりアンインストールで
+    キーごと削除される。オプトイン・オプトアウト両方のインストール→アンインストールで
+    キーが残らないことを実機確認し、`RemoveRegistryKey` は不要と判断。E2E の残置物確認に
+    `residue-hklm-registry-removed`(opt-in 側)と `repair-remember-optout-residue-registry`
+    (opt-out 側)を追加して継続検知する
+  - 既知の設計上の割り切り(レビューで指摘・スコープ外を維持): 記憶値が存在する環境では、
+    修復時に msiexec コマンドラインで明示指定した値(例 `YAGURA_FIREWALL="1"` での再オプトイン)
+    も AppSearch の記憶値で上書きされる(RobMensching 記事の「追加の落とし穴」)。Issue #203 の
+    要求範囲(オプトアウトが修復で失われない)外であり、対応する CMDLINE 退避カスタム
+    アクションは導入しない。将来「明示指定で記憶値を上書きしたい」要望が出た際の設計負債として
+    ここに記録する(Package.wxs のコメントにも同旨を記載)

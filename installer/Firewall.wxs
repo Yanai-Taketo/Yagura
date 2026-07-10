@@ -48,7 +48,13 @@
   <Fragment>
     <!-- 規則のプロファイル(ビットマスク整数)。3 = NET_FW_PROFILE2_DOMAIN(0x1) |
          NET_FW_PROFILE2_PRIVATE(0x2)。小文字混じりの private property のため
-         msiexec コマンドラインから変更できない(冒頭コメント (3) 参照)。 -->
+         msiexec コマンドラインから変更できない(冒頭コメント (3) 参照)。
+
+         "remember property" パターン(Issue #203)の対象外: 本プロパティはどのダイアログ
+         からも変更されない固定値(常に 3)であり、YAGURA_FIREWALL のようにユーザーの選択を
+         反映するものではない。修復・アップグレードで既定値へ「戻る」以前に、そもそも
+         インストール UI が変更する手段を持たないため、remember property の対象にする
+         必要がない(2026-07-10 確認。Issue #203 の対応調査時に検討)。 -->
     <Property Id="YaguraFwProfile" Value="3" />
 
     <!--
@@ -56,9 +62,23 @@
       IniFile の Value 列は MSI の Formatted 型であり、実行時のプロパティ値
       [YAGURA_FIREWALL] が書き込まれる(learn.microsoft.com/windows/win32/msi/inifile-table
       の Value 列 = Formatted、確認日 2026-07-06)。オプトアウト時は空文字列になる。
+
+      "remember property" パターン(Issue #203)の書き込み側: レジストリ値
+      HKLM\SOFTWARE\Yagura\FirewallOptIn に生の YAGURA_FIREWALL 値("1" または空文字列)を
+      毎回上書き記録する。読み出し側(修復・アップグレード時に上書きする RegistrySearch)は
+      Package.wxs の Property Id="YAGURA_FIREWALL" 定義を参照。この IniFile の記録
+      (RulesRequested)は人間可読な監査記録、RegistryValue は修復時に読み戻す機械可読の
+      記憶場所という役割分担(同じ値を 2 箇所に書くが目的が異なる)。
+      Value 列が空文字列になるケースは MSI Formatted フィールド上・Registry テーブル上とも
+      正当(Null とは異なり REG_SZ の空文字列として書き込まれる。
+      learn.microsoft.com/windows/win32/msi/registry-table「Otherwise, the value is
+      interpreted and stored as a string (REG_SZ).」、確認日 2026-07-10)。
     -->
     <!-- CreateFolder を KeyPath とするコンポーネントは GUID 自動生成の対象外
-         (WIX0230。実ビルドで確認)のため明示 GUID を与える。 -->
+         (WIX0230。実ビルドで確認)のため明示 GUID を与える。ただし本コンポーネントの
+         KeyPath は下の RegistryValue(KeyPath="yes")であり、GUID 明示自体は WIX0230 の
+         対象ではなくなった後も変更しない(コンポーネント GUID の変更は避けるべきという
+         MSI の一般原則。安定 GUID のまま残す)。 -->
     <Component Id="FirewallInstallRecord" Directory="YaguraDataRoot" Guid="39625606-DB54-464A-BB55-250D9244A062">
       <CreateFolder />
       <IniFile Id="FwRecordRequested"
@@ -68,6 +88,7 @@
                Section="Yagura.Firewall"
                Key="RulesRequested"
                Value="[YAGURA_FIREWALL]" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\Yagura" Name="FirewallOptIn" Type="string" Value="[YAGURA_FIREWALL]" KeyPath="yes" />
     </Component>
 
     <!--

@@ -11,6 +11,8 @@
   - 完了画面での閲覧・管理 URL 案内 + スタートメニューリンク(Issue #131)
   - デスクトップの閲覧ショートカット(opt-in・既定 ON。Issue #131)
   - MajorUpgrade の基本定義
+  - opt-in プロパティ(YAGURA_FIREWALL・YAGURA_DESKTOP_SHORTCUT)の "remember property"
+    (修復・アップグレード時にオプトアウトの選択を保持。Issue #203)
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -58,8 +60,53 @@
          既定 = 規則を作成する(1)。UI のチェックボックス(YaguraFirewallDlg)または
          サイレントインストール時の msiexec プロパティ(YAGURA_FIREWALL="")で解除できる。
          実行シーケンス(elevated)のコンポーネント条件で参照するため Secure="yes"
-         (SecureCustomProperties への登録)が必須。 -->
-    <Property Id="YAGURA_FIREWALL" Value="1" Secure="yes" />
+         (SecureCustomProperties への登録)が必須。
+
+         "remember property" パターン(Issue #203): 修復(Repair)・アップグレード実行時は
+         YaguraFirewallDlg を経由しない(WixUI_YaguraInstallDir.wxs のダイアログ列は
+         「NOT Installed」の初回インストール分岐にのみ両ダイアログを挿入している)ため、
+         対策を入れないと Property/@Value の既定値 "1" がそのまま使われ、初回インストールで
+         行ったオプトアウト(空文字列)の選択が失われる。
+         下記 RegistrySearch は WiX 公式の "remember property" パターン
+         (robmensching.com/articles/the-remember-property-pattern/、確認日 2026-07-10。
+         WiX 本体 v7.0.0 のソースで機構を直接確認: src/wix/WixToolset.Core/Compiler_Package.cs
+         の ParsePropertyElement は Property/@Value を常の既定値として AddProperty へ渡し、
+         子の RegistrySearch は signatures として別途 AddAppSearch に登録される——
+         つまり @Value は「検索で見つからない場合のフォールバック」、RegistrySearch は
+         「見つかった場合に上書きする AppSearch」という 2 段構えになる)。
+         AppSearch は UI シーケンスと実行シーケンスの双方に自動配線されるが、Microsoft 公式
+         ドキュメント(learn.microsoft.com/windows/win32/msi/appsearch-action、確認日
+         2026-07-10)に "The installer prevents the AppSearch action from running in the
+         InstallExecuteSequence sequence if the action has already run in InstallUISequence
+         sequence." と明記されている——UI シーケンスで一度だけ実行され、SecureCustomProperties
+         経由で実行シーケンスへ渡った後の値を上書きし直すことはない。
+         書き込み側(初回インストール時に選択値をレジストリへ記録)は Firewall.wxs の
+         FirewallInstallRecord コンポーネント(無条件でインストールされる)を参照。
+
+         出典の切り分け(オプトアウト = 空文字列の記憶が成立する根拠。PR #214 レビュー指摘):
+         (a) 書き込み側「空文字列は Null と異なり正当な空 REG_SZ として書き込まれる」は
+             公式ドキュメントで裏取り済み(learn.microsoft.com/windows/win32/msi/
+             registry-table の Value 列 "Otherwise, the value is interpreted and stored
+             as a string (REG_SZ)."、確認日 2026-07-10)。
+         (b) 読み出し側「RegistrySearch(AppSearch/RegLocator)が既存の空 REG_SZ の
+             named value を見つけたとき、Property を空文字列で上書きする(『見つからない』
+             と同じ扱いにして既定値 1 を残したりしない)」は、**公式ドキュメントに直接の
+             記述が見つからなかったため、実機検証 + CI の E2E 検証のみに依拠する**
+             (2026-07-10 実機: オプトアウトインストール→ msiexec /fa 修復で規則・
+             ショートカットが復活しないことを確認。継続検知は installer-e2e の
+             repair-remember-optout-* ステップ)。なお RegLocator Table の公式ページには
+             "you can search for the default value of a key and retrieve its value if it
+             is not empty" という「空値では検索が成立しない」ケースへの言及があるが、
+             これはキーの既定値(unnamed value)検索に限定した記述であり、本実装が使う
+             named value(FirewallOptIn 等)には該当しないと解される——ただしその解釈自体も
+             公式明記ではないため、上記の実機/CI 検証を根拠の正とする。
+         スコープ判断: msiexec コマンドラインでの「修復中のプロパティ上書き」
+         (RobMensching 記事が指摘する追加の落とし穴)は Issue #203 が要求する範囲外
+         (要求は「オプトアウトが修復で失われない」ことのみ)のため、対応する
+         CMDLINE 退避カスタムアクションは本 PR では導入しない。 -->
+    <Property Id="YAGURA_FIREWALL" Value="1" Secure="yes">
+      <RegistrySearch Id="YaguraFirewallOptInSearch" Root="HKLM" Key="SOFTWARE\Yagura" Name="FirewallOptIn" Type="raw" />
+    </Property>
 
     <!-- デスクトップの閲覧ショートカット作成のオプトアウト(Issue #131。オーナー決定
          2026-07-09「案A フル構成」の 2)。既定 = 作成する(1)。スタートメニューの管理リンク
@@ -67,8 +114,17 @@
          opt-in(既定 ON)に留める。UI のチェックボックス(YaguraShortcutDlg)または
          サイレントインストール時のプロパティ(YAGURA_DESKTOP_SHORTCUT="")で解除できる。
          YAGURA_FIREWALL と同じ理由(elevated 実行シーケンスのコンポーネント条件で参照)で
-         Secure="yes" が必須。 -->
-    <Property Id="YAGURA_DESKTOP_SHORTCUT" Value="1" Secure="yes" />
+         Secure="yes" が必須。
+
+         "remember property" パターン(Issue #203): YAGURA_FIREWALL と全く同じ理由・同じ
+         機構(上のコメント参照)。書き込み側は下の DesktopShortcutInstallRecord コンポーネント
+         (無条件でインストールされる。ViewerDesktopShortcut は YAGURA_DESKTOP_SHORTCUT = 1 の
+         ときしかインストールされないため、そこに書き込みを同居させるとオプトアウト時に
+         レジストリキー自体が作られず記憶が機能しない——FirewallInstallRecord と
+         FirewallRules を分離しているのと同じ理由)。 -->
+    <Property Id="YAGURA_DESKTOP_SHORTCUT" Value="1" Secure="yes">
+      <RegistrySearch Id="YaguraDesktopShortcutOptInSearch" Root="HKLM" Key="SOFTWARE\Yagura" Name="DesktopShortcutOptIn" Type="raw" />
+    </Property>
 
     <!-- 完了画面(ExitDialog): 閲覧・管理 URL の案内テキスト + 「ブラウザで開く」チェックボックス
          (WixUI 公式のカスタマイズ機構。docs.firegiant.com/wix/tools/wixext/wixui/
@@ -130,6 +186,7 @@
       <ComponentRef Id="ViewerShortcut" />
       <ComponentRef Id="AdminMenuShortcut" />
       <ComponentRef Id="ViewerDesktopShortcut" />
+      <ComponentRef Id="DesktopShortcutInstallRecord" />
     </Feature>
   </Package>
 
@@ -358,6 +415,31 @@
                              Target="http://localhost:8514/"
                              Type="url" />
       <RegistryValue Root="HKCU" Key="SOFTWARE\Yagura" Name="ViewerDesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      デスクトップショートカットのオプトイン/アウトの選択を記録する(Issue #203。
+      "remember property" パターン)。ViewerDesktopShortcut コンポーネントは
+      YAGURA_DESKTOP_SHORTCUT = 1 のときしかインストールされないため、そこへ記録を
+      同居させるとオプトアウト時にレジストリキーそのものが作られず、修復時の
+      RegistrySearch(Package.wxs の Property 定義参照)が「見つからない」扱いになって
+      既定値 1 へ戻ってしまう。Firewall.wxs の FirewallInstallRecord(FirewallRules から
+      分離した無条件コンポーネント)と同じ設計判断により、常にインストールされる
+      専用コンポーネントとして分離する。
+
+      アンインストール時の HKLM\SOFTWARE\Yagura キー残置について(PR #214 レビュー指摘):
+      RemoveRegistryKey は追加しない。Registry Table の公式ドキュメント
+      (learn.microsoft.com/windows/win32/msi/registry-table、確認日 2026-07-10)に
+      "Note that the installer removes a registry key after removing the last value or
+      subkey under the key." と明記されており、このキー配下の値はすべて MSI 管理
+      (FirewallOptIn・DesktopShortcutOptIn・FirewallRulesInstalled)のため、最後の値の
+      削除に伴いキー自体も削除される。実機確認済み(2026-07-10): オプトイン・オプトアウト
+      どちらのインストールでも、アンインストール後に HKLM\SOFTWARE\Yagura キーが存在しない
+      ことを reg query / Test-Path で確認。継続検知は installer-e2e の
+      residue-hklm-registry-removed / repair-remember-optout-residue-registry ステップ。
+    -->
+    <Component Id="DesktopShortcutInstallRecord" Directory="YaguraDataRoot">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\Yagura" Name="DesktopShortcutOptIn" Type="string" Value="[YAGURA_DESKTOP_SHORTCUT]" KeyPath="yes" />
     </Component>
   </Fragment>
 
