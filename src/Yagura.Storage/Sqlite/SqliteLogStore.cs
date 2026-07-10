@@ -455,6 +455,16 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
                 // カーソル（キーセット）ページング（database.md §1.2・DB-11。Issue #144）:
                 // 複合索引 IX_LogRecords_ReceivedAt_Id（ReceivedAt DESC, Id DESC）と同じ並びで
                 // 「カーソルより過去」の行だけに絞るシーク条件。OFFSET は使わない。
+                //
+                // 述語の形は provider ごとに異なる（意味論は同一。database.md §8 DB-11 の実測記録）:
+                // SQLite はこの OR 分解形をそのまま索引シークへ変換できることを EXPLAIN QUERY PLAN
+                // で実測済み（PR #221 レビュー。200 万行で
+                // `SEARCH LogRecords USING INDEX IX_LogRecords_ReceivedAt_Id (ReceivedAt<?)`——
+                // SCAN ではなく SEARCH）。一方 SQL Server の最適化器は同じ形をシークへ変換できず
+                // Clustered Index Scan + Sort に落ちるため（2026-07-10 実測）、SqlServerLogStore
+                // 側は等価な書き換え形（ReceivedAt <= @c AND (ReceivedAt < @c OR Id < @i)）を
+                // 使う——各 provider の最適化器が確実にシークする形を実測で選ぶ（方言差の
+                // 封じ込め。database.md §1.1）。
                 whereClauses.Add(
                     "(ReceivedAt < $cursorReceivedAt OR (ReceivedAt = $cursorReceivedAt AND Id < $cursorId))");
                 command.Parameters.Add("$cursorReceivedAt", SqliteType.Text).Value =

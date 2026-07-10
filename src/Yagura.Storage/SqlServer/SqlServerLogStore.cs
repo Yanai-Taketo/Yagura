@@ -754,14 +754,37 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                 // カーソル（キーセット）ページング（database.md §1.2・DB-11。Issue #144）:
                 // 複合索引 IX_LogRecords_ReceivedAt_Id（ReceivedAt DESC, Id DESC）と同じ並びで
                 // 「カーソルより過去」の行だけに絞るシーク条件。OFFSET は使わない。
+                //
+                // 述語の形（PR #221 レビュー起点の実行計画実測。2026-07-10・SqlLocalDB・200 万行）:
+                // 素朴な OR 分解 (ReceivedAt < @c OR (ReceivedAt = @c AND Id < @i)) は最適化器の
+                // 計画選択が不安定で、統計サンプリングの揺れにより Clustered Index Scan + Sort
+                // （全該当行を読んでからソート——中間カーソルで実際に約 100 万行を走査し 1 クエリ
+                // 約 1 秒・浅いカーソルほど遅い）に落ちる場合と Index Seek になる場合の両方を
+                // 同一データで観測した。下の形はこれと論理的に等価（R=@c かつ Id>=@i のとき
+                // 両者とも偽・他も一致）で、先頭の conjunct（ReceivedAt <= @c）が単独で索引の
+                // シーク述語になる——常にシーク可能な形であることが下記 FORCESEEK の前提。
                 whereClauses.Add(
-                    "(ReceivedAt < @cursorReceivedAt OR (ReceivedAt = @cursorReceivedAt AND Id < @cursorId))");
+                    "(ReceivedAt <= @cursorReceivedAt AND (ReceivedAt < @cursorReceivedAt OR Id < @cursorId))");
                 command.Parameters.Add("@cursorReceivedAt", System.Data.SqlDbType.DateTime2).Value =
                     cursor.ReceivedAt.UtcDateTime;
                 command.Parameters.Add("@cursorId", System.Data.SqlDbType.BigInt).Value = cursor.Id;
             }
 
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+
+            // FORCESEEK テーブルヒント（カーソル指定時のみ）: 上記のとおり計画選択が不安定な
+            // コスト境界領域にあるため、「索引シークのみを許す」ヒントで計画を固定する
+            // （Microsoft Learn "Table hints (Transact-SQL)" が FORCESEEK の用途として挙げる
+            // 「推定の問題でシークではなくスキャンが選ばれる場合」そのもの。確認日 2026-07-10）。
+            // カーソル指定時は常にシーク可能な範囲条件（ReceivedAt <= @c）が WHERE に含まれる
+            // ためコンパイル不能にはならない（他フィルタ——Severity 閾値・LIKE——との併用も
+            // 実行計画で確認済み。database.md §8 DB-11）。実測: シーク計画はカーソル深度に
+            // よらず約 19ms/クエリ（limit=10,000）で平坦——スキャン計画（深度により
+            // 約 0.2〜2 秒）を常に下回る。カーソルなし（先頭ページ・従来経路）には付与しない
+            // ——従来の計画選択を変えない。
+            var fromClause = query.Cursor is not null
+                ? "FROM dbo.LogRecords WITH (FORCESEEK)"
+                : "FROM dbo.LogRecords";
 
             // Id DESC のタイブレーク（Issue #144）: ReceivedAt 単独では同一時刻（同一ミリ秒）の
             // 行の相対順序が SQL 上未定義になる——UDP バースト・スタックトレースの分割送信等、
@@ -772,7 +795,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
                 SELECT TOP (@limit) Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
                        DeviceTimestamp, Facility, Severity, Hostname, AppName, ProcId, MsgId,
                        StructuredData, Message
-                FROM dbo.LogRecords
+                {fromClause}
                 {whereSql}
                 ORDER BY ReceivedAt DESC, Id DESC;
                 """;

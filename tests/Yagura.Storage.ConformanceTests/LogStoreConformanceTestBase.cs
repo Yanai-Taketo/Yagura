@@ -761,6 +761,57 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal(seenIds.Count, seenIds.Distinct().Count());
     }
 
+    [SkippableFact]
+    public async Task QueryAsync_CursorCombinedWithSeverityFilter_ContinuesWithoutDuplicatesOrGaps()
+    {
+        // カーソル + フィルタ条件の組み合わせ（PR #221 レビュー指摘 3）: カーソル条件は
+        // 「特定の 1 行より真に過去」を表す純粋条件であり、他の WHERE 条件（重大度閾値等）と
+        // AND 結合されるだけ——という設計上の理屈を、DB 層の実クエリで固定するリグレッション
+        // テスト。フィルタ対象行の間に非対象行（Severity が閾値超）を挟み込み、カーソルを
+        // 「非対象行の位置」ではなく「フィルタ結果の最終行」から取ることで、続きのページが
+        // フィルタを保ったまま重複・欠落なく返ることを検証する。
+        var baseline = DateTimeOffset.UtcNow;
+        var records = new List<LogRecord>();
+        for (var i = 0; i < 12; i++)
+        {
+            // 偶数 = severity 3（エラー。閾値 3 以下 = フィルタ対象）、奇数 = severity 6（非対象）。
+            // 2 件おきに同一 ReceivedAt を作り、タイブレーク境界とフィルタの相互作用も踏ませる。
+            var receivedAt = baseline.AddSeconds(-(i / 2));
+            records.Add(CreateParsedRecord(receivedAt, "10.0.0.1", $"record-{i}", severity: i % 2 == 0 ? 3 : 6));
+        }
+
+        await Store.WriteBatchAsync(records);
+
+        // フィルタ対象は偶数の 6 件。ページサイズ 2 で 3 ページに分けて辿る。
+        var seenIds = new List<long>();
+        LogQueryCursor? cursor = null;
+
+        for (var guard = 0; guard < 10; guard++)
+        {
+            var page = await Store.QueryAsync(new LogQuery(
+                Limit: 2,
+                Timeout: TimeSpan.FromSeconds(5),
+                SeverityAtMost: 3,
+                Cursor: cursor));
+
+            if (page.Count == 0)
+            {
+                break;
+            }
+
+            // フィルタが全ページで維持されている（カーソルがフィルタを打ち消していない）。
+            Assert.All(page, r => Assert.True(r.Severity <= 3));
+
+            seenIds.AddRange(page.Select(r => r.Id));
+            var last = page[^1];
+            cursor = new LogQueryCursor(last.ReceivedAt, last.Id);
+        }
+
+        // フィルタ対象の全 6 件が重複・欠落なく揃う。
+        Assert.Equal(6, seenIds.Count);
+        Assert.Equal(seenIds.Count, seenIds.Distinct().Count());
+    }
+
     // ------------------------------------------------------------------
     // 契約 5: 保持期間の削除（database.md §1.2「保持期間の削除」・§3）
     // ------------------------------------------------------------------
