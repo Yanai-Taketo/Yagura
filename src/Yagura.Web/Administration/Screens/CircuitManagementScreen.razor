@@ -2,9 +2,11 @@
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
 @using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject ICircuitManagementService CircuitManagement
 @inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject IYaguraNotifier Notifier
 
 @*
@@ -54,7 +56,11 @@
 
     private async Task DisconnectAsync(CircuitInfo circuit)
     {
-        var accepted = await CircuitManagement.DisconnectAsync(circuit.CircuitId, CircuitContext.RemoteAddress);
+        // 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者を導出して監査へ渡す。
+        var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+            (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+        var accepted = await CircuitManagement.DisconnectAsync(
+            circuit.CircuitId, CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
 
         if (accepted)
         {

@@ -1,12 +1,14 @@
 @namespace Yagura.Web.Administration.Screens
 @inherits LayoutComponentBase
 @layout Yagura.Web.Components.Layout.MainLayout
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Http
 @using Yagura.Abstractions.Auditing
 @using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraAdminListenerPort AdminPort
+@inject AdminAuthenticationRuntimeOptions AuthOptions
 @inject IAuditRecorder AuditRecorder
 @inject NavigationManager Navigation
 @inject TimeProvider Time
@@ -30,8 +32,11 @@
 *@
 @switch (_access)
 {
-    case AdminScreenAccess.Allowed:
+    case AdminScreenAccess.Allowed when _authenticationSatisfied:
         @Body
+        break;
+    case AdminScreenAccess.Allowed:
+        <MudText>@UiText.AdminScreenRequiresAuthentication</MudText>
         break;
     case AdminScreenAccess.Denied:
         <MudText Typo="Typo.h5">@UiText.AdminScreenNotFound</MudText>
@@ -49,7 +54,18 @@
     [CascadingParameter]
     public HttpContext? HttpContext { get; set; }
 
+    /// <summary>
+    /// circuit の現在の認証状態（ADR-0010 決定 2）。<c>AddCascadingAuthenticationState()</c> が
+    /// アプリ全体へ供給し、<c>YaguraCircuitAuthenticationStateProvider</c> の
+    /// <c>NotifyAuthenticationStateChanged</c>（<c>YaguraCircuitHandler.OnConnectionUpAsync</c> が
+    /// 接続確立/再接続のたびに発火させる）のたびに本コンポーネントが再評価される——「接続確立時に
+    /// 固定されたスナップショットに頼らない」実装（security.md §2.3）。
+    /// </summary>
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
     private AdminScreenAccess _access = AdminScreenAccess.Undetermined;
+    private bool _authenticationSatisfied = true;
     private string? _auditedDeniedUri;
 
     protected override async Task OnParametersSetAsync()
@@ -74,6 +90,38 @@
                     ReachedListenerPort: HttpContext?.Connection.LocalPort,
                     Detail: "circuit 上の対話的ナビゲーションによる管理画面への到達試行（circuit 層ガード）"),
                 CancellationToken.None);
+        }
+
+        if (_access != AdminScreenAccess.Allowed)
+        {
+            return;
+        }
+
+        // 認証の充足判定（ADR-0010 決定 1・2）: リスナ帰属とは独立の第二段判定。
+        var isLoginRoute = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/') ==
+            AdminAuthenticationExtensions.LoginPath.TrimEnd('/');
+
+        var user = AuthenticationStateTask is null
+            ? new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity())
+            : (await AuthenticationStateTask).User;
+
+        var isAuthorizedUser =
+            AdminAuthenticationExtensions.IsWindowsAdministrator(user) ||
+            AdminAuthenticationExtensions.IsAppAuthenticated(user);
+
+        _authenticationSatisfied = AdminScreenAccessPolicy.IsAuthenticationSatisfied(
+            AuthOptions.RequireAuthentication, isLoginRoute, isAuthorizedUser);
+
+        if (!_authenticationSatisfied)
+        {
+            // fail-closed: 未認証・未認可のまま画面本体（@Body）は描画しない。ログイン画面へ
+            // 誘導する。forceLoad: true でフルページロードにする（PR #217 レビュー指摘への
+            // 対応）——ログイン画面のアンチフォージェリトークンと Cookie の対は HTTP 要求
+            // （prerender 段の HttpContext）でのみ発行できるため、circuit 内の対話的
+            // ナビゲーションではなく新しい HTTP 要求として到達させ、常に有効なトークンで
+            // フォームが描画されることを保証する（AdminLoginScreen の PersistentComponentState
+            // による対話的描画への持ち越しと合わせて二段で守る）。
+            Navigation.NavigateTo(AdminAuthenticationExtensions.LoginPath, forceLoad: true);
         }
     }
 }

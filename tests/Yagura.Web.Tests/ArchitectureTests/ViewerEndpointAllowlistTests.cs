@@ -256,6 +256,15 @@ public sealed class ViewerEndpointAllowlistTests
         // であり、名前空間由来の自動付与の対象外——YaguraAdminExtensions.MapForwarderKitDownload
         // が明示的に Admin メタデータを付与していることを確認する（ADR-0008 設計条件 7）。
         Assert.Contains("/admin/forwarder-kit/download", adminEndpointRoutes);
+
+        // 管理 UI 認証（ADR-0010 Phase 1）: ログイン画面(Razor Components)と、
+        // ログイン/ログアウトの素の HTTP エンドポイント（AdminAuthEndpoints）も
+        // 管理リスナ帰属であること（閲覧リスナへ露出しないこと）を確認する。
+        Assert.Contains("/admin/auth-setup", adminEndpointRoutes);
+        Assert.Contains("/admin/login", adminEndpointRoutes);
+        Assert.Contains("/admin/login/windows", adminEndpointRoutes);
+        Assert.Contains("/admin/login/app", adminEndpointRoutes);
+        Assert.Contains("/admin/logout", adminEndpointRoutes);
     }
 
     [Fact]

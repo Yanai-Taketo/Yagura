@@ -39,6 +39,12 @@ internal static class AuditEventDescriptions
         AuditEventKind.CircuitDisconnected => "circuit を切断",
         AuditEventKind.CircuitOriginRejected => "circuit 確立要求の origin 検証で拒否",
         AuditEventKind.ForwarderKitGenerated => "フォワーダ配布キットを生成",
+        AuditEventKind.AdminAuthenticationConfigured => "管理 UI 認証設定を変更",
+        AuditEventKind.AdminAccountCreated => "管理者アカウントを作成/変更",
+        AuditEventKind.WindowsAuthenticationHandshakeFailed => "Windows 統合認証のハンドシェイクに失敗",
+        AuditEventKind.AppAuthenticationLoginFailed => "アプリ独自認証のログインに失敗",
+        AuditEventKind.AdminAccountLockedOut => "管理者アカウントをロックアウト",
+        AuditEventKind.AdminLoginSucceeded => "管理 UI へサインイン",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

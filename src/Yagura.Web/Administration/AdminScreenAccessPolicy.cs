@@ -51,6 +51,29 @@ public static class AdminScreenAccessPolicy
             null => AdminScreenAccess.Undetermined,
         };
     }
+
+    /// <summary>
+    /// 認証の充足を判定する（ADR-0010 決定 1・2）。リスナ帰属（<see cref="Decide"/>）で
+    /// <see cref="AdminScreenAccess.Allowed"/> になった後の第二段判定として使う——両者は独立
+    /// （認証は「誰が到達できるか」を絞る機構であり、「どの経路が存在するか」を検証する
+    /// リスナ帰属検査とは直交する。security.md §1 決定 7 の整理と同じ考え方）。
+    /// </summary>
+    /// <param name="authenticationRequired">
+    /// loopback 認証 opt-in の実効値（<see cref="AdminAuthenticationRuntimeOptions.RequireAuthentication"/>）。
+    /// <see langword="false"/> の場合、認証状態に関わらず常に充足する（既定は現状維持）。
+    /// </param>
+    /// <param name="isLoginRoute">
+    /// ログイン画面自身への遷移かどうか。ログイン画面は認証充足判定の対象外
+    /// （未認証で到達できなければならない——循環防止）。
+    /// </param>
+    /// <param name="isAuthorizedUser">
+    /// 現在の circuit 認証状態が管理権限を満たすか
+    /// （<c>AdminAuthenticationExtensions.IsWindowsAdministrator</c> または
+    /// <c>IsAppAuthenticated</c>。呼び出し側が判定して渡す——本メソッドはクレーム判定の詳細を
+    /// 知らない、純粋な組み立てに留める）。
+    /// </param>
+    public static bool IsAuthenticationSatisfied(bool authenticationRequired, bool isLoginRoute, bool isAuthorizedUser) =>
+        !authenticationRequired || isLoginRoute || isAuthorizedUser;
 }
 
 /// <summary>管理画面の描画可否。</summary>

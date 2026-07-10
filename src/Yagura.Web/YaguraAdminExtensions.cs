@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Components.Endpoints;
 using Microsoft.AspNetCore.Http;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.Web.Administration;
 using Yagura.Web.Circuits;
 using Yagura.Web.ForwarderKit;
 
@@ -40,6 +42,18 @@ public static class YaguraAdminExtensions
     /// 名前空間の分離が「閲覧側の参照分離検査」と「管理側の帰属導出」の両方の境界線になる。
     /// </remarks>
     public const string AdminScreenNamespacePrefix = "Yagura.Web.Administration";
+
+    /// <summary>
+    /// 認証を要求しない管理系ルート（ADR-0010 Phase 1）。未認証状態で到達できなければならない
+    /// ログイン画面自体に <see cref="Administration.AdminAuthenticationExtensions.AdminPolicyName"/>
+    /// を課すと、認証を要求される → ログイン画面へも到達できない、という循環（自己ロックアウト）が
+    /// 生じるため、これらのルートは管理リスナ帰属（<see cref="ListenerPortGuardEndpointMetadata.Admin"/>）
+    /// のみを課し、認可ポリシーは適用しない。
+    /// </summary>
+    private static readonly HashSet<string> AdminAuthExemptRouteTypeNames = new(StringComparer.Ordinal)
+    {
+        "Yagura.Web.Administration.Screens.AdminLoginScreen",
+    };
 
     /// <summary>
     /// 管理系の書き込みサービス（circuit 管理）を DI へ登録する（M8-4）。
@@ -82,9 +96,22 @@ public static class YaguraAdminExtensions
     /// 併用する（二層防御。AdminScreenAccessPolicy 参照）。
     /// </para>
     /// </remarks>
+    /// <param name="endpoints">エンドポイントビルダー。</param>
+    /// <param name="razorComponents">
+    /// <see cref="YaguraWebViewerExtensions.MapYaguraWebViewer"/> の戻り値（Razor Components
+    /// エンドポイントの規約ビルダー）。管理画面のページエンドポイントへの Admin メタデータ付与に
+    /// 使う。
+    /// </param>
+    /// <param name="adminAuthRequired">
+    /// loopback 認証 opt-in（ADR-0010 決定 1。<c>Admin:Authentication:RequireForLoopback</c>）の
+    /// 実効値。<see langword="true"/> の場合、ログイン画面自身（<see cref="AdminAuthExemptRouteTypeNames"/>）
+    /// を除く全管理画面・管理系エンドポイントに
+    /// <see cref="Administration.AdminAuthenticationExtensions.AdminPolicyName"/> の認可を課す。
+    /// </param>
     public static IEndpointRouteBuilder MapYaguraAdmin(
         this IEndpointRouteBuilder endpoints,
-        RazorComponentsEndpointConventionBuilder razorComponents)
+        RazorComponentsEndpointConventionBuilder razorComponents,
+        bool adminAuthRequired = false)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(razorComponents);
@@ -100,10 +127,16 @@ public static class YaguraAdminExtensions
                  ns.StartsWith(AdminScreenNamespacePrefix + ".", StringComparison.Ordinal)))
             {
                 endpointBuilder.Metadata.Add(ListenerPortGuardEndpointMetadata.Admin);
+
+                if (adminAuthRequired && !AdminAuthExemptRouteTypeNames.Contains(componentType.FullName ?? string.Empty))
+                {
+                    endpointBuilder.Metadata.Add(new AuthorizeAttribute(AdminAuthenticationExtensions.AdminPolicyName));
+                }
             }
         });
 
-        MapForwarderKitDownload(endpoints);
+        MapForwarderKitDownload(endpoints, adminAuthRequired);
+        endpoints.MapAdminAuthEndpoints();
 
         return endpoints;
     }
@@ -125,7 +158,7 @@ public static class YaguraAdminExtensions
     /// <see cref="ForwarderKitRequest.TryCreate(string?, int, string?, ForwarderMsiBundle?, out ForwarderKitRequest?, out ForwarderKitValidationError?)"/>
     /// 側の最終防御で 400 になる）。
     /// </remarks>
-    private static void MapForwarderKitDownload(IEndpointRouteBuilder endpoints)
+    private static void MapForwarderKitDownload(IEndpointRouteBuilder endpoints, bool adminAuthRequired)
     {
         var endpoint = endpoints.MapGet("/admin/forwarder-kit/download", async (
             HttpContext context,
@@ -184,13 +217,18 @@ public static class YaguraAdminExtensions
             // CancellationToken.None: クライアント切断（RequestAborted）で監査記録自体を
             // 打ち切らない——生成した事実は応答の成否に関わらず記録する
             // （ListenerPortGuardMiddleware と同じ判断。ADR-0004 決定 7）。
+            // 「誰が」欄（ADR-0010 決定 6）: 認証を経由した操作（loopback 認証 opt-in 有効時等）は
+            // 認証済み利用者名を併記する。未認証（既定の loopback 無認証）は従来どおり接続元のみ。
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(context.User);
             await auditRecorder.RecordAsync(
                 new AuditEvent(
                     OccurredAt: timeProvider.GetUtcNow(),
                     Kind: AuditEventKind.ForwarderKitGenerated,
                     RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
                     RemotePort: context.Connection.RemotePort,
-                    Detail: FormatAuditDetail(request!)),
+                    Detail: FormatAuditDetail(request!),
+                    AuthenticationScheme: operatorScheme,
+                    AuthenticatedPrincipal: operatorPrincipal),
                 CancellationToken.None).ConfigureAwait(false);
 
             var fileName = ForwarderKitBuilder.BuildFileName(request!, generatedAt);
@@ -200,6 +238,13 @@ public static class YaguraAdminExtensions
         });
 
         endpoint.WithMetadata(ListenerPortGuardEndpointMetadata.Admin);
+
+        if (adminAuthRequired)
+        {
+            // loopback 認証 opt-in（ADR-0010 決定 1）有効時は、Razor Components 以外の
+            // 管理系エンドポイントにも同じ認可ポリシーを課す。
+            endpoint.RequireAuthorization(AdminAuthenticationExtensions.AdminPolicyName);
+        }
     }
 
     /// <summary>検証エラーの応答文言（管理者向け・機械可読なキーワードを含む簡潔な英語文）。</summary>

@@ -82,8 +82,13 @@ public interface IPromotionWizardService : IYaguraWriteService
     /// 委譲される——SQL Server のない開発機でもテスト実装で経路を検証できる形にする
     /// （Issue #71 の要件）。
     /// </summary>
+    /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用。security.md §4.1）。</param>
+    /// <param name="operatorScheme">操作者の認証方式（ADR-0010 決定 6。未認証では <see langword="null"/>）。</param>
+    /// <param name="operatorPrincipal">操作者の認証済み利用者名（同上）。</param>
     Task<PromotionValidationResult> ValidateConnectionAsync(
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -103,8 +108,14 @@ public interface IPromotionWizardService : IYaguraWriteService
     /// 切替を実行する（検証済み接続を設定ファイルへ保存する。管理操作として監査記録の対象。
     /// 冪等トークンにより二重適用を防ぐ——configuration.md §7）。
     /// </summary>
+    /// <param name="idempotencyToken">冪等トークン。</param>
+    /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用）。</param>
+    /// <param name="operatorScheme">操作者の認証方式（ADR-0010 決定 6。未認証では <see langword="null"/>）。</param>
+    /// <param name="operatorPrincipal">操作者の認証済み利用者名（同上）。</param>
     Task<PromotionApplyResult> ExecuteAsync(
         string idempotencyToken,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default);
 }

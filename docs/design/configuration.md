@@ -98,6 +98,8 @@ ADR-0004 決定 4（都度入力・使用後破棄・保持しない）の「長
 - **実装参照（M8-4 / Issue #71）**: 本番昇格ウィザードの接続文字列は `PromotionWizardService` のメモリにのみ保持し、切替の完了で破棄する。無操作タイムアウト（CF-3 仮値 15 分 = `WizardSessionDefaults.InactivityTimeout`）で資格情報のみを破棄し、確定済みの進行状態（処分の選択等）は保持する——再開時は再入力を求め、その旨を画面に明示する。接続検証の実施は「使用した事実 + 成否」のみを監査記録（security.md §4.3 の 2002）に残す。切替実行時の設定ファイルへの保存は §2 の DPAPI 暗号化表現（`dpapi:<Base64>`）で常に行う（2026-07-06 実装。ウィザードには平文が設定ファイルへ書かれる経路が存在しない。暗号化自体が失敗した場合は切替を失敗させ、平文保存へはフォールバックしない）
 - **資格情報の粒度（昇格ウィザードの接続組み立て化に伴う精密化。database.md §6.1）**: 本節が破棄の対象とする「資格情報」は**パスワードのみ**とする。サーバ名・データベース名・認証方式・ユーザー名・サーバ証明書の信頼、およびパスワードを含まない接続文字列（直接入力方式——`Password`/`Pwd` 等のパスワード系キーの記載は正規化パースの上で拒否される）は秘密ではなく、**進行状態として保持する**（無操作タイムアウトで消えない——再開のたびにサーバ名から打ち直させない）。タイムアウトはパスワードとともに検証済み状態・実行トークンも無効化する（検証は「現に保持している入力」に対してのみ有効、の従来原則を維持。Windows 統合認証ではパスワードが存在しないため、タイムアウト後の再開は再入力なしの再検証のみで足りる）
 
+**管理 UI 認証（[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1）のアプリ独自 ID/パスワードとの違い**: 本節が扱う「長時間処理での再入力方針」は本番昇格ウィザードの SQL Server 接続資格情報を対象とする。管理 UI 認証のアプリ独自認証アカウントのパスワードは性質が異なる（サーバ側に永続化するハッシュ値であり、都度入力・使用後破棄の対象ではない）——保管方式は `PasswordHasher<TUser>`（PBKDF2）によるハッシュ化のみで、平文はメモリ上の入力値受け渡し以外に一切保持しない。詳細は security.md §2.4 を参照。
+
 ## 6. HTTPS 証明書の取り扱い（opt-in 強化。v1.0 までに提供）
 
 本節の射程は **Web UI（閲覧リスナ）の HTTPS 証明書**である。TLS 受信（§4.1 の TCP 6514）用の証明書の参照方式・期限切れ挙動は [security.md](security.md) §6 で確定済み（HTTPS = 停止 / TLS 受信 = 継続、という非対称の根拠を含む）。
@@ -133,7 +135,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | スプール | 有効/無効（opt-out）・置き場所・上限（M-12） | 即時（置き場所のみサービス再起動） |
 | 永続化 | provider 選択・接続情報（資格情報は暗号化表現 §2）・組み込み DB の置き場所 | provider 切替は database.md §6.1 の切替手順による（備考: ウィザード経由のみ）。置き場所はサービス再起動 |
 | 保持期間 | 日数（DB-1）・実行時間帯 | 即時 |
-| UI | 閲覧ポート・公開範囲（LAN / localhost）・管理ポート・HTTPS 証明書参照（opt-in。§6） | リスナ再構成 |
+| UI | 閲覧ポート・公開範囲（LAN / localhost）・管理ポート・HTTPS 証明書参照（opt-in。§6）・管理 UI 認証（opt-in。[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1） | リスナ再構成 |
 | 通知 | イベントログ警告の有効範囲（architecture.md §4.6） | 即時 |
 
 **確定済みの詳細キー**（実装されたものから本表に記録する。2026-07-05 オーナー決定によりキー名の同期は本表で行う）:
@@ -149,6 +151,10 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Viewer:HttpPort` | UI | 再起動（同上） | 既定値で継続（既定 **8514**。CF-1 確定値。M6-1） |
 | `Viewer:PublicAccess` | UI | 再起動（目標はリスナ再構成。M6-1） | **縮小側で継続**（`Lan`/`LocalhostOnly` 以外の値は `LocalhostOnly` へ縮小——既定は開放側の `Lan` だが、不正値の縮小先は必ず狭い側。§1「公開範囲・bind 先の不正値は製品既定へ落とさない」の適用。M6-1） |
 | `Admin:HttpPort` | UI | 再起動（M6-1） | 既定値で継続（既定 **8515**。CF-1 確定値。bind 先（127.0.0.1/::1）を変える設定キーは設けない——§1 の不変条件。M6-1） |
+| `Admin:Authentication:Windows:Enabled` | UI（管理 UI 認証。[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1） | 再起動（認証スキーム構成は `WebApplicationBuilder` 構築時に固定され、実行中の付け替え API を持たない） | 縮小側で継続（真偽値として不正なら**無効**へ——§1 の縮小側原則を認証項目へ適用。既定 `false`） |
+| `Admin:Authentication:Windows:KerberosOnly` | UI（同上） | 再起動（同上） | 縮小側で継続（既定 `false`。不正値は無効へ） |
+| `Admin:Authentication:App:Enabled` | UI（同上） | 再起動（同上） | 縮小側で継続（既定 `false`。不正値は無効へ） |
+| `Admin:Authentication:RequireForLoopback` | UI（同上） | 再起動（同上） | 縮小側で継続（既定 `false`）。ただし **`true` かつ Windows 統合認証・アプリ独自認証がいずれも無効の組み合わせは §1「起動失敗」として `ConfigurationValidationException` で拒否する**（fail-closed 不変条件。ADR-0010 決定 1。security.md §2.4） |
 | `Storage:SqliteFileName` | 永続化 | 再起動 | 既定値で継続 |
 | `Storage:Provider` | 永続化 | 再起動（provider 切替の正式な無瞬断手順は database.md §6.1。M5-3 時点はサービス再起動のみ） | 既定値で継続（`sqlite`/`sqlserver` 以外の値は既定の `sqlite` へ。M5-3） |
 | `Storage:SqlServer:ConnectionString` | 永続化 | 再起動 | 既定値で継続（値は DPAPI 暗号化表現 `dpapi:<Base64>`——ウィザード保存の常形——または平文を受理する（§2）。`Storage:Provider = sqlserver` かつ**本キー未設定**、または**暗号化表現の復号失敗**（改ざん・別マシンへの `yagura.json` コピー——DPAPI machine スコープのマシン束縛）の場合、起動失敗ではなく組み込み SQLite へ縮小 + 強い警告。設計判断: 受信を止めないことを優先——database.md §1「ログを失わない」原則の適用。M5-3・DPAPI 実装 2026-07-06。平文で SQL 認証資格情報を含む場合は受理しつつ強い警告——自動書き換えはしない（§2）） |

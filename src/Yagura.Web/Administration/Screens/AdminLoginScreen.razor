@@ -1,0 +1,114 @@
+@page "/admin/login"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@implements IDisposable
+@using Microsoft.AspNetCore.Antiforgery
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Http
+@using Yagura.Web.Administration
+@inject AdminAuthenticationRuntimeOptions AuthOptions
+@inject IAntiforgery Antiforgery
+@inject NavigationManager Navigation
+@inject PersistentComponentState ApplicationState
+
+@*
+    管理 UI ログイン画面（ADR-0010 Phase 1・委任事項 9「選択式」）。
+
+    未認証で到達できなければならない唯一の管理画面——AdminScreenLayout・
+    YaguraAdminExtensions.AdminAuthExemptRouteTypeNames の両方で認可要求から除外されている
+    （このページ自身が認可を要求すると、認証が要求される→ログイン画面へも到達できない、
+    という循環に陥る）。管理リスナ帰属の検査（AdminScreenLayout の一層目）は他の管理画面と
+    同じく適用される。
+
+    フォーム送信先は本コンポーネント（Razor Components/circuit）ではなく、Yagura.Web.Administration
+    の素の HTTP エンドポイント（AdminAuthEndpoints）——circuit 上から Set-Cookie を直接
+    制御できないための分離（AdminAuthEndpoints の remarks 参照）。
+*@
+<PageTitle>@UiText.AdminLoginTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminLoginTitle</MudText>
+
+@if (_hasError)
+{
+    <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.AdminLoginError</MudAlert>
+}
+
+@if (AuthOptions.WindowsAuthEnabled)
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudButton Href="/admin/login/windows" Variant="Variant.Filled" Color="Color.Primary">
+            @UiText.AdminLoginWindowsButton
+        </MudButton>
+    </MudPaper>
+}
+
+@if (AuthOptions.AppAuthEnabled)
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        @* 素の HTML <form> による通常のブラウザ POST（circuit を要しない——AdminAuthEndpoints の
+           remarks 参照）。MudTextField 等の対話部品は name 属性を生成しないため使わず、
+           プレーンな input 要素を用いる。 *@
+        <form method="post" action="/admin/login/app">
+            <input type="hidden" name="__RequestVerificationToken" value="@_antiforgeryToken" />
+            <div class="mud-input-control mt-2">
+                <label for="admin-login-username">@UiText.AdminLoginUsernameLabel</label>
+                <input id="admin-login-username" type="text" name="username" class="mud-input-slot" autocomplete="username" />
+            </div>
+            <div class="mud-input-control mt-2">
+                <label for="admin-login-password">@UiText.AdminLoginPasswordLabel</label>
+                <input id="admin-login-password" type="password" name="password" class="mud-input-slot" autocomplete="current-password" />
+            </div>
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-2">
+                @UiText.AdminLoginAppButton
+            </MudButton>
+        </form>
+    </MudPaper>
+}
+
+@code {
+    /// <summary>PersistentComponentState のキー（prerender → 対話的描画のトークン持ち越し用）。</summary>
+    private const string AntiforgeryTokenStateKey = "admin-login-antiforgery-token";
+
+    [CascadingParameter]
+    public HttpContext? HttpContext { get; set; }
+
+    private string? _antiforgeryToken;
+    private bool _hasError;
+    private PersistingComponentStateSubscription _persistingSubscription;
+
+    protected override void OnInitialized()
+    {
+        // アンチフォージェリトークンは静的 SSR/prerender 段の HttpContext からのみ発行できる
+        // （対話的描画では HttpContext が無効——AdminScreenLayout と同じ制約）。プレーンな
+        // HTML フォームで POST するため、Blazor の EditForm 経由の暗黙トークン注入は使えない。
+        //
+        // 対話的描画への持ち越し（PR #217 レビュー指摘への対応）: 本コンポーネントは prerender と
+        // circuit 上の対話的描画の 2 回初期化される。対話的側では HttpContext が null のため
+        // トークンを発行できず、prerender 済み HTML の hidden input も対話的描画による DOM
+        // 置き換えで失われる——PersistentComponentState（prerender の状態を対話的コンポーネントへ
+        // 引き渡す公式機構）でトークンを持ち越し、対話的描画後もフォームが有効なトークンを
+        // 保持するようにする（対応する antiforgery cookie は prerender の HTTP 応答で
+        // ブラウザへ発行済みのため、トークンとの対はそのまま有効）。
+        if (ApplicationState.TryTakeFromJson<string>(AntiforgeryTokenStateKey, out var restoredToken))
+        {
+            _antiforgeryToken = restoredToken;
+        }
+        else if (HttpContext is not null)
+        {
+            var tokens = Antiforgery.GetAndStoreTokens(HttpContext);
+            _antiforgeryToken = tokens.RequestToken;
+
+            _persistingSubscription = ApplicationState.RegisterOnPersisting(() =>
+            {
+                ApplicationState.PersistAsJson(AntiforgeryTokenStateKey, _antiforgeryToken);
+                return Task.CompletedTask;
+            });
+        }
+
+        var uri = new Uri(Navigation.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        _hasError = query.ContainsKey("error");
+    }
+
+    public void Dispose() => _persistingSubscription.Dispose();
+}

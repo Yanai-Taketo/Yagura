@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Yagura.Storage;
 using Yagura.Abstractions.Auditing;
+using Yagura.Web.Administration;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web.Tests.ArchitectureTests;
@@ -50,9 +51,25 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     /// <see cref="NoopLogStore"/>）。<c>LogSearchCsvExportEndpointTests</c>（Issue #157）が
     /// 実データを積んだフェイクへ差し替えて使う。
     /// </param>
+    /// <param name="appAuthEnabled">
+    /// アプリ独自認証を有効にした構成でホストを起動する（ADR-0010 Phase 1。
+    /// <c>AdminAuthLoginEndpointTests</c> の実 HTTP ログインフロー検証が使う。既定 false =
+    /// 従来どおり全認証無効）。
+    /// </param>
+    /// <param name="appAuthenticator">
+    /// <see cref="Yagura.Abstractions.Administration.IAppAdminAuthenticator"/> の差し替え
+    /// （既定 <see langword="null"/> は常に例外のスタブ）。
+    /// </param>
+    /// <param name="auditRecorder">
+    /// <see cref="IAuditRecorder"/> の差し替え（既定 <see langword="null"/> は何もしないスタブ。
+    /// 監査発火のアサーションを行うテストが記録型フェイクへ差し替える）。
+    /// </param>
     public static async Task<ViewerHostHarness> StartAsync(
         Yagura.Web.ForwarderKit.IForwarderMsiSource? forwarderMsiSource = null,
-        ILogStore? logStore = null)
+        ILogStore? logStore = null,
+        bool appAuthEnabled = false,
+        Yagura.Abstractions.Administration.IAppAdminAuthenticator? appAuthenticator = null,
+        IAuditRecorder? auditRecorder = null)
     {
         var builder = WebApplication.CreateBuilder();
 
@@ -66,15 +83,40 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddYaguraWebViewer();
         builder.Services.AddSingleton<ILogStore>(_ => logStore ?? new NoopLogStore());
         builder.Services.AddSingleton<WebGuardMetrics>();
-        builder.Services.AddSingleton<IAuditRecorder, NoopAuditRecorder>();
+        builder.Services.AddSingleton<IAuditRecorder>(_ => auditRecorder ?? new NoopAuditRecorder());
         builder.Services.AddSingleton<Yagura.Abstractions.Observability.IYaguraSystemStatusReader, NoopStatusReader>();
 
         // M8-4: circuit 統治・管理画面が要求するサービス（Program.cs と同じ結線の最小形。
-        // ポート値は本ハーネスでは到達判定に使われないため、既定の 8515 を置く）。
-        builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(8515));
+        // ポート値はルーティング列挙では到達判定に使われないため既定 8515 でよいが、
+        // 管理画面（AdminScreenLayout 経由）を実 HTTP で取得するテスト（appAuthEnabled: true）
+        // では prerender 段のリスナ帰属検査（AdminScreenAccessPolicy——実ローカルポートと
+        // YaguraAdminListenerPort の一致判定）を通す必要があるため、実際に bind するポートを
+        // 事前に確保して一致させる。
+        var adminPort = 8515;
+        if (appAuthEnabled)
+        {
+            using var probe = new System.Net.Sockets.Socket(
+                System.Net.Sockets.AddressFamily.InterNetwork,
+                System.Net.Sockets.SocketType.Stream,
+                System.Net.Sockets.ProtocolType.Tcp);
+            probe.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+            adminPort = ((System.Net.IPEndPoint)probe.LocalEndPoint!).Port;
+        }
+
+        builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(adminPort));
         builder.Services.AddYaguraAdmin();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService, StubSetupWizardService>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService, StubPromotionWizardService>();
+
+        // ADR-0010 Phase 1: 管理 UI 認証(既定は無効——ルーティング表の機械列挙用。
+        // appAuthEnabled: true はアプリ独自認証の実 HTTP フロー検証用の構成)。
+        builder.Services.AddYaguraAdminAuthentication(
+            windowsAuthEnabled: false, kerberosOnly: false, appAuthEnabled: appAuthEnabled);
+        builder.Services.AddSingleton(new Yagura.Web.Administration.AdminAuthenticationRuntimeOptions(
+            RequireAuthentication: false, WindowsAuthEnabled: false, AppAuthEnabled: appAuthEnabled));
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminAuthenticationAdminService, StubAdminAuthenticationAdminService>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator>(
+            _ => appAuthenticator ?? new StubAppAdminAuthenticator());
 
         // ADR-0008 設計条件 9: フォワーダキット生成画面・ダウンロードエンドポイントが要求する
         // IForwarderMsiSource（Program.cs と同じくデータルート配下 forwarder を注入する結線だが、
@@ -85,9 +127,16 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         // 閲覧・管理の両方を同一ホストにマップする(Program.cs と同じ構造。ポートによる
         // 到達可否の分離は実行時の ListenerPortGuardMiddleware が担うため、エンドポイント表
         // レベルでは両者は同居する——ViewerEndpointAllowlistTests のコメント参照)。
-        builder.WebHost.ConfigureKestrel(o => o.Listen(System.Net.IPAddress.Loopback, 0));
+        // appAuthEnabled: true では事前確保した adminPort に bind する（上記コメント参照）。
+        builder.WebHost.ConfigureKestrel(o => o.Listen(
+            System.Net.IPAddress.Loopback, appAuthEnabled ? adminPort : 0));
 
         var app = builder.Build();
+
+        // Program.cs と同じ配線: Razor Components ページ（antiforgery メタデータ付き）の
+        // 描画・アンチフォージェリ検証に必要（GET /admin/login のトークン発行と
+        // POST /admin/login/app の検証——ADR-0010 Phase 1 の実 HTTP フローテストが使う）。
+        app.UseAntiforgery();
 
         // 静的アセットのマニフェストは明示指定する(M8-1): 既定解決は
         // {ApplicationName}.staticwebassets.endpoints.json だが、テスト実行時の
@@ -231,6 +280,8 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         public Task<Yagura.Abstractions.Administration.SetupWizardApplyResult> ApplyAsync(
             string idempotencyToken,
             string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
@@ -254,6 +305,8 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
 
         public Task<Yagura.Abstractions.Administration.PromotionValidationResult> ValidateConnectionAsync(
             string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
@@ -266,7 +319,35 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         public Task<Yagura.Abstractions.Administration.PromotionApplyResult> ExecuteAsync(
             string idempotencyToken,
             string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubAdminAuthenticationAdminService : Yagura.Abstractions.Administration.IAdminAuthenticationAdminService
+    {
+        public Task<Yagura.Abstractions.Administration.AdminAuthenticationStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.AdminAuthenticationStatus> ConfigureAsync(
+            bool windowsAuthEnabled,
+            bool kerberosOnly,
+            bool appAuthEnabled,
+            bool requireForLoopback,
+            string? newAppUsername,
+            string? newAppPassword,
+            string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubAppAdminAuthenticator : Yagura.Abstractions.Administration.IAppAdminAuthenticator
+    {
+        public Task<Yagura.Abstractions.Administration.AppAuthenticationOutcome> TryAuthenticateAsync(
+            string username, string password, CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
 }

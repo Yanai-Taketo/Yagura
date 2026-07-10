@@ -38,6 +38,7 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     private readonly YaguraCircuitContext _context;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly YaguraAdminListenerPort _adminPort;
+    private readonly YaguraCircuitAuthenticationStateProvider _authenticationStateProvider;
     private readonly TimeProvider _timeProvider;
 
     public YaguraCircuitHandler(
@@ -45,17 +46,20 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         YaguraCircuitContext context,
         IHttpContextAccessor httpContextAccessor,
         YaguraAdminListenerPort adminPort,
+        YaguraCircuitAuthenticationStateProvider authenticationStateProvider,
         TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(httpContextAccessor);
         ArgumentNullException.ThrowIfNull(adminPort);
+        ArgumentNullException.ThrowIfNull(authenticationStateProvider);
 
         _registry = registry;
         _context = context;
         _httpContextAccessor = httpContextAccessor;
         _adminPort = adminPort;
+        _authenticationStateProvider = authenticationStateProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -75,6 +79,31 @@ public sealed class YaguraCircuitHandler : CircuitHandler
             _context.IsAdminListener,
             _timeProvider.GetUtcNow(),
             _context));
+
+        if (httpContext?.User is { } user)
+        {
+            _authenticationStateProvider.SetAuthenticationState(user);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// circuit の接続確立/再接続のたびに呼ばれる公式フック（ADR-0010 決定 2・委任事項 2。
+    /// 検証 3 が引用する Microsoft Learn の "Circuit handler to capture users for custom
+    /// services" パターン）。<see cref="OnCircuitOpenedAsync"/> は最初の接続確立時のみ呼ばれるが、
+    /// <see cref="OnConnectionUpAsync"/> は SignalR の再接続（circuit 喪失後の再接続を含む）の
+    /// たびに呼ばれるため、<b>ここで現在の <c>HttpContext.User</c> を明示的に汲み直す</b>ことが
+    /// 「接続確立時に固定されたスナップショットに頼らない」（security.md §2.3）実装の要である。
+    /// </summary>
+    public override Task OnConnectionUpAsync(Circuit circuit, CancellationToken cancellationToken)
+    {
+        var httpContext = _httpContextAccessor.HttpContext;
+
+        if (httpContext?.User is { } user)
+        {
+            _authenticationStateProvider.SetAuthenticationState(user);
+        }
 
         return Task.CompletedTask;
     }

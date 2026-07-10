@@ -35,4 +35,20 @@ public sealed class AdminScreenAccessPolicyTests
         // 同じ向き——実装の取得経路が失陥しても管理画面が閲覧側へ開く方向には倒れない）。
         Assert.Equal(AdminScreenAccess.Undetermined, AdminScreenAccessPolicy.Decide(null, null, AdminPort));
     }
+
+    // ---- IsAuthenticationSatisfied（ADR-0010 決定 1・2。loopback 認証 opt-in 実効時の第二段判定） ----
+
+    [Theory]
+    [InlineData(false, false, false, true)] // 認証不要なら常に充足
+    [InlineData(false, false, true, true)]
+    [InlineData(true, true, false, true)]   // ログイン画面自身は判定対象外
+    [InlineData(true, false, true, true)]   // 認証要求 + 未ログイン画面 + 認可済み → 充足
+    [InlineData(true, false, false, false)] // 認証要求 + 未ログイン画面 + 未認可 → 不充足
+    public void IsAuthenticationSatisfied_FollowsTruthTable(
+        bool authenticationRequired, bool isLoginRoute, bool isAuthorizedUser, bool expected)
+    {
+        Assert.Equal(
+            expected,
+            AdminScreenAccessPolicy.IsAuthenticationSatisfied(authenticationRequired, isLoginRoute, isAuthorizedUser));
+    }
 }

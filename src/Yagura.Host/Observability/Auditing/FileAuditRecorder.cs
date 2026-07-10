@@ -115,6 +115,8 @@ public sealed class FileAuditRecorder : IAuditRecorder
                 AttemptedPath = auditEvent.AttemptedPath,
                 ReachedListenerPort = auditEvent.ReachedListenerPort,
                 Detail = auditEvent.Detail,
+                AuthenticationScheme = auditEvent.AuthenticationScheme,
+                AuthenticatedPrincipal = auditEvent.AuthenticatedPrincipal,
             };
 
             var json = JsonSerializer.Serialize(line, SerializerOptions);
@@ -156,13 +158,18 @@ public sealed class FileAuditRecorder : IAuditRecorder
             // 運用者向けの文面に漏れるため（2026-07-06 イベントログ日本語化）。
             // アプリ記録ファイル側（AuditFileLine.Kind）は機械可読性を優先し enum 名のまま
             // 維持するため、本メソッドの変更はイベントログ本文にのみ影響する。
+            // 「誰が」欄（ADR-0010 決定 3・6）: 認証済みなら方式つき利用者名、未認証（または
+            // 認証 opt-in 無効）なら接続元のみ——security.md §4.1 の記録内容の実装。
+            var who = auditEvent.AuthenticatedPrincipal is { Length: > 0 }
+                ? $"{auditEvent.AuthenticationScheme}:{auditEvent.AuthenticatedPrincipal} ({auditEvent.RemoteAddress ?? "(unknown)"}:{auditEvent.RemotePort})"
+                : $"{auditEvent.RemoteAddress ?? "(unknown)"}:{auditEvent.RemotePort}";
+
             _logger.Log(
                 ResolveLogLevel(eventId),
                 eventId,
-                "[audit] {Description}: 接続元={RemoteAddress}:{RemotePort} 試行パス={AttemptedPath} 到達リスナポート={ReachedListenerPort} 要約={Detail}",
+                "[audit] {Description}: 実行者={Who} 試行パス={AttemptedPath} 到達リスナポート={ReachedListenerPort} 要約={Detail}",
                 AuditEventDescriptions.Describe(auditEvent.Kind),
-                auditEvent.RemoteAddress ?? "(unknown)",
-                auditEvent.RemotePort,
+                who,
                 auditEvent.AttemptedPath,
                 auditEvent.ReachedListenerPort,
                 auditEvent.Detail);
@@ -194,6 +201,12 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.CircuitDisconnected => AuditEventIds.CircuitDisconnected,
         AuditEventKind.CircuitOriginRejected => AuditEventIds.CircuitOriginRejected,
         AuditEventKind.ForwarderKitGenerated => AuditEventIds.ForwarderKitGenerated,
+        AuditEventKind.AdminAuthenticationConfigured => AuditEventIds.AdminAuthenticationConfigured,
+        AuditEventKind.AdminAccountCreated => AuditEventIds.AdminAccountCreated,
+        AuditEventKind.WindowsAuthenticationHandshakeFailed => AuditEventIds.WindowsAuthenticationHandshakeFailed,
+        AuditEventKind.AppAuthenticationLoginFailed => AuditEventIds.AppAuthenticationLoginFailed,
+        AuditEventKind.AdminAccountLockedOut => AuditEventIds.AdminAccountLockedOut,
+        AuditEventKind.AdminLoginSucceeded => AuditEventIds.AdminLoginSucceeded,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

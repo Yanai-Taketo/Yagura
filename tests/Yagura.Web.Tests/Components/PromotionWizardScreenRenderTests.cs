@@ -143,6 +143,8 @@ public sealed class PromotionWizardScreenRenderTests
 
         public Task<PromotionValidationResult> ValidateConnectionAsync(
             string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(new PromotionValidationResult(true, "ok"));
 
@@ -155,6 +157,8 @@ public sealed class PromotionWizardScreenRenderTests
         public Task<PromotionApplyResult> ExecuteAsync(
             string idempotencyToken,
             string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(new PromotionApplyResult(
                 WizardApplyOutcome.Applied, ConfigurationApplyEffect.RestartRequired, "ok"));

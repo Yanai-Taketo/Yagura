@@ -69,6 +69,17 @@ public static class YaguraWebViewerExtensions
         services.AddScoped<CircuitHandler, YaguraCircuitHandler>();
         services.AddHostedService<CircuitIdleReclaimService>();
 
+        // ---- circuit 認証状態の明示的な汲み直し（ADR-0010 決定 2・委任事項 2）----
+        //
+        // YaguraCircuitAuthenticationStateProvider は circuit スコープ（YaguraCircuitContext と
+        // 同じ Scoped 登録）。AuthenticationStateProvider として登録することで
+        // AddCascadingAuthenticationState()/<AuthorizeView> が同一インスタンスを消費し、
+        // YaguraCircuitHandler.OnConnectionUpAsync が汲み直した最新の状態をそのまま反映する。
+        services.AddScoped<YaguraCircuitAuthenticationStateProvider>();
+        services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider>(
+            sp => sp.GetRequiredService<YaguraCircuitAuthenticationStateProvider>());
+        services.AddCascadingAuthenticationState();
+
         // ---- 送信元の逆引きホスト名（ADR-0007。ui.md §4）----
         //
         // - ReverseDnsDisplayOptions は Host が設定読み込み結果（Viewer:ReverseDns:Enabled）から

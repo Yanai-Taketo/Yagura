@@ -139,6 +139,8 @@ public sealed class SetupWizardService : ISetupWizardService
     public async Task<SetupWizardApplyResult> ApplyAsync(
         string idempotencyToken,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(idempotencyToken);
@@ -193,7 +195,9 @@ public sealed class SetupWizardService : ISetupWizardService
                 Kind: AuditEventKind.ConfigurationSaved,
                 RemoteAddress: operatorAddress,
                 RemotePort: null,
-                Detail: BuildAuditDetail(plan));
+                Detail: BuildAuditDetail(plan),
+                AuthenticationScheme: operatorScheme,
+                AuthenticatedPrincipal: operatorPrincipal);
         }
 
         // 監査記録はロックの外で（IAuditRecorder は失敗しても例外を投げない契約——記録失敗が

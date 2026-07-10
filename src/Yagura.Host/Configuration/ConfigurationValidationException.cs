@@ -1,4 +1,6 @@
-﻿namespace Yagura.Host.Configuration;
+﻿using Microsoft.Extensions.Logging;
+
+namespace Yagura.Host.Configuration;
 
 /// <summary>
 /// configuration.md §1「起動失敗」分類の不正値を検出したときに送出する例外。
@@ -19,4 +21,17 @@ public sealed class ConfigurationValidationException : Exception
         : base(message, innerException)
     {
     }
+
+    /// <summary>
+    /// この起動失敗に対応する監査イベント ID（ADR-0010 決定 6 で追加——additive）。
+    /// 個別 ID を持たない起動失敗（受信ポート不正等、従来どおり）は <see langword="null"/> のまま。
+    /// </summary>
+    public ConfigurationValidationException(string message, EventId eventId)
+        : base(message)
+    {
+        EventId = eventId;
+    }
+
+    /// <inheritdoc cref="ConfigurationValidationException(string, EventId)"/>
+    public EventId? EventId { get; }
 }

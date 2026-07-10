@@ -23,6 +23,14 @@
       (api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/index.json) で確認した最新安定版
       7.0.2（7.1.0-preview1.26124.5 はプレリリースのため除外。検証日 2026-07-05）。
     -->
+    <!--
+      Windows 統合認証（Negotiate: Kerberos/NTLM。ADR-0010 決定 2・委任事項 1）。当日ライブ検証:
+      nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/microsoft.aspnetcore.authentication.negotiate/index.json) で
+      最新安定版 10.0.9 を確認（11.0.0-preview.* はプレリリースのため除外。既存の
+      Microsoft.* 10.0.9 系列と同一。検証日 2026-07-10）。
+    -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.9" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.7.0" />

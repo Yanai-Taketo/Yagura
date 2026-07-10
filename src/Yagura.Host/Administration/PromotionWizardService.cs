@@ -192,6 +192,8 @@ public sealed class PromotionWizardService : IPromotionWizardService
     /// <inheritdoc/>
     public async Task<PromotionValidationResult> ValidateConnectionAsync(
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default)
     {
         string connectionString;
@@ -243,7 +245,9 @@ public sealed class PromotionWizardService : IPromotionWizardService
                 Kind: AuditEventKind.PromotionConnectionValidated,
                 RemoteAddress: operatorAddress,
                 RemotePort: null,
-                Detail: BuildValidationAuditDetail(validation)),
+                Detail: BuildValidationAuditDetail(validation),
+                AuthenticationScheme: operatorScheme,
+                AuthenticatedPrincipal: operatorPrincipal),
             CancellationToken.None).ConfigureAwait(false);
 
         return new PromotionValidationResult(
@@ -292,6 +296,8 @@ public sealed class PromotionWizardService : IPromotionWizardService
     public async Task<PromotionApplyResult> ExecuteAsync(
         string idempotencyToken,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(idempotencyToken);
@@ -392,7 +398,9 @@ public sealed class PromotionWizardService : IPromotionWizardService
                 RemotePort: null,
                 Detail: "Storage:Provider を sqlite から sqlserver へ切替（設定保存。反映はサービス再起動）。" +
                         $"旧 DB 処分の選択={disposalDetail}、" +
-                        $"サーバ証明書の信頼={(built.TrustServerCertificate ? "有効" : "無効")}");
+                        $"サーバ証明書の信頼={(built.TrustServerCertificate ? "有効" : "無効")}",
+                AuthenticationScheme: operatorScheme,
+                AuthenticatedPrincipal: operatorPrincipal);
         }
 
         await _auditRecorder.RecordAsync(auditEvent, CancellationToken.None).ConfigureAwait(false);

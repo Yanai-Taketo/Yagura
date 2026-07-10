@@ -34,6 +34,18 @@ public static class AuditEventIds
     /// <summary>フォワーダ配布キットの生成（ADR-0008）。レベルは情報。</summary>
     public static readonly EventId ForwarderKitGenerated = new(2005, "ForwarderKitGenerated");
 
+    /// <summary>管理 UI 認証設定の変更（ADR-0010 決定 1・3）。レベルは情報。</summary>
+    public static readonly EventId AdminAuthenticationConfigured = new(2006, "AdminAuthenticationConfigured");
+
+    /// <summary>アプリ独自認証の管理者アカウントの作成・パスワード変更（ADR-0010 決定 3）。レベルは情報。</summary>
+    public static readonly EventId AdminAccountCreated = new(2007, "AdminAccountCreated");
+
+    /// <summary>
+    /// 管理 UI へのサインイン成功（Windows 統合認証・アプリ独自認証の両方。ADR-0010 決定 6
+    /// 「誰が」欄の実効化の起点）。レベルは情報。
+    /// </summary>
+    public static readonly EventId AdminLoginSucceeded = new(2008, "AdminLoginSucceeded");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
@@ -43,4 +55,17 @@ public static class AuditEventIds
 
     /// <summary>同一サイト以外からの circuit 確立試行の拒否（origin 検証。security.md §2.1）。レベルは警告。</summary>
     public static readonly EventId CircuitOriginRejected = new(3002, "CircuitOriginRejected");
+
+    /// <summary>Windows 統合認証（Negotiate）のハンドシェイク失敗・拒否（ADR-0010 決定 6）。レベルは警告。</summary>
+    public static readonly EventId WindowsAuthenticationHandshakeFailed = new(3003, "WindowsAuthenticationHandshakeFailed");
+
+    /// <summary>アプリ独自認証のログイン失敗（ADR-0010 決定 6）。レベルは警告。</summary>
+    public static readonly EventId AppAuthenticationLoginFailed = new(3004, "AppAuthenticationLoginFailed");
+
+    /// <summary>
+    /// アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6）。レベルは警告。
+    /// 「解除」側の ID は Phase 1 では採番しない——時間経過による自動失効のみで「解除」という
+    /// 個別事象が存在しないため（PR #217 レビューの決着。明示的な解除操作の実装時に採番する）。
+    /// </summary>
+    public static readonly EventId AdminAccountLockedOut = new(3005, "AdminAccountLockedOut");
 }

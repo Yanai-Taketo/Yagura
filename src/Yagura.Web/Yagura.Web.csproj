@@ -7,6 +7,8 @@
   <ItemGroup>
     <!-- UI コンポーネントライブラリ（ADR-0003 決定 3。版のライブ検証記録は Directory.Packages.props）。 -->
     <PackageReference Include="MudBlazor" />
+    <!-- 管理 UI 認証（ADR-0010 Phase 1。版のライブ検証記録は Directory.Packages.props）。 -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Negotiate" />
   </ItemGroup>
 
   <ItemGroup>

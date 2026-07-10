@@ -86,6 +86,13 @@ public static class ConfigurationKeyMetadata
             // 呼び出しごとに参照する想定でリスナ再構成を要しない)。現時点の実効は他キー同様、
             // 設定読み込みが起動時のみのため再起動(ライブ再読込 §3 の配線時に目標へ揃える)。
             ["Viewer:ReverseDns:Enabled"] = ConfigurationReloadEffect.Immediate,
+            // 管理 UI 認証（ADR-0010 Phase 1）: 認証スキーム構成（AddNegotiate/AddCookie/
+            // AddAuthorization）は WebApplicationBuilder 構築時に固定され、実行中の付け替え
+            // API を持たないため、Admin:HttpPort と同じくサービス再起動が現時点の実効。
+            ["Admin:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Admin:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
+            ["Admin:Authentication:App:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Admin:Authentication:RequireForLoopback"] = ConfigurationReloadEffect.RestartRequired,
         };
 
     /// <summary>
