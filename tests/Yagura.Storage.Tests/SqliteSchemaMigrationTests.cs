@@ -17,8 +17,9 @@ namespace Yagura.Storage.Tests;
 /// </para>
 /// <para>
 /// SQLite 側は列長・COLLATE の変更を伴わない（TEXT は元々無制限。自由文検索の非 ASCII
-/// 大文字小文字非区別は DB-9 の性能実測後——database.md §4）ため、v1 -> v2 の実体は
-/// 索引の付け替えと履歴表の追加のみである。
+/// 大文字小文字非区別は DB-9（2026-07-10 実測・採用確定）を経てアプリ定義比較関数
+/// （クエリ実行時にのみ登録するアプリケーション層の変更）で実装した——database.md §4）ため、
+/// v1 -> v2 のスキーマ DDL としての実体は索引の付け替えと履歴表の追加のみである。
 /// </para>
 /// </remarks>
 public sealed class SqliteSchemaMigrationTests : IDisposable

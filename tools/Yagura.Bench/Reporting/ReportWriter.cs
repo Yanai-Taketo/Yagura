@@ -95,4 +95,78 @@ public static class ReportWriter
 
     private static double ComputeEffectiveRate(LoadGeneration.LoadGeneratorResult result) =>
         result.Elapsed.TotalSeconds > 0 ? result.SucceededCount / result.Elapsed.TotalSeconds : 0;
+
+    /// <summary>結果を JSON 文字列へ整形する（<see cref="StorageBenchReport"/> 版。DB-9/DB-10）。</summary>
+    public static string ToJson(StorageBenchReport report) => JsonSerializer.Serialize(report, JsonOptions);
+
+    /// <summary>結果を JSON ファイルへ書き出す（<see cref="StorageBenchReport"/> 版）。</summary>
+    public static void WriteJsonFile(StorageBenchReport report, string filePath) =>
+        File.WriteAllText(filePath, ToJson(report));
+
+    /// <summary>人間可読サマリを組み立てる（<see cref="StorageBenchReport"/> 版）。</summary>
+    public static string ToHumanReadableSummary(StorageBenchReport report)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"=== ベンチ結果: {report.ScenarioName} ===");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"実行 ID: {report.RunId}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"開始時刻(UTC): {report.StartedAt:o}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"所要時間: {report.ElapsedWallClock}");
+        sb.AppendLine();
+
+        sb.AppendLine("--- 実行環境 ---");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"マシン名: {report.Environment.MachineName}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"OS: {report.Environment.OsDescription} ({report.Environment.OsArchitecture})");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"CPU: {report.Environment.ProcessorName ?? "(取得不可)"} / 論理コア数 {report.Environment.LogicalProcessorCount}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"メモリ: {report.Environment.TotalPhysicalMemoryBytes / (1024 * 1024 * 1024)} GiB");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"ディスク: {report.Environment.DataRootDriveDescription}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $".NET ランタイム: {report.Environment.DotnetRuntimeVersion}");
+        sb.AppendLine();
+
+        if (report.QueryLatencyResults is { } queryResults)
+        {
+            sb.AppendLine("--- DB-9: クエリレイテンシ（ネイティブ LIKE vs 比較関数候補案） ---");
+            foreach (var rowResult in queryResults)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture,
+                    $"[rows={rowResult.RowCount:N0}] 投入 {rowResult.SeedElapsed} / 移行(v1→v2) {rowResult.MigrationElapsed}");
+                foreach (var c in rowResult.Cases)
+                {
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"  {c.Label} '{c.SearchTerm}':");
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"    LIKE : {c.LikeLatency} (一致 {c.LikeMatchCount} 件{(c.LikeExceededBudget ? " / 予算30秒超過あり" : "")})");
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"    UDF  : {c.FunctionLatency} (一致 {c.FunctionMatchCount} 件{(c.FunctionExceededBudget ? " / 予算30秒超過あり" : "")})");
+                    var ratio = c.LikeLatency.P95.TotalMilliseconds > 0
+                        ? c.FunctionLatency.P95.TotalMilliseconds / c.LikeLatency.P95.TotalMilliseconds
+                        : double.NaN;
+                    sb.AppendLine(CultureInfo.InvariantCulture, $"    p95 比 (UDF/LIKE): {ratio:F2}x");
+                }
+            }
+
+            sb.AppendLine();
+        }
+
+        if (report.SchemaMigrationResults is { } ddlResults)
+        {
+            sb.AppendLine("--- DB-10: スキーマ v1→v2 移行の DDL 実行時間 ---");
+            foreach (var r in ddlResults)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture,
+                    $"[{r.Provider} rows={r.RowCount:N0}] 投入 {r.SeedElapsed} / 移行 {r.MigrationElapsed} / " +
+                    $"probe write {(r.ProbeWriteElapsed is { } pe ? pe.ToString() : "(N/A)")} / " +
+                    $"版確認={r.SchemaVersionConfirmed} / 件数保全={r.RowCountPreserved}");
+            }
+
+            sb.AppendLine();
+        }
+
+        if (report.Notes.Count > 0)
+        {
+            sb.AppendLine("--- 注記 ---");
+            foreach (var note in report.Notes)
+            {
+                sb.AppendLine(CultureInfo.InvariantCulture, $"- {note}");
+            }
+        }
+
+        return sb.ToString();
+    }
 }

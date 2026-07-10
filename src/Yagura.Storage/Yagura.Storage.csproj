@@ -26,6 +26,11 @@
       （CurrentSchemaVersion）と照合順序定数（SearchCollation）を検証で参照するため。
     -->
     <InternalsVisibleTo Include="Yagura.Storage.ConformanceTests" />
+    <!--
+      DB-9/DB-10 のストレージベンチマーク（tools/Yagura.Bench/StorageBench）が
+      SchemaMigrationDdlBenchmark の移行後検証で CurrentSchemaVersion を参照するため。
+    -->
+    <InternalsVisibleTo Include="Yagura.Bench" />
   </ItemGroup>
 
 </Project>

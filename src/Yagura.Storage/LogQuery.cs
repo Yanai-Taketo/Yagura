@@ -34,9 +34,9 @@ namespace Yagura.Storage;
 /// <param name="SearchText">
 /// 自由文検索。<see cref="LogRecord.Message"/> に対する部分一致（大文字小文字を区別しない）とする
 /// （database.md §1.2「自由文検索の一致規則（DB-6）」。2026-07-09 オーナー決定で規則は確定済み。
-/// ASCII 範囲の大文字小文字非区別は両 provider が blocking で満たす。非 ASCII の実装・検証は
-/// provider ごとの実装バッチ——SQL Server は database.md §5.4 の列 COLLATE、SQLite は DB-9 の
-/// 性能実測後——に委ねる）。
+/// ASCII・非 ASCII とも両 provider で blocking として満たす——SQL Server は database.md §5.4 の
+/// 列 COLLATE、SQLite は DB-9 の性能実測（2026-07-10）を経たアプリ定義比較関数
+/// （<see cref="Yagura.Storage.Sqlite.SqliteLogStore"/>）で実装済み）。
 /// </param>
 /// <param name="Limit">結果件数の上限（必須。architecture.md §6・M-10）。</param>
 /// <param name="Timeout">クエリの実行時間上限（必須。超過時は例外を送出する）。</param>

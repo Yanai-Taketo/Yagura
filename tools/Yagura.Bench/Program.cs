@@ -1,6 +1,7 @@
 using Yagura.Bench.Baseline;
 using Yagura.Bench.Reporting;
 using Yagura.Bench.Scenarios;
+using Yagura.Bench.StorageBench;
 
 namespace Yagura.Bench;
 
@@ -36,6 +37,14 @@ public static class Program
         Directory.CreateDirectory(options.OutputDirectory);
 
         Console.WriteLine($"シナリオ '{options.Scenario}' を開始する...");
+
+        // DB-9/DB-10 のストレージベンチマーク（database.md §8）は受信パイプラインの負荷測定
+        // （送出・突合の概念を持つ ScenarioReport）とは性質が異なるため、専用の実行・出力経路を持つ
+        // （StorageBenchReport。ReportWriter/StorageBenchReport の doc コメント参照）。
+        if (options.Scenario is BenchScenario.QueryLatency or BenchScenario.SchemaMigrationDdl)
+        {
+            return await RunStorageBenchAsync(options).ConfigureAwait(false);
+        }
 
         ScenarioReport report;
         try
@@ -99,5 +108,93 @@ public static class Program
         // 原則が破れたことを意味するため、終了コードで検知可能にする（CI 等での自動判定に使える。
         // ただし M7-1 時点では長時間本番ベンチの CI 組み込みは行わない——M7-3 のスコープ）。
         return report.Reconciliation.IsReconciled ? 0 : 2;
+    }
+
+    /// <summary>
+    /// DB-9（<see cref="BenchScenario.QueryLatency"/>）・DB-10（<see cref="BenchScenario.SchemaMigrationDdl"/>）の
+    /// 実行経路。既定の行数規模は QueryLatency/SchemaMigrationDdl とも 10 万・100 万
+    /// （<c>--rows</c> 未指定時）——1000 万行は実行時間が長いため明示指定を要求する。
+    /// </summary>
+    private static async Task<int> RunStorageBenchAsync(ScenarioOptions options)
+    {
+        var runId = Guid.NewGuid().ToString("N")[..12];
+        var dataRoot = options.DataRoot ?? Path.Combine(Path.GetTempPath(), $"yagura-bench-{runId}");
+        Directory.CreateDirectory(dataRoot);
+
+        var rowCounts = options.RowCounts ?? [100_000, 1_000_000];
+        var startedAt = DateTimeOffset.UtcNow;
+        var wallClock = System.Diagnostics.Stopwatch.StartNew();
+        var notes = new List<string>();
+
+        void Log(string message) => Console.WriteLine(message);
+
+        try
+        {
+            IReadOnlyList<QueryLatencyBenchmark.RowCountResult>? queryResults = null;
+            IReadOnlyList<SchemaMigrationDdlBenchmark.RowCountResult>? ddlResults = null;
+
+            if (options.Scenario == BenchScenario.QueryLatency)
+            {
+                queryResults = await QueryLatencyBenchmark.RunAsync(rowCounts, dataRoot, Log).ConfigureAwait(false);
+                notes.Add(
+                    $"結果上限 {10_000} 件・タイムアウト {TimeSpan.FromSeconds(30)}（architecture.md M-10 の仮値）を前提に計測した。");
+            }
+            else
+            {
+                var usingSqlServer = !string.IsNullOrWhiteSpace(options.SqlServerConnectionString);
+                var sqlServerTemplate = usingSqlServer
+                    ? options.SqlServerConnectionString
+                    : null;
+                ddlResults = await SchemaMigrationDdlBenchmark.RunAsync(rowCounts, dataRoot, sqlServerTemplate, Log).ConfigureAwait(false);
+                notes.Add(usingSqlServer
+                    ? "SQL Server（--sqlserver 指定先）を対象に、v1→v2 移行（列 COLLATE 明示 + 索引再構築）の DDL 実行時間を計測した。"
+                    : "SQLite を対象に、v1→v2 移行（索引のみ。COLLATE 相当の DDL 変更は不要）の DDL 実行時間を計測した。");
+            }
+
+            wallClock.Stop();
+
+            var report = new StorageBenchReport(
+                options.Scenario.ToString(),
+                runId,
+                startedAt,
+                Reporting.EnvironmentInfo.Collect(dataRoot),
+                wallClock.Elapsed,
+                queryResults,
+                ddlResults,
+                notes);
+
+            var timestamp = report.StartedAt.UtcDateTime.ToString("yyyyMMdd-HHmmss");
+            var jsonPath = Path.Combine(options.OutputDirectory, $"{report.ScenarioName}-{timestamp}.json");
+            var summaryPath = Path.Combine(options.OutputDirectory, $"{report.ScenarioName}-{timestamp}.summary.txt");
+
+            ReportWriter.WriteJsonFile(report, jsonPath);
+            var summary = ReportWriter.ToHumanReadableSummary(report);
+            File.WriteAllText(summaryPath, summary);
+
+            Console.WriteLine(summary);
+            Console.WriteLine($"JSON: {jsonPath}");
+            Console.WriteLine($"サマリ: {summaryPath}");
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ストレージベンチ実行中にエラーが発生した: {ex}");
+            return 1;
+        }
+        finally
+        {
+            if (!options.KeepDataRoot && Directory.Exists(dataRoot))
+            {
+                try
+                {
+                    Directory.Delete(dataRoot, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // ベストエフォート（ScenarioRunner.RunAsync と同じ判断）。
+                }
+            }
+        }
     }
 }
