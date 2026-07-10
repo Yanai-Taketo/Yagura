@@ -73,7 +73,7 @@
         _access = AdminScreenAccessPolicy.Decide(
             HttpContext?.Connection.LocalPort,
             CircuitContext.IsAdminListener,
-            AdminPort.Port);
+            AdminPort.Ports);
 
         if (_access == AdminScreenAccess.Denied && _auditedDeniedUri != Navigation.Uri)
         {

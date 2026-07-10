@@ -42,6 +42,13 @@ public static class Program
     /// </summary>
     public const string WindowsServiceName = "Yagura";
 
+    /// <summary>
+    /// Yagura サービスの仮想サービスアカウント名（ADR-0004 決定 4。<c>NT SERVICE\&lt;ServiceName&gt;</c>
+    /// は Windows がサービス登録時に自動で認識する予約済みアカウント）。管理リスナのリモート HTTPS
+    /// 証明書の秘密鍵読み取り権限付与先（ADR-0010 Phase 2 決定 4）。
+    /// </summary>
+    public const string YaguraServiceAccountName = $"NT SERVICE\\{WindowsServiceName}";
+
     public static async Task Main(string[] args)
     {
         // データルートは設定ファイル自体の置き場所を決める入力のため、ファイル読み込みに
@@ -173,28 +180,108 @@ public static class Program
         // (dotnet/aspnetcore の SocketTransportOptions.CreateDefaultBoundListenSocket。
         // ListenAnyIP はこの単一ソケットの Listen(IPv6Any, port) 呼び出しをラップした
         // 公式の簡易 API——実機確認・ソース確認済み、確認日 2026-07-05)。
+        // 管理リスナのリモート HTTPS（ADR-0010 Phase 2 決定 4）: bind エントリを Kestrel へ渡す前に
+        // 証明書ストア参照を試みる。YaguraConfigurationLoader.Load は「認証 + HTTPS が静的に構成
+        // 済みであること」までを fail-closed で検証済みだが、拇印が実際に証明書ストアで解決できる
+        // か（証明書が存在するか・秘密鍵が読めるか・期限内か）は環境依存のため、ここでの解決結果に
+        // 応じて「開けなかった bind エントリを縮小継続としてスキップする」（configuration.md §4.1
+        // 「指定した bind 先が使用できない場合...そのリスナは開かずに縮小側で継続する」と同型の扱い。
+        // ADR-0010 Phase 2 決定 4「loopback 経由の管理リスナは HTTPS の対象外のまま残る」——
+        // リモート面 1 本が開けなくても管理リスナ全体・loopback 面は影響を受けない）。
+        System.Security.Cryptography.X509Certificates.X509Certificate2? adminHttpsCertificate = null;
+        string? adminHttpsCertificateUnavailableReason = null;
+
         var listenerBindEntries = ListenerBindPlan.Create(resolvedConfiguration);
+
+        if (listenerBindEntries.Any(e => e.RequiresHttps))
+        {
+            var certificateLoadResult = Yagura.Host.Administration.Https.AdminCertificateProvider.Load(
+                resolvedConfiguration.AdminHttpsCertificateThumbprint!);
+
+            if (!certificateLoadResult.Succeeded)
+            {
+                adminHttpsCertificateUnavailableReason = certificateLoadResult.FailureReason;
+            }
+            else if (certificateLoadResult.IsExpired)
+            {
+                adminHttpsCertificateUnavailableReason =
+                    $"証明書（拇印 {resolvedConfiguration.AdminHttpsCertificateThumbprint}）の有効期間外です" +
+                    $"（NotBefore={certificateLoadResult.Certificate!.NotBefore:O}, NotAfter={certificateLoadResult.Certificate.NotAfter:O}）。";
+            }
+            else
+            {
+                adminHttpsCertificate = certificateLoadResult.Certificate;
+            }
+        }
+
         builder.WebHost.ConfigureKestrel(kestrelOptions =>
         {
             foreach (var entry in listenerBindEntries)
             {
+                if (entry.RequiresHttps && adminHttpsCertificate is null)
+                {
+                    // 証明書が解決できなかった（未検出・秘密鍵アクセス不可・期限切れ）——
+                    // このエントリだけを bind せず縮小継続する（警告は app.Build() 後、下記参照）。
+                    continue;
+                }
+
+                void ConfigureHttpsIfRequired(Microsoft.AspNetCore.Server.Kestrel.Core.ListenOptions listenOptions)
+                {
+                    if (!entry.RequiresHttps)
+                    {
+                        return;
+                    }
+
+                    listenOptions.UseHttps(httpsOptions =>
+                    {
+                        // 最低 TLS 1.2・1.3 優先を明示固定する（ADR-0010 Phase 2 決定 4。田中の指摘）。
+                        // OS 既定（schannel ポリシー）に暗黙に委ねない——Windows Server の版が混在する
+                        // 導入先で TLS 1.0/1.1 が意図せず有効のまま露出することを防ぐ。
+                        httpsOptions.SslProtocols =
+                            System.Security.Authentication.SslProtocols.Tls12 |
+                            System.Security.Authentication.SslProtocols.Tls13;
+
+                        // ServerCertificateSelector は TLS ハンドシェイクのたびに呼ばれる公式の
+                        // 拡張点（証明書のホットスワップ用途で用意されている）。ここでは「起動後に
+                        // 証明書が期限切れへ遷移した場合、以後の新規ハンドシェイクを拒否する
+                        // （= リモート HTTPS リスナを事実上停止する。configuration.md §6 の既存方針
+                        // 『HTTPS リスナは停止し HTTP へは落とさない』をリモート面に適用——決定 4）」
+                        // という runtime の挙動を、Kestrel のリスナを再構成することなく実現する
+                        // ために転用する。null を返すと当該ハンドシェイクは失敗する（TLS レベルで
+                        // 拒否——loopback 面には一切影響しない。管理者は RDP + loopback から
+                        // 引き続き復旧操作ができる）。
+                        var capturedCertificate = adminHttpsCertificate!;
+                        httpsOptions.ServerCertificateSelector = (_, _) =>
+                        {
+                            var now = DateTime.Now;
+                            return now >= capturedCertificate.NotBefore && now <= capturedCertificate.NotAfter
+                                ? capturedCertificate
+                                : null;
+                        };
+                    });
+                }
+
                 if (entry.IsAnyIP)
                 {
-                    kestrelOptions.ListenAnyIP(entry.Port);
+                    kestrelOptions.ListenAnyIP(entry.Port, ConfigureHttpsIfRequired);
                 }
                 else
                 {
-                    kestrelOptions.Listen(entry.Address!, entry.Port);
+                    kestrelOptions.Listen(entry.Address!, entry.Port, ConfigureHttpsIfRequired);
                 }
             }
         });
 
-        // ポートゲート(後述 UseYaguraListenerPortGuard)の判定に使う管理ポートの実値。
-        // resolvedConfiguration.AdminHttpPort をそのまま使わない理由: 0(OS 採番。テスト用)
-        // 指定時、ListenerBindPlan.Create が実際に予約した具体ポート番号はここでしか
-        // 得られない(ResolvedYaguraConfiguration 自体は 0 のまま——ListenerBindPlan の
-        // ResolvePortForDualStackLoopback コメント参照)。
-        var effectiveAdminPort = listenerBindEntries.First(e => e.Kind == ListenerKind.Admin).Port;
+        // ポートゲート(後述 UseYaguraListenerPortGuard)の判定に使う管理ポートの実値一式
+        // (ADR-0010 Phase 2 決定 1。loopback 用に加え、証明書が解決できてリモート HTTPS bind を
+        // 実際に行った場合はそのポートも含める)。resolvedConfiguration.AdminHttpPort をそのまま
+        // 使わない理由: 0(OS 採番。テスト用)指定時、ListenerBindPlan.Create が実際に予約した
+        // 具体ポート番号はここでしか得られない(ResolvedYaguraConfiguration 自体は 0 のまま——
+        // ListenerBindPlan の ResolvePortForDualStackLoopback コメント参照)。
+        var effectiveAdminPort = listenerBindEntries.First(e => e is { Kind: ListenerKind.Admin, RequiresHttps: false }).Port;
+        var effectiveAdminPorts = adminHttpsCertificate is not null
+            ? new[] { effectiveAdminPort, resolvedConfiguration.AdminHttpsPort }
+            : [effectiveAdminPort];
 
         // Windows サービス統合（M3-2 #31。architecture.md §1.1 「ホスト」の責務）。
         //
@@ -420,7 +507,7 @@ public static class Program
 
         // circuit 統治（M8-4。security.md §2）: リスナ帰属判定・上限ガードが参照する管理ポートの
         // 実値と、circuit 管理（一覧・個別切断）のサービスを登録する。
-        builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(effectiveAdminPort));
+        builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(effectiveAdminPorts));
         builder.Services.AddYaguraAdmin();
 
         // ---- 管理 UI 認証（ADR-0010 Phase 1）----
@@ -500,6 +587,54 @@ public static class Program
                 resolvedConfiguration.SpoolDirectory);
         }
 
+        // 管理リスナのリモート HTTPS（ADR-0010 Phase 2 決定 4）: 証明書が解決できなかった場合の
+        // 起動時警告（縮小継続——起動は中止しない。ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup
+        // = 1013 参照）。app.Build() 後の DI ロガーを使うことで EventLog プロバイダへも到達する。
+        if (adminHttpsCertificateUnavailableReason is not null)
+        {
+            var httpsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.Https");
+            httpsLogger.LogWarning(
+                Yagura.Host.Configuration.ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup,
+                "[admin-https-certificate-unavailable] 管理リスナのリモート HTTPS（ポート {HttpsPort}）用証明書を" +
+                "解決できなかったため、このリスナは開かずに縮小継続します（loopback 経由の管理リスナ（ポート {AdminPort}）は" +
+                "影響を受けません——ADR-0010 Phase 2 決定 4）。理由: {Reason}",
+                resolvedConfiguration.AdminHttpsPort,
+                effectiveAdminPort,
+                adminHttpsCertificateUnavailableReason);
+        }
+        else if (adminHttpsCertificate is not null)
+        {
+            // 秘密鍵の読み取り権限をサービスアカウントへ付与する（configuration.md §6 の既存方式と
+            // 同型。付与は監査記録の対象——ADR-0010 Phase 2 決定 4）。ベストエフォート: 付与に
+            // 失敗しても HTTPS リスナ自体は（証明書が現在の実行アカウントから既に読める限り）
+            // 動作を継続できるため、起動は妨げない——警告のみ残す（CF-D2 の手動手順への誘導）。
+            var httpsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.Https");
+            var grantResult = Yagura.Host.Administration.Https.AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess(
+                adminHttpsCertificate, YaguraServiceAccountName);
+
+            var auditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
+            if (grantResult.Succeeded)
+            {
+                await auditRecorder.RecordAsync(new AuditEvent(
+                    OccurredAt: TimeProvider.System.GetUtcNow(),
+                    Kind: AuditEventKind.AdminHttpsCertificatePrivateKeyAccessGranted,
+                    RemoteAddress: null,
+                    RemotePort: null,
+                    Detail: $"thumbprint={resolvedConfiguration.AdminHttpsCertificateThumbprint};account={YaguraServiceAccountName}"))
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                httpsLogger.LogWarning(
+                    "[admin-https-private-key-grant-failed] 管理リスナのリモート HTTPS 証明書の秘密鍵読み取り権限を" +
+                    "{Account} へ自動付与できませんでした（理由: {Reason}）。サービスアカウントが証明書へ既存の権限で" +
+                    "アクセスできない場合、リモート HTTPS の接続受付が失敗する可能性があります。証明書スナップイン" +
+                    "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2）。",
+                    YaguraServiceAccountName,
+                    grantResult.FailureReason);
+            }
+        }
+
         // MapRazorComponents の既定エンドポイントは antiforgery メタデータを持つため、
         // 対応する UseAntiforgery ミドルウェアが無いと 500 になる（書き込みフォームを
         // 持たないページでも、Razor Components のパイプラインとして必須。実機確認済み）。
@@ -515,7 +650,7 @@ public static class Program
         // ミドルウェアの登録順序上、UseAntiforgery の後・MapYaguraWebViewer/MapYaguraAdmin
         // (エンドポイント実行に相当)の前に置く必要がある。effectiveAdminPort を使う理由は
         // 上記(122 行目付近)のコメント参照——0 指定時は解決済みの具体ポートで判定する必要がある。
-        app.UseYaguraListenerPortGuard(effectiveAdminPort);
+        app.UseYaguraListenerPortGuard(effectiveAdminPorts);
 
         // 管理 UI 認証（ADR-0010 Phase 1）。ポートガードの直後（管理系 404 の判定が認証
         // チャレンジより優先——閲覧リスナ経由の到達はそもそも認証を試みずに 404 で終わる）・

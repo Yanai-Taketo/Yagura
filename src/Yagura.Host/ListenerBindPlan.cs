@@ -65,6 +65,24 @@ public static class ListenerBindPlan
         entries.Add(ListenerBindEntry.Specific(ListenerKind.Admin, IPAddress.Loopback, adminPort));
         entries.Add(ListenerBindEntry.Specific(ListenerKind.Admin, IPAddress.IPv6Loopback, adminPort));
 
+        // 管理リスナのリモートバインド（ADR-0010 Phase 2 決定 1）: 上記 loopback 2 エントリを
+        // 置き換えるのではなく、別ポート（既定 8516）への AnyIP + HTTPS エントリを追加する。
+        // 理由: (1) OS の bind 制約——同一ポートでワイルドカード(AnyIP) bind と特定アドレス
+        // （loopback）bind は共存できない（Windows は先に bind した側がポート全体を排他的に
+        // 占有する）ため、loopback を残したまま「別ポート」で remote を提供する以外に両立の
+        // 手段がない。(2) ADR-0010 Phase 2 決定 4「loopback 経由の管理リスナは HTTPS の対象外の
+        // まま残る」——証明書の期限切れ・失効時に管理リスナ全体が道連れにならず、RDP + loopback
+        // からの復旧が常に残ることを bind 構成そのもので保証する。
+        // 到達可否は YaguraConfigurationLoader.Load の fail-closed 検証（認証・HTTPS が両方
+        // 構成済みであること）で既に保証済みだが、実際の証明書ストア参照の成否は環境依存
+        // （証明書ストアの状態）のため、ここでは呼び出し元（Program）が RequiresHttps エントリを
+        // 実際に bind するかどうかを証明書解決の成否で判断する（本メソッドは常にエントリを返す——
+        // configuration.md §1「起動失敗」の対象ではない縮小継続の判断は Program 側に委ねる）。
+        if (configuration.AdminRemoteBindingEnabled)
+        {
+            entries.Add(ListenerBindEntry.AnyIP(ListenerKind.Admin, configuration.AdminHttpsPort, requiresHttps: true));
+        }
+
         return entries;
     }
 
@@ -95,12 +113,13 @@ public static class ListenerBindPlan
 /// <summary>1 つの bind 先（アドレス + ポート、またはワイルドカード + ポート）。</summary>
 public sealed record ListenerBindEntry
 {
-    private ListenerBindEntry(ListenerKind kind, IPAddress? address, int port, bool isAnyIP)
+    private ListenerBindEntry(ListenerKind kind, IPAddress? address, int port, bool isAnyIP, bool requiresHttps)
     {
         Kind = kind;
         Address = address;
         Port = port;
         IsAnyIP = isAnyIP;
+        RequiresHttps = requiresHttps;
     }
 
     /// <summary>このエントリが帰属するリスナの種別。</summary>
@@ -118,9 +137,17 @@ public sealed record ListenerBindEntry
     /// </summary>
     public bool IsAnyIP { get; }
 
-    public static ListenerBindEntry Specific(ListenerKind kind, IPAddress address, int port) =>
-        new(kind, address, port, isAnyIP: false);
+    /// <summary>
+    /// <see langword="true"/> の場合、このエントリは HTTPS 必須（ADR-0010 Phase 2 決定 4。
+    /// 管理リスナのリモートバインド面）。呼び出し側（<c>Program</c>）は証明書を解決できた場合のみ
+    /// <c>UseHttps</c> 付きで bind し、解決できなければこのエントリを縮小継続としてスキップする
+    /// （<see cref="ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup"/>）。
+    /// </summary>
+    public bool RequiresHttps { get; }
 
-    public static ListenerBindEntry AnyIP(ListenerKind kind, int port) =>
-        new(kind, address: null, port, isAnyIP: true);
+    public static ListenerBindEntry Specific(ListenerKind kind, IPAddress address, int port, bool requiresHttps = false) =>
+        new(kind, address, port, isAnyIP: false, requiresHttps);
+
+    public static ListenerBindEntry AnyIP(ListenerKind kind, int port, bool requiresHttps = false) =>
+        new(kind, address: null, port, isAnyIP: true, requiresHttps);
 }

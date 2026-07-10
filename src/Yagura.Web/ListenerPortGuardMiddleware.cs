@@ -56,24 +56,25 @@ namespace Yagura.Web;
 public sealed class ListenerPortGuardMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly int _adminPort;
+    private readonly IReadOnlyList<int> _adminPorts;
     private readonly IAuditRecorder _auditRecorder;
     private readonly WebGuardMetrics _metrics;
     private readonly TimeProvider _timeProvider;
 
     public ListenerPortGuardMiddleware(
         RequestDelegate next,
-        int adminPort,
+        IReadOnlyList<int> adminPorts,
         IAuditRecorder auditRecorder,
         WebGuardMetrics metrics,
         TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(next);
+        ArgumentNullException.ThrowIfNull(adminPorts);
         ArgumentNullException.ThrowIfNull(auditRecorder);
         ArgumentNullException.ThrowIfNull(metrics);
 
         _next = next;
-        _adminPort = adminPort;
+        _adminPorts = adminPorts;
         _auditRecorder = auditRecorder;
         _metrics = metrics;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -84,7 +85,7 @@ public sealed class ListenerPortGuardMiddleware
         var endpoint = context.GetEndpoint();
         var guard = endpoint?.Metadata.GetMetadata<ListenerPortGuardEndpointMetadata>();
 
-        if (guard is { Kind: ListenerKind.Admin } && context.Connection.LocalPort != _adminPort)
+        if (guard is { Kind: ListenerKind.Admin } && !_adminPorts.Contains(context.Connection.LocalPort))
         {
             // 閲覧リスナ（または将来追加され得る他ポート）経由での管理系エンドポイント到達を
             // 拒否する。存在自体を漏らさないため 404（NotFound）で応答する。

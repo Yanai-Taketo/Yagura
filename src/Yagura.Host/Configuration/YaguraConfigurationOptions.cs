@@ -130,6 +130,55 @@ public sealed class YaguraConfigurationOptions
         /// </summary>
         public AuthenticationOptions? Authentication { get; set; }
 
+        /// <summary>
+        /// 管理リスナのリモートバインド解禁（ADR-0010 Phase 2 決定 1。opt-in。既定 <c>false</c>——
+        /// 現状（loopback 束縛のみ）を維持する）。有効化には認証（<see cref="AuthenticationOptions"/>
+        /// のいずれか）と HTTPS（<see cref="HttpsOptions"/>）の両方が構成済みであることを要する
+        /// （fail-closed 不変条件。<see cref="YaguraConfigurationLoader"/> 参照）。
+        /// </summary>
+        public RemoteBindingOptions? RemoteBinding { get; set; }
+
+        /// <summary>
+        /// 管理リスナのリモートバインド面（<see cref="RemoteBindingOptions"/>）用 HTTPS 証明書設定
+        /// （ADR-0010 Phase 2 決定 4）。設定キーは閲覧リスナの HTTPS（configuration.md §6）とは
+        /// 独立させる——暗黙の連動をしない（同一証明書の流用は両方のキーに指定することで実現する）。
+        /// </summary>
+        public HttpsOptions? Https { get; set; }
+
+        public sealed class RemoteBindingOptions
+        {
+            /// <summary>
+            /// リモートバインドを有効化する（既定 <c>false</c>）。<c>true</c> かつ認証・HTTPS の
+            /// いずれかが未構成の組み合わせは fail-closed で起動を拒否する（ADR-0010 Phase 2 決定 1）。
+            /// </summary>
+            public string? Enabled { get; set; }
+        }
+
+        public sealed class HttpsOptions
+        {
+            /// <summary>
+            /// 管理リスナのリモート HTTPS を有効化する（既定 <c>false</c>）。
+            /// </summary>
+            public string? Enabled { get; set; }
+
+            /// <summary>
+            /// Windows 証明書ストア（ローカルコンピューター・<c>My</c>）内の証明書を選択する拇印
+            /// （SHA-1、40 桁の 16 進表記。configuration.md §6 と同型——PFX パス + パスワード方式は
+            /// 採らない）。空白・区切り文字は正規化して比較する。
+            /// </summary>
+            public string? CertificateThumbprint { get; set; }
+
+            /// <summary>
+            /// 管理リスナのリモート HTTPS 用ポート（既定 8516）。<see cref="AdminOptions.HttpPort"/>
+            /// （既定 8515。loopback・平文 HTTP 専用のまま）とは独立のポートとする——同一ポートで
+            /// loopback は平文・remote は HTTPS という 2 通りの扱いを共存させることは、OS の
+            /// bind 制約（ワイルドカード bind と特定アドレス bind は同一ポートで共存できない）
+            /// および ADR-0010 Phase 2 決定 4「loopback 経由の管理リスナは HTTPS の対象外のまま残る」
+            /// （証明書事故時も loopback からの復旧を維持する）の両方から、別ポートでの提供を要する。
+            /// </summary>
+            public string? Port { get; set; }
+        }
+
         public sealed class AuthenticationOptions
         {
             /// <summary>Windows 統合認証（Negotiate）の設定（ADR-0010 決定 2）。</summary>

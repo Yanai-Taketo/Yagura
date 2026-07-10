@@ -93,6 +93,13 @@ public static class ConfigurationKeyMetadata
             ["Admin:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:App:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:RequireForLoopback"] = ConfigurationReloadEffect.RestartRequired,
+            // 管理リスナのリモートバインド・HTTPS（ADR-0010 Phase 2 決定 1・4）: bind エントリの
+            // 追加・Kestrel の UseHttps 構成はいずれも WebApplicationBuilder 構築時に固定され、
+            // 認証キーと同じくサービス再起動が現時点の実効（§8「UI」区分の目標のとおり）。
+            ["Admin:RemoteBinding:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Admin:Https:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Admin:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
+            ["Admin:Https:Port"] = ConfigurationReloadEffect.RestartRequired,
         };
 
     /// <summary>

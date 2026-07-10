@@ -33,14 +33,17 @@ public static class AdminScreenAccessPolicy
     /// circuit のリスナ帰属（<c>YaguraCircuitContext.IsAdminListener</c>。circuit 未確立・
     /// 判定不能は <see langword="null"/>）。
     /// </param>
-    /// <param name="adminPort">管理リスナの実ポート。</param>
-    public static AdminScreenAccess Decide(int? requestLocalPort, bool? circuitIsAdminListener, int adminPort)
+    /// <param name="adminPorts">
+    /// 管理リスナが実際に bind している全ポート（ADR-0010 Phase 2 決定 1。リモートバインド有効時は
+    /// loopback 用ポートに加えリモート HTTPS 用ポートも含む）。
+    /// </param>
+    public static AdminScreenAccess Decide(int? requestLocalPort, bool? circuitIsAdminListener, IReadOnlyList<int> adminPorts)
     {
         // HTTP 要求文脈がある（prerender / 静的 SSR）なら、接続の実ローカルポートが唯一の真実
         // （クライアントが偽装できない値——ListenerPortGuardMiddleware と同じ判定根拠）。
         if (requestLocalPort is int port)
         {
-            return port == adminPort ? AdminScreenAccess.Allowed : AdminScreenAccess.Denied;
+            return adminPorts.Contains(port) ? AdminScreenAccess.Allowed : AdminScreenAccess.Denied;
         }
 
         // 対話的描画では circuit 確立時に束縛した帰属で判定する。

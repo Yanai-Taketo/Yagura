@@ -63,6 +63,16 @@ internal static class YaguraConfigurationOptionsCloner
                         Enabled = source.Admin.Authentication.App.Enabled,
                     },
                 },
+                RemoteBinding = source.Admin.RemoteBinding is null ? null : new YaguraConfigurationOptions.AdminOptions.RemoteBindingOptions
+                {
+                    Enabled = source.Admin.RemoteBinding.Enabled,
+                },
+                Https = source.Admin.Https is null ? null : new YaguraConfigurationOptions.AdminOptions.HttpsOptions
+                {
+                    Enabled = source.Admin.Https.Enabled,
+                    CertificateThumbprint = source.Admin.Https.CertificateThumbprint,
+                    Port = source.Admin.Https.Port,
+                },
             },
             Storage = source.Storage is null ? null : new YaguraConfigurationOptions.StorageOptions
             {

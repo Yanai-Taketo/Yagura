@@ -105,4 +105,10 @@ public enum AuditEventKind
     /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を必ず伴う。
     /// </summary>
     AdminLoginSucceeded,
+
+    /// <summary>
+    /// 管理操作: 管理リスナ HTTPS 証明書の秘密鍵読み取り権限をサービスアカウントへ付与
+    /// （ADR-0010 Phase 2 決定 4。イベント ID 2009）。記録内容は証明書拇印・付与先アカウントのみ。
+    /// </summary>
+    AdminHttpsCertificatePrivateKeyAccessGranted,
 }

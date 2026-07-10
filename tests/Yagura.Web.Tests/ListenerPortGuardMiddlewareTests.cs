@@ -178,7 +178,7 @@ public sealed class ListenerPortGuardMiddlewareTests
         out WebGuardMetrics metrics)
     {
         metrics = new WebGuardMetrics();
-        return new ListenerPortGuardMiddleware(next, AdminPort, auditRecorder, metrics);
+        return new ListenerPortGuardMiddleware(next, [AdminPort], auditRecorder, metrics);
     }
 
     private static DefaultHttpContext CreateContext(

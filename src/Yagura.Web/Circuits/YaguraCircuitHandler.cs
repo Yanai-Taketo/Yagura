@@ -70,7 +70,7 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         // 取得できなければ帰属不明（null）のまま = 閲覧相当の安全側（クラスコメント参照）。
         _context.IsAdminListener = httpContext is null
             ? null
-            : httpContext.Connection.LocalPort == _adminPort.Port;
+            : _adminPort.Contains(httpContext.Connection.LocalPort);
         _context.RemoteAddress = httpContext?.Connection.RemoteIpAddress?.ToString();
 
         _registry.Register(new CircuitRecord(

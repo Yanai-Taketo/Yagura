@@ -50,6 +50,24 @@
 /// の組み合わせは <see cref="YaguraConfigurationLoader.Load"/> が fail-closed で起動を拒否するため、
 /// この記録に到達する時点では常に「有効なら認証方式が最低 1 つ構成済み」が成立している。
 /// </param>
+/// <param name="AdminRemoteBindingEnabled">
+/// 管理リスナのリモートバインド解禁（既定 <c>false</c>。ADR-0010 Phase 2 決定 1）。<c>true</c> の
+/// 組み合わせは、認証（<see cref="AdminWindowsAuthEnabled"/>/<see cref="AdminAppAuthEnabled"/>の
+/// いずれか）と <see cref="AdminHttpsEnabled"/> + 有効な <see cref="AdminHttpsCertificateThumbprint"/>
+/// の両方が構成済みであることを <see cref="YaguraConfigurationLoader.Load"/> が fail-closed で
+/// 検証済みのため、この記録に到達する時点では常に両条件が成立している（静的な設定検証のみ——
+/// 実際の証明書ストア参照の成否は別途 Program 側で確認する）。
+/// </param>
+/// <param name="AdminHttpsEnabled">
+/// 管理リスナのリモート HTTPS 有効/無効（既定 <c>false</c>。ADR-0010 Phase 2 決定 4）。
+/// </param>
+/// <param name="AdminHttpsCertificateThumbprint">
+/// 管理リスナのリモート HTTPS 証明書拇印（正規化済み・大文字 16 進 40 桁。未設定/不正値は
+/// <see langword="null"/>）。
+/// </param>
+/// <param name="AdminHttpsPort">
+/// 管理リスナのリモート HTTPS 用ポート（既定 8516。<see cref="AdminHttpPort"/> とは独立）。
+/// </param>
 /// <param name="SqliteFileName">データルート配下の SQLite ファイル名（検証済み）。</param>
 /// <param name="SpoolEnabled">スプールの有効/無効（既定 <c>true</c>。opt-out。M4-3）。</param>
 /// <param name="SpoolDirectory">スプールディレクトリの絶対パス（既定はデータルート配下。M4-3）。</param>
@@ -84,6 +102,10 @@ public sealed record ResolvedYaguraConfiguration(
     bool AdminWindowsAuthKerberosOnly,
     bool AdminAppAuthEnabled,
     bool AdminAuthRequireForLoopback,
+    bool AdminRemoteBindingEnabled,
+    bool AdminHttpsEnabled,
+    string? AdminHttpsCertificateThumbprint,
+    int AdminHttpsPort,
     string SqliteFileName,
     bool SpoolEnabled,
     string SpoolDirectory,
