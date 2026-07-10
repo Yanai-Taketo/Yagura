@@ -76,11 +76,11 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
         Assert.Contains("Admin:Authentication:Windows:Enabled", output, StringComparison.Ordinal);
         Assert.Contains("Admin:Authentication:App:Enabled", output, StringComparison.Ordinal);
 
-        // イベント ID 1010 が Critical ログの EventId として記録されること
+        // イベント ID 1011 が Critical ログの EventId として記録されること
         // (既定コンソールロガーの出力形式 "warn: Category[EventId]" のうち EventId 部分。
-        // 1009 は main 側で Issue #152 に既に割り当て済みのため、本イベントは 1010——
+        // 1009 = Issue #152、1010 = PR #211 が使用のため本イベントは 1011——
         // ConfigurationEventIds.AdminAuthenticationFailClosedStartupRejected 参照)。
-        Assert.Contains("[1010]", output, StringComparison.Ordinal);
+        Assert.Contains("[1011]", output, StringComparison.Ordinal);
     }
 
     [Fact]

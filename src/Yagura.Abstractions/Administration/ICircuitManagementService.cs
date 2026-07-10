@@ -19,8 +19,14 @@ public interface ICircuitManagementService
     /// 切断要求を受け付けた場合 <see langword="true"/>。対象が既に存在しない場合
     /// <see langword="false"/>（この場合は監査記録しない——実行されなかった操作）。
     /// </returns>
+    /// <param name="circuitId">対象 circuit の識別子。</param>
+    /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用）。</param>
+    /// <param name="operatorScheme">操作者の認証方式（ADR-0010 決定 6。未認証では <see langword="null"/>）。</param>
+    /// <param name="operatorPrincipal">操作者の認証済み利用者名（同上）。</param>
     Task<bool> DisconnectAsync(
         string circuitId,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default);
 }

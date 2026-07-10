@@ -2,9 +2,11 @@
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
 @using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject IPromotionWizardService PromotionWizard
 @inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 
 @*
     本番昇格（SQLite → SQL Server）ウィザード（database.md §6.1・ui.md §4。M8-4 骨格 = Issue #71、
@@ -320,7 +322,9 @@ else
                     _rawConnectionString ?? string.Empty, _password);
             }
 
-            _validationResult = await PromotionWizard.ValidateConnectionAsync(CircuitContext.RemoteAddress);
+            var (validateScheme, validatePrincipal) = await ResolveOperatorAsync();
+            _validationResult = await PromotionWizard.ValidateConnectionAsync(
+                CircuitContext.RemoteAddress, validateScheme, validatePrincipal);
             _snapshot = await PromotionWizard.GetSnapshotAsync();
         }
         catch (WizardValidationException ex)
@@ -360,7 +364,8 @@ else
             return;
         }
 
-        _applyResult = await PromotionWizard.ExecuteAsync(token, CircuitContext.RemoteAddress);
+        var (operatorScheme, operatorPrincipal) = await ResolveOperatorAsync();
+        _applyResult = await PromotionWizard.ExecuteAsync(token, CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
         _resultMessage = _applyResult.Outcome switch
         {
             WizardApplyOutcome.Applied => _applyResult.Message,
@@ -375,4 +380,11 @@ else
             _applyResult = null;
         }
     }
+
+    /// <summary>
+    /// 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者の方式・利用者名を導出する
+    /// （未認証 = 既定の loopback 無認証では両方 null → 監査は接続元のみ記録）。
+    /// </summary>
+    private async Task<(string? Scheme, string? Principal)> ResolveOperatorAsync() =>
+        AuditActorResolver.Resolve((await AuthStateProvider.GetAuthenticationStateAsync()).User);
 }

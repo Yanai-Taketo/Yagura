@@ -115,8 +115,13 @@
         if (!_authenticationSatisfied)
         {
             // fail-closed: 未認証・未認可のまま画面本体（@Body）は描画しない。ログイン画面へ
-            // 誘導する（強制リロードは行わない——既存 circuit を活かしたまま遷移する）。
-            Navigation.NavigateTo(AdminAuthenticationExtensions.LoginPath);
+            // 誘導する。forceLoad: true でフルページロードにする（PR #217 レビュー指摘への
+            // 対応）——ログイン画面のアンチフォージェリトークンと Cookie の対は HTTP 要求
+            // （prerender 段の HttpContext）でのみ発行できるため、circuit 内の対話的
+            // ナビゲーションではなく新しい HTTP 要求として到達させ、常に有効なトークンで
+            // フォームが描画されることを保証する（AdminLoginScreen の PersistentComponentState
+            // による対話的描画への持ち越しと合わせて二段で守る）。
+            Navigation.NavigateTo(AdminAuthenticationExtensions.LoginPath, forceLoad: true);
         }
     }
 }

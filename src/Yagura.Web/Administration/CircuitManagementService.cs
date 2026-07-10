@@ -55,6 +55,8 @@ public sealed class CircuitManagementService : ICircuitManagementService
     public async Task<bool> DisconnectAsync(
         string circuitId,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(circuitId);
@@ -76,7 +78,9 @@ public sealed class CircuitManagementService : ICircuitManagementService
                 Kind: AuditEventKind.CircuitDisconnected,
                 RemoteAddress: operatorAddress,
                 RemotePort: null,
-                Detail: $"circuitId={circuitId}"),
+                Detail: $"circuitId={circuitId}",
+                AuthenticationScheme: operatorScheme,
+                AuthenticatedPrincipal: operatorPrincipal),
             CancellationToken.None).ConfigureAwait(false);
 
         return true;

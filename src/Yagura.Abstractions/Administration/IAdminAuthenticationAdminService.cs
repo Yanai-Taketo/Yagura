@@ -39,6 +39,8 @@ public interface IAdminAuthenticationAdminService : IYaguraWriteService
     /// </param>
     /// <param name="newAppPassword">最初の管理者アカウントのパスワード（平文。保存前にハッシュ化する）。</param>
     /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用）。</param>
+    /// <param name="operatorScheme">操作者の認証方式（ADR-0010 決定 6。未認証では <see langword="null"/>）。</param>
+    /// <param name="operatorPrincipal">操作者の認証済み利用者名（同上）。</param>
     /// <exception cref="WizardValidationException">
     /// fail-closed 不変条件（ADR-0010 決定 1）に反する組み合わせ、またはアプリ独自認証を
     /// 有効化しようとしているのにアカウントが 1 件も存在しない（本呼び出しでも作成しない）場合。
@@ -51,6 +53,8 @@ public interface IAdminAuthenticationAdminService : IYaguraWriteService
         string? newAppUsername,
         string? newAppPassword,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default);
 }
 

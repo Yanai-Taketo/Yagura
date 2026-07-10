@@ -206,7 +206,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.WindowsAuthenticationHandshakeFailed => AuditEventIds.WindowsAuthenticationHandshakeFailed,
         AuditEventKind.AppAuthenticationLoginFailed => AuditEventIds.AppAuthenticationLoginFailed,
         AuditEventKind.AdminAccountLockedOut => AuditEventIds.AdminAccountLockedOut,
-        AuditEventKind.AdminAccountLockoutReleased => AuditEventIds.AdminAccountLockoutReleased,
+        AuditEventKind.AdminLoginSucceeded => AuditEventIds.AdminLoginSucceeded,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

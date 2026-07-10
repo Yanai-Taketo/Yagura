@@ -56,6 +56,8 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         string? newAppUsername,
         string? newAppPassword,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default)
     {
         // fail-closed 不変条件（ADR-0010 決定 1）: 起動時検証（YaguraConfigurationLoader）と
@@ -115,7 +117,9 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
                 Kind: AuditEventKind.AdminAuthenticationConfigured,
                 RemoteAddress: operatorAddress,
                 RemotePort: null,
-                Detail: $"windows={windowsAuthEnabled} kerberosOnly={kerberosOnly} app={appAuthEnabled} requireForLoopback={requireForLoopback}"),
+                Detail: $"windows={windowsAuthEnabled} kerberosOnly={kerberosOnly} app={appAuthEnabled} requireForLoopback={requireForLoopback}",
+                AuthenticationScheme: operatorScheme,
+                AuthenticatedPrincipal: operatorPrincipal),
             CancellationToken.None).ConfigureAwait(false);
 
         if (createdUsername is not null)
@@ -126,7 +130,9 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
                     Kind: AuditEventKind.AdminAccountCreated,
                     RemoteAddress: operatorAddress,
                     RemotePort: null,
-                    Detail: $"username={createdUsername}"),
+                    Detail: $"username={createdUsername}",
+                    AuthenticationScheme: operatorScheme,
+                    AuthenticatedPrincipal: operatorPrincipal),
                 CancellationToken.None).ConfigureAwait(false);
         }
 

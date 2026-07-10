@@ -217,13 +217,18 @@ public static class YaguraAdminExtensions
             // CancellationToken.None: クライアント切断（RequestAborted）で監査記録自体を
             // 打ち切らない——生成した事実は応答の成否に関わらず記録する
             // （ListenerPortGuardMiddleware と同じ判断。ADR-0004 決定 7）。
+            // 「誰が」欄（ADR-0010 決定 6）: 認証を経由した操作（loopback 認証 opt-in 有効時等）は
+            // 認証済み利用者名を併記する。未認証（既定の loopback 無認証）は従来どおり接続元のみ。
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(context.User);
             await auditRecorder.RecordAsync(
                 new AuditEvent(
                     OccurredAt: timeProvider.GetUtcNow(),
                     Kind: AuditEventKind.ForwarderKitGenerated,
                     RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
                     RemotePort: context.Connection.RemotePort,
-                    Detail: FormatAuditDetail(request!)),
+                    Detail: FormatAuditDetail(request!),
+                    AuthenticationScheme: operatorScheme,
+                    AuthenticatedPrincipal: operatorPrincipal),
                 CancellationToken.None).ConfigureAwait(false);
 
             var fileName = ForwarderKitBuilder.BuildFileName(request!, generatedAt);

@@ -2,9 +2,11 @@
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
 @using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject IAdminAuthenticationAdminService AuthAdminService
 @inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
 
 @*
@@ -98,6 +100,10 @@ else
 
         try
         {
+            // 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者を導出して監査へ渡す。
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
             _status = await AuthAdminService.ConfigureAsync(
                 _windowsEnabled,
                 _kerberosOnly,
@@ -105,7 +111,9 @@ else
                 _requireForLoopback,
                 string.IsNullOrWhiteSpace(_newPassword) ? null : _newUsername,
                 string.IsNullOrWhiteSpace(_newPassword) ? null : _newPassword,
-                CircuitContext.RemoteAddress);
+                CircuitContext.RemoteAddress,
+                operatorScheme,
+                operatorPrincipal);
 
             _newPassword = string.Empty;
             ApplyStatusToFields(_status);

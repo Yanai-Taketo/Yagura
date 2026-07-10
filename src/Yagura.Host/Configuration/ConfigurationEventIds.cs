@@ -19,10 +19,11 @@ public static class ConfigurationEventIds
     /// のレベル割当方針「機能停止を伴う事象はエラー」の適用）。
     /// </summary>
     /// <remarks>
-    /// ID 1009 は main 側で Issue #152（スプールの定期自己検証失敗）に既に割り当て済みのため
-    /// （additive-only 規約——一度公開した ID の意味は変えない）、本イベントは次の空き番号
-    /// 1010 を採る（rebase 時に 1009 → 1010 へ変更）。
+    /// 採番の経緯: 1009 は main 側で Issue #152（スプールの定期自己検証失敗）に割り当て済み、
+    /// 1010 は PR #211（スプール自己検証タイムアウトのバックログ起因の区別）が使用し先に
+    /// マージされる見込みのため（additive-only 規約——一度公開した ID の意味は変えない。
+    /// 採番は PR #217 レビューで裁定済み）、本イベントは 1011 を採る。
     /// </remarks>
     public static readonly EventId AdminAuthenticationFailClosedStartupRejected =
-        new(1010, "AdminAuthenticationFailClosedStartupRejected");
+        new(1011, "AdminAuthenticationFailClosedStartupRejected");
 }

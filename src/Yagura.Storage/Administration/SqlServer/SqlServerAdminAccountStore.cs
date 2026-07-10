@@ -163,36 +163,42 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        // 原子的インクリメント（PR #217 レビュー指摘への対応。SQLite 実装と同じ設計判断）:
+        // 単文の UPDATE ... SET FailedAttemptCount = FailedAttemptCount + 1 ... OUTPUT により
+        // インクリメント・ロックアウト設定・結果取得を単一の原子的な文で行う——並行する
+        // ログイン失敗での lost update（ロックアウト閾値到達の遅延）を構造的に防ぐ。
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE dbo.AdminAccounts SET
+                FailedAttemptCount = FailedAttemptCount + 1,
+                LockoutUntilUtc = CASE
+                    WHEN FailedAttemptCount + 1 >= @threshold THEN @lockoutUntil
+                    ELSE LockoutUntilUtc
+                END
+            OUTPUT inserted.FailedAttemptCount, inserted.LockoutUntilUtc
+            WHERE UsernameNormalized = @normalized;
+            """;
+        command.Parameters.AddWithValue("@threshold", lockoutThreshold);
+        command.Parameters.AddWithValue("@lockoutUntil", atUtc.Add(lockoutDuration).UtcDateTime);
+        command.Parameters.AddWithValue("@normalized", Normalize(username));
 
-        int failedCount;
-        await using (var select = connection.CreateCommand())
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            select.Transaction = transaction;
-            select.CommandText = "SELECT FailedAttemptCount FROM dbo.AdminAccounts WHERE UsernameNormalized = @normalized;";
-            select.Parameters.AddWithValue("@normalized", Normalize(username));
-            var current = await select.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            failedCount = current is null ? 0 : Convert.ToInt32(current) + 1;
+            // アカウント不在（呼び出し元は実在アカウントに対してのみ呼ぶ契約だが、防御的に空結果を返す）。
+            return new AdminAccountLoginFailureResult(0, LockedOutNow: false, LockoutUntilUtc: null);
         }
 
-        var lockedOutNow = failedCount >= lockoutThreshold;
-        DateTimeOffset? lockoutUntil = lockedOutNow ? atUtc.Add(lockoutDuration) : null;
+        var failedCount = reader.GetInt32(0);
+        DateTimeOffset? lockoutUntil = reader.IsDBNull(1)
+            ? null
+            : new DateTimeOffset(reader.GetDateTime(1), TimeSpan.Zero);
 
-        await using (var update = connection.CreateCommand())
-        {
-            update.Transaction = transaction;
-            update.CommandText =
-                "UPDATE dbo.AdminAccounts SET FailedAttemptCount = @count, LockoutUntilUtc = @lockoutUntil " +
-                "WHERE UsernameNormalized = @normalized;";
-            update.Parameters.AddWithValue("@count", failedCount);
-            update.Parameters.AddWithValue("@lockoutUntil", (object?)lockoutUntil?.UtcDateTime ?? DBNull.Value);
-            update.Parameters.AddWithValue("@normalized", Normalize(username));
-            await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-        return new AdminAccountLoginFailureResult(failedCount, lockedOutNow, lockoutUntil);
+        return new AdminAccountLoginFailureResult(
+            failedCount,
+            LockedOutNow: failedCount >= lockoutThreshold,
+            LockoutUntilUtc: lockoutUntil);
     }
 
     private static string Normalize(string username) => username.Trim().ToLowerInvariant();

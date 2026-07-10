@@ -2,9 +2,11 @@
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
 @using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject ISetupWizardService SetupWizard
 @inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 
 @*
     初期セットアップウィザードの骨格（configuration.md §3〜§7・ui.md §4。M8-4。Issue #71）。
@@ -172,7 +174,11 @@ else
             return;
         }
 
-        _applyResult = await SetupWizard.ApplyAsync(token, CircuitContext.RemoteAddress);
+        // 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者の方式・利用者名を
+        // 導出して監査へ渡す（未認証 = 既定の loopback 無認証では両方 null → 接続元のみ記録）。
+        var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+            (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+        _applyResult = await SetupWizard.ApplyAsync(token, CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
         _resultMessage = _applyResult.Outcome switch
         {
             WizardApplyOutcome.Applied => UiText.WizardApplied,

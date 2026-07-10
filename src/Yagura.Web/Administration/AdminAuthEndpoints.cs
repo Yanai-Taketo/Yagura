@@ -80,6 +80,20 @@ internal static class AdminAuthEndpoints
                 return;
             }
 
+            // サインイン成功の監査記録（ADR-0010 決定 6「誰が」欄の実効化の起点。ID 2008）。
+            // CancellationToken.None: クライアント切断で監査記録自体を打ち切らない
+            // （ForwarderKit ダウンロード等の既存 2000 番台と同じ判断。ADR-0004 決定 7）。
+            await auditRecorder.RecordAsync(new AuditEvent(
+                OccurredAt: timeProvider.GetUtcNow(),
+                Kind: AuditEventKind.AdminLoginSucceeded,
+                RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
+                RemotePort: context.Connection.RemotePort,
+                ReachedListenerPort: context.Connection.LocalPort,
+                Detail: "scheme=windows",
+                AuthenticationScheme: "windows",
+                AuthenticatedPrincipal: user.Identity?.Name),
+                CancellationToken.None).ConfigureAwait(false);
+
             context.Response.Redirect("/admin");
         });
 
@@ -128,6 +142,19 @@ internal static class AdminAuthEndpoints
                     identity.AddClaim(new Claim(ClaimTypes.Name, outcome.Username));
                     var principal = new ClaimsPrincipal(identity);
                     await context.SignInAsync(AdminAuthenticationExtensions.AppAuthenticationScheme, principal).ConfigureAwait(false);
+
+                    // サインイン成功の監査記録（ADR-0010 決定 6「誰が」欄の実効化の起点。ID 2008）。
+                    await auditRecorder.RecordAsync(new AuditEvent(
+                        OccurredAt: now,
+                        Kind: AuditEventKind.AdminLoginSucceeded,
+                        RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
+                        RemotePort: context.Connection.RemotePort,
+                        ReachedListenerPort: context.Connection.LocalPort,
+                        Detail: "scheme=app",
+                        AuthenticationScheme: "app",
+                        AuthenticatedPrincipal: outcome.Username),
+                        CancellationToken.None).ConfigureAwait(false);
+
                     context.Response.Redirect("/admin");
                     return;
 

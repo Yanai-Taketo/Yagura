@@ -22,27 +22,43 @@ public sealed class KerberosOnlyFilterMiddleware
     private readonly RequestDelegate _next;
     private readonly IAuditRecorder _auditRecorder;
     private readonly TimeProvider _timeProvider;
+    private readonly YaguraAdminListenerPort _adminPort;
     private readonly ILogger<KerberosOnlyFilterMiddleware> _logger;
 
     public KerberosOnlyFilterMiddleware(
         RequestDelegate next,
         IAuditRecorder auditRecorder,
         TimeProvider timeProvider,
+        YaguraAdminListenerPort adminPort,
         ILogger<KerberosOnlyFilterMiddleware> logger)
     {
         ArgumentNullException.ThrowIfNull(next);
         ArgumentNullException.ThrowIfNull(auditRecorder);
         ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentNullException.ThrowIfNull(adminPort);
         ArgumentNullException.ThrowIfNull(logger);
 
         _next = next;
         _auditRecorder = auditRecorder;
         _timeProvider = timeProvider;
+        _adminPort = adminPort;
         _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // 検査対象は管理リスナ（Negotiate 認証を要求する唯一のリスナ）に限る（PR #217
+        // レビュー指摘への対応）: 閲覧リスナ（8514）は Negotiate を要求せず、誤って
+        // Negotiate ヘッダーを送ったクライアントに対してもヘッダーは単に無視されるのが
+        // 自然な挙動であり、本 opt-in（管理面の保護水準の選択）が閲覧面の応答を変える
+        // べきではない。判定は ListenerPortGuardMiddleware と同じく接続の実ローカルポート
+        // （クライアントが偽装できない値）で行う。
+        if (context.Connection.LocalPort != _adminPort.Port)
+        {
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
         var authorizationHeader = context.Request.Headers.Authorization.ToString();
 
         if (authorizationHeader.StartsWith("Negotiate ", StringComparison.OrdinalIgnoreCase))

@@ -134,4 +134,49 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
         var account = await _store.FindByUsernameAsync("admin1");
         Assert.Equal(baseline.AddMinutes(15), account!.LockoutUntilUtc);
     }
+
+    [Fact]
+    public async Task RecordFailedLoginAsync_ConcurrentFailures_DoNotLoseUpdates()
+    {
+        // 原子的インクリメントの並行検証（PR #217 レビュー指摘——read-modify-write の
+        // lost update があると、並行するログイン失敗（分散送信元からの同時試行）でカウンタが
+        // 実際の失敗回数より小さくなり、ロックアウト閾値到達が遅れる。ADR-0010 委任事項 4）。
+        await _store.UpsertAsync("admin1", "hash-1");
+        var baseline = DateTimeOffset.UtcNow;
+        const int parallelAttempts = 20;
+
+        var results = await Task.WhenAll(Enumerable.Range(0, parallelAttempts)
+            .Select(_ => _store.RecordFailedLoginAsync(
+                "admin1", baseline, lockoutThreshold: 100, lockoutDuration: TimeSpan.FromMinutes(15))));
+
+        // 各試行が一意な増分後カウンタ値を観測する（重複 = lost update の証拠）。
+        var observedCounts = results.Select(r => r.FailedAttemptCount).OrderBy(c => c).ToList();
+        Assert.Equal(Enumerable.Range(1, parallelAttempts), observedCounts);
+
+        // 最終カウンタ = 実際の失敗回数。
+        var account = await _store.FindByUsernameAsync("admin1");
+        Assert.Equal(parallelAttempts, account!.FailedAttemptCount);
+    }
+
+    [Fact]
+    public async Task RecordFailedLoginAsync_ConcurrentFailuresAcrossThreshold_LockoutIsNotDelayed()
+    {
+        await _store.UpsertAsync("admin1", "hash-1");
+        var baseline = DateTimeOffset.UtcNow;
+        const int parallelAttempts = 10;
+        const int threshold = 5;
+
+        var results = await Task.WhenAll(Enumerable.Range(0, parallelAttempts)
+            .Select(_ => _store.RecordFailedLoginAsync(
+                "admin1", baseline, threshold, TimeSpan.FromMinutes(15))));
+
+        // 閾値以上を観測した試行はすべてロックアウト到達として報告される。
+        Assert.All(
+            results.Where(r => r.FailedAttemptCount >= threshold),
+            r => Assert.True(r.LockedOutNow));
+
+        var account = await _store.FindByUsernameAsync("admin1");
+        Assert.Equal(parallelAttempts, account!.FailedAttemptCount);
+        Assert.NotNull(account.LockoutUntilUtc);
+    }
 }

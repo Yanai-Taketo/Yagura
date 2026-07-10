@@ -44,7 +44,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.WindowsAuthenticationHandshakeFailed => "Windows 統合認証のハンドシェイクに失敗",
         AuditEventKind.AppAuthenticationLoginFailed => "アプリ独自認証のログインに失敗",
         AuditEventKind.AdminAccountLockedOut => "管理者アカウントをロックアウト",
-        AuditEventKind.AdminAccountLockoutReleased => "管理者アカウントのロックアウトを解除",
+        AuditEventKind.AdminLoginSucceeded => "管理 UI へサインイン",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

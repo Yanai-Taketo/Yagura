@@ -44,8 +44,15 @@ public interface ISetupWizardService : IYaguraWriteService
     /// 同一トークンでの再呼び出しは再適用せず <see cref="SetupWizardApplyResult.AlreadyApplied"/> を返す。
     /// </param>
     /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用。security.md §4.1）。</param>
+    /// <param name="operatorScheme">
+    /// 操作者の認証方式（<c>"windows"</c>/<c>"app"</c>。ADR-0010 決定 6「誰が」欄の実効化——
+    /// 認証を経由しない操作（既定の loopback 無認証）では <see langword="null"/>）。
+    /// </param>
+    /// <param name="operatorPrincipal">操作者の認証済み利用者名（同上。未認証では <see langword="null"/>）。</param>
     Task<SetupWizardApplyResult> ApplyAsync(
         string idempotencyToken,
         string? operatorAddress = null,
+        string? operatorScheme = null,
+        string? operatorPrincipal = null,
         CancellationToken cancellationToken = default);
 }

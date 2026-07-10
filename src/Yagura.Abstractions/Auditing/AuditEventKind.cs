@@ -90,11 +90,19 @@ public enum AuditEventKind
     /// 拒否・セキュリティ事象: アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6。
     /// イベント ID 3005）。
     /// </summary>
+    /// <remarks>
+    /// <b>「解除」側の事象は Phase 1 では定義しない</b>（PR #217 レビュー指摘の決着）:
+    /// Phase 1 のロックアウト解除は時間経過による自動失効のみであり、「解除」という個別の
+    /// 事象が発生する時点が存在しない（明示的な解除操作も未実装）。到達不能な事象種別を
+    /// 定義したままにせず、管理者による明示的なロックアウト解除操作を実装する際に
+    /// 新しい ID とともに追加する（申し送り: security.md §2.4）。
+    /// </remarks>
     AdminAccountLockedOut,
 
     /// <summary>
-    /// セキュリティ事象: アプリ独自認証アカウントのロックアウト解除（時間経過による自動解除・
-    /// 管理操作による解除の両方を含む。ADR-0010 決定 6。イベント ID 3006）。
+    /// 管理操作: 管理 UI へのサインイン成功（Windows 統合認証・アプリ独自認証の両方。
+    /// ADR-0010 決定 6「誰が」欄の実効化の起点。イベント ID 2008）。
+    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を必ず伴う。
     /// </summary>
-    AdminAccountLockoutReleased,
+    AdminLoginSucceeded,
 }

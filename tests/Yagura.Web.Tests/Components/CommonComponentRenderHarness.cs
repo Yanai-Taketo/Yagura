@@ -68,6 +68,10 @@ internal static class CommonComponentRenderHarness
         services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsResolver, Yagura.Web.ReverseDns.ReverseDnsResolver>();
         services.AddSingleton(TimeProvider.System);
 
+        // circuit 認証状態（ADR-0010 決定 2）: 管理画面が操作者導出（AuditActorResolver）の
+        // ために注入する。描画テストでは未認証状態のままでよい（初期描画はこの値を参照しない）。
+        services.AddSingleton<Yagura.Web.Circuits.YaguraCircuitAuthenticationStateProvider>();
+
         configureServices?.Invoke(services);
 
         await using var provider = services.BuildServiceProvider();

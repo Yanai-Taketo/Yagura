@@ -99,7 +99,9 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
             requireForLoopback: false,
             newAppUsername: "admin1",
             newAppPassword: "correct-horse-battery-staple",
-            operatorAddress: "127.0.0.1");
+            operatorAddress: "127.0.0.1",
+            operatorScheme: "windows",
+            operatorPrincipal: "CONTOSO\\jdoe");
 
         Assert.True(status.AppAuthEnabled);
         Assert.True(status.HasAppAccount);
@@ -113,9 +115,39 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         var outcome = await _appAuthService.TryAuthenticateAsync("admin1", "correct-horse-battery-staple");
         Assert.Equal(Yagura.Abstractions.Administration.AppAuthenticationResult.Success, outcome.Result);
 
-        // 監査記録(2006 設定変更 + 2007 アカウント作成)。
-        Assert.Contains(_audit.Recorded, e => e.Kind == AuditEventKind.AdminAuthenticationConfigured);
-        Assert.Contains(_audit.Recorded, e => e.Kind == AuditEventKind.AdminAccountCreated);
+        // 監査記録(2006 設定変更 + 2007 アカウント作成)——「誰が」欄（AuthenticationScheme/
+        // AuthenticatedPrincipal。ADR-0010 決定 6）が両方の記録に伝播していること
+        // （PR #217 レビュー指摘 1 の (b)(d)）。
+        var configured = Assert.Single(_audit.Recorded, e => e.Kind == AuditEventKind.AdminAuthenticationConfigured);
+        Assert.Equal("windows", configured.AuthenticationScheme);
+        Assert.Equal("CONTOSO\\jdoe", configured.AuthenticatedPrincipal);
+        Assert.Equal("127.0.0.1", configured.RemoteAddress);
+
+        var accountCreated = Assert.Single(_audit.Recorded, e => e.Kind == AuditEventKind.AdminAccountCreated);
+        Assert.Equal("windows", accountCreated.AuthenticationScheme);
+        Assert.Equal("CONTOSO\\jdoe", accountCreated.AuthenticatedPrincipal);
+        // パスワードそのものはいかなる監査記録にも現れない（決定 3）。
+        Assert.All(_audit.Recorded, e => Assert.DoesNotContain("correct-horse-battery-staple", e.Detail ?? string.Empty));
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_UnauthenticatedOperator_RecordsAuditWithNullSchemeAndPrincipal()
+    {
+        // 既定（loopback 認証 opt-in 無効）の未認証操作: 「誰が」欄は接続元のみが実効値
+        // （security.md §4.1 の射程限定——ADR-0010 決定 6）。
+        await _service.ConfigureAsync(
+            windowsAuthEnabled: true,
+            kerberosOnly: false,
+            appAuthEnabled: false,
+            requireForLoopback: false,
+            newAppUsername: null,
+            newAppPassword: null,
+            operatorAddress: "127.0.0.1");
+
+        var configured = Assert.Single(_audit.Recorded, e => e.Kind == AuditEventKind.AdminAuthenticationConfigured);
+        Assert.Null(configured.AuthenticationScheme);
+        Assert.Null(configured.AuthenticatedPrincipal);
+        Assert.Equal("127.0.0.1", configured.RemoteAddress);
     }
 
     [Fact]

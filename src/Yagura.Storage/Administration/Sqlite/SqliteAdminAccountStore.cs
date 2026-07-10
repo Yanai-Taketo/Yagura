@@ -164,36 +164,46 @@ public sealed class SqliteAdminAccountStore : IAdminAccountStore, IAsyncDisposab
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        // 原子的インクリメント（PR #217 レビュー指摘への対応）: read-modify-write（SELECT →
+        // アプリ側計算 → UPDATE）は並行するログイン失敗（複数送信元からの同時試行）で
+        // lost update を起こし、ロックアウト閾値到達が遅れる——ADR-0010 委任事項 4 の
+        // 「分散送信元からの低速ブルートフォース対策」を弱める。単文の
+        // UPDATE ... SET FailedAttemptCount = FailedAttemptCount + 1 ... RETURNING により
+        // インクリメント・ロックアウト設定・結果取得を単一の原子的な文で行う
+        // （SQLite の RETURNING 句は 3.35.0+。同梱の e_sqlite3 は 3.50 系——Directory.Packages.props）。
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE AdminAccounts SET
+                FailedAttemptCount = FailedAttemptCount + 1,
+                LockoutUntilUtc = CASE
+                    WHEN FailedAttemptCount + 1 >= $threshold THEN $lockoutUntil
+                    ELSE LockoutUntilUtc
+                END
+            WHERE UsernameNormalized = $normalized
+            RETURNING FailedAttemptCount, LockoutUntilUtc;
+            """;
+        command.Parameters.AddWithValue("$threshold", lockoutThreshold);
+        command.Parameters.AddWithValue("$lockoutUntil", atUtc.Add(lockoutDuration).UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$normalized", Normalize(username));
 
-        int failedCount;
-        await using (var select = connection.CreateCommand())
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            select.Transaction = transaction;
-            select.CommandText = "SELECT FailedAttemptCount FROM AdminAccounts WHERE UsernameNormalized = $normalized;";
-            select.Parameters.AddWithValue("$normalized", Normalize(username));
-            var current = await select.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            failedCount = current is null ? 0 : Convert.ToInt32(current) + 1;
+            // アカウント不在（呼び出し元 AppAdminAuthenticationService は実在アカウントに
+            // 対してのみ呼ぶ契約だが、防御的に空結果を返す）。
+            return new AdminAccountLoginFailureResult(0, LockedOutNow: false, LockoutUntilUtc: null);
         }
 
-        var lockedOutNow = failedCount >= lockoutThreshold;
-        DateTimeOffset? lockoutUntil = lockedOutNow ? atUtc.Add(lockoutDuration) : null;
+        var failedCount = reader.GetInt32(0);
+        DateTimeOffset? lockoutUntil = reader.IsDBNull(1)
+            ? null
+            : DateTimeOffset.Parse(reader.GetString(1), null, System.Globalization.DateTimeStyles.RoundtripKind);
 
-        await using (var update = connection.CreateCommand())
-        {
-            update.Transaction = transaction;
-            update.CommandText =
-                "UPDATE AdminAccounts SET FailedAttemptCount = $count, LockoutUntilUtc = $lockoutUntil " +
-                "WHERE UsernameNormalized = $normalized;";
-            update.Parameters.AddWithValue("$count", failedCount);
-            update.Parameters.AddWithValue("$lockoutUntil", (object?)lockoutUntil?.UtcDateTime.ToString("O") ?? DBNull.Value);
-            update.Parameters.AddWithValue("$normalized", Normalize(username));
-            await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-        return new AdminAccountLoginFailureResult(failedCount, lockedOutNow, lockoutUntil);
+        return new AdminAccountLoginFailureResult(
+            failedCount,
+            LockedOutNow: failedCount >= lockoutThreshold,
+            LockoutUntilUtc: lockoutUntil);
     }
 
     private static string Normalize(string username) => username.Trim().ToLowerInvariant();

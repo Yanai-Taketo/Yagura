@@ -40,6 +40,12 @@ public static class AuditEventIds
     /// <summary>アプリ独自認証の管理者アカウントの作成・パスワード変更（ADR-0010 決定 3）。レベルは情報。</summary>
     public static readonly EventId AdminAccountCreated = new(2007, "AdminAccountCreated");
 
+    /// <summary>
+    /// 管理 UI へのサインイン成功（Windows 統合認証・アプリ独自認証の両方。ADR-0010 決定 6
+    /// 「誰が」欄の実効化の起点）。レベルは情報。
+    /// </summary>
+    public static readonly EventId AdminLoginSucceeded = new(2008, "AdminLoginSucceeded");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
@@ -56,9 +62,10 @@ public static class AuditEventIds
     /// <summary>アプリ独自認証のログイン失敗（ADR-0010 決定 6）。レベルは警告。</summary>
     public static readonly EventId AppAuthenticationLoginFailed = new(3004, "AppAuthenticationLoginFailed");
 
-    /// <summary>アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6）。レベルは警告。</summary>
+    /// <summary>
+    /// アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6）。レベルは警告。
+    /// 「解除」側の ID は Phase 1 では採番しない——時間経過による自動失効のみで「解除」という
+    /// 個別事象が存在しないため（PR #217 レビューの決着。明示的な解除操作の実装時に採番する）。
+    /// </summary>
     public static readonly EventId AdminAccountLockedOut = new(3005, "AdminAccountLockedOut");
-
-    /// <summary>アプリ独自認証アカウントのロックアウト解除（ADR-0010 決定 6）。レベルは警告。</summary>
-    public static readonly EventId AdminAccountLockoutReleased = new(3006, "AdminAccountLockoutReleased");
 }

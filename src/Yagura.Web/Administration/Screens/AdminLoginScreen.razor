@@ -1,12 +1,15 @@
 @page "/admin/login"
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
+@implements IDisposable
 @using Microsoft.AspNetCore.Antiforgery
+@using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Http
 @using Yagura.Web.Administration
 @inject AdminAuthenticationRuntimeOptions AuthOptions
 @inject IAntiforgery Antiforgery
 @inject NavigationManager Navigation
+@inject PersistentComponentState ApplicationState
 
 @*
     管理 UI ログイン画面（ADR-0010 Phase 1・委任事項 9「選択式」）。
@@ -63,25 +66,49 @@
 }
 
 @code {
+    /// <summary>PersistentComponentState のキー（prerender → 対話的描画のトークン持ち越し用）。</summary>
+    private const string AntiforgeryTokenStateKey = "admin-login-antiforgery-token";
+
     [CascadingParameter]
     public HttpContext? HttpContext { get; set; }
 
     private string? _antiforgeryToken;
     private bool _hasError;
+    private PersistingComponentStateSubscription _persistingSubscription;
 
     protected override void OnInitialized()
     {
         // アンチフォージェリトークンは静的 SSR/prerender 段の HttpContext からのみ発行できる
         // （対話的描画では HttpContext が無効——AdminScreenLayout と同じ制約）。プレーンな
         // HTML フォームで POST するため、Blazor の EditForm 経由の暗黙トークン注入は使えない。
-        if (HttpContext is not null)
+        //
+        // 対話的描画への持ち越し（PR #217 レビュー指摘への対応）: 本コンポーネントは prerender と
+        // circuit 上の対話的描画の 2 回初期化される。対話的側では HttpContext が null のため
+        // トークンを発行できず、prerender 済み HTML の hidden input も対話的描画による DOM
+        // 置き換えで失われる——PersistentComponentState（prerender の状態を対話的コンポーネントへ
+        // 引き渡す公式機構）でトークンを持ち越し、対話的描画後もフォームが有効なトークンを
+        // 保持するようにする（対応する antiforgery cookie は prerender の HTTP 応答で
+        // ブラウザへ発行済みのため、トークンとの対はそのまま有効）。
+        if (ApplicationState.TryTakeFromJson<string>(AntiforgeryTokenStateKey, out var restoredToken))
+        {
+            _antiforgeryToken = restoredToken;
+        }
+        else if (HttpContext is not null)
         {
             var tokens = Antiforgery.GetAndStoreTokens(HttpContext);
             _antiforgeryToken = tokens.RequestToken;
+
+            _persistingSubscription = ApplicationState.RegisterOnPersisting(() =>
+            {
+                ApplicationState.PersistAsJson(AntiforgeryTokenStateKey, _antiforgeryToken);
+                return Task.CompletedTask;
+            });
         }
 
         var uri = new Uri(Navigation.Uri);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
         _hasError = query.ContainsKey("error");
     }
+
+    public void Dispose() => _persistingSubscription.Dispose();
 }
