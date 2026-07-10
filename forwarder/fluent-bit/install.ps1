@@ -20,6 +20,31 @@
 #     anyway it is ignored with a warning (the kit is already destination-
 #     bound and re-substituting would silently discard the server's values).
 #
+# Collection endpoint architecture (ADR-0009 decision 7 / delegation #4): Fluent
+# Bit officially provides win64 (x64) and winarm64 (ARM64) MSIs. This script
+# auto-detects the local machine's processor architecture (see
+# Get-LocalMsiFilenamePattern below) and only considers the MSI matching that
+# architecture when auto-discovering an MSI next to the script -- this lets a
+# single kit folder carry both a win64 and a winarm64 MSI side by side (e.g.
+# for a mixed x64/ARM64 fleet distributed via the same Intune/SCCM/GPO
+# package) without the wrong-architecture MSI ever being picked. Windows x86
+# (32-bit OS) is not supported by this kit or by Yagura itself (ADR-0009
+# decision 1); this script fails with a clear message on that architecture
+# rather than silently doing nothing. Explicit -MsiPath bypasses this
+# detection (the admin's explicit choice); msiexec itself refuses to install
+# a wrong-architecture MSI (Windows Installer ERROR_INSTALL_PLATFORM_UNSUPPORTED,
+# verified for the Yagura MSI itself -- see installer/README.md, ARM64 section).
+#
+# Detection order (see Get-LocalMsiFilenamePattern): the primary source is
+# WMI/CIM (Win32_Processor.Architecture), which is answered by the native WMI
+# service and therefore reflects the actual machine regardless of the calling
+# process's own emulation state. The PROCESSOR_ARCHITECTURE /
+# PROCESSOR_ARCHITEW6432 environment variables are only a fallback: they are
+# known to be unreliable when an x64-emulated process runs on an ARM64 host
+# (both report AMD64 -- the ARCHITEW6432 promotion only covers classic 32-bit
+# WOW64, not x64-on-ARM64 emulation), which would misdetect an ARM64 machine
+# as x64 (PR #222 review, 2026-07-10).
+#
 # Usage:
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10 -YaguraPort 514 -Channels "System,Application"
@@ -145,6 +170,66 @@ function Get-ParsedVersion([string]$raw) {
     return [version]$m.Value
 }
 
+function Get-LocalMsiFilenamePattern {
+    # Detect the local machine's processor architecture and return the
+    # matching Fluent Bit MSI filename pattern (ADR-0009 decision 7 /
+    # delegation #4).
+    #
+    # Primary source: WMI/CIM Win32_Processor.Architecture. The query is
+    # answered by the native WMI service (a separate native process), so the
+    # value describes the actual machine and is not skewed by the calling
+    # PowerShell host's own bitness or emulation state. Documented values
+    # (Win32_Processor class, learn.microsoft.com/en-us/windows/win32/
+    # cimwin32prov/win32-processor, checked 2026-07-10): x86 = 0, ARM = 5,
+    # x64 = 9, ARM64 = 12. Live-verified on this x64 dev machine
+    # (Architecture = 9, 2026-07-10); the ARM64-side value (12) is from the
+    # official documentation -- not machine-verified here (no ARM64 hardware
+    # in this dev environment).
+    #
+    # Fallback (CIM unavailable/failed): PROCESSOR_ARCHITECTURE, promoted by
+    # PROCESSOR_ARCHITEW6432 when present. PROCESSOR_ARCHITECTURE reports the
+    # architecture of the *current process*, not the OS; ARCHITEW6432 only
+    # covers the classic 32-bit WOW64 case. Known limitation of this fallback:
+    # an x64-emulated process on an ARM64 host sees AMD64 in both variables
+    # and would be misdetected as x64 (PR #222 review, 2026-07-10) -- which is
+    # exactly why CIM is the primary source above.
+    $cimArch = $null
+    try {
+        $cimArch = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop |
+            Select-Object -First 1).Architecture
+    } catch {
+        Log ("WARN: CIM processor architecture query failed (" + $_.Exception.Message +
+             "); falling back to environment variables.")
+    }
+
+    if ($null -ne $cimArch) {
+        switch ([int]$cimArch) {
+            9  { return "fluent-bit-*-win64.msi" }
+            12 { return "fluent-bit-*-winarm64.msi" }
+            default {
+                Fail ("Unsupported processor architecture (Win32_Processor.Architecture = " + $cimArch + "). " +
+                      "The Yagura forwarder kit supports Windows x64 (win64) and ARM64 (winarm64) only " +
+                      "(ADR-0009); Windows x86 (32-bit) is not supported by Yagura or by this kit.")
+            }
+        }
+    }
+
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if (-not [string]::IsNullOrEmpty($env:PROCESSOR_ARCHITEW6432)) {
+        $arch = $env:PROCESSOR_ARCHITEW6432
+    }
+
+    switch ($arch) {
+        "AMD64" { return "fluent-bit-*-win64.msi" }
+        "ARM64" { return "fluent-bit-*-winarm64.msi" }
+        default {
+            Fail ("Unsupported or undetected processor architecture: '" + $arch + "'. " +
+                  "The Yagura forwarder kit supports Windows x64 (win64) and ARM64 (winarm64) only " +
+                  "(ADR-0009); Windows x86 (32-bit) is not supported by Yagura or by this kit.")
+        }
+    }
+}
+
 function Invoke-FluentBitMsi([string]$msiFile, [string]$action) {
     Log ($action + " MSI silently: " + $msiFile)
     $proc = Start-Process -FilePath "msiexec.exe" `
@@ -163,30 +248,35 @@ function Invoke-FluentBitMsi([string]$msiFile, [string]$action) {
          (Get-Item $fluentBitExe).VersionInfo.ProductVersion + ").")
 }
 
-# Resolve the kit MSI (explicit -MsiPath wins; otherwise newest by name next to
-# the script). On a fresh machine a missing MSI is fatal; on an installed
-# machine it just means "config/service update only" (idempotent rerun).
+# Resolve the kit MSI (explicit -MsiPath wins; otherwise newest matching file
+# next to the script -- see Get-LocalMsiFilenamePattern above for how the
+# architecture-specific filter is picked). On a fresh machine a missing MSI is
+# fatal; on an installed machine it just means "config/service update only"
+# (idempotent rerun).
 $resolvedMsiPath = $null
+$localMsiFilter = $null
 if (-not [string]::IsNullOrEmpty($MsiPath)) {
     if (-not (Test-Path $MsiPath)) { Fail ("MSI not found: " + $MsiPath) }
     $resolvedMsiPath = (Get-Item $MsiPath).FullName
 } else {
-    $msi = Get-ChildItem -Path $scriptDir -Filter "fluent-bit-*-win64.msi" |
+    $localMsiFilter = Get-LocalMsiFilenamePattern
+    $msi = Get-ChildItem -Path $scriptDir -Filter $localMsiFilter |
         Sort-Object Name | Select-Object -Last 1
     if ($null -ne $msi) { $resolvedMsiPath = $msi.FullName }
 }
 
 if (-not (Test-Path $fluentBitExe)) {
     if ($null -eq $resolvedMsiPath) {
-        Fail "No fluent-bit-*-win64.msi found next to the script. Place the MSI there or pass -MsiPath."
+        Fail ("No " + $localMsiFilter + " found next to the script (matching this machine's " +
+              "architecture). Place the correct MSI there or pass -MsiPath.")
     }
     Invoke-FluentBitMsi $resolvedMsiPath "Install"
 } elseif ($null -eq $resolvedMsiPath) {
-    Log ("Fluent Bit already installed: " + $fluentBitExe + " (no MSI in the kit; config/service update only)")
+    Log ("Fluent Bit already installed: " + $fluentBitExe + " (no matching MSI in the kit; config/service update only)")
 } else {
     $installedVersion = Get-ParsedVersion ((Get-Item $fluentBitExe).VersionInfo.ProductVersion)
     $kitVersion = Get-ParsedVersion ([regex]::Match((Split-Path -Leaf $resolvedMsiPath),
-        '^fluent-bit-(.+)-win64\.msi$').Groups[1].Value)
+        '^fluent-bit-(.+)-(?:win64|winarm64)\.msi$').Groups[1].Value)
     if ($null -eq $installedVersion -or $null -eq $kitVersion) {
         Log ("WARN: could not compare versions (installed: '" +
              (Get-Item $fluentBitExe).VersionInfo.ProductVersion + "', kit MSI: '" +

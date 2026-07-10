@@ -3,7 +3,7 @@
 - 状態: accepted
 - 日付: 2026-07-06
 - 決定者: YANAI Taketo
-- 関連: [ADR-0001](0001-project-founding.md)(スコープ)/ [ADR-0004](0004-security-model.md)(管理面の分離・監査・ACL)/ PR #99・#101(静的キットと実機検証の証跡)/ [利用者ガイド: Windows イベントログを Yagura へ転送する](../guides/forward-windows-eventlog.md)
+- 関連: [ADR-0001](0001-project-founding.md)(スコープ)/ [ADR-0004](0004-security-model.md)(管理面の分離・監査・ACL)/ [ADR-0009](0009-architecture-support.md)(アーキテクチャ対応拡張・決定7・委任 #4)/ PR #99・#101(静的キットと実機検証の証跡)/ [利用者ガイド: Windows イベントログを Yagura へ転送する](../guides/forward-windows-eventlog.md)
 
 ## 文脈と課題
 
@@ -240,3 +240,58 @@ ADR-0001 は「Windows イベントログ転送エージェントの自作」を
      UI 仕様まで踏み込んでおり、ADR-0004 の記述規律(方針は ADR、実装詳細は全体設計書)に
      照らすと厚い。矛盾はないが、委任事項 7 の実装完了時に、実装細部を security.md 側へ一本化し
      本文を方針レベルへ圧縮する整理を行う。
+
+2. **2026-07-10 (amendment): MSI 検出パターンを ARM64(`winarm64`)にも拡張(設計条件 9 の適用範囲拡大)。**
+   - **契機**: [ADR-0009](0009-architecture-support.md) 決定7・委任 #4——Yagura サーバ本体の
+     ARM64 対応拡張(Phase 1・PR #212 で実装済み)とは独立に、フォワーダキットの**収集対象端末**
+     側にも ARM64 対応を拡張する。Fluent Bit は Windows 向けに `win64`(x64)・`winarm64`
+     (ARM64)・`win32`(x86)の MSI を公式提供しているが(2026-07-10 ライブ確認)、Yagura が
+     対応するのはサーバ本体と同じ判断基準で `win64`・`winarm64` の 2 アーキのみとし、`win32`
+     は対象外とする(ADR-0009 決定1 の x86 不採用理由——需要の一次情報が無いこと・OOM リスク
+     ——をそのまま踏襲。収集対象端末という文脈が変わっても再評価の理由にはならない)。
+   - **変更**:
+     - MSI 検出パターン(`ForwarderMsiConstraints.FileNamePattern` = `fluent-bit-*-win64.msi`)
+       に加え、`FileNamePatternArm64` = `fluent-bit-*-winarm64.msi` を追加。判定は
+       `ForwarderMsiFilter.IsCandidateFileName(string, ForwarderMsiArchitecture)` で
+       アーキごとに独立させた
+     - `IForwarderMsiSource.Lookup()` を `Lookup(ForwarderMsiArchitecture)` に変更
+       (破壊的変更。実装は `SystemForwarderMsiSource` のみで、生成 UI 経由の呼び出し元も
+       同一 PR で追随させた)
+     - 管理 UI(`/admin/forwarder-kit`)に「収集対象端末のアーキテクチャ」の選択(x64 / ARM64。
+       既定 x64)を追加。ダウンロードエンドポイントは `architecture` クエリパラメータ
+       (既定 `x64`)を受け取り、選択アーキに対応する `Lookup` を呼ぶ
+     - `install.ps1` に `Get-LocalMsiFilenamePattern` を追加し、実行端末のプロセッサアーキを
+       判定して該当パターンの MSI のみを自動検出するようにした。判定の第一情報源は WMI/CIM
+       (`Win32_Processor.Architecture`——ネイティブの WMI サービスが応答するため、呼び出し
+       プロセス自身のエミュレーション状態に左右されない)とし、環境変数
+       (`PROCESSOR_ARCHITECTURE` / `PROCESSOR_ARCHITEW6432`)は CIM 不可時のフォールバックに
+       留める。環境変数のみの判定には「ARM64 端末上の x64 エミュレーションでは両変数とも
+       `AMD64` を返し実 OS を反映しない」既知の限界があり、ARM64 端末を x64 と誤判定しうる
+       ため(PR #222 レビュー指摘を受けて CIM 優先へ確定)。x86(32bit)上で実行した場合は
+       明確なエラーで停止する
+     - 公式配布 SHA256 の内部保持値を ARM64 分(`OfficialSha256ForVerifiedVersionArm64`)追加
+       (2026-07-10 ライブ検証で確定。検証手順は既存の win64 分と同一)
+   - **複数アーキ MSI 混在時の誤配布への牽制(委任 #4 の検討事項への回答)**: 追加の警告表示は
+     実装しない。理由は、`Lookup(ForwarderMsiArchitecture)` が呼び出し時点で指定したアーキの
+     MSI のみを候補とする設計そのものが、選ばなかったアーキの MSI を検出対象にすら含めない
+     ——「警告して気づかせる」より強い「そもそも見えない」という構造的な牽制になっているため。
+     同一フォルダに win64・winarm64 の MSI が 1 つずつ存在する状態(x64/ARM64 混在フレットへの
+     配布に必要な正常な状態)は「複数検出」エラーにならない——アーキごとに独立して判定するため。
+     画面側もアーキを切り替えると同梱チェックボックスの選択状態をリセットする(別アーキの
+     MSI を誤って同梱要求してしまう事故の追加防止)。
+   - **検証水準**: Fluent Bit の `winarm64` MSI が公式に取得できること・SHA256 が算出できること
+     は 2026-07-10 に実機(x64 環境)で live 確認したが、**ARM64 実機での Fluent Bit 導入・
+     サービス起動・イベント転送は本改訂の時点では未検証**(検証環境が x64 のため ARM64
+     バイナリを実行できない)。アーキ自動判定も同様——CIM 経路・環境変数フォールバック経路の
+     分岐ロジックはユニット相当の検証(実 CIM での x64 判定 + モックでの ARM64/x86 分岐)で
+     確認済みだが、「ARM64 実機上の各種 PowerShell ホストで CIM・環境変数が実際に返す値」の
+     実測は未実施であり、残余の限界(CIM 失敗時の環境変数フォールバックにおける x64
+     エミュレーション誤判定の可能性)は利用者ガイドに回避手順(ARM64 ネイティブ PowerShell
+     での実行または `-MsiPath` 明示指定)とともに明記した。ADR-0009 決定2 が Yagura サーバ
+     本体の ARM64 を「試験的」と位置づけたのと同じ考え方を収集対象端末側にも適用し、
+     実機検証は試用フィードバック・lab 実施の申し送りとする。詳細は
+     [利用者ガイド §ARM64(winarm64)の検証状況](../guides/forward-windows-eventlog.md)を参照
+   - **なぜ supersession でなく amendment か**: 中核決定(選択肢 B の採用・設計条件 9 の
+     MSI オプトイン同梱の枠組み)は不変。本改訂は設計条件 9 が前提とする「対応アーキ」の
+     集合を x64 のみから x64・ARM64 の 2 つへ広げる適用範囲の拡大であり、既存の判定ロジック・
+     UI フロー・監査記録の構造(設計条件 9 全体)はそのまま維持している。

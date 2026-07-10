@@ -12,6 +12,8 @@ public sealed class ForwarderMsiFilterTests
     [InlineData("fluent-bit-4.0.14-win64.msi")]
     [InlineData("fluent-bit-5.0.0-win64.msi")]
     [InlineData("FLUENT-BIT-4.0.14-WIN64.MSI")]
+    [InlineData("fluent-bit-5.0.8-winarm64.msi")]
+    [InlineData("FLUENT-BIT-5.0.8-WINARM64.MSI")]
     public void IsCandidateFileName_MatchingPattern_True(string fileName)
     {
         Assert.True(ForwarderMsiFilter.IsCandidateFileName(fileName));
@@ -22,16 +24,68 @@ public sealed class ForwarderMsiFilterTests
     [InlineData("fluent-bit-win64.msi")]
     [InlineData("other-4.0.14-win64.msi")]
     [InlineData("fluent-bit-4.0.14-win64.exe")]
+    [InlineData("fluent-bit-5.0.8-winarm64.exe")]
     [InlineData("")]
     public void IsCandidateFileName_NonMatchingPattern_False(string fileName)
     {
         Assert.False(ForwarderMsiFilter.IsCandidateFileName(fileName));
     }
 
+    // ---- アーキ別の検出（ADR-0009 決定7・委任 #4） ----
+
+    [Theory]
+    [InlineData("fluent-bit-5.0.8-win64.msi", ForwarderMsiArchitecture.Win64)]
+    [InlineData("FLUENT-BIT-5.0.8-WIN64.MSI", ForwarderMsiArchitecture.Win64)]
+    public void IsCandidateFileName_WithArchitecture_Win64_MatchesOnlyWin64(string fileName, ForwarderMsiArchitecture architecture)
+    {
+        Assert.True(ForwarderMsiFilter.IsCandidateFileName(fileName, architecture));
+        Assert.False(ForwarderMsiFilter.IsCandidateFileName(fileName, ForwarderMsiArchitecture.WinArm64));
+    }
+
+    [Theory]
+    [InlineData("fluent-bit-5.0.8-winarm64.msi", ForwarderMsiArchitecture.WinArm64)]
+    [InlineData("FLUENT-BIT-5.0.8-WINARM64.MSI", ForwarderMsiArchitecture.WinArm64)]
+    public void IsCandidateFileName_WithArchitecture_WinArm64_MatchesOnlyWinArm64(string fileName, ForwarderMsiArchitecture architecture)
+    {
+        Assert.True(ForwarderMsiFilter.IsCandidateFileName(fileName, architecture));
+        Assert.False(ForwarderMsiFilter.IsCandidateFileName(fileName, ForwarderMsiArchitecture.Win64));
+    }
+
+    [Fact]
+    public void IsCandidateFileName_WithArchitecture_EmptyFileName_False()
+    {
+        Assert.False(ForwarderMsiFilter.IsCandidateFileName("", ForwarderMsiArchitecture.Win64));
+        Assert.False(ForwarderMsiFilter.IsCandidateFileName("", ForwarderMsiArchitecture.WinArm64));
+    }
+
+    [Fact]
+    public void TryGetArchitecture_Win64FileName_ReturnsWin64()
+    {
+        Assert.Equal(ForwarderMsiArchitecture.Win64, ForwarderMsiFilter.TryGetArchitecture("fluent-bit-5.0.8-win64.msi"));
+    }
+
+    [Fact]
+    public void TryGetArchitecture_WinArm64FileName_ReturnsWinArm64()
+    {
+        Assert.Equal(ForwarderMsiArchitecture.WinArm64, ForwarderMsiFilter.TryGetArchitecture("fluent-bit-5.0.8-winarm64.msi"));
+    }
+
+    [Fact]
+    public void TryGetArchitecture_NonMatchingFileName_ReturnsNull()
+    {
+        Assert.Null(ForwarderMsiFilter.TryGetArchitecture("not-a-recognized-name.msi"));
+    }
+
     [Fact]
     public void ExtractVersionFromFileName_StandardName_ReturnsVersion()
     {
         Assert.Equal("4.0.14", ForwarderMsiFilter.ExtractVersionFromFileName("fluent-bit-4.0.14-win64.msi"));
+    }
+
+    [Fact]
+    public void ExtractVersionFromFileName_WinArm64Name_ReturnsVersion()
+    {
+        Assert.Equal("5.0.8", ForwarderMsiFilter.ExtractVersionFromFileName("fluent-bit-5.0.8-winarm64.msi"));
     }
 
     [Fact]

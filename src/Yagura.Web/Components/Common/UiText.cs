@@ -1058,6 +1058,21 @@ public static class UiText
     /// <summary>配置フォルダのフルパス表示の形式。{0} にフルパスが入る。</summary>
     public const string ForwarderKitMsiFolderPathFormat = "配置フォルダ: {0}";
 
+    // ---- 収集対象端末のアーキ選択（ADR-0009 決定7・委任 #4） ----
+
+    /// <summary>収集対象端末のアーキ選択の見出し。</summary>
+    public const string ForwarderKitMsiArchitectureTitle = "収集対象端末のアーキテクチャ";
+
+    /// <summary>アーキ選択の説明（MSI 同梱時のみ意味を持つ——構成の残り（宛先・チャネル）は共通）。</summary>
+    public const string ForwarderKitMsiArchitectureNote =
+        "同梱する MSI は、この配布キットの導入先端末のアーキテクチャに合わせて選んでください。迷ったら x64 を選んでください。";
+
+    /// <summary>アーキ選択肢: x64。</summary>
+    public const string ForwarderKitMsiArchitectureX64 = "x64（対応・既定）";
+
+    /// <summary>アーキ選択肢: ARM64。</summary>
+    public const string ForwarderKitMsiArchitectureArm64 = "ARM64（試験的。Windows 11 on Arm 等）";
+
     /// <summary>MSI 未検出時の案内の形式。{0} に期待ファイル名パターンが入る。</summary>
     public const string ForwarderKitMsiNotFoundFormat =
         "MSI 未検出。ここに {0} を配置すると、生成する ZIP に MSI を同梱できます（任意）。";

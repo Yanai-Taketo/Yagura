@@ -110,10 +110,31 @@
     <MudText Typo="Typo.h6">@UiText.ForwarderKitMsiSectionTitle</MudText>
     <MudText Typo="Typo.caption" Class="mb-2">@string.Format(UiText.ForwarderKitMsiFolderPathFormat, MsiSource.FolderPath)</MudText>
 
+    <MudText Typo="Typo.subtitle2" Class="mt-2">@UiText.ForwarderKitMsiArchitectureTitle</MudText>
+    <MudText Typo="Typo.caption" Class="mb-2">@UiText.ForwarderKitMsiArchitectureNote</MudText>
+    <div role="radiogroup" aria-label="@UiText.ForwarderKitMsiArchitectureTitle">
+        <label class="yagura-checkbox-row d-block mb-1">
+            <input type="radio"
+                   name="forwarder-kit-msi-architecture"
+                   value="x64"
+                   checked="@(_selectedArchitecture == ForwarderMsiArchitecture.Win64)"
+                   @onchange="() => SelectArchitecture(ForwarderMsiArchitecture.Win64)" />
+            @UiText.ForwarderKitMsiArchitectureX64
+        </label>
+        <label class="yagura-checkbox-row d-block mb-1">
+            <input type="radio"
+                   name="forwarder-kit-msi-architecture"
+                   value="arm64"
+                   checked="@(_selectedArchitecture == ForwarderMsiArchitecture.WinArm64)"
+                   @onchange="() => SelectArchitecture(ForwarderMsiArchitecture.WinArm64)" />
+            @UiText.ForwarderKitMsiArchitectureArm64
+        </label>
+    </div>
+
     @switch (_msiLookup!.State)
     {
         case ForwarderMsiLookupState.NotFound:
-            <MudText Typo="Typo.body2">@string.Format(UiText.ForwarderKitMsiNotFoundFormat, ForwarderMsiConstraints.FileNamePattern)</MudText>
+            <MudText Typo="Typo.body2">@string.Format(UiText.ForwarderKitMsiNotFoundFormat, ForwarderMsiConstraints.GetFileNamePattern(_selectedArchitecture))</MudText>
             break;
 
         case ForwarderMsiLookupState.Multiple:
@@ -179,7 +200,8 @@
     private bool _channelSecurity;
     private string? _errorText;
 
-    // ---- MSI オプトイン同梱（ADR-0008 設計条件 9） ----
+    // ---- MSI オプトイン同梱（ADR-0008 設計条件 9・ADR-0009 決定7・委任 #4） ----
+    private ForwarderMsiArchitecture _selectedArchitecture = ForwarderMsiArchitecture.Win64;
     private ForwarderMsiLookup? _msiLookup;
     private bool _includeMsi;
     private bool _versionMismatchAcknowledged;
@@ -189,8 +211,20 @@
     protected override void OnInitialized()
     {
         _candidates = NicCandidateSource.GetCandidates();
+        RefreshMsiLookup();
+    }
 
-        _msiLookup = MsiSource.Lookup();
+    /// <summary>
+    /// 選択中のアーキテクチャで <see cref="IForwarderMsiSource.Lookup(ForwarderMsiArchitecture)"/>
+    /// を呼び直す（ADR-0009 決定7・委任 #4。<see cref="Lookup(ForwarderMsiArchitecture)"/> は
+    /// 指定アーキの MSI のみを候補とするため、アーキを切り替えるたびに検出結果も切り替わる）。
+    /// </summary>
+    private void RefreshMsiLookup()
+    {
+        _msiLookup = MsiSource.Lookup(_selectedArchitecture);
+        _effectiveVersion = null;
+        _versionMismatch = false;
+
         if (_msiLookup.State == ForwarderMsiLookupState.Single)
         {
             var details = _msiLookup.Details!;
@@ -199,10 +233,20 @@
         }
     }
 
+    private void SelectArchitecture(ForwarderMsiArchitecture architecture)
+    {
+        _selectedArchitecture = architecture;
+        // アーキを切り替えたら、前のアーキの検出結果に基づく選択状態を持ち越さない
+        // （別アーキの MSI を誤って同梱要求してしまう事故を防ぐ）。
+        _includeMsi = false;
+        _versionMismatchAcknowledged = false;
+        RefreshMsiLookup();
+    }
+
     private string OfficialHashMatchText()
     {
         var details = _msiLookup!.Details!;
-        var result = ForwarderMsiFilter.MatchesOfficialHash(details.Sha256, ForwarderMsiConstraints.OfficialSha256ForVerifiedVersion);
+        var result = ForwarderMsiFilter.MatchesOfficialHash(details.Sha256, ForwarderMsiConstraints.GetOfficialSha256(_selectedArchitecture));
         return result switch
         {
             OfficialHashMatchResult.Match => UiText.ForwarderKitMsiOfficialHashMatch,
@@ -265,9 +309,41 @@
             return;
         }
 
-        var query = $"host={Uri.EscapeDataString(host)}&port={port}&channels={Uri.EscapeDataString(string.Join(",", channels))}" +
-                    $"&includeMsi={(_includeMsi ? "true" : "false")}";
+        var query = BuildDownloadQuery(
+            host, port, channels, _selectedArchitecture,
+            _includeMsi, _versionMismatch, _versionMismatchAcknowledged);
         Navigation.NavigateTo($"/admin/forwarder-kit/download?{query}", forceLoad: true);
+    }
+
+    /// <summary>
+    /// ダウンロードエンドポイントへ渡すクエリ文字列を組み立てる（テスト固定のため static に分離）。
+    /// </summary>
+    /// <remarks>
+    /// <b>msiVersionMismatchAcknowledged の付与は回帰防止の対象</b>: 本パラメータは以前この画面の
+    /// URL 組み立てに含まれておらず、版不一致時に画面の確認チェックを入れてもサーバ側
+    /// （<c>ForwarderKitRequest.TryCreate</c> の最終防御）で常に「未確認」扱いになり 400 で
+    /// 生成に失敗していた（PR #222 レビューで確認された既存不具合。同 PR で修正）。
+    /// <c>ForwarderKitScreenDownloadQueryTests</c> が本メソッドの出力を固定する。
+    /// </remarks>
+    internal static string BuildDownloadQuery(
+        string host,
+        int port,
+        IReadOnlyList<string> channels,
+        ForwarderMsiArchitecture architecture,
+        bool includeMsi,
+        bool versionMismatch,
+        bool versionMismatchAcknowledged)
+    {
+        var architectureValue = architecture == ForwarderMsiArchitecture.WinArm64 ? "arm64" : "x64";
+        var query = $"host={Uri.EscapeDataString(host)}&port={port}&channels={Uri.EscapeDataString(string.Join(",", channels))}" +
+                    $"&includeMsi={(includeMsi ? "true" : "false")}&architecture={architectureValue}";
+
+        if (includeMsi && versionMismatch)
+        {
+            query += $"&msiVersionMismatchAcknowledged={(versionMismatchAcknowledged ? "true" : "false")}";
+        }
+
+        return query;
     }
 
     private List<string> SelectedChannels()

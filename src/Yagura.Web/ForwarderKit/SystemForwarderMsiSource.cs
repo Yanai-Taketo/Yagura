@@ -37,7 +37,7 @@ public sealed class SystemForwarderMsiSource : IForwarderMsiSource
     public string FolderPath { get; }
 
     /// <inheritdoc/>
-    public ForwarderMsiLookup Lookup()
+    public ForwarderMsiLookup Lookup(ForwarderMsiArchitecture architecture)
     {
         if (!Directory.Exists(FolderPath))
         {
@@ -45,7 +45,7 @@ public sealed class SystemForwarderMsiSource : IForwarderMsiSource
         }
 
         var candidates = Directory.EnumerateFiles(FolderPath)
-            .Where(path => ForwarderMsiFilter.IsCandidateFileName(Path.GetFileName(path)))
+            .Where(path => ForwarderMsiFilter.IsCandidateFileName(Path.GetFileName(path), architecture))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 

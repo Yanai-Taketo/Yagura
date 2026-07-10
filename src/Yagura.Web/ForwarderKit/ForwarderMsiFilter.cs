@@ -10,18 +10,75 @@ namespace Yagura.Web.ForwarderKit;
 public static partial class ForwarderMsiFilter
 {
     /// <summary>
-    /// <see cref="ForwarderMsiConstraints.FileNamePattern"/> のコンパイル済み表現
-    /// （大文字小文字を区別しない——Windows のファイル名は大文字小文字を区別しないため）。
+    /// <see cref="ForwarderMsiConstraints.FileNamePattern"/> / <see cref="ForwarderMsiConstraints.FileNamePatternArm64"/>
+    /// のコンパイル済み表現（大文字小文字を区別しない——Windows のファイル名は大文字小文字を
+    /// 区別しないため）。x64・ARM64 のどちらか一方に一致すればよい（ADR-0009 決定7・委任 #4）。
     /// </summary>
-    [GeneratedRegex(@"^fluent-bit-.*-win64\.msi$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^fluent-bit-.*-(win64|winarm64)\.msi$", RegexOptions.IgnoreCase)]
     private static partial Regex FileNamePatternRegex();
 
-    /// <summary>指定したファイル名が配置フォルダの検出対象パターンに一致するか。</summary>
+    /// <summary>アーキ別のファイル名パターン（<see cref="IsCandidateFileName(string, ForwarderMsiArchitecture)"/> 用）。</summary>
+    [GeneratedRegex(@"^fluent-bit-.*-win64\.msi$", RegexOptions.IgnoreCase)]
+    private static partial Regex FileNamePatternWin64Regex();
+
+    [GeneratedRegex(@"^fluent-bit-.*-winarm64\.msi$", RegexOptions.IgnoreCase)]
+    private static partial Regex FileNamePatternWinArm64Regex();
+
+    /// <summary>
+    /// 指定したファイル名が配置フォルダの検出対象パターン（x64・ARM64 のいずれか）に一致するか。
+    /// </summary>
     public static bool IsCandidateFileName(string fileName) =>
         !string.IsNullOrEmpty(fileName) && FileNamePatternRegex().IsMatch(fileName);
 
     /// <summary>
-    /// ファイル名から版を抽出する（<c>fluent-bit-4.0.14-win64.msi</c> → <c>4.0.14</c>）。
+    /// 指定したファイル名が<b>指定アーキテクチャの</b>検出対象パターンに一致するか
+    /// （ADR-0009 決定7・委任 #4）。<see cref="IForwarderMsiSource.Lookup(ForwarderMsiArchitecture)"/>
+    /// が配置フォルダ内の候補をアーキごとに絞り込むために使う——同一フォルダに win64・ARM64 の
+    /// MSI が混在していても、片方のアーキだけを検出対象にできる（誤アーキ配布への構造的な
+    /// 牽制。詳細は <see cref="IForwarderMsiSource"/> の remarks 参照）。
+    /// </summary>
+    public static bool IsCandidateFileName(string fileName, ForwarderMsiArchitecture architecture)
+    {
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return false;
+        }
+
+        return architecture switch
+        {
+            ForwarderMsiArchitecture.WinArm64 => FileNamePatternWinArm64Regex().IsMatch(fileName),
+            _ => FileNamePatternWin64Regex().IsMatch(fileName),
+        };
+    }
+
+    /// <summary>
+    /// ファイル名からアーキテクチャを判定する（<c>...-win64.msi</c> → <see cref="ForwarderMsiArchitecture.Win64"/>、
+    /// <c>...-winarm64.msi</c> → <see cref="ForwarderMsiArchitecture.WinArm64"/>）。
+    /// どちらのパターンにも一致しない場合は <see langword="null"/>。
+    /// </summary>
+    public static ForwarderMsiArchitecture? TryGetArchitecture(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        if (FileNamePatternWinArm64Regex().IsMatch(fileName))
+        {
+            return ForwarderMsiArchitecture.WinArm64;
+        }
+
+        if (FileNamePatternWin64Regex().IsMatch(fileName))
+        {
+            return ForwarderMsiArchitecture.Win64;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// ファイル名から版を抽出する（<c>fluent-bit-4.0.14-win64.msi</c> → <c>4.0.14</c>、
+    /// <c>fluent-bit-5.0.8-winarm64.msi</c> → <c>5.0.8</c>）。
     /// ProductVersion が取得できない場合の補助手段——<b>ファイル名だけに依拠しない</b>という
     /// ADR-0008 設計条件 9 の意図により、これは「ProductVersion 優先」の補助にとどめる。
     /// </summary>
@@ -31,7 +88,7 @@ public static partial class ForwarderMsiFilter
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    [GeneratedRegex(@"^fluent-bit-(.+)-win64\.msi$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^fluent-bit-(.+)-(?:win64|winarm64)\.msi$", RegexOptions.IgnoreCase)]
     private static partial Regex FileNameVersionRegex();
 
     /// <summary>

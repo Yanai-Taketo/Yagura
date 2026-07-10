@@ -81,15 +81,23 @@ public static class ForwarderMsiConstraints
     public const string PlacementSubPath = "forwarder";
 
     /// <summary>
-    /// MSI ファイル名パターン（ADR-0008 設計条件 9）。実際の判定は
-    /// <see cref="ForwarderMsiFilter.IsCandidateFileName"/>（正規表現をコンパイル済みで保持）。
-    /// ここでは人が読める表記として残す。
+    /// MSI ファイル名パターン（x64。ADR-0008 設計条件 9）。実際の判定は
+    /// <see cref="ForwarderMsiFilter.IsCandidateFileName(string)"/>（正規表現をコンパイル済みで保持）。
+    /// ここでは人が読める表記として残す。ARM64 は <see cref="FileNamePatternArm64"/>
+    /// （ADR-0009 決定7・委任 #4）。
     /// </summary>
     public const string FileNamePattern = "fluent-bit-*-win64.msi";
 
     /// <summary>
+    /// MSI ファイル名パターン（ARM64。ADR-0009 決定7・委任 #4）。Fluent Bit は公式に Windows
+    /// ARM64 向け MSI を <c>winarm64</c> サフィックスで配布している
+    /// （<c>https://packages.fluentbit.io/windows/</c>、2026-07-10 ライブ確認）。
+    /// </summary>
+    public const string FileNamePatternArm64 = "fluent-bit-*-winarm64.msi";
+
+    /// <summary>
     /// 検証済み Fluent Bit 版（<see cref="ForwarderKitConstraints.VerifiedFluentBitVersion"/>）に
-    /// 対応する公式配布 MSI の SHA256（16 進小文字）。
+    /// 対応する公式配布 MSI（x64）の SHA256（16 進小文字）。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -110,4 +118,31 @@ public static class ForwarderMsiConstraints
     /// </para>
     /// </remarks>
     public const string? OfficialSha256ForVerifiedVersion = "f0649d52bd681d6a4ed4234a669a6d2b09ce1945ca8efcee59b1b807222374d8";
+
+    /// <summary>
+    /// 検証済み Fluent Bit 版に対応する公式配布 MSI（ARM64）の SHA256（16 進小文字）。
+    /// </summary>
+    /// <remarks>
+    /// <b>2026-07-10 ライブ検証で確定</b>（ADR-0009 決定7・委任 #4）: 同日
+    /// <c>https://packages.fluentbit.io/windows/fluent-bit-5.0.8-winarm64.msi</c>
+    /// （23,796,327 バイト）を取得し、<c>Get-FileHash -Algorithm SHA256</c> で算出した値。
+    /// 検証手順・根拠は <see cref="OfficialSha256ForVerifiedVersion"/> の remarks と同じ
+    /// （このプロジェクトの検証環境は x64 のため、実行検証ではなく取得物のハッシュ実測に留まる。
+    /// この検証環境では winarm64 バイナリ自体は実行できない）。
+    /// </remarks>
+    public const string? OfficialSha256ForVerifiedVersionArm64 = "9730cd2479276b2fd8f323c8c5ddbfe6be52e2f4e8ebb3caae1efda46d327860";
+
+    /// <summary>指定アーキテクチャの人が読めるファイル名パターン表記を返す。</summary>
+    public static string GetFileNamePattern(ForwarderMsiArchitecture architecture) => architecture switch
+    {
+        ForwarderMsiArchitecture.WinArm64 => FileNamePatternArm64,
+        _ => FileNamePattern,
+    };
+
+    /// <summary>指定アーキテクチャの検証済み版に対応する公式配布 SHA256（未確定なら <see langword="null"/>）。</summary>
+    public static string? GetOfficialSha256(ForwarderMsiArchitecture architecture) => architecture switch
+    {
+        ForwarderMsiArchitecture.WinArm64 => OfficialSha256ForVerifiedVersionArm64,
+        _ => OfficialSha256ForVerifiedVersion,
+    };
 }
