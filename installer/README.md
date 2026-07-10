@@ -74,10 +74,10 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
     Domain+Private 複合で Public/Any を含まないこと・データルート・firewall-rules.ini)
     → UDP 514 へ syslog 送出 → 閲覧リスナ(http://localhost:8514/)の
     HTML で照合 → アンインストール(`msiexec /x /qn`)→ 残置物確認(サービス・規則・
-    スタートメニュー消滅、**データルート保持** = 上の責務表どおり)→ 修復時の opt-out 記憶
-    検証(Issue #203。主フローとは独立: オプトアウトインストール → プロパティ無指定で
-    修復 `msiexec /fa /qn` → 規則・デスクトップショートカットが復活しないことを確認 →
-    アンインストール)
+    スタートメニュー・`HKLM\SOFTWARE\Yagura` キー消滅、**データルート保持** = 上の責務表
+    どおり)→ 修復時の opt-out 記憶検証(Issue #203。主フローとは独立: オプトアウト
+    インストール → プロパティ無指定で修復 `msiexec /fa /qn` → 規則・デスクトップ
+    ショートカットが復活しないことを確認 → アンインストール → HKLM キー消滅確認)
   - `-DryRun`: msiexec・サービス操作を行わず手順と出力の配管のみ検証(開発機用)
   - `-SendVerifyOnly -UdpPort <p> -ViewerBaseUrl <url>`: 送出・照合部分のみを起動済みの
     Yagura.Host に対して実行(開発機用。管理者権限不要)
@@ -187,3 +187,18 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   - この実機シナリオは installer/e2e/Invoke-YaguraInstallerE2E.ps1 の手順 7
     (`repair-remember-optout-*`)として自動化し、CI(installer-e2e.yml)で継続検知する
     (Issue #125 の Profile ビットマスク回帰に E2E アサーションを追加した #187 と同じ方針)
+  - **アンインストール後の `HKLM\SOFTWARE\Yagura` 残置なしを実機確認済み(2026-07-10。
+    PR #214 レビュー指摘への対応)**: 記憶値の導入によりオプトアウト側でも本キーが作られる
+    ようになったが、キー配下の値はすべて MSI 管理のため、Registry Table の公式仕様
+    ("the installer removes a registry key after removing the last value or subkey under
+    the key"。learn.microsoft.com/windows/win32/msi/registry-table)によりアンインストールで
+    キーごと削除される。オプトイン・オプトアウト両方のインストール→アンインストールで
+    キーが残らないことを実機確認し、`RemoveRegistryKey` は不要と判断。E2E の残置物確認に
+    `residue-hklm-registry-removed`(opt-in 側)と `repair-remember-optout-residue-registry`
+    (opt-out 側)を追加して継続検知する
+  - 既知の設計上の割り切り(レビューで指摘・スコープ外を維持): 記憶値が存在する環境では、
+    修復時に msiexec コマンドラインで明示指定した値(例 `YAGURA_FIREWALL="1"` での再オプトイン)
+    も AppSearch の記憶値で上書きされる(RobMensching 記事の「追加の落とし穴」)。Issue #203 の
+    要求範囲(オプトアウトが修復で失われない)外であり、対応する CMDLINE 退避カスタム
+    アクションは導入しない。将来「明示指定で記憶値を上書きしたい」要望が出た際の設計負債として
+    ここに記録する(Package.wxs のコメントにも同旨を記載)

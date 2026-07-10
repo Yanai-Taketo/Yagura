@@ -18,12 +18,12 @@
          HTML に RunId トークンが現れることを確認
       5. アンインストール(msiexec /x /qn)
       6. 残置物確認(サービス消滅・ファイアウォール規則消滅・スタートメニュー消滅・
-         デスクトップショートカット消滅・データルート保持 = 設計どおり。
-         installer/README.md の責務表参照)
+         デスクトップショートカット消滅・HKLM\SOFTWARE\Yagura キー消滅・データルート保持
+         = 設計どおり。installer/README.md の責務表参照)
       7. 修復(Repair)時の opt-out 記憶の検証(Issue #203。主フローとは独立した
          専用シーケンス): オプトアウト状態でインストール → プロパティ無指定で修復
          (msiexec /fa /qn。ARP の「修復」実行時と同じ入力条件)→ オプトアウトが
-         既定値へ戻っていないことを確認 → アンインストール
+         既定値へ戻っていないことを確認 → アンインストール → HKLM キー消滅確認
 
     照合は必ず ASCII トークン(RunId)で行う。日本語本文の照合は en-US CI の
     コードページ(CP437)で文字化けして誤判定するため使用しない(旧リポジトリ PR #42 実障害)。
@@ -589,6 +589,7 @@ try {
             Add-SkippedStep -Name 'residue-dataroot-retained' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-forwarder-removed' -Reason 'dry-run'
             Add-SkippedStep -Name 'residue-installdir-removed' -Reason 'dry-run'
+            Add-SkippedStep -Name 'residue-hklm-registry-removed' -Reason 'dry-run'
         }
         else {
             [void](Invoke-E2EStep -Name 'residue-service-removed' -ContinueOnFailure $true -Action {
@@ -660,6 +661,19 @@ try {
                 }
                 return 'install dir removed'
             })
+
+            # HKLM\SOFTWARE\Yagura の残置確認(Issue #203 / PR #214 レビュー指摘)。
+            # remember property の記憶値(FirewallOptIn / DesktopShortcutOptIn)は MSI 管理の
+            # レジストリ値であり、Registry Table の公式仕様("the installer removes a registry
+            # key after removing the last value or subkey under the key")によりアンインストールで
+            # キーごと消えるのが設計どおり。空キーが残る回帰をここで検知する。
+            [void](Invoke-E2EStep -Name 'residue-hklm-registry-removed' -ContinueOnFailure $true -Action {
+                if (Test-Path -Path 'HKLM:\SOFTWARE\Yagura') {
+                    $values = @((Get-Item 'HKLM:\SOFTWARE\Yagura' -ErrorAction SilentlyContinue).Property)
+                    throw ('HKLM\SOFTWARE\Yagura still present after uninstall ({0} value(s): {1})' -f $values.Count, ($values -join '; '))
+                }
+                return 'HKLM\SOFTWARE\Yagura removed'
+            })
         }
 
         # -------------------------------------------------------------------
@@ -684,6 +698,7 @@ try {
             Add-SkippedStep -Name 'repair-remember-optout-repair' -Reason ('dry-run: would run msiexec /fa "{0}" /qn (no properties - simulates ARP Repair)' -f $MsiPath)
             Add-SkippedStep -Name 'repair-remember-optout-verify-after' -Reason 'dry-run: would assert opt-out still in effect after repair (Issue #203 regression check)'
             Add-SkippedStep -Name 'repair-remember-optout-cleanup' -Reason 'dry-run: would uninstall'
+            Add-SkippedStep -Name 'repair-remember-optout-residue-registry' -Reason 'dry-run: would assert HKLM\SOFTWARE\Yagura removed after opt-out uninstall'
         }
         else {
             [void](Invoke-E2EStep -Name 'repair-remember-optout-install' -Action {
@@ -744,6 +759,17 @@ try {
                 $exitCode = Invoke-Msiexec -Description 'opt-out cleanup uninstall' -ArgumentString ('/x "{0}" /qn /norestart /l*v "{1}"' -f $msiFull, $msiLog)
                 $script:OptOutUninstallCompleted = $true
                 return ('msiexec exit code {0} (log: msiexec-optout-uninstall.log)' -f $exitCode)
+            })
+
+            # オプトアウト側の記憶値(空文字列の FirewallOptIn / DesktopShortcutOptIn)でも、
+            # アンインストールで HKLM\SOFTWARE\Yagura がキーごと消えることを確認する
+            # (残置確認 residue-hklm-registry-removed のオプトアウト版。PR #214 レビュー指摘)。
+            [void](Invoke-E2EStep -Name 'repair-remember-optout-residue-registry' -ContinueOnFailure $true -Action {
+                if (Test-Path -Path 'HKLM:\SOFTWARE\Yagura') {
+                    $values = @((Get-Item 'HKLM:\SOFTWARE\Yagura' -ErrorAction SilentlyContinue).Property)
+                    throw ('HKLM\SOFTWARE\Yagura still present after opt-out uninstall ({0} value(s): {1})' -f $values.Count, ($values -join '; '))
+                }
+                return 'HKLM\SOFTWARE\Yagura removed after opt-out uninstall'
             })
         }
     }
