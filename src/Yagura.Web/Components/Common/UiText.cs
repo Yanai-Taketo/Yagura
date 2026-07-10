@@ -80,10 +80,15 @@ public static class UiText
 
     /// <summary>
     /// 検索の打ち切り（ui.md §3.1 テーブル規約——件数と共に明示、§5.3——条件を絞る案内と共に）。
-    /// {0} に表示済み件数が入る。
+    /// {0} に表示済み件数が入る。**database.md DB-11（カーソルページング）の追加後**は
+    /// 「さらに読み込む」ボタン（<see cref="SearchLoadMoreButton"/>）で続きを取得できるため、
+    /// 文言もその選択肢を案内する（従来の「期間や条件を絞る」も引き続き有効な選択肢として残す）。
+    /// <b>{0} は「1 回のクエリの上限」ではなく「現在までに読み込んだ累計件数」</b>
+    /// （<c>YaguraTable.Items.Count</c>。「さらに読み込む」を繰り返すと増える）である点に注意——
+    /// 文言はこの値を「一度に取得できる上限」と誤読させない表現にする。
     /// </summary>
     public const string MissingDataTruncatedFormat =
-        "結果が上限に達したため、{0} 件で打ち切りました。期間や条件を絞ると続きを確認できます";
+        "現在 {0} 件を表示しています。まだ続きがあります——「さらに読み込む」で続きを確認するか、期間や条件を絞ってください";
 
     /// <summary>
     /// 保持期間の常時明示（ui.md §5.3 の確定文言）。{0} に保持日数が入る。
@@ -361,6 +366,17 @@ public static class UiText
     /// 同じ上限を使うことを利用者に明示する（「件数上限の明示」——Issue #157 の受け入れ条件）。
     /// </summary>
     public const string SearchExportCsvHintFormat = "現在の検索条件のまま、最大 {0:N0} 件まで CSV に出力します（一覧表示と同じ上限）。";
+
+    /// <summary>
+    /// 「さらに読み込む」ボタン（database.md DB-11。カーソルページングの追記型 UI。Issue #144 残課題）。
+    /// 現在の検索条件のまま、表示済みの最後の行より過去の続きを追加で読み込む。
+    /// </summary>
+    public const string SearchLoadMoreButton = "さらに読み込む";
+
+    /// <summary>
+    /// 「さらに読み込む」実行中の表示（連打防止のためボタンを無効化する間のラベル）。
+    /// </summary>
+    public const string SearchLoadingMoreButton = "読み込み中…";
 
     // ---- 送信元の逆引きホスト名（ADR-0007。ui.md §4） ----
 

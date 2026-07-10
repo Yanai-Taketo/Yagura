@@ -153,7 +153,7 @@
         <YaguraTable TItem="LogRecordSummary"
                      Items="@_results"
                      OnRowSelected="ShowDetailAsync"
-                     TruncatedAtLimit="@(_results.Count >= SearchLimit)">
+                     TruncatedAtLimit="@_hasMore">
             <HeaderContent>
                 <MudTh>受信時刻</MudTh>
                 <MudTh>@UiText.SourceColumnAddress</MudTh>
@@ -176,6 +176,17 @@
                 </MudTd>
             </RowTemplate>
         </YaguraTable>
+        @if (_hasMore)
+        {
+            @* カーソル（キーセット）ページングの追記型 UI（database.md DB-11。Issue #144 残課題）:
+               現在の検索条件のまま、表示済み最後の行から続きを追加取得する。主ボタン（検索）は
+               上部フォームの 1 つのみのため、本ボタンも Normal ロールとする（ui.md §3.1）。 *@
+            <div class="mt-2 d-flex justify-center">
+                <YaguraButton Role="YaguraButtonRole.Normal" OnClick="LoadMoreAsync" Disabled="@_loadingMore">
+                    @(_loadingMore ? UiText.SearchLoadingMoreButton : UiText.SearchLoadMoreButton)
+                </YaguraButton>
+            </div>
+        }
     }
 </div>
 
@@ -271,7 +282,10 @@
 
 @code {
     // M-10 の仮値（architecture.md §6: 結果上限 10,000 件・射影 200 文字・タイムアウト 30 秒）。
-    private const int SearchLimit = 10_000;
+    // internal: 「さらに読み込む」（database.md DB-11）の bUnit テストが、フェイクストアの
+    // 応答件数をこの値に合わせるために参照する（DeviceTimestampDriftThreshold と同じ、
+    // InternalsVisibleTo 経由でテストに公開する既存パターン）。
+    internal const int SearchLimit = 10_000;
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DetailTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan OutageQueryTimeout = TimeSpan.FromSeconds(5);
@@ -306,6 +320,15 @@
     private string? _parseStatusValue;
     private string? _searchText;
     private bool _searching;
+
+    // カーソル（キーセット）ページングの「さらに読み込む」状態（database.md DB-11。Issue #144
+    // 残課題）。_hasMore は直近の取得バッチがちょうど SearchLimit 件だったか（=まだ続きが
+    // あり得るか）を表す——_results.Count 自体で判定すると、追記型で件数が増え続けるうちに
+    // 「まだ続きがあるか」を表せなくなるため、直近バッチのみを見る専用フラグにする。
+    // カーソルは URL に載せない（ui.md §4「カーソルページングの UI 判断」参照——検索条件のみを
+    // URL の正とし、追記のページ位置は画面のローカル状態に留める）。
+    private bool _hasMore;
+    private bool _loadingMore;
 
     private IReadOnlyList<LogRecordSummary>? _results;
     private IReadOnlyList<SystemEvent> _visibleOutages = [];
@@ -506,17 +529,9 @@
 
         try
         {
-            var results = await LogStore.QueryAsync(new LogQuery(
-                Limit: SearchLimit,
-                Timeout: SearchTimeout,
-                ReceivedAtFrom: FromUtc,
-                ReceivedAtTo: ToUtc,
-                SourceAddress: string.IsNullOrWhiteSpace(_sourceAddress) ? null : _sourceAddress.Trim(),
-                SeverityAtMost: TryParseInt(_severityValue),
-                Facility: TryParseInt(_facilityValue),
-                ParseStatus: TryParseParseStatus(_parseStatusValue),
-                SearchText: string.IsNullOrWhiteSpace(_searchText) ? null : _searchText));
+            var results = await LogStore.QueryAsync(BuildLogQuery(cursor: null));
             _results = results;
+            _hasMore = results.Count == SearchLimit;
 
             await LoadOutagesAndChartAsync(results);
         }
@@ -525,6 +540,59 @@
             _searching = false;
         }
     }
+
+    /// <summary>
+    /// 「さらに読み込む」（database.md DB-11。カーソルページングの追記型 UI）: 現在の検索条件は
+    /// そのまま、表示済みの最後の行のカーソルから続きを取得して末尾に追記する。カーソルは
+    /// URL に載せない画面ローカルの状態のため、新しい検索（<see cref="SubmitSearch"/> による
+    /// URL ナビゲーション → <see cref="OnParametersSetAsync"/>）が実行されると自然にリセットされる
+    /// （_results が置き換わるため）。
+    /// </summary>
+    private async Task LoadMoreAsync()
+    {
+        if (_results is not { Count: > 0 } current || !_hasMore || _loadingMore)
+        {
+            return;
+        }
+
+        _loadingMore = true;
+
+        try
+        {
+            var last = current[^1];
+            var nextPage = await LogStore.QueryAsync(
+                BuildLogQuery(cursor: new LogQueryCursor(last.ReceivedAt, last.Id)));
+
+            var combined = current.Concat(nextPage).ToList();
+            _results = combined;
+            _hasMore = nextPage.Count == SearchLimit;
+
+            // 追記した分だけ観測範囲が過去へ広がる——時間軸チャート・受信断区間も
+            // 拡張後の全件（_results）を基準に再計算する（LoadOutagesAndChartAsync は
+            // FromUtc 指定時はその下限を優先するため、期間指定検索では範囲は広がらない）。
+            await LoadOutagesAndChartAsync(combined);
+        }
+        finally
+        {
+            _loadingMore = false;
+        }
+    }
+
+    /// <summary>
+    /// フォームの現在値から <see cref="LogQuery"/> を組み立てる（<see cref="ExecuteSearchAsync"/>・
+    /// <see cref="LoadMoreAsync"/> で共有——条件マッピングの二重管理を避ける）。
+    /// </summary>
+    private LogQuery BuildLogQuery(LogQueryCursor? cursor) => new(
+        Limit: SearchLimit,
+        Timeout: SearchTimeout,
+        ReceivedAtFrom: FromUtc,
+        ReceivedAtTo: ToUtc,
+        SourceAddress: string.IsNullOrWhiteSpace(_sourceAddress) ? null : _sourceAddress.Trim(),
+        SeverityAtMost: TryParseInt(_severityValue),
+        Facility: TryParseInt(_facilityValue),
+        ParseStatus: TryParseParseStatus(_parseStatusValue),
+        SearchText: string.IsNullOrWhiteSpace(_searchText) ? null : _searchText,
+        Cursor: cursor);
 
     private static int? TryParseInt(string? value) =>
         value is { Length: > 0 } && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)

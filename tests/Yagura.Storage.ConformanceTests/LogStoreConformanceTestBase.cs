@@ -635,6 +635,184 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
     }
 
     // ------------------------------------------------------------------
+    // カーソル（キーセット）ページング（database.md §1.2・DB-11。Issue #144）
+    // ------------------------------------------------------------------
+
+    [SkippableFact]
+    public async Task QueryAsync_WithoutCursor_ReturnsFirstPage()
+    {
+        // カーソル省略（既定 null）は先頭ページ（従来どおり最新から）と同じ結果になる——
+        // 後方互換性の確認。
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(new[]
+        {
+            CreateParsedRecord(baseline.AddSeconds(-2), "10.0.0.1", "first"),
+            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.2", "second"),
+            CreateParsedRecord(baseline, "10.0.0.3", "third"),
+        });
+
+        var withoutCursor = await Store.QueryAsync(new LogQuery(Limit: 2, Timeout: TimeSpan.FromSeconds(5)));
+        var withNullCursor = await Store.QueryAsync(new LogQuery(Limit: 2, Timeout: TimeSpan.FromSeconds(5), Cursor: null));
+
+        Assert.Equal(2, withoutCursor.Count);
+        Assert.Equal("third", withoutCursor[0].Message);
+        Assert.Equal("second", withoutCursor[1].Message);
+        Assert.Equal(withoutCursor.Select(r => r.Id), withNullCursor.Select(r => r.Id));
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_WithCursor_ContinuesFromLastRecordAcrossReceivedAtBoundary()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(new[]
+        {
+            CreateParsedRecord(baseline.AddSeconds(-3), "10.0.0.1", "page2-a"),
+            CreateParsedRecord(baseline.AddSeconds(-2), "10.0.0.2", "page2-b"),
+            CreateParsedRecord(baseline.AddSeconds(-1), "10.0.0.3", "page1-a"),
+            CreateParsedRecord(baseline, "10.0.0.4", "page1-b"),
+        });
+
+        var firstPage = await Store.QueryAsync(new LogQuery(Limit: 2, Timeout: TimeSpan.FromSeconds(5)));
+        Assert.Equal(2, firstPage.Count);
+        Assert.Equal("page1-b", firstPage[0].Message);
+        Assert.Equal("page1-a", firstPage[1].Message);
+
+        var lastOfFirstPage = firstPage[^1];
+        var secondPage = await Store.QueryAsync(new LogQuery(
+            Limit: 2,
+            Timeout: TimeSpan.FromSeconds(5),
+            Cursor: new LogQueryCursor(lastOfFirstPage.ReceivedAt, lastOfFirstPage.Id)));
+
+        Assert.Equal(2, secondPage.Count);
+        Assert.Equal("page2-b", secondPage[0].Message);
+        Assert.Equal("page2-a", secondPage[1].Message);
+        // 重複・欠落なし: 2 ページ分の Id 集合は書き込んだ全 4 件の Id 集合と一致する。
+        Assert.Empty(firstPage.Select(r => r.Id).Intersect(secondPage.Select(r => r.Id)));
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_WithCursor_ContinuesWithinSameReceivedAt()
+    {
+        // 同一 ReceivedAt 内でカーソルが割れる境界ケース（UDP バースト等。Issue #144 の症状）。
+        // Id 降順のタイブレークにより、同一時刻内でも重複・欠落なく続きを取得できることを確認する。
+        var sameInstant = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(new[]
+        {
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-1"),
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-2"),
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-3"),
+            CreateParsedRecord(sameInstant, "10.0.0.1", "burst-4"),
+        });
+
+        var firstPage = await Store.QueryAsync(new LogQuery(Limit: 2, Timeout: TimeSpan.FromSeconds(5)));
+        Assert.Equal(2, firstPage.Count);
+        Assert.Equal("burst-4", firstPage[0].Message);
+        Assert.Equal("burst-3", firstPage[1].Message);
+
+        var lastOfFirstPage = firstPage[^1];
+        var secondPage = await Store.QueryAsync(new LogQuery(
+            Limit: 2,
+            Timeout: TimeSpan.FromSeconds(5),
+            Cursor: new LogQueryCursor(lastOfFirstPage.ReceivedAt, lastOfFirstPage.Id)));
+
+        Assert.Equal(2, secondPage.Count);
+        Assert.Equal("burst-2", secondPage[0].Message);
+        Assert.Equal("burst-1", secondPage[1].Message);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_PagingThroughAllRecordsWithCursor_NoDuplicatesOrGaps()
+    {
+        // ページサイズより多い件数・一部同一 ReceivedAt を含む集合をカーソルで最後まで辿り、
+        // 和集合が元の全件集合に重複・欠落なく一致することを確認する（境界の網羅検証）。
+        var baseline = DateTimeOffset.UtcNow;
+        var records = new List<LogRecord>();
+        for (var i = 0; i < 25; i++)
+        {
+            // 5 件おきに同一 ReceivedAt を作り、タイブレーク境界をページ跨ぎで踏ませる。
+            var receivedAt = baseline.AddSeconds(-(i / 5));
+            records.Add(CreateParsedRecord(receivedAt, "10.0.0.1", $"record-{i}"));
+        }
+
+        await Store.WriteBatchAsync(records);
+
+        var seenIds = new List<long>();
+        LogQueryCursor? cursor = null;
+        const int pageSize = 4;
+
+        for (var guard = 0; guard < 20; guard++)
+        {
+            var page = await Store.QueryAsync(new LogQuery(
+                Limit: pageSize,
+                Timeout: TimeSpan.FromSeconds(5),
+                Cursor: cursor));
+
+            if (page.Count == 0)
+            {
+                break;
+            }
+
+            seenIds.AddRange(page.Select(r => r.Id));
+            var last = page[^1];
+            cursor = new LogQueryCursor(last.ReceivedAt, last.Id);
+        }
+
+        Assert.Equal(records.Count, seenIds.Count);
+        Assert.Equal(seenIds.Count, seenIds.Distinct().Count());
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_CursorCombinedWithSeverityFilter_ContinuesWithoutDuplicatesOrGaps()
+    {
+        // カーソル + フィルタ条件の組み合わせ（PR #221 レビュー指摘 3）: カーソル条件は
+        // 「特定の 1 行より真に過去」を表す純粋条件であり、他の WHERE 条件（重大度閾値等）と
+        // AND 結合されるだけ——という設計上の理屈を、DB 層の実クエリで固定するリグレッション
+        // テスト。フィルタ対象行の間に非対象行（Severity が閾値超）を挟み込み、カーソルを
+        // 「非対象行の位置」ではなく「フィルタ結果の最終行」から取ることで、続きのページが
+        // フィルタを保ったまま重複・欠落なく返ることを検証する。
+        var baseline = DateTimeOffset.UtcNow;
+        var records = new List<LogRecord>();
+        for (var i = 0; i < 12; i++)
+        {
+            // 偶数 = severity 3（エラー。閾値 3 以下 = フィルタ対象）、奇数 = severity 6（非対象）。
+            // 2 件おきに同一 ReceivedAt を作り、タイブレーク境界とフィルタの相互作用も踏ませる。
+            var receivedAt = baseline.AddSeconds(-(i / 2));
+            records.Add(CreateParsedRecord(receivedAt, "10.0.0.1", $"record-{i}", severity: i % 2 == 0 ? 3 : 6));
+        }
+
+        await Store.WriteBatchAsync(records);
+
+        // フィルタ対象は偶数の 6 件。ページサイズ 2 で 3 ページに分けて辿る。
+        var seenIds = new List<long>();
+        LogQueryCursor? cursor = null;
+
+        for (var guard = 0; guard < 10; guard++)
+        {
+            var page = await Store.QueryAsync(new LogQuery(
+                Limit: 2,
+                Timeout: TimeSpan.FromSeconds(5),
+                SeverityAtMost: 3,
+                Cursor: cursor));
+
+            if (page.Count == 0)
+            {
+                break;
+            }
+
+            // フィルタが全ページで維持されている（カーソルがフィルタを打ち消していない）。
+            Assert.All(page, r => Assert.True(r.Severity <= 3));
+
+            seenIds.AddRange(page.Select(r => r.Id));
+            var last = page[^1];
+            cursor = new LogQueryCursor(last.ReceivedAt, last.Id);
+        }
+
+        // フィルタ対象の全 6 件が重複・欠落なく揃う。
+        Assert.Equal(6, seenIds.Count);
+        Assert.Equal(seenIds.Count, seenIds.Distinct().Count());
+    }
+
+    // ------------------------------------------------------------------
     // 契約 5: 保持期間の削除（database.md §1.2「保持期間の削除」・§3）
     // ------------------------------------------------------------------
 

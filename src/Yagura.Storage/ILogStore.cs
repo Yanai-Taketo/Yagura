@@ -89,8 +89,18 @@ public interface ILogStore
     /// <see cref="LogRecord.Id"/> 降順でタイブレークする（Issue #144。結果順序の決定性）。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// この防御（上限・タイムアウトの必須化）は UI の対話的検索が対象であり、
     /// database.md §1.2「契約拡張の予約」（一括読み出し・集計）の管理経路には適用しない。
+    /// </para>
+    /// <para>
+    /// <b>カーソル（キーセット）ページング</b>（database.md §1.2・DB-11。Issue #144）:
+    /// <see cref="LogQuery.Cursor"/> を指定すると、先頭ページと同じ条件のまま「続き」
+    /// （カーソルより過去の行）だけを返す。実装は <c>ORDER BY ReceivedAt DESC, Id DESC</c> と
+    /// 同じ複合キーに対するシーク（<c>WHERE (ReceivedAt, Id) &lt; (@cursorReceivedAt, @cursorId)</c>
+    /// 相当）で行い、複合索引 <c>IX_LogRecords_ReceivedAt_Id</c> に乗る——OFFSET は使わない
+    /// （ページが深くなっても性能が劣化しない）。詳細は <see cref="LogQueryCursor"/> 参照。
+    /// </para>
     /// </remarks>
     /// <exception cref="TimeoutException">クエリが <see cref="LogQuery.Timeout"/> を超過した場合。</exception>
     Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
