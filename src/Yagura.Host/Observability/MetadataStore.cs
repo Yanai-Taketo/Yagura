@@ -151,7 +151,8 @@ public static class MetadataStore
                 TcpConnectionIdleTimeout: c.TcpConnectionIdleTimeout ?? 0,
                 TcpMessageOversizedDiscarded: c.TcpMessageOversizedDiscarded ?? 0,
                 TcpConnectionResyncLimitExceeded: c.TcpConnectionResyncLimitExceeded ?? 0,
-                TcpConnectionFramingTimeout: c.TcpConnectionFramingTimeout ?? 0)
+                TcpConnectionFramingTimeout: c.TcpConnectionFramingTimeout ?? 0,
+                SpoolCorruptTailDiscardedBytes: c.SpoolCorruptTailDiscardedBytes ?? 0)
             : IngestionCounterSnapshot.Zero;
 
         StopEventRecord? stopEvent = null;
@@ -186,6 +187,7 @@ public static class MetadataStore
             TcpMessageOversizedDiscarded = state.Counters.TcpMessageOversizedDiscarded,
             TcpConnectionResyncLimitExceeded = state.Counters.TcpConnectionResyncLimitExceeded,
             TcpConnectionFramingTimeout = state.Counters.TcpConnectionFramingTimeout,
+            SpoolCorruptTailDiscardedBytes = state.Counters.SpoolCorruptTailDiscardedBytes,
         },
         LastStopEvent = state.LastStopEvent is { } stopEvent
             ? new MetadataStoreFileFormat.StopEventFileFormat

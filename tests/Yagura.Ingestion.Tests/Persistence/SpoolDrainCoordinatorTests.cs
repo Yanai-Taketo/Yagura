@@ -255,6 +255,131 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
         Assert.Empty(store.WrittenRecords);
     }
 
+    // ------------------------------------------------------------------
+    // Issue #201: スプール末尾破損（corruptTailDetected）を drain がどのカウンタにも計上せず
+    // セグメントを削除していたギャップの回帰テスト。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task DrainSegmentWithCorruptTail_RecordsDiscardedBytesAndDrainsRecoveredRecords()
+    {
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(_spool);
+
+        var record = new LogRecord(
+            ReceivedAt: DateTimeOffset.UtcNow,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.Parsed,
+            Message: "recovered-record");
+
+        Assert.Equal(SpoolAppendResult.Appended, await _spool.TryAppendAsync(SpoolRecord.ForLog(record)));
+
+        var segments = _spool.TrySealActiveSegmentAndListDrainable();
+        var segmentPath = Assert.Single(segments);
+
+        // 正常な 1 件の直後に、中途半端な末尾バイト（不完全なフレーム）を追記する
+        // ——クラッシュ・強制終了で末尾が中途半端に切れた状況を模擬する
+        // （DiskSpoolTests.ReadSegmentRecords_TruncatedTailAfterNRecords_... と同じ模擬）。
+        using (var stream = new FileStream(segmentPath, FileMode.Append, FileAccess.Write))
+        {
+            var partialLengthPrefix = new byte[] { 0x10, 0x00, 0x00, 0x00 }; // 長さプレフィックスのみで本体が続かない
+            stream.Write(partialLengthPrefix);
+        }
+
+        var store = new FlakyLogStore(failFirstNAttempts: 0);
+
+        var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        using var metrics = new IngestionMetrics();
+        var coordinator = new SpoolDrainCoordinator(_spool, q2.Reader, store, metrics);
+
+        using var stoppingCts = new CancellationTokenSource();
+        var runTask = Task.Run(() => coordinator.RunAsync(stoppingCts.Token));
+
+        await WaitUntilAsync(() => store.WrittenRecords.Count >= 1, TimeSpan.FromSeconds(15));
+
+        stoppingCts.Cancel();
+        await runTask;
+
+        // 回収できた正常レコードは drain され、セグメントは消化済みとして削除される
+        // （破損があっても回収できた分は救う。§3.2.1）。
+        Assert.Single(store.WrittenRecords);
+        Assert.Equal("recovered-record", store.WrittenRecords[0].Message);
+        await WaitUntilAsync(() => _spool.CurrentUsageBytes == 0, TimeSpan.FromSeconds(15));
+
+        // 末尾破損として読み捨てた 4 バイト（追記した中途半端な長さプレフィックス）が
+        // 専用カウンタへ計上される（Issue #201。従来はどのカウンタにも計上されなかった）。
+        var snapshot = metrics.SnapshotCumulativeCounters();
+        Assert.Equal(4, snapshot.SpoolCorruptTailDiscardedBytes);
+    }
+
+    [Fact]
+    public async Task DrainSegmentWithCorruptTail_WriteFailsThenRecovers_DiscardedBytesAreCountedOnlyOnce()
+    {
+        // 末尾破損の計上は DeleteSegment 確定直前でのみ行う設計（SpoolDrainCoordinator クラス
+        // remarks 参照）——書き込み失敗による再試行のたびに同じ破損セグメントを再読み込みしても、
+        // 破損バイト数が重複計上されないことを固定化する回帰テスト。
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(_spool);
+
+        var record = new LogRecord(
+            ReceivedAt: DateTimeOffset.UtcNow,
+            SourceAddress: "10.0.0.1",
+            SourcePort: 514,
+            Protocol: Protocol.Udp,
+            ParseStatus: ParseStatus.Parsed,
+            Message: "recovered-after-retry");
+
+        Assert.Equal(SpoolAppendResult.Appended, await _spool.TryAppendAsync(SpoolRecord.ForLog(record)));
+
+        var segments = _spool.TrySealActiveSegmentAndListDrainable();
+        var segmentPath = Assert.Single(segments);
+
+        using (var stream = new FileStream(segmentPath, FileMode.Append, FileAccess.Write))
+        {
+            var partialLengthPrefix = new byte[] { 0x10, 0x00, 0x00, 0x00 };
+            stream.Write(partialLengthPrefix);
+        }
+
+        // 最初の 2 回は失敗し、3 回目以降で成功する（同じ破損セグメントが複数回再読み込みされる
+        // 状況を作る）。
+        var store = new FlakyLogStore(failFirstNAttempts: 2);
+
+        var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        using var metrics = new IngestionMetrics();
+        var coordinator = new SpoolDrainCoordinator(_spool, q2.Reader, store, metrics);
+
+        using var stoppingCts = new CancellationTokenSource();
+        var runTask = Task.Run(() => coordinator.RunAsync(stoppingCts.Token));
+
+        await WaitUntilAsync(() => store.WrittenRecords.Count >= 1, TimeSpan.FromSeconds(15));
+        // 失敗 → 再試行が実際に複数回起きたことを確認する（このテストの前提条件）。
+        Assert.True(store.AttemptCount >= 3, $"AttemptCount was {store.AttemptCount}, expected at least 3 (2 failures + 1 success).");
+
+        stoppingCts.Cancel();
+        await runTask;
+
+        await WaitUntilAsync(() => _spool.CurrentUsageBytes == 0, TimeSpan.FromSeconds(15));
+
+        // 複数回読み直されたにもかかわらず、破損バイト数は 4（1 回分）のまま
+        // ——8・12 等の重複計上になっていないことを確認する。
+        var snapshot = metrics.SnapshotCumulativeCounters();
+        Assert.Equal(4, snapshot.SpoolCorruptTailDiscardedBytes);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow + timeout;

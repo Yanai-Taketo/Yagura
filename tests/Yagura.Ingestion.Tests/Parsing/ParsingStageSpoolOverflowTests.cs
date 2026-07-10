@@ -70,7 +70,7 @@ public sealed class ParsingStageSpoolOverflowTests : IDisposable
 
         var segments = _spool.TrySealActiveSegmentAndListDrainable();
         var spooledMessages = segments
-            .SelectMany(path => _spool.ReadSegmentRecords(path, out _))
+            .SelectMany(path => _spool.ReadSegmentRecords(path, out _, out _))
             .Where(r => r.Kind == SpoolRecordKind.Normal)
             .Select(r => r.LogRecord!.Message)
             .ToList();

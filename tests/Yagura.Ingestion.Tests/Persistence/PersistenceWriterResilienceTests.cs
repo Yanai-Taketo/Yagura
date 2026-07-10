@@ -72,7 +72,7 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
         // スプールから実際に読み戻し、"first" が退避されていることを直接確認する。
         var segments = spool!.TrySealActiveSegmentAndListDrainable();
         var spooledMessages = segments
-            .SelectMany(path => spool.ReadSegmentRecords(path, out _))
+            .SelectMany(path => spool.ReadSegmentRecords(path, out _, out _))
             .Where(r => r.Kind == SpoolRecordKind.Normal)
             .Select(r => r.LogRecord!.Message)
             .ToList();

@@ -264,6 +264,7 @@ architecture.md §4.2 の M8 必須要求（「UI に表示する際は…常時
 | スプール退避（`yagura.ingestion.spool.evacuated`） | 一時保管への退避（取りこぼしではありません） |
 | スプール書込失敗（`yagura.ingestion.spool.write_failed`） | 取りこぼし（一時保管への保存失敗） |
 | スプール破棄（`yagura.ingestion.spool.discarded`） | 取りこぼし（一時保管が満杯） |
+| スプール末尾破損破棄（`yagura.ingestion.spool.corrupt_tail_discarded_bytes`） | 取りこぼし（一時保管ファイルの末尾破損。単位はバイト） |
 | 永続化失敗（`yagura.ingestion.persistence.failed`） | 取りこぼし（保存の失敗） |
 | 流量制御破棄（`yagura.ingestion.flow_control.dropped`） | 取りこぼし（受信量の制限。現在この機能は無効です） |
 | システムイベント Kind: downtime.normal-stop / downtime.crash-approximate | 受信できなかった時間帯（停止・再起動による / 正常に終了しなかったため境界はおおよそ） |
@@ -279,7 +280,7 @@ architecture.md §4.2 の M8 必須要求（「UI に表示する際は…常時
 | 逆引き解決 失敗（`yagura.web.reverse_dns.failed`） | 逆引きホスト名の取得（失敗——DNS の応答なし・エラー） |
 | 逆引き解決 見送り（`yagura.web.reverse_dns.skipped`） | 逆引きホスト名の取得（見送り——キャッシュが満杯） |
 
-- カウンタ 7 種の平易語は**状態画面で識別子（計器名）と併記**する（§4 の「報告と設計文書を機械的に突合できるようにする」の表示面。1 対 1 対応——複数の計器を同じ平易語に写像しない。「取りこぼし（…）」の括弧内が計器ごとの識別を担う）
+- カウンタ 8 種の平易語は**状態画面で識別子（計器名）と併記**する（§4 の「報告と設計文書を機械的に突合できるようにする」の表示面。1 対 1 対応——複数の計器を同じ平易語に写像しない。「取りこぼし（…）」の括弧内が計器ごとの識別を担う）。スプール末尾破損破棄（Issue #201）のみ単位がバイトのため、平易語のラベル自体に「単位はバイト」を含めて他行との桁の不一致による誤解を防ぐ
 
 ### 7.3 再接続まわりの文言例（ADR-0003 / PR #5 佐藤の委任）
 

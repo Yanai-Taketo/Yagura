@@ -57,6 +57,20 @@ namespace Yagura.Ingestion.Diagnostics;
 /// <see cref="SeedCumulativeCounters"/>・<see cref="SnapshotCumulativeCounters"/>）の対象には
 /// 含めない——プロセス内累積のみ（Web 層の逆引き解決カウンタと同じ扱い。§4.1.1 末尾の注記参照）。
 /// </para>
+/// <para>
+/// <b>Issue #201「スプール末尾破損破棄」</b>: <c>SpoolDrainCoordinator.DrainSegmentAsync</c> が
+/// スプールセグメント末尾の破損（<c>corruptTailDetected</c>）を検出した際、従来はその破棄分が
+/// どのカウンタにも計上されないままセグメントが削除されていた——「カウンタに計上されない喪失は
+/// 重大」（§3.1）に反する観測ギャップだった。<see cref="RecordSpoolCorruptTailDiscarded"/> で
+/// 計上する。<b>単位はレコード数ではなくバイト数</b>にした——破損した末尾はフレーム境界が
+/// 保証されない（<c>SpoolSegmentReader</c> のクラス remarks 参照）ため、そこに何件のレコードが
+/// あったはずかを数える手段が原理的に存在しない（境界不明のバイト列を再同期して数えようとすると
+/// フレーム先頭の誤認識リスクを負う）。他 7 種の「発生箇所別ドロップカウンタ」（§4.1）は他の
+/// カウンタと同じくメタデータ領域への永続化（§4.3・<see cref="SeedCumulativeCounters"/>・
+/// <see cref="SnapshotCumulativeCounters"/>）の対象に含める——「サーバに届いた後、回収不能な形で
+/// 失われた」という点は他の損失カウンタと同質であり、UDP 受信エラー・逆引き解決カウンタのような
+/// 「プロセス内累積のみで足りる診断用カウンタ」とは性質が異なるため。
+/// </para>
 /// </remarks>
 public sealed class IngestionMetrics : IDisposable
 {
@@ -80,6 +94,7 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _tcpMessageDiscardedOversized;
     private readonly Counter<long> _tcpConnectionResyncLimitExceeded;
     private readonly Counter<long> _tcpConnectionFramingTimeout;
+    private readonly Counter<long> _spoolCorruptTailDiscarded;
 
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
@@ -103,6 +118,7 @@ public sealed class IngestionMetrics : IDisposable
     private long _tcpMessageDiscardedOversizedTotal;
     private long _tcpConnectionResyncLimitExceededTotal;
     private long _tcpConnectionFramingTimeoutTotal;
+    private long _spoolCorruptTailDiscardedTotal;
 
     private readonly ObservableGauge<long>? _osUdpIPv4DatagramsDiscarded;
     private readonly ObservableGauge<long>? _osUdpIPv6DatagramsDiscarded;
@@ -149,6 +165,16 @@ public sealed class IngestionMetrics : IDisposable
             "yagura.ingestion.spool.discarded",
             unit: "{record}",
             description: "スプール上限到達により新規破棄した件数。");
+
+        // architecture.md §3.1・§4.1「スプール末尾破損破棄」（Issue #201 で追加）: drain がスプール
+        // セグメント末尾の破損（corruptTailDetected）を検出し、回収不能として読み捨てたバイト数。
+        // 単位はレコード数ではなくバイト数——破損した末尾はフレーム境界が保証されないため
+        // レコード数を数える手段が原理的に存在しない（本クラス remarks 参照）。
+        _spoolCorruptTailDiscarded = _meter.CreateCounter<long>(
+            "yagura.ingestion.spool.corrupt_tail_discarded_bytes",
+            unit: "By",
+            description: "スプールセグメント末尾の破損検出により、回収不能として読み捨てたバイト数" +
+                "（レコード単位では数えられないためバイト数で計上。Issue #201）。");
 
         // architecture.md §3.1・§4.1「永続化失敗」: リトライとスプール退避でも救えず失われた件数
         // （スプールなし縮退中の喪失を含む。§1.2）。
@@ -342,6 +368,22 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// スプールセグメント末尾の破損検出により読み捨てたバイト数を計上する（§3.2.1・§4.1。
+    /// Issue #201）。<paramref name="discardedBytes"/> は 1 回の検出で読み捨てたバイト数
+    /// （0 以下は何も加算しない——corruptTailDetected が <c>false</c> の呼び出しを防御する）。
+    /// </summary>
+    public void RecordSpoolCorruptTailDiscarded(long discardedBytes)
+    {
+        if (discardedBytes <= 0)
+        {
+            return;
+        }
+
+        _spoolCorruptTailDiscarded.Add(discardedBytes);
+        Interlocked.Add(ref _spoolCorruptTailDiscardedTotal, discardedBytes);
+    }
+
+    /// <summary>
     /// リトライ・スプール退避でも救えなかった永続化失敗を 1 件計上する
     /// （スプールなし縮退中の喪失を含む。§1.2・§4.1）。
     /// </summary>
@@ -446,6 +488,7 @@ public sealed class IngestionMetrics : IDisposable
         Interlocked.Exchange(ref _tcpMessageDiscardedOversizedTotal, previous.TcpMessageOversizedDiscarded);
         Interlocked.Exchange(ref _tcpConnectionResyncLimitExceededTotal, previous.TcpConnectionResyncLimitExceeded);
         Interlocked.Exchange(ref _tcpConnectionFramingTimeoutTotal, previous.TcpConnectionFramingTimeout);
+        Interlocked.Exchange(ref _spoolCorruptTailDiscardedTotal, previous.SpoolCorruptTailDiscardedBytes);
     }
 
     /// <summary>
@@ -464,7 +507,8 @@ public sealed class IngestionMetrics : IDisposable
         TcpConnectionIdleTimeout: Interlocked.Read(ref _tcpConnectionIdleTimeoutTotal),
         TcpMessageOversizedDiscarded: Interlocked.Read(ref _tcpMessageDiscardedOversizedTotal),
         TcpConnectionResyncLimitExceeded: Interlocked.Read(ref _tcpConnectionResyncLimitExceededTotal),
-        TcpConnectionFramingTimeout: Interlocked.Read(ref _tcpConnectionFramingTimeoutTotal));
+        TcpConnectionFramingTimeout: Interlocked.Read(ref _tcpConnectionFramingTimeoutTotal),
+        SpoolCorruptTailDiscardedBytes: Interlocked.Read(ref _spoolCorruptTailDiscardedTotal));
 
     /// <summary>
     /// 内部バッファ破棄カウンタの計器そのもの。テストで
@@ -510,6 +554,9 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>TCP フレーミング進捗タイムアウトカウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> TcpConnectionFramingTimeoutCounter => _tcpConnectionFramingTimeout;
+
+    /// <summary>スプール末尾破損破棄カウンタの計器そのもの（テスト用。Issue #201）。</summary>
+    public Counter<long> SpoolCorruptTailDiscardedCounter => _spoolCorruptTailDiscarded;
 
     /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
     public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;

@@ -577,6 +577,13 @@ public static class UiText
     /// <summary>カウンタ平易語: 流量制御破棄。</summary>
     public const string CounterFlowControlDropped = "取りこぼし（受信量の制限。現在この機能は無効です）";
 
+    /// <summary>
+    /// カウンタ平易語: スプール末尾破損破棄（Issue #201）。他の取りこぼし系カウンタと異なり
+    /// 単位がバイト（レコード単位では数えられないため）——値の桁が他行と並ばないことでの
+    /// 誤解を避けるため、ラベル自体に単位を明記する。
+    /// </summary>
+    public const string CounterSpoolCorruptTailDiscarded = "取りこぼし（一時保管ファイルの末尾破損。単位はバイト）";
+
     /// <summary>カウンタ平易語: 逆引き解決成功（ADR-0007 決定 6。ui.md §7.2）。</summary>
     public const string CounterReverseDnsResolved = "逆引きホスト名の取得（成功）";
 

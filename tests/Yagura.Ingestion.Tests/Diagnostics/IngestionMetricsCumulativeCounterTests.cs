@@ -145,7 +145,7 @@ public sealed class IngestionMetricsCumulativeCounterTests
     public void IngestionCounterSnapshot_ConstructedWithoutTcpFields_DefaultsToZero()
     {
         // 追加前の 7 引数の呼び出し（旧テスト・旧メタデータ領域ファイル相当）が、末尾の
-        // 5 引数を既定値 0 として扱えること（additive-only なスキーマ変更の後方互換性）。
+        // 6 引数を既定値 0 として扱えること（additive-only なスキーマ変更の後方互換性）。
         var snapshot = new IngestionCounterSnapshot(1, 2, 3, 4, 5, 6, 7);
 
         Assert.Equal(0, snapshot.TcpConnectionClosed);
@@ -153,5 +153,59 @@ public sealed class IngestionMetricsCumulativeCounterTests
         Assert.Equal(0, snapshot.TcpMessageOversizedDiscarded);
         Assert.Equal(0, snapshot.TcpConnectionResyncLimitExceeded);
         Assert.Equal(0, snapshot.TcpConnectionFramingTimeout);
+        Assert.Equal(0, snapshot.SpoolCorruptTailDiscardedBytes);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue #201 で追加したスプール末尾破損破棄カウンタ（単位はバイト）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void RecordSpoolCorruptTailDiscarded_AccumulatesDiscardedBytes()
+    {
+        using var metrics = new IngestionMetrics();
+
+        metrics.RecordSpoolCorruptTailDiscarded(37);
+        metrics.RecordSpoolCorruptTailDiscarded(5);
+
+        var snapshot = metrics.SnapshotCumulativeCounters();
+        Assert.Equal(42, snapshot.SpoolCorruptTailDiscardedBytes);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void RecordSpoolCorruptTailDiscarded_ZeroOrNegative_DoesNotAccumulate(long discardedBytes)
+    {
+        // corruptTailDetected が false の呼び出し元からの防御的な呼び出し（0 バイト）や、
+        // 万一の負値渡しを無害化する（クラス doc コメント参照）。
+        using var metrics = new IngestionMetrics();
+
+        metrics.RecordSpoolCorruptTailDiscarded(discardedBytes);
+
+        var snapshot = metrics.SnapshotCumulativeCounters();
+        Assert.Equal(0, snapshot.SpoolCorruptTailDiscardedBytes);
+    }
+
+    [Fact]
+    public void SeedCumulativeCounters_ThenRecordSpoolCorruptTailDiscarded_ComposesPreviousPlusThisProcess()
+    {
+        var previous = new IngestionCounterSnapshot(
+            InternalBufferDropped: 0,
+            TcpConnectionRejected: 0,
+            SpoolEvacuated: 0,
+            SpoolWriteFailed: 0,
+            SpoolDiscarded: 0,
+            PersistenceFailed: 0,
+            FlowControlDropped: 0,
+            SpoolCorruptTailDiscardedBytes: 100);
+
+        using var metrics = new IngestionMetrics();
+        metrics.SeedCumulativeCounters(previous);
+
+        metrics.RecordSpoolCorruptTailDiscarded(23);
+
+        var snapshot = metrics.SnapshotCumulativeCounters();
+        Assert.Equal(123, snapshot.SpoolCorruptTailDiscardedBytes); // 100 + 23
     }
 }

@@ -31,12 +31,19 @@ internal static class SpoolSegmentReader
     /// </summary>
     /// <param name="filePath">セグメントファイルのパス。</param>
     /// <param name="corruptTailDetected">破損した末尾を検出し、読み取りを打ち切った場合に <c>true</c>。</param>
-    public static List<SpoolRecord> ReadValidRecords(string filePath, out bool corruptTailDetected)
+    /// <param name="corruptTailBytes">
+    /// 破損した末尾として読み捨てたバイト数（<paramref name="corruptTailDetected"/> が
+    /// <c>false</c> の場合は常に 0）。破損した末尾はフレーム境界が保証されないため
+    /// レコード単位では数えられない（クラス remarks 参照）——バイト数を計上の単位とする
+    /// （Issue #201: architecture.md §3.1「カウンタに計上されない喪失は重大」への対応）。
+    /// </param>
+    public static List<SpoolRecord> ReadValidRecords(string filePath, out bool corruptTailDetected, out long corruptTailBytes)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
         var records = new List<SpoolRecord>();
         corruptTailDetected = false;
+        corruptTailBytes = 0;
 
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
@@ -44,6 +51,10 @@ internal static class SpoolSegmentReader
 
         while (true)
         {
+            // このフレームの読み取りを試みる直前の位置——破損と判定した場合、ここから
+            // ファイル末尾までを「読み捨てた破損バイト数」として計上する。
+            var frameStartPosition = stream.Position;
+
             var lengthBytesRead = ReadFully(stream, lengthPrefix);
             if (lengthBytesRead == 0)
             {
@@ -55,6 +66,7 @@ internal static class SpoolSegmentReader
             {
                 // 長さプレフィックスの途中でファイルが終わっている——破損した末尾。
                 corruptTailDetected = true;
+                corruptTailBytes = stream.Length - frameStartPosition;
                 break;
             }
 
@@ -69,6 +81,7 @@ internal static class SpoolSegmentReader
             if (payloadLength < 0 || (long)payloadLength + 4 > remainingBytes)
             {
                 corruptTailDetected = true;
+                corruptTailBytes = stream.Length - frameStartPosition;
                 break;
             }
 
@@ -78,6 +91,7 @@ internal static class SpoolSegmentReader
             {
                 // payload または CRC の途中でファイルが終わっている——破損した末尾。
                 corruptTailDetected = true;
+                corruptTailBytes = stream.Length - frameStartPosition;
                 break;
             }
 
@@ -90,6 +104,7 @@ internal static class SpoolSegmentReader
                 // 長さは読めたが中身が破損している（torn write）——以降の境界は
                 // 保証されないため、ここで打ち切る。
                 corruptTailDetected = true;
+                corruptTailBytes = stream.Length - frameStartPosition;
                 break;
             }
 

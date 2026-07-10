@@ -42,6 +42,28 @@ namespace Yagura.Ingestion.Persistence;
 /// 成立する。トラッカー未指定（<c>null</c>）でも drain 自体の識別・破棄動作は変わらない
 /// （検証の有無は drain の正しさに影響しない）。
 /// </para>
+/// <para>
+/// <b>末尾破損分の計上（Issue #201）</b>: <see cref="DiskSpool.ReadSegmentRecords"/> が
+/// <c>corruptTailDetected</c> を返した場合、読み捨てた末尾のバイト数を
+/// <see cref="IngestionMetrics.RecordSpoolCorruptTailDiscarded"/> で計上する
+/// （architecture.md §3.1「カウンタに計上されない喪失は重大」）。計上は
+/// <see cref="DiskSpool.DeleteSegment"/> の直前（= このセグメントの drain 完了が確定する
+/// タイミング）でのみ行う——書き込み失敗により同じセグメントを次周期で再読み込みする間、
+/// 同じ破損バイト数を毎回計上してしまう二重計上を避けるため。
+/// </para>
+/// <para>
+/// <b>再起動を跨ぐ理論上の二重計上（既知・許容。PR #213 レビュー指摘）</b>: 計上と
+/// <see cref="DiskSpool.DeleteSegment"/> の間には同期を取っていない微小な time window があり、
+/// この間にメタデータ領域の定期永続化（既定 10 秒間隔）が「計上済みだが未削除」の状態を
+/// 書き出した直後・削除完了前にプロセスが非グレースフルにクラッシュした場合、再起動後の
+/// 再 drain で同じバイト数が再度加算され、永続化累積値が恒久的に過大になり得る。通常レコードの
+/// at-least-once 重複（DB 側の重複行として現れる）とは異なり「累積カウンタの値そのもの」が
+/// 膨らむ点で性質が異なるが、(i) window は加算〜削除呼び出しのごく短い区間に永続化タイマーの
+/// 発火とクラッシュの両方が重なる必要があり発生確率が極めて低い、(ii) 発生しても
+/// <c>SystemStatusReader</c> の異常判定は増分 &gt; 0 のみを見るため判定結果は変わらず、影響は
+/// 表示上のバイト数の誤差にとどまる、の 2 点から exactly-once 化（計上と削除の
+/// アトミック化）のコストに見合わないと判断し許容する。
+/// </para>
 /// </remarks>
 public sealed class SpoolDrainCoordinator
 {
@@ -145,10 +167,11 @@ public sealed class SpoolDrainCoordinator
     {
         IReadOnlyList<SpoolRecord> records;
         bool corruptTailDetected;
+        long corruptTailBytes;
 
         try
         {
-            records = _spool.ReadSegmentRecords(segmentPath, out corruptTailDetected);
+            records = _spool.ReadSegmentRecords(segmentPath, out corruptTailDetected, out corruptTailBytes);
         }
         catch (IOException ex)
         {
@@ -159,8 +182,10 @@ public sealed class SpoolDrainCoordinator
         if (corruptTailDetected)
         {
             _logger.LogWarning(
-                "スプールセグメント {SegmentPath} の末尾に破損を検出したため、それ以降を読み捨てた（回収できた分は drain する）。",
-                segmentPath);
+                "スプールセグメント {SegmentPath} の末尾に破損を検出したため、{CorruptTailBytes} バイトを読み捨てた" +
+                "（回収できた分は drain する）。",
+                segmentPath,
+                corruptTailBytes);
         }
 
         // 自己検証用の合成レコード（§3.2.5）は DB 書き込みの直前で破棄する——
@@ -184,6 +209,17 @@ public sealed class SpoolDrainCoordinator
         {
             // 通常ログが 0 件（自己検証レコードのみ、または空/全破損セグメント）でも
             // セグメント自体は消化済みとして削除してよい——再 drain しても得るものがない。
+            //
+            // 末尾破損の計上（Issue #201）はここ・末尾の DeleteSegment 直前の 2 箇所でのみ行う
+            // ——セグメント削除（= このセグメントの drain 完了）が確定するタイミングに限ることで、
+            // 書き込み失敗による再試行のたびに同じ破損バイト数を重複計上することを避ける
+            // （セグメントが未消化のまま残る限り、次周期の DrainSegmentAsync は同じ末尾破損を
+            // 再度検出するため）。
+            if (corruptTailDetected)
+            {
+                _metrics.RecordSpoolCorruptTailDiscarded(corruptTailBytes);
+            }
+
             _spool.DeleteSegment(segmentPath);
             return true;
         }
@@ -264,6 +300,13 @@ public sealed class SpoolDrainCoordinator
         }
 
         // 全バッチの書き込みが確定してから削除する（at-least-once。§3.2.1）。
+        // 末尾破損の計上（Issue #201）はセグメント削除の確定直前で行う（上の早期リターン経路と
+        // 同じ理由。クラス内コメント参照）。
+        if (corruptTailDetected)
+        {
+            _metrics.RecordSpoolCorruptTailDiscarded(corruptTailBytes);
+        }
+
         _spool.DeleteSegment(segmentPath);
         return true;
     }
