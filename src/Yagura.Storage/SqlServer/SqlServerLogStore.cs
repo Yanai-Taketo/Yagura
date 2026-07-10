@@ -114,9 +114,11 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
 
         // database.md §5.2「途中失敗からの安全な再実行」: テーブル/索引作成・版間移行・
         // 版の記録を単一トランザクションにまとめる（SqliteLogStore.InitializeAsync と同じ方式）。
-        // ALTER COLUMN を伴う v1 -> v2 移行（大テーブルでの所要時間・ロック挙動は DB-10 実機検証待ち。
-        // database.md §5.4）もこのトランザクションの範囲に含む——失敗時は全体がロールバックされ、
-        // 再実行時は sys.columns / sys.indexes の状態確認により未完了分のみが適用される。
+        // ALTER COLUMN を伴う v1 -> v2 移行（大テーブルでの所要時間・ロック挙動は DB-10 で実機検証
+        // 済み——database.md §5.4。単一トランザクションのため移行完了まで書き込みはブロックされる
+        // ＝無瞬断ではない。実測値は database.md §5.4 参照）もこのトランザクションの範囲に含む
+        // ——失敗時は全体がロールバックされ、再実行時は sys.columns / sys.indexes の状態確認により
+        // 未完了分のみが適用される。
         await using var transaction = (SqlTransaction)await connection
             .BeginTransactionAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -132,6 +134,14 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             await using (var lockCommand = connection.CreateCommand())
             {
                 lockCommand.Transaction = transaction;
+                // スキーマ管理は対話的検索のようなタイムアウト予算（M-10）を持たない管理経路
+                // （database.md §1.2「契約拡張の予約」・対話的検索の防御は管理経路に適用しない）。
+                // DB-10 実測（tools/Yagura.Bench SchemaMigrationDdl。2026-07-10・1000 万行規模）で、
+                // ADO.NET 既定の CommandTimeout（30 秒）のまま大規模データへ ALTER COLUMN を
+                // 適用すると "実行タイムアウトの期限が切れました" で移行そのものが失敗することを
+                // 確認した——本メソッド内の全コマンドを無制限（0）にし、呼び出し側が渡す
+                // cancellationToken にのみ打ち切りを委ねる。
+                lockCommand.CommandTimeout = 0;
                 lockCommand.CommandText =
                     "EXEC sp_getapplock @Resource = N'Yagura.SchemaInitialization', @LockMode = 'Exclusive', @LockOwner = 'Transaction';";
                 await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -142,6 +152,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             await using (var command = connection.CreateCommand())
             {
                 command.Transaction = transaction;
+                command.CommandTimeout = 0; // 理由は sp_getapplock コマンドのコメント参照（DB-10）。
                 command.CommandText =
                     $"""
                     IF OBJECT_ID(N'dbo.LogRecords', N'U') IS NULL
@@ -256,6 +267,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        command.CommandTimeout = 0; // 理由は sp_getapplock コマンドのコメント参照（DB-10）。
         command.CommandText = "SELECT 1 FROM sys.fn_helpcollations() WHERE name = @collation;";
         command.Parameters.Add("@collation", System.Data.SqlDbType.NVarChar, 128).Value = SearchCollation;
 
@@ -285,8 +297,8 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
             // ヘッダ列（Hostname/AppName/ProcId/MsgId）は同時に NVARCHAR(MAX) へ拡張する
             // （Issue #147。列ごとに sys.columns で適用済みかを確認してから ALTER する——
             // database.md §5.2「現在の列照合順序を確認し、適用済みなら何もしない」の実体化。
-            // 大テーブルでの ALTER COLUMN 1 回ごとの所要時間・ロック挙動は DB-10 の実機検証対象で
-            // あり、本移行は「正しく収束すること」を優先し、分割実行の要否は DB-10 の結果を待つ）。
+            // 大テーブルでの ALTER COLUMN 1 回ごとの所要時間・ロック挙動は DB-10 で実機検証済み
+            // （database.md §5.4）——単一トランザクション実行のまま採用し、分割実行は不要と判断した）。
             await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "SourceAddress", "NVARCHAR(255)", expectMaxLength: false, isNullable: false, cancellationToken).ConfigureAwait(false);
             await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "Hostname", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
             await EnsureColumnCollationAsync(connection, transaction, "dbo.LogRecords", "AppName", "NVARCHAR(MAX)", expectMaxLength: true, isNullable: true, cancellationToken).ConfigureAwait(false);
@@ -323,6 +335,7 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         await using (var checkCommand = connection.CreateCommand())
         {
             checkCommand.Transaction = transaction;
+            checkCommand.CommandTimeout = 0; // 理由は sp_getapplock コマンドのコメント参照（DB-10）。
             checkCommand.CommandText =
                 """
                 SELECT max_length, collation_name
@@ -355,6 +368,14 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         var nullability = isNullable ? "NULL" : "NOT NULL";
         await using var alterCommand = connection.CreateCommand();
         alterCommand.Transaction = transaction;
+        // DB-10 実測（tools/Yagura.Bench SchemaMigrationDdl。2026-07-10）: 1000 万行規模で
+        // NVARCHAR(255)→NVARCHAR(MAX) を伴う列の ALTER COLUMN が ADO.NET 既定の 30 秒
+        // CommandTimeout を超え、"実行タイムアウトの期限が切れました" で移行自体が失敗することを
+        // 確認した（size-of-data 変更を伴う ALTER COLUMN は全ページ書き換えを要するため、
+        // 行数に比例して時間がかかる）。この ALTER 自体が最も時間のかかるコマンドであるため、
+        // 無制限にし、呼び出し側の cancellationToken にのみ打ち切りを委ねる
+        // （sp_getapplock コマンドのコメント参照）。
+        alterCommand.CommandTimeout = 0;
         alterCommand.CommandText =
             $"ALTER TABLE {tableName} ALTER COLUMN {columnName} {targetSqlType} COLLATE {SearchCollation} {nullability};";
         await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -373,6 +394,9 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // 索引作成自体も大規模データでは低速になり得る（DB-10 実測。sp_getapplock コマンドの
+        // コメント参照）——3 索引の新規構築を伴い得るため既定 30 秒では不足し得る。
+        command.CommandTimeout = 0;
         command.CommandText =
             """
             -- v1 の単一列索引は複合索引 IX_LogRecords_ReceivedAt_Id に包含される（先頭列が同じ）ため、

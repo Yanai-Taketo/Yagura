@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using Microsoft.Data.Sqlite;
 
 namespace Yagura.Storage.Sqlite;
@@ -241,8 +240,10 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
             // InitializeAsync 冒頭の「スキーマ確認」ブロックで新規作成・既存 DB のどちらに対しても
             // 既に冪等に収束済み（CREATE INDEX IF NOT EXISTS / DROP INDEX IF EXISTS）。
             // このバージョン間移行で残る作業は SchemaVersion の更新と適用記録の追記のみ。
-            // SQLite 側は列長・COLLATE の変更を伴わない（TEXT は元々無制限——database.md §4。
-            // 自由文検索の非 ASCII 大文字小文字非区別は DB-9 の性能実測後に別途扱う）。
+            // SQLite 側は列長・COLLATE の変更を伴わない（TEXT は元々無制限——database.md §4）。
+            // 自由文検索の非 ASCII 大文字小文字非区別は DB-9 の性能実測（2026-07-10）を経て
+            // アプリ定義比較関数方式で確定した（QueryAsync 参照）——スキーマ DDL は変更しない
+            // （比較関数はクエリ実行時に登録するアプリケーション層の変更のため）。
             await RecordSchemaVersionAppliedAsync(connection, transaction, 2, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -386,6 +387,11 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
         {
             await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
 
+            if (query.SearchText is { Length: > 0 })
+            {
+                RegisterFreeTextComparisonFunction(connection);
+            }
+
             await using var command = connection.CreateCommand();
             var whereClauses = new List<string>();
 
@@ -431,17 +437,17 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
             if (query.SearchText is { Length: > 0 } searchText)
             {
                 // 自由文検索: Message に対する部分一致・大文字小文字を区別しない
-                // （database.md §8 DB-6 決定。2026-07-09 オーナー決定で規則は確定済み。
-                // LogQuery のドキュメント参照）。SQLite の LIKE は既定で ASCII の大文字小文字を
-                // 区別しない（公式ドキュメント "The LIKE operator" — www.sqlite.org/lang_expr.html:
-                // "the LIKE operator is case sensitive by default for unicode characters that
-                // are beyond the ASCII range... the operator is not case sensitive... for ASCII
-                // characters"。確認日 2026-07-05）——ASCII 範囲は DB-6 の blocking 要件を満たす。
-                // 非 ASCII の大文字小文字非区別は database.md §4 の第一候補（アプリ定義比較関数）の
-                // 性能実測（DB-9）が済むまで未実装（現状のまま ASCII 限定 LIKE を維持）。
-                // ワイルドカード文字 %・_ はエスケープする。
-                whereClauses.Add("Message LIKE $searchText ESCAPE '\\'");
-                command.Parameters.Add("$searchText", SqliteType.Text).Value = "%" + EscapeLikePattern(searchText) + "%";
+                // （database.md §1.2 DB-6 確定規則。2026-07-09 オーナー決定）。
+                // DB-9（database.md §4・§8）の性能実測（tools/Yagura.Bench QueryLatency。
+                // 2026-07-10。100 万行規模で UDF 方式の worst-case p95 が約 0.6〜0.8 秒——
+                // 対話的検索のタイムアウト予算（architecture.md M-10 仮値 30 秒）の 3% 未満に
+                // 収まり、ネイティブ LIKE 比でも概ね 1〜1.6 倍の範囲だった）により、アプリ定義
+                // 比較関数方式（<see cref="RegisterFreeTextComparisonFunction"/>）を採用に確定した
+                // （database.md §4 第一候補。ICU 拡張は不採用のまま——doc コメント参照）。
+                // ネイティブ LIKE（ASCII 限定）へは戻さない——DB-6 の非 ASCII 保証集合
+                // （café/CAFÉ 等）を満たせないため。
+                whereClauses.Add("yagura_ci_contains(Message, $searchText) = 1");
+                command.Parameters.Add("$searchText", SqliteType.Text).Value = searchText;
             }
 
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
@@ -806,21 +812,41 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
         return results;
     }
 
-    private static string EscapeLikePattern(string value)
-    {
-        var builder = new StringBuilder(value.Length);
-        foreach (var ch in value)
-        {
-            if (ch is '\\' or '%' or '_')
-            {
-                builder.Append('\\');
-            }
-
-            builder.Append(ch);
-        }
-
-        return builder.ToString();
-    }
+    /// <summary>
+    /// 自由文検索専用のアプリ定義比較関数 <c>yagura_ci_contains(haystack, needle)</c> を登録する
+    /// （database.md §4「自由文検索専用にアプリケーション定義の比較関数を導入する」。DB-9 の性能
+    /// 実測後に採用確定——<see cref="QueryAsync"/> の doc コメント参照）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>組み込み <c>LIKE</c> 演算子自体は上書きしない</b>: <c>Microsoft.Data.Sqlite</c> の
+    /// <c>SqliteConnection.CreateFunction</c> は同名関数の再定義で <c>LIKE</c> 演算子の挙動そのものを
+    /// グローバルに差し替えることも可能だが（Microsoft Learn "User-defined functions -
+    /// Microsoft.Data.Sqlite"。確認日 2026-07-09）、database.md §4 の方針どおり呼び出し経路を
+    /// 自由文検索に限定した専用関数として実装する。
+    /// </para>
+    /// <para>
+    /// <b>一致規則の実体</b>: <c>string.Contains(needle, StringComparison.OrdinalIgnoreCase)</c>。
+    /// .NET の <c>OrdinalIgnoreCase</c> は不変カルチャの大小変換テーブルに基づく比較であり、
+    /// ASCII に限らない大小変換を行う（Microsoft Learn "Globalization invariant mode"。
+    /// 確認日 2026-07-09: Invariant Mode 下では「非 ASCII の大小変換は行われない」——裏を返せば
+    /// 通常モード（本方式の前提。同メソッド doc コメント参照）では非 ASCII も大小変換される）。
+    /// これにより DB-6「折り畳むのは大文字小文字のみ」を過不足なく満たす:
+    /// café/CAFÉ は同一視される一方、café/cafe（アクセントの有無）・あ/ア（かな種。大小の概念を
+    /// 持たない）・Ａ/A（全角/半角。コードポイントが異なり大小関係を持たない）は一致しない
+    /// （<c>tests/Yagura.Storage.ConformanceTests/SqliteFreeTextSearchNonAsciiTests.cs</c> で検証）。
+    /// </para>
+    /// <para>
+    /// .NET Globalization Invariant Mode（<c>InvariantGlobalization</c>）を有効化する発行構成では
+    /// 上記の非 ASCII 折り畳みが成立しない（database.md §4 の前提——Yagura は Invariant Mode を
+    /// 有効化しない）。
+    /// </para>
+    /// </remarks>
+    private static void RegisterFreeTextComparisonFunction(SqliteConnection connection) =>
+        connection.CreateFunction<string?, string?, bool>(
+            "yagura_ci_contains",
+            (haystack, needle) => haystack is not null && needle is not null &&
+                haystack.Contains(needle, StringComparison.OrdinalIgnoreCase));
 
     /// <inheritdoc />
     public async Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default)

@@ -1,0 +1,40 @@
+{
+  "ScenarioName": "SchemaMigrationDdl",
+  "RunId": "9ae67d388b03",
+  "StartedAt": "2026-07-10T06:53:46.5900207+00:00",
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.19045",
+    "OsArchitecture": "X64",
+    "ProcessorName": "Intel64 Family 15 Model 107 Stepping 1, GenuineIntel",
+    "LogicalProcessorCount": 8,
+    "TotalPhysicalMemoryBytes": 12884357120,
+    "DataRootDriveDescription": "C:\\ (Fixed, NTFS, total=127GiB, free=38GiB)",
+    "DotnetRuntimeVersion": ".NET 10.0.9",
+    "MachineName": "DESKTOP-3FI51LK"
+  },
+  "ElapsedWallClock": "00:00:10.2184360",
+  "QueryLatencyResults": null,
+  "SchemaMigrationResults": [
+    {
+      "Provider": "SQLite",
+      "RowCount": 100000,
+      "SeedElapsed": "00:00:00.7304433",
+      "MigrationElapsed": "00:00:00.1762246",
+      "ProbeWriteElapsed": null,
+      "SchemaVersionConfirmed": true,
+      "RowCountPreserved": true
+    },
+    {
+      "Provider": "SQLite",
+      "RowCount": 1000000,
+      "SeedElapsed": "00:00:06.2893901",
+      "MigrationElapsed": "00:00:02.7094379",
+      "ProbeWriteElapsed": null,
+      "SchemaVersionConfirmed": true,
+      "RowCountPreserved": true
+    }
+  ],
+  "Notes": [
+    "SQLite \u3092\u5BFE\u8C61\u306B\u3001v1\u2192v2 \u79FB\u884C\uFF08\u7D22\u5F15\u306E\u307F\u3002COLLATE \u76F8\u5F53\u306E DDL \u5909\u66F4\u306F\u4E0D\u8981\uFF09\u306E DDL \u5B9F\u884C\u6642\u9593\u3092\u8A08\u6E2C\u3057\u305F\u3002"
+  ]
+}

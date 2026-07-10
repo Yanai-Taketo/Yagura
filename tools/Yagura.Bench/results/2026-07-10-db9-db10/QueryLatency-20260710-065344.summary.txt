@@ -1,0 +1,43 @@
+=== ベンチ結果: QueryLatency ===
+実行 ID: c3e4dafc5bda
+開始時刻(UTC): 2026-07-10T06:53:44.7711778+00:00
+所要時間: 00:00:32.3565672
+
+--- 実行環境 ---
+マシン名: DESKTOP-3FI51LK
+OS: Microsoft Windows 10.0.19045 (X64)
+CPU: Intel64 Family 15 Model 107 Stepping 1, GenuineIntel / 論理コア数 8
+メモリ: 11 GiB
+ディスク: C:\ (Fixed, NTFS, total=127GiB, free=38GiB)
+.NET ランタイム: .NET 10.0.9
+
+--- DB-9: クエリレイテンシ（ネイティブ LIKE vs 比較関数候補案） ---
+[rows=100,000] 投入 00:00:00.7475478 / 移行(v1→v2) 00:00:00.1704383
+  ASCII(中選択性) 'error':
+    LIKE : n=5 min=61.6ms p50=62.4ms p95=65.9ms max=66.5ms mean=63.2ms (一致 1000 件)
+    UDF  : n=5 min=50.6ms p50=91.4ms p95=113.3ms max=116.6ms mean=83.1ms (一致 1000 件)
+    p95 比 (UDF/LIKE): 1.72x
+  非ASCII(疎な一致=保証集合正例) 'café':
+    LIKE : n=5 min=45.1ms p50=45.5ms p95=47.4ms max=47.9ms mean=45.9ms (一致 0 件)
+    UDF  : n=5 min=58.8ms p50=59.1ms p95=60.3ms max=60.5ms mean=59.4ms (一致 7 件)
+    p95 比 (UDF/LIKE): 1.27x
+  該当なし(全表走査の最悪系) 'zzz-no-such-term-zzz':
+    LIKE : n=5 min=36.4ms p50=37.0ms p95=37.4ms max=37.4ms mean=36.9ms (一致 0 件)
+    UDF  : n=5 min=50.6ms p50=51.6ms p95=52.5ms max=52.8ms mean=51.6ms (一致 0 件)
+    p95 比 (UDF/LIKE): 1.41x
+[rows=1,000,000] 投入 00:00:06.1897875 / 移行(v1→v2) 00:00:02.8200148
+  ASCII(中選択性) 'error':
+    LIKE : n=5 min=624.7ms p50=644.2ms p95=673.4ms max=678.8ms mean=645.7ms (一致 10000 件)
+    UDF  : n=5 min=536.4ms p50=563.9ms p95=607.0ms max=614.7ms mean=568.7ms (一致 10000 件)
+    p95 比 (UDF/LIKE): 0.90x
+  非ASCII(疎な一致=保証集合正例) 'café':
+    LIKE : n=5 min=454.0ms p50=475.3ms p95=482.4ms max=483.3ms mean=469.9ms (一致 0 件)
+    UDF  : n=5 min=640.0ms p50=678.0ms p95=762.3ms max=776.9ms mean=693.2ms (一致 7 件)
+    p95 比 (UDF/LIKE): 1.58x
+  該当なし(全表走査の最悪系) 'zzz-no-such-term-zzz':
+    LIKE : n=5 min=408.0ms p50=420.0ms p95=429.1ms max=430.1ms mean=419.5ms (一致 0 件)
+    UDF  : n=5 min=575.3ms p50=601.1ms p95=606.6ms max=607.3ms mean=594.3ms (一致 0 件)
+    p95 比 (UDF/LIKE): 1.41x
+
+--- 注記 ---
+- 結果上限 10000 件・タイムアウト 00:00:30（architecture.md M-10 の仮値）を前提に計測した。

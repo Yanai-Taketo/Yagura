@@ -35,6 +35,10 @@ namespace Yagura.Bench.Scenarios;
 /// <see cref="BenchScenario.SustainedZeroDrop"/>・<see cref="BenchScenario.BurstQ1Drop"/> で
 /// バッファ値別の破棄ゼロ上限・OS バッファ破棄（導出値）を比較測定するために使う。
 /// </param>
+/// <param name="RowCounts">
+/// <see cref="BenchScenario.QueryLatency"/>・<see cref="BenchScenario.SchemaMigrationDdl"/> が
+/// 行数規模別に計測する際の対象行数の一覧（<c>--rows</c>。既定はシナリオ側が持つ既定値を使う）。
+/// </param>
 public sealed record ScenarioOptions(
     BenchScenario Scenario,
     LoadTransport Transport,
@@ -49,4 +53,5 @@ public sealed record ScenarioOptions(
     long SpoolQuotaBytes,
     bool KeepDataRoot,
     string? CompareBaselinePath = null,
-    int? UdpReceiveBufferBytes = null);
+    int? UdpReceiveBufferBytes = null,
+    IReadOnlyList<long>? RowCounts = null);

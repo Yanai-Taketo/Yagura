@@ -18,7 +18,8 @@ namespace Yagura.Storage.ConformanceTests;
 /// （database.md §5.4 観測性）。(5) DB-6 の一致規則——非 ASCII を含む大文字小文字非区別の
 /// 正例（CAFÉ/café）と、同一視してはならない負例（あ/ア・全角Ａ/半角A・café/cafe）の双方が
 /// blocking で成立すること（database.md §1.2 の保証集合。SQL Server 側のみ——SQLite の
-/// 非 ASCII は DB-9 の性能実測後に実装するため、本検証は SQLite には適用しない）。
+/// 非 ASCII は DB-9（2026-07-10 実測・採用確定）を経て実装済みで、対応する検証は
+/// <c>tests/Yagura.Storage.ConformanceTests/SqliteFreeTextSearchNonAsciiTests.cs</c> に持つ）。
 /// </para>
 /// <para>
 /// <b>スキップ戦略</b>: <see cref="SqlServerLogStoreConformanceTests"/> と同一
@@ -250,7 +251,7 @@ public sealed class SqlServerSchemaMigrationTests : IAsyncLifetime
 
     // ------------------------------------------------------------------
     // DB-6 一致規則の非 ASCII 保証集合（database.md §1.2。SQL Server 側のみ——
-    // SQLite の非 ASCII 実装は DB-9 の性能実測後）
+    // SQLite 側は SqliteFreeTextSearchNonAsciiTests.cs に同一の保証集合を持つ）
     // ------------------------------------------------------------------
 
     [SkippableFact]

@@ -34,6 +34,7 @@ public static class ScenarioOptionsParser
         var keepDataRoot = false;
         string? compareBaselinePath = null;
         int? udpReceiveBufferBytes = null;
+        IReadOnlyList<long>? rowCounts = null;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -78,6 +79,12 @@ public static class ScenarioOptionsParser
                 case "--udp-receive-buffer-bytes":
                     udpReceiveBufferBytes = int.Parse(RequireValue(args, ref i, "--udp-receive-buffer-bytes"));
                     break;
+                case "--rows":
+                    rowCounts = RequireValue(args, ref i, "--rows")
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(long.Parse)
+                        .ToArray();
+                    break;
                 default:
                     throw new BenchUsageException($"未知のオプション '{args[i]}'。\n\n{BuildUsageText()}");
             }
@@ -97,7 +104,8 @@ public static class ScenarioOptionsParser
             spoolQuotaBytes,
             keepDataRoot,
             compareBaselinePath,
-            udpReceiveBufferBytes);
+            udpReceiveBufferBytes,
+            rowCounts);
     }
 
     private static LoadTransport ParseTransport(string value) => value.ToLowerInvariant() switch
@@ -131,6 +139,8 @@ public static class ScenarioOptionsParser
           BurstQ1Drop              バースト負荷時の Q1 破棄の発生有無（UDP 固定）
           SpoolActivationRecovery  スプール発動 → 追いつきの所要時間
           ProviderWriteCeiling     SQLite / SQL Server 書き込み上限（--sqlserver で SQL Server 対象）
+          QueryLatency             SQLite 自由文検索のクエリレイテンシ（DB-9。ネイティブ LIKE vs 比較関数候補案。--rows で行数規模指定）
+          SchemaMigrationDdl       スキーマ v1→v2 移行の DDL 実行時間（DB-10。--sqlserver で SQL Server 対象。--rows で行数規模指定）
 
         共通オプション:
           --transport <udp|tcp>       対象トランスポート（既定 udp。Throughput/SustainedZeroDrop/ProviderWriteCeiling で使用）
@@ -148,6 +158,8 @@ public static class ScenarioOptionsParser
                                       Issue #62 / architecture.md §5.2。絶対値の合否は行わない）
           --udp-receive-buffer-bytes <N>  UDP 受信バッファサイズ（SO_RCVBUF。バイト。M-2。
                                            既定: 未指定 = 製品既定のまま上書きしない）
+          --rows <N1,N2,...>          QueryLatency/SchemaMigrationDdl の対象行数規模（カンマ区切り。
+                                      既定: QueryLatency = 100000,1000000 / SchemaMigrationDdl = 100000,1000000）
 
         例:
           Yagura.Bench Throughput --transport udp --rate 2000 --duration 15
@@ -156,6 +168,9 @@ public static class ScenarioOptionsParser
           Yagura.Bench ProviderWriteCeiling --sqlserver "Server=.;Database=YaguraBench;Integrated Security=true;"
           Yagura.Bench SustainedZeroDrop --rate 5000 --duration 10 --compare-baseline tools\Yagura.Bench\baselines\ci-baseline.json
           Yagura.Bench SustainedZeroDrop --rate 30000 --duration 10 --udp-receive-buffer-bytes 4194304
+          Yagura.Bench QueryLatency --rows 100000,1000000,10000000
+          Yagura.Bench SchemaMigrationDdl --rows 100000,1000000
+          Yagura.Bench SchemaMigrationDdl --rows 100000,1000000 --sqlserver "Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true;"
         """;
 }
 

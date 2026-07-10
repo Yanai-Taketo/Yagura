@@ -322,8 +322,14 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
     // 条件・組み合わせ・射影・上限・キャンセル伝播の機械検証は
     // Yagura.Storage.ConformanceTests/LogStoreConformanceTestBase に集約した
     // （M5-2 database.md §1.3。provider 非依存の契約検証は適合スイートを正とし、
-    // 純粋に重複する検証は本ファイルから削除した）。ここには SQLite の LIKE 演算子の
-    // ワイルドカードエスケープという実装固有の検証のみ残す。
+    // 純粋に重複する検証は本ファイルから削除した）。ここには自由文検索の実装固有の検証のみ残す。
+    //
+    // DB-9（2026-07-10）による実装変更: 自由文検索は SQLite ネイティブ LIKE から
+    // アプリ定義比較関数（yagura_ci_contains。string.Contains ベース）へ切り替わった
+    // （SqliteLogStore.QueryAsync 参照）。LIKE のワイルドカード文字（%・_）を SQL レベルで
+    // エスケープする必要自体がなくなった——Contains は常に部分文字列の完全一致で評価するため、
+    // % や _ を特別扱いしない。本テストは「検索語に % を含んでも SQL ワイルドカードとして
+    // 展開されない」という利用者から見える契約を、実装の変遷を跨いで回帰検証し続ける。
 
     [Fact]
     public async Task QueryAsync_SearchText_WithWildcardCharacters_TreatedLiterally()

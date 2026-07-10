@@ -1,0 +1,18 @@
+=== ベンチ結果: SchemaMigrationDdl ===
+実行 ID: 982fa7c837c4
+開始時刻(UTC): 2026-07-10T07:09:39.6120286+00:00
+所要時間: 00:03:48.8804463
+
+--- 実行環境 ---
+マシン名: DESKTOP-3FI51LK
+OS: Microsoft Windows 10.0.19045 (X64)
+CPU: Intel64 Family 15 Model 107 Stepping 1, GenuineIntel / 論理コア数 8
+メモリ: 11 GiB
+ディスク: C:\ (Fixed, NTFS, total=127GiB, free=18GiB)
+.NET ランタイム: .NET 10.0.9
+
+--- DB-10: スキーマ v1→v2 移行の DDL 実行時間 ---
+[SQLite rows=10,000,000] 投入 00:01:08.6794647 / 移行 00:02:34.8121605 / probe write (N/A) / 版確認=True / 件数保全=True
+
+--- 注記 ---
+- SQLite を対象に、v1→v2 移行（索引のみ。COLLATE 相当の DDL 変更は不要）の DDL 実行時間を計測した。
