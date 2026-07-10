@@ -124,6 +124,45 @@ public sealed class YaguraConfigurationOptions
         /// （configuration.md §1 の不変条件・security.md §1 L-4）。
         /// </summary>
         public string? HttpPort { get; set; }
+
+        /// <summary>
+        /// 管理 UI 認証（ADR-0010 Phase 1。opt-in。既定は現状維持——認証なし）。
+        /// </summary>
+        public AuthenticationOptions? Authentication { get; set; }
+
+        public sealed class AuthenticationOptions
+        {
+            /// <summary>Windows 統合認証（Negotiate）の設定（ADR-0010 決定 2）。</summary>
+            public WindowsOptions? Windows { get; set; }
+
+            /// <summary>アプリ独自 ID/パスワード認証の設定（ADR-0010 決定 3）。</summary>
+            public AppOptions? App { get; set; }
+
+            /// <summary>
+            /// loopback アクセスにも認証を課す opt-in（ADR-0010 決定 1）。既定 <c>false</c>
+            /// （既定は現状どおり loopback 無認証を維持——最終復旧経路としての価値を守る）。
+            /// <c>true</c> かつ <see cref="Windows"/>/<see cref="App"/> がいずれも無効な組み合わせは
+            /// fail-closed で起動を拒否する（<see cref="YaguraConfigurationLoader"/> 参照）。
+            /// </summary>
+            public string? RequireForLoopback { get; set; }
+
+            public sealed class WindowsOptions
+            {
+                /// <summary>Windows 統合認証（Negotiate）を有効化する（既定 <c>false</c>）。</summary>
+                public string? Enabled { get; set; }
+
+                /// <summary>
+                /// Kerberos-only モード（NTLM 無効化 opt-in。ADR-0010 決定 2・委任事項 12。既定 <c>false</c>）。
+                /// </summary>
+                public string? KerberosOnly { get; set; }
+            }
+
+            public sealed class AppOptions
+            {
+                /// <summary>アプリ独自 ID/パスワード認証を有効化する（既定 <c>false</c>）。</summary>
+                public string? Enabled { get; set; }
+            }
+        }
     }
 
     public sealed class StorageOptions

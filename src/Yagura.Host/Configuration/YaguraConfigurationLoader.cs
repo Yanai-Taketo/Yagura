@@ -62,6 +62,10 @@ public static class YaguraConfigurationLoader
         "Viewer:PublicAccess",
         "Viewer:ReverseDns:Enabled",
         "Admin:HttpPort",
+        "Admin:Authentication:Windows:Enabled",
+        "Admin:Authentication:Windows:KerberosOnly",
+        "Admin:Authentication:App:Enabled",
+        "Admin:Authentication:RequireForLoopback",
         "Storage:SqliteFileName",
         "Storage:Provider",
         "Storage:SqlServer:ConnectionString",
@@ -135,6 +139,38 @@ public static class YaguraConfigurationLoader
         // --- UI: 管理 HTTP ポート（§1「既定値で継続」。bind 先は常に loopback 固定。M6-1） ---
         var adminHttpPort = ResolveAdminHttpPort(options, warnings);
 
+        // --- UI: 管理 UI 認証（ADR-0010 Phase 1。opt-in。§1「縮小側で継続」——
+        //     公開範囲・bind 先・認証関連のセキュリティ項目は不正値で開放側へ落とさない） ---
+        var adminWindowsAuthEnabled = ResolveSecurityFlag(
+            options.Admin?.Authentication?.Windows?.Enabled, "Admin:Authentication:Windows:Enabled", warnings);
+        var adminWindowsAuthKerberosOnly = ResolveSecurityFlag(
+            options.Admin?.Authentication?.Windows?.KerberosOnly, "Admin:Authentication:Windows:KerberosOnly", warnings);
+        var adminAppAuthEnabled = ResolveSecurityFlag(
+            options.Admin?.Authentication?.App?.Enabled, "Admin:Authentication:App:Enabled", warnings);
+        var adminAuthRequireForLoopback = ResolveSecurityFlag(
+            options.Admin?.Authentication?.RequireForLoopback, "Admin:Authentication:RequireForLoopback", warnings);
+
+        // --- fail-closed 不変条件（ADR-0010 決定 1・委任事項 5。configuration.md §1 の
+        //     「縮小側で継続」ではなく「起動失敗」に分類する——リモートバインドの fail-closed
+        //     （configuration.md §1 の既存 L-4 不変条件）と対称の扱い。「loopback 認証 opt-in が
+        //     有効なのに認証方式が一つも構成されていない」は、認証手段が存在しないまま
+        //     loopback にも認証を要求してしまい、佐藤・鈴木の両ペルソナが最重要視した
+        //     「最終復旧経路」を誤設定 1 つで自壊させるため、既定値へのフォールバック
+        //     （§1「縮小側で継続」の通常運用）ではなく起動そのものを止める） ---
+        if (adminAuthRequireForLoopback && !adminWindowsAuthEnabled && !adminAppAuthEnabled)
+        {
+            throw new ConfigurationValidationException(
+                "Admin:Authentication:RequireForLoopback が有効ですが、認証方式" +
+                "（Admin:Authentication:Windows:Enabled / Admin:Authentication:App:Enabled）が" +
+                "一つも有効になっていません。この組み合わせのまま起動すると、認証手段が存在しないのに" +
+                "loopback 経由の管理操作にも認証が要求され、管理 UI へ一切到達できなくなります" +
+                "（ADR-0010 決定 1 の fail-closed 不変条件）。" +
+                "Admin:Authentication:Windows:Enabled または Admin:Authentication:App:Enabled の" +
+                "少なくとも一方を true にするか、Admin:Authentication:RequireForLoopback を" +
+                "false に戻してから再起動してください。",
+                ConfigurationEventIds.AdminAuthenticationFailClosedStartupRejected);
+        }
+
         // --- 永続化: SQLite ファイル名（§1「既定値で継続」） ---
         var sqliteFileName = ResolveSqliteFileName(options, warnings);
 
@@ -172,6 +208,10 @@ public static class YaguraConfigurationLoader
             ViewerPublicAccess: viewerPublicAccess,
             ViewerReverseDnsEnabled: viewerReverseDnsEnabled,
             AdminHttpPort: adminHttpPort,
+            AdminWindowsAuthEnabled: adminWindowsAuthEnabled,
+            AdminWindowsAuthKerberosOnly: adminWindowsAuthKerberosOnly,
+            AdminAppAuthEnabled: adminAppAuthEnabled,
+            AdminAuthRequireForLoopback: adminAuthRequireForLoopback,
             SqliteFileName: sqliteFileName,
             SpoolEnabled: spoolEnabled,
             SpoolDirectory: spoolDirectory,
@@ -599,6 +639,35 @@ public static class YaguraConfigurationLoader
             Reason: "ポート番号として不正なため既定値を適用"));
 
         return YaguraHostEnvironment.DefaultAdminPort;
+    }
+
+    /// <summary>
+    /// 管理 UI 認証関連の真偽値キーを解決する（ADR-0010 Phase 1）。§1「縮小側で継続」の
+    /// セキュリティ 3 項目（公開範囲・bind 先・認証）の一つとして扱う——不正値は
+    /// <c>Viewer:ReverseDns:Enabled</c> と同じ「発生しない・要求しない側（false）」へ縮小する
+    /// （既定 false と一致するため通常運用では既定値継続と結果は同じだが、分類としては
+    /// 縮小側であることを明示するため専用ヘルパーに切り出す）。
+    /// </summary>
+    private static bool ResolveSecurityFlag(string? raw, string key, List<ConfigurationWarning> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(raw, out var value))
+        {
+            return value;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: key,
+            InvalidValue: raw,
+            AppliedValue: bool.FalseString,
+            Reason: "真偽値として不正なため縮小側（無効）を適用" +
+                "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない）"));
+
+        return false;
     }
 
     /// <summary>

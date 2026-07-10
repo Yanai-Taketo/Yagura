@@ -706,6 +706,35 @@ public static class UiText
     /// <summary>circuit 管理画面への導線・見出し。</summary>
     public const string AdminCircuitsTitle = "画面とサーバの接続の管理";
 
+    // ---- 管理 UI 認証（ADR-0010 Phase 1） ----
+
+    /// <summary>認証設定画面への導線・見出し。</summary>
+    public const string AdminAuthSetupTitle = "管理 UI の認証";
+
+    /// <summary>ログイン画面の見出し。</summary>
+    public const string AdminLoginTitle = "サインイン";
+
+    /// <summary>Windows 統合認証でのサインインボタン文言。</summary>
+    public const string AdminLoginWindowsButton = "Windows でサインイン";
+
+    /// <summary>アプリ独自認証のユーザー名入力欄ラベル。</summary>
+    public const string AdminLoginUsernameLabel = "ユーザー名";
+
+    /// <summary>アプリ独自認証のパスワード入力欄ラベル。</summary>
+    public const string AdminLoginPasswordLabel = "パスワード";
+
+    /// <summary>アプリ独自認証のサインインボタン文言。</summary>
+    public const string AdminLoginAppButton = "サインイン";
+
+    /// <summary>
+    /// ログイン失敗時の汎用エラー文言（ユーザー列挙耐性のため、資格情報誤り・アカウント不在・
+    /// ロックアウト中のいずれも同一文言とする——ADR-0010 決定 3・security.md §4.3）。
+    /// </summary>
+    public const string AdminLoginError = "ユーザー名またはパスワードが正しくないか、現在サインインできません。";
+
+    /// <summary>管理画面が認証を要求しているが未認証のときの表示（AdminScreenLayout のリダイレクト経路の直前表示）。</summary>
+    public const string AdminScreenRequiresAuthentication = "サインインが必要です…";
+
     // ---- 初期セットアップウィザード（configuration.md §3〜§7。M8-4 骨格） ----
 
     /// <summary>ステップ: 受信設定。</summary>

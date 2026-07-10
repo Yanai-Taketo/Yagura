@@ -15,6 +15,7 @@ using Yagura.Storage.Sqlite;
 using Yagura.Storage.SqlServer;
 using Yagura.Storage.Spool;
 using Yagura.Web;
+using Yagura.Web.Administration;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Host;
@@ -64,7 +65,12 @@ public static class Program
         catch (ConfigurationValidationException ex)
         {
             // §1「起動失敗」分類: 受信の成立に不可欠なキーが不正な場合はホスト起動を失敗させる。
-            configurationLogger.LogCritical(ex, "設定ファイルの検証に失敗したため起動を中止します。");
+            // ADR-0010 決定 6: fail-closed 拒否（loopback 認証 opt-in の誤設定等）は専用の
+            // イベント ID（1000 番台。ex.EventId）を伴う——「なぜ起動しないか・何を直せばよいか」
+            // が一目で分かる警告を求める要件（委任事項 5）を、専用 ID + 詳細メッセージ
+            // （例外メッセージ自体に誘導文言を含む）の組み合わせで満たす。個別 ID を持たない
+            // 従来の起動失敗（受信ポート不正等）は既定の EventId（0）のまま記録する。
+            configurationLogger.LogCritical(ex.EventId ?? default, ex, "設定ファイルの検証に失敗したため起動を中止します。");
             throw;
         }
 
@@ -417,6 +423,41 @@ public static class Program
         builder.Services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(effectiveAdminPort));
         builder.Services.AddYaguraAdmin();
 
+        // ---- 管理 UI 認証（ADR-0010 Phase 1）----
+        //
+        // 管理者アカウントストアは ILogStore と同じ provider 選択（Program.cs 上の switch）に
+        // 相乗りする（ADR-0010 決定 3「既存のデータ provider 抽象に載る単一テーブル」）が、
+        // ILogStore とは独立の契約（Yagura.Storage.Administration.IAdminAccountStore）とする
+        // ——ログレコード専用の形をした ILogStore の性質を歪めないため（IAdminAccountStore の
+        // remarks 参照）。
+        builder.Services.AddSingleton<Yagura.Storage.Administration.IAdminAccountStore>(_ => resolvedConfiguration.StorageProvider switch
+        {
+            Yagura.Host.Configuration.StorageProvider.SqlServer =>
+                new Yagura.Storage.Administration.SqlServer.SqlServerAdminAccountStore(resolvedConfiguration.SqlServerConnectionString!),
+            _ => new Yagura.Storage.Administration.Sqlite.SqliteAdminAccountStore(databasePath),
+        });
+        builder.Services.AddSingleton<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator>(
+            sp => sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>());
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminAuthenticationAdminService>(sp =>
+            new Yagura.Host.Administration.AdminAuthentication.AdminAuthenticationAdminService(
+                dataRoot,
+                sp.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>(),
+                sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>(),
+                sp.GetRequiredService<IAuditRecorder>()));
+
+        // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシーの登録（AdminAuthenticationExtensions
+        // 参照）。実効値は起動時に固定される（設定キーの反映方式は §3「サービス再起動」——
+        // ConfigurationKeyMetadata 参照）。
+        builder.Services.AddYaguraAdminAuthentication(
+            resolvedConfiguration.AdminWindowsAuthEnabled,
+            resolvedConfiguration.AdminWindowsAuthKerberosOnly,
+            resolvedConfiguration.AdminAppAuthEnabled);
+        builder.Services.AddSingleton(new Yagura.Web.Administration.AdminAuthenticationRuntimeOptions(
+            RequireAuthentication: resolvedConfiguration.AdminAuthRequireForLoopback,
+            WindowsAuthEnabled: resolvedConfiguration.AdminWindowsAuthEnabled,
+            AppAuthEnabled: resolvedConfiguration.AdminAppAuthEnabled));
+
         // フォワーダ配布キットの MSI オプトイン同梱（ADR-0008 設計条件 9・委任 #7）: 配置フォルダは
         // データルート配下 forwarder（%ProgramData%\Yagura\forwarder）。Web 層はデータルートの
         // 実パスを直接知らないため（INicCandidateSource と異なり外部設定＝データルートに依存する）、
@@ -476,6 +517,11 @@ public static class Program
         // 上記(122 行目付近)のコメント参照——0 指定時は解決済みの具体ポートで判定する必要がある。
         app.UseYaguraListenerPortGuard(effectiveAdminPort);
 
+        // 管理 UI 認証（ADR-0010 Phase 1）。ポートガードの直後（管理系 404 の判定が認証
+        // チャレンジより優先——閲覧リスナ経由の到達はそもそも認証を試みずに 404 で終わる）・
+        // circuit 統治ガードの前（circuit 確立可否の判定より、確立要求の認証状態を先に確定させる）。
+        app.UseYaguraAdminAuthentication(resolvedConfiguration.AdminWindowsAuthKerberosOnly);
+
         // circuit 統治のガード(M8-4。security.md §2.1 origin 検証・§2.2 上限。SEC-1/SEC-8 仮値)。
         // ポートガードの直後(管理系 404 の判定が先——存在を漏らさない応答が上限案内より優先)。
         app.UseYaguraCircuitGuard();
@@ -491,7 +537,14 @@ public static class Program
         // 同居しても安全側に働く——管理者がローカルで全部見られることはむしろ自然)。
         // Host 側で個別に MapGet 等を追加しない(各拡張メソッドのコメント参照)。
         var razorComponents = app.MapYaguraWebViewer();
-        app.MapYaguraAdmin(razorComponents);
+        app.MapYaguraAdmin(razorComponents, resolvedConfiguration.AdminAuthRequireForLoopback);
+
+        // 管理者アカウントストアのスキーマ初期化（ADR-0010 Phase 1。ILogStore と同じ
+        // 「受信開始（Kestrel の listen 開始）より前に初期化を終える」順序——
+        // IngestionHostedService.StartAsync が listen 開始前に必ず待たれる（上記コメント参照）
+        // のと同じ理由で、ここ（app.RunAsync() 呼び出し前）で同期的に完了させる。
+        await app.Services.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>()
+            .InitializeAsync().ConfigureAwait(false);
 
         // architecture.md §1.2 の起動順序（受信を最初に開く）は IngestionHostedService が
         // 担う。IHostedService.StartAsync は ASP.NET Core の規約により Kestrel が listen を

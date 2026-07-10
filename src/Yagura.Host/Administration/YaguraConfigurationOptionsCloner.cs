@@ -50,6 +50,19 @@ internal static class YaguraConfigurationOptionsCloner
             Admin = source.Admin is null ? null : new YaguraConfigurationOptions.AdminOptions
             {
                 HttpPort = source.Admin.HttpPort,
+                Authentication = source.Admin.Authentication is null ? null : new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions
+                {
+                    RequireForLoopback = source.Admin.Authentication.RequireForLoopback,
+                    Windows = source.Admin.Authentication.Windows is null ? null : new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.WindowsOptions
+                    {
+                        Enabled = source.Admin.Authentication.Windows.Enabled,
+                        KerberosOnly = source.Admin.Authentication.Windows.KerberosOnly,
+                    },
+                    App = source.Admin.Authentication.App is null ? null : new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.AppOptions
+                    {
+                        Enabled = source.Admin.Authentication.App.Enabled,
+                    },
+                },
             },
             Storage = source.Storage is null ? null : new YaguraConfigurationOptions.StorageOptions
             {

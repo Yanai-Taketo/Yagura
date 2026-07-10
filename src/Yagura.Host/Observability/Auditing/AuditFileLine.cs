@@ -38,4 +38,16 @@ internal sealed class AuditFileLine
 
     /// <summary>事象の要約（変更キー・成否等。秘密情報は含まない——security.md §4.1。M8-4 で追加——additive）。</summary>
     public string? Detail { get; init; }
+
+    /// <summary>
+    /// 認証方式（<c>"windows"</c> / <c>"app"</c>。ADR-0010 決定 3・6 で追加——additive。
+    /// 認証を経由しない操作では null。
+    /// </summary>
+    public string? AuthenticationScheme { get; init; }
+
+    /// <summary>
+    /// 認証済み利用者名（ADR-0010 決定 3・6 で追加——additive。<see cref="AuthenticationScheme"/> と
+    /// 組み合わせて命名空間つきの「誰が」表記になる）。
+    /// </summary>
+    public string? AuthenticatedPrincipal { get; init; }
 }

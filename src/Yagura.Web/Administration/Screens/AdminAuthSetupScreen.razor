@@ -1,0 +1,119 @@
+@page "/admin/auth-setup"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Circuits
+@inject IAdminAuthenticationAdminService AuthAdminService
+@inject YaguraCircuitContext CircuitContext
+@inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
+
+@*
+    管理 UI 認証の設定画面（ADR-0010 決定 1・3。Phase 1）。
+
+    - Windows 統合認証（Negotiate）・Kerberos-only opt-in・アプリ独自認証の有効化を切り替える
+    - 最初の管理者アカウント（ユーザー名/パスワード）を loopback 中に設定する
+      （決定 3「物理到達性による信頼が既に効いている状態でオペレーターが対話的に設定する」）
+    - loopback 認証 opt-in（決定 1）は fail-closed 不変条件をサービス層が検証し、
+      違反時は WizardValidationException のメッセージをそのまま表示する
+*@
+<PageTitle>@UiText.AdminAuthSetupTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminAuthSetupTitle</MudText>
+
+@if (_status is null)
+{
+    <MudText>@UiText.AdminScreenAccessChecking</MudText>
+}
+else
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudSwitch T="bool" @bind-Value="_windowsEnabled" Label="Windows 統合認証(Negotiate)を有効にする" Color="Color.Primary" />
+        @if (_windowsEnabled)
+        {
+            <MudSwitch T="bool" @bind-Value="_kerberosOnly" Label="Kerberos-only モード(NTLM を拒否する)" Color="Color.Primary" Class="ml-8" />
+        }
+
+        <MudSwitch T="bool" @bind-Value="_appEnabled" Label="アプリ独自 ID/パスワード認証を有効にする" Color="Color.Primary" Class="mt-4" />
+
+        <MudSwitch T="bool" @bind-Value="_requireForLoopback" Label="loopback アクセスにも認証を課す(opt-in)" Color="Color.Warning" Class="mt-4" />
+        <MudText Typo="Typo.caption">
+            既定は loopback 無認証のままです。有効にすると、認証手段が全滅した場合の復旧は
+            設定ファイルの手編集(物理到達 + ACL を満たす者に限る)が最終手段になります。
+        </MudText>
+    </MudPaper>
+
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">最初の管理者アカウント</MudText>
+        @if (_status.HasAppAccount)
+        {
+            <MudText Class="mt-2">現在のユーザー名: @(_status.AppAccountUsername)(下記でパスワードのみ変更できます)</MudText>
+        }
+        else
+        {
+            <MudText Class="mt-2">アプリ独自認証を有効にする場合は、ユーザー名とパスワードを設定してください。</MudText>
+        }
+
+        <MudTextField T="string" Label="@UiText.AdminLoginUsernameLabel" @bind-Value="_newUsername" Class="mt-2" />
+        <MudTextField T="string" Label="@UiText.AdminLoginPasswordLabel" InputType="InputType.Password" @bind-Value="_newPassword" Class="mt-2" />
+    </MudPaper>
+
+    @if (_errorMessage is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+    }
+
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="ApplyAsync">
+        適用する
+    </MudButton>
+}
+
+@code {
+    private AdminAuthenticationStatus? _status;
+    private bool _windowsEnabled;
+    private bool _kerberosOnly;
+    private bool _appEnabled;
+    private bool _requireForLoopback;
+    private string _newUsername = string.Empty;
+    private string _newPassword = string.Empty;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = await AuthAdminService.GetStatusAsync();
+        ApplyStatusToFields(_status);
+    }
+
+    private void ApplyStatusToFields(AdminAuthenticationStatus status)
+    {
+        _windowsEnabled = status.WindowsAuthEnabled;
+        _kerberosOnly = status.KerberosOnly;
+        _appEnabled = status.AppAuthEnabled;
+        _requireForLoopback = status.RequireForLoopback;
+        _newUsername = status.AppAccountUsername ?? string.Empty;
+    }
+
+    private async Task ApplyAsync()
+    {
+        _errorMessage = null;
+
+        try
+        {
+            _status = await AuthAdminService.ConfigureAsync(
+                _windowsEnabled,
+                _kerberosOnly,
+                _appEnabled,
+                _requireForLoopback,
+                string.IsNullOrWhiteSpace(_newPassword) ? null : _newUsername,
+                string.IsNullOrWhiteSpace(_newPassword) ? null : _newPassword,
+                CircuitContext.RemoteAddress);
+
+            _newPassword = string.Empty;
+            ApplyStatusToFields(_status);
+            Notifier.NotifyOk("管理 UI 認証設定を保存しました。反映にはサービス再起動が必要です。");
+        }
+        catch (WizardValidationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+    }
+}

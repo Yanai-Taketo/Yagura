@@ -61,4 +61,40 @@ public enum AuditEventKind
     /// 記録内容は生成日時・宛先（ホスト・ポート）・収集チャネル。秘密情報は含まない。
     /// </summary>
     ForwarderKitGenerated,
+
+    /// <summary>
+    /// 管理操作: 管理 UI 認証設定の変更（ADR-0010 決定 1・3。Windows 統合認証/アプリ独自認証の
+    /// 有効化・Kerberos-only・loopback 認証 opt-in の切替。イベント ID 2006）。
+    /// </summary>
+    AdminAuthenticationConfigured,
+
+    /// <summary>
+    /// 管理操作: アプリ独自認証の管理者アカウントの作成・パスワード変更（ADR-0010 決定 3。
+    /// パスワードそのものは記録しない。イベント ID 2007）。
+    /// </summary>
+    AdminAccountCreated,
+
+    /// <summary>
+    /// 拒否: Windows 統合認証（Negotiate）のハンドシェイク失敗・拒否（ADR-0010 決定 6。
+    /// イベント ID 3003）。
+    /// </summary>
+    WindowsAuthenticationHandshakeFailed,
+
+    /// <summary>
+    /// 拒否: アプリ独自認証のログイン失敗（ADR-0010 決定 6。試行されたユーザー名を保持する。
+    /// イベント ID 3004）。
+    /// </summary>
+    AppAuthenticationLoginFailed,
+
+    /// <summary>
+    /// 拒否・セキュリティ事象: アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6。
+    /// イベント ID 3005）。
+    /// </summary>
+    AdminAccountLockedOut,
+
+    /// <summary>
+    /// セキュリティ事象: アプリ独自認証アカウントのロックアウト解除（時間経過による自動解除・
+    /// 管理操作による解除の両方を含む。ADR-0010 決定 6。イベント ID 3006）。
+    /// </summary>
+    AdminAccountLockoutReleased,
 }

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Yagura.Storage;
 using Yagura.Abstractions.Auditing;
+using Yagura.Web.Administration;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web.Tests.ArchitectureTests;
@@ -75,6 +76,16 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddYaguraAdmin();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService, StubSetupWizardService>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService, StubPromotionWizardService>();
+
+        // ADR-0010 Phase 1: 管理 UI 認証(既定は無効のまま——本ハーネスはルーティング表の
+        // 機械列挙が目的であり、認証の実処理は Yagura.Host.Tests / 専用の HTTP フロー
+        // テストが検証する)。
+        builder.Services.AddYaguraAdminAuthentication(
+            windowsAuthEnabled: false, kerberosOnly: false, appAuthEnabled: false);
+        builder.Services.AddSingleton(new Yagura.Web.Administration.AdminAuthenticationRuntimeOptions(
+            RequireAuthentication: false, WindowsAuthEnabled: false, AppAuthEnabled: false));
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminAuthenticationAdminService, StubAdminAuthenticationAdminService>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator, StubAppAdminAuthenticator>();
 
         // ADR-0008 設計条件 9: フォワーダキット生成画面・ダウンロードエンドポイントが要求する
         // IForwarderMsiSource（Program.cs と同じくデータルート配下 forwarder を注入する結線だが、
@@ -267,6 +278,30 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             string idempotencyToken,
             string? operatorAddress = null,
             CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubAdminAuthenticationAdminService : Yagura.Abstractions.Administration.IAdminAuthenticationAdminService
+    {
+        public Task<Yagura.Abstractions.Administration.AdminAuthenticationStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.AdminAuthenticationStatus> ConfigureAsync(
+            bool windowsAuthEnabled,
+            bool kerberosOnly,
+            bool appAuthEnabled,
+            bool requireForLoopback,
+            string? newAppUsername,
+            string? newAppPassword,
+            string? operatorAddress = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubAppAdminAuthenticator : Yagura.Abstractions.Administration.IAppAdminAuthenticator
+    {
+        public Task<Yagura.Abstractions.Administration.AppAuthenticationOutcome> TryAuthenticateAsync(
+            string username, string password, CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
 }

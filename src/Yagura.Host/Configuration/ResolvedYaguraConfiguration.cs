@@ -35,6 +35,21 @@
 /// 管理 HTTP リスナのポート（検証済み。M6-1）。bind 先は常に <c>127.0.0.1</c> / <c>::1</c>
 /// 固定（設定で変更不可——configuration.md §1 の不変条件）。
 /// </param>
+/// <param name="AdminWindowsAuthEnabled">
+/// Windows 統合認証（Negotiate）の有効/無効（既定 <c>false</c>。ADR-0010 決定 2）。
+/// </param>
+/// <param name="AdminWindowsAuthKerberosOnly">
+/// Kerberos-only モード（NTLM 無効化 opt-in。既定 <c>false</c>。ADR-0010 決定 2・委任事項 12）。
+/// </param>
+/// <param name="AdminAppAuthEnabled">
+/// アプリ独自 ID/パスワード認証の有効/無効（既定 <c>false</c>。ADR-0010 決定 3）。
+/// </param>
+/// <param name="AdminAuthRequireForLoopback">
+/// loopback アクセスにも認証を課す opt-in（既定 <c>false</c>。ADR-0010 決定 1）。<c>true</c> かつ
+/// <see cref="AdminWindowsAuthEnabled"/>/<see cref="AdminAppAuthEnabled"/> がいずれも <c>false</c>
+/// の組み合わせは <see cref="YaguraConfigurationLoader.Load"/> が fail-closed で起動を拒否するため、
+/// この記録に到達する時点では常に「有効なら認証方式が最低 1 つ構成済み」が成立している。
+/// </param>
 /// <param name="SqliteFileName">データルート配下の SQLite ファイル名（検証済み）。</param>
 /// <param name="SpoolEnabled">スプールの有効/無効（既定 <c>true</c>。opt-out。M4-3）。</param>
 /// <param name="SpoolDirectory">スプールディレクトリの絶対パス（既定はデータルート配下。M4-3）。</param>
@@ -65,6 +80,10 @@ public sealed record ResolvedYaguraConfiguration(
     ViewerPublicAccess ViewerPublicAccess,
     bool ViewerReverseDnsEnabled,
     int AdminHttpPort,
+    bool AdminWindowsAuthEnabled,
+    bool AdminWindowsAuthKerberosOnly,
+    bool AdminAppAuthEnabled,
+    bool AdminAuthRequireForLoopback,
     string SqliteFileName,
     bool SpoolEnabled,
     string SpoolDirectory,
