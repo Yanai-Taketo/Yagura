@@ -19,7 +19,8 @@
 /// 比較漏れを追加修正——PR #190 の調査で発見され、本 Issue に記録されていた既知ギャップ。
 /// Issue #210 で残りの 5 キー（<c>Ingestion:Udp:ReceiveBufferBytes</c>・
 /// <c>Ingestion:Tcp:BindAddress</c>・<c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・
-/// <c>Retention:ExecutionTimeOfDay</c>）の比較漏れを追加修正）。
+/// <c>Retention:ExecutionTimeOfDay</c>）の比較漏れを追加修正。ADR-0010 Phase 1 の
+/// 管理 UI 認証 4 キー——PR #217——は #218 とのマージ順の意味的競合で漏れたため追補）。
 /// 新しいキーを <see cref="YaguraConfigurationOptions"/> に追加する際は、本クラスの
 /// 比較ロジックと <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
 /// </para>
@@ -54,6 +55,10 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);
         CompareKey(changedKeys, "Viewer:ReverseDns:Enabled", before.Viewer?.ReverseDns?.Enabled, after.Viewer?.ReverseDns?.Enabled);
         CompareKey(changedKeys, "Admin:HttpPort", before.Admin?.HttpPort, after.Admin?.HttpPort);
+        CompareKey(changedKeys, "Admin:Authentication:Windows:Enabled", before.Admin?.Authentication?.Windows?.Enabled, after.Admin?.Authentication?.Windows?.Enabled);
+        CompareKey(changedKeys, "Admin:Authentication:Windows:KerberosOnly", before.Admin?.Authentication?.Windows?.KerberosOnly, after.Admin?.Authentication?.Windows?.KerberosOnly);
+        CompareKey(changedKeys, "Admin:Authentication:App:Enabled", before.Admin?.Authentication?.App?.Enabled, after.Admin?.Authentication?.App?.Enabled);
+        CompareKey(changedKeys, "Admin:Authentication:RequireForLoopback", before.Admin?.Authentication?.RequireForLoopback, after.Admin?.Authentication?.RequireForLoopback);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
         CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);
