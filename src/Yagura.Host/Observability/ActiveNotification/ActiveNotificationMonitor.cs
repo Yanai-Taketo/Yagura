@@ -29,7 +29,10 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// が同一の <see cref="_selfTestTracker"/> インスタンスへ通知する（<c>Yagura.Host.Program</c> が
 /// 両者へ同一インスタンスを渡す構成）。<see cref="RunAsync"/> のループが包括的な例外保護を持つため
 /// （PR #188 レビュー指摘への対応）、本メソッドが自前の例外処理を怠っても監視ループ自体が
-/// 無警告で恒久停止することはない。
+/// 無警告で恒久停止することはない。**タイムアウト時、drain の進捗（スプール使用量の減少）が
+/// 直近に観測されているかでバックログ起因（EventId 1010。警告）と経路障害の疑い（EventId 1009。
+/// エラー）を判別する（Issue #202。PR #200 レビューのフォローアップ）**——詳細は
+/// <c>EvaluateSpoolSelfTestAsync</c> の remarks 参照。
 /// </para>
 /// <para>
 /// <b>スプール無効・縮退運転中の扱い</b>: <see cref="_spool"/> または <see cref="_selfTestTracker"/>
@@ -70,6 +73,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private long? _lastSpoolEvacuatedTotal;
     private DateTimeOffset? _evacuationStreakStartAt;
     private DateTimeOffset? _lastSelfTestInjectedAt;
+    private long? _lastSelfTestObservedSpoolUsageBytes;
+    private DateTimeOffset? _lastSelfTestDrainProgressObservedAt;
 
     private CancellationTokenSource? _stoppingCts;
     private Task? _loopTask;
@@ -342,10 +347,36 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// opt-out・縮退運転）の間は投入・判定のいずれも行わない（クラス remarks 参照）。
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <b>実行順序</b>: タイムアウト判定を新規投入より先に行う——「直前に投入したマーカーが
     /// 期待時間内に drain へ合流したか」を、次のマーカーで上書きする前に確認する必要がある
     /// （<see cref="SpoolSelfTestTracker.BeginNewMarker"/> は未照合のまま残っていても上書きする
     /// 設計のため、判定の機会は投入直前の一度しかない）。
+    /// </para>
+    /// <para>
+    /// <b>バックログ起因の判別（Issue #202。PR #200 レビューのフォローアップ）</b>: drain は FIFO
+    /// のため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する持続的な
+    /// 速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しないことがある。
+    /// 検討した 3 案（Issue #202）: ①投入時点のバックログ量を記録して判定に使う、②drain の進行
+    /// （セグメント消化）を観測する、③タイムアウト値をバックログ量に比例させて再設計する。
+    /// ①は「バックログが深い」ことと「経路が壊れている」ことを判別できない（両方とも投入時点の
+    /// バックログは深いまま観測される）ため単独では使えない。③はバックログ量と所要時間の比例関係が
+    /// 実測（M-16 も含め）で未検証であり、誤った比例式は「タイムアウトを長く取りすぎて実障害の
+    /// 検知が遅れる」方向に倒れるリスクが①以上に高い。採用したのは②——<see cref="_spool"/> の
+    /// 使用量（<see cref="DiskSpool.CurrentUsageBytes"/>）を周期ごとに観測し、前回周期から
+    /// 減少していれば drain がセグメントを消化・削除できている直接証拠として扱う（新規追記だけでは
+    /// 使用量は増えることはあっても減ることはなく、削除はセグメント単位で離散的に起こるため、
+    /// 持続的な速度不足下でも「使用量の減少」は drain 成功の信頼できるシグナルになる）。判定は
+    /// 「直近 <see cref="ActiveNotificationConstants.SelfTestTimeout"/> 以内に進捗を観測したか」
+    /// で行う——観測していれば未消化バックログの滞留（EventId 1010。警告）、していなければ経路障害の
+    /// 疑い（EventId 1009。エラー。従来どおり）とする。drain は 1 セグメントの書込失敗で以降の
+    /// セグメントの消化を止める設計（<see cref="Yagura.Ingestion.Persistence.SpoolDrainCoordinator"/>
+    /// の FIFO 順次処理）のため、この判定は「進捗が観測される限り経路は生きている」という近似では
+    /// なく、「特定セグメントで恒久的に詰まれば以降の進捗も止まる」という構造上の性質に支えられて
+    /// いる——判定を先送りし続けて実障害の検知が沈黙する事態（本節の留意事項）は、進捗が実際に
+    /// 途絶えた時点で 1009 へ切り替わることで避ける（進捗のたびに再発火する 1010 と異なり、1010 は
+    /// 1009 の発火を止めない——両者は独立したトリガキーで抑制窓を持つ）。
+    /// </para>
     /// </remarks>
     private async Task EvaluateSpoolSelfTestAsync(CancellationToken cancellationToken)
     {
@@ -356,34 +387,63 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         var now = _timeProvider.GetUtcNow();
 
+        // drain 進捗の観測（上記 remarks 参照）: このメソッド自身の投入（後段）より前の使用量を
+        // 前回周期末の使用量と比較する——前回周期の投入分は前回周期末のスナップショットに含まれる
+        // ため、比較対象は「周期間に外部（drain・実トラフィックの退避）で起きた変化」に絞られる。
+        var usageBytesAtCycleStart = _spool.CurrentUsageBytes;
+        if (_lastSelfTestObservedSpoolUsageBytes is { } lastObservedUsageBytes &&
+            usageBytesAtCycleStart < lastObservedUsageBytes)
+        {
+            _lastSelfTestDrainProgressObservedAt = now;
+        }
+
         if (_selfTestTracker.IsPendingTimedOut(now, ActiveNotificationConstants.SelfTestTimeout))
         {
-            // 文言は「経路の障害」と断定しない（PR #200 レビュー指摘への対応）: drain は FIFO の
-            // ため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する
-            // 持続的な速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しない。
-            // その場合はスプール退避継続の警告（EventId 1004）が並行して出ている可能性が高いため、
-            // 切り分けの手がかりとして文言に含め、現在のスプール使用率も添える。バックログ起因を
-            // 判定に加味する改善（投入時点のバックログ記録・判定の先送り等）はフォローアップ
-            // Issue に委ねる。
+            var recentDrainProgress = _lastSelfTestDrainProgressObservedAt is { } progressAt &&
+                now - progressAt < ActiveNotificationConstants.SelfTestTimeout;
             var usageRatio = _spool.UsageRatio;
-            NotifyIfDue("spool-self-test-timeout", () =>
-                _logger.LogError(
-                    ActiveNotificationEventIds.SpoolSelfTestFailed,
-                    "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
-                    "期待時間 {Timeout} 以内に完了しませんでした（architecture.md §3.2.5。現在のスプール使用率" +
-                    " {UsageRatio:P0}）。スプール経路（書込 → セグメント読出 → 逆直列化 → drain 合流判定）の障害、" +
-                    "または未消化バックログの滞留（保存先の持続的な速度不足。§3.2.2——この場合はスプール退避継続の" +
-                    "警告（イベント ID 1004）が並行して出ている可能性が高い）が考えられます。" +
-                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
-                    ActiveNotificationConstants.SelfTestTimeout,
-                    usageRatio,
-                    ActiveNotificationConstants.SuppressionWindow));
+
+            if (recentDrainProgress)
+            {
+                NotifyIfDue("spool-self-test-timeout-backlog", () =>
+                    _logger.LogWarning(
+                        ActiveNotificationEventIds.SpoolSelfTestTimeoutBacklog,
+                        "[spool-self-test-timeout-backlog] スプールの定期自己検証（合成レコードの投入 → drain 合流" +
+                        "判定）が期待時間 {Timeout} 以内に完了しませんでしたが、同じ期待時間内に drain の進捗" +
+                        "（スプール使用量の減少）を観測しているため、経路は生きており未消化バックログの滞留" +
+                        "（保存先の持続的な速度不足。architecture.md §3.2.2 が正常な運用状態と明記——スプール" +
+                        "退避継続の警告 イベント ID 1004 が並行して出ている可能性が高い）と判定しました" +
+                        "（architecture.md §3.2.5。Issue #202）。現在のスプール使用率 {UsageRatio:P0}。" +
+                        "進捗が途絶えた場合は経路障害の疑いとしてイベント ID 1009 で改めて警告します。" +
+                        "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                        ActiveNotificationConstants.SelfTestTimeout,
+                        usageRatio,
+                        ActiveNotificationConstants.SuppressionWindow));
+            }
+            else
+            {
+                NotifyIfDue("spool-self-test-timeout", () =>
+                    _logger.LogError(
+                        ActiveNotificationEventIds.SpoolSelfTestFailed,
+                        "[spool-self-test-timeout] スプールの定期自己検証（合成レコードの投入 → drain 合流判定）が" +
+                        "期待時間 {Timeout} 以内に完了せず、同じ期間内に drain の進捗（スプール使用量の減少）も" +
+                        "観測されませんでした（architecture.md §3.2.5。現在のスプール使用率 {UsageRatio:P0}）。" +
+                        "未消化バックログの滞留であれば drain の進捗が観測されるはずのため、本通知はスプール経路" +
+                        "（書込 → セグメント読出 → 逆直列化 → drain 合流判定）の障害が疑われる場合に絞って発火" +
+                        "します（バックログ起因との判別は Issue #202）。同種の警告は {SuppressionWindow} の間は" +
+                        "再表示を抑制します。",
+                        ActiveNotificationConstants.SelfTestTimeout,
+                        usageRatio,
+                        ActiveNotificationConstants.SuppressionWindow));
+            }
         }
 
         if (_lastSelfTestInjectedAt is { } lastInjectedAt &&
             now - lastInjectedAt < ActiveNotificationConstants.SelfTestInterval)
         {
-            // 前回投入からまだ周期（仮値 1 日）に達していない。
+            // 前回投入からまだ周期（仮値 1 日）に達していない。次周期の比較基準として、
+            // このメソッド内で投入が起きなかった今回の使用量をそのまま記録する。
+            _lastSelfTestObservedSpoolUsageBytes = usageBytesAtCycleStart;
             return;
         }
 
@@ -425,6 +485,10 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     result,
                     ActiveNotificationConstants.SuppressionWindow));
         }
+
+        // 次周期の比較基準として、今回の投入（成功・失敗いずれも）を反映した最新の使用量を記録する
+        // （このメソッドの先頭で読む「周期開始時点の使用量」から投入分を除外するため——remarks 参照）。
+        _lastSelfTestObservedSpoolUsageBytes = _spool.CurrentUsageBytes;
     }
 
     /// <summary>

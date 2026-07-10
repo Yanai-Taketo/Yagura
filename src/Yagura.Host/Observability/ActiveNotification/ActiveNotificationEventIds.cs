@@ -65,11 +65,26 @@ public static class ActiveNotificationEventIds
 
     /// <summary>
     /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）が失敗した——合成レコードの
-    /// 投入自体に失敗した、または投入した合成レコードが期待時間内に drain へ合流判定されなかった
-    /// （<see cref="ActiveNotificationConstants.SelfTestTimeout"/>）。レベル: エラー（障害時専用
+    /// 投入自体に失敗した、または投入した合成レコードが期待時間内に drain へ合流判定されず、かつ
+    /// 同じ期間内に drain の進捗（スプール使用量の減少）も観測されなかった（経路障害が疑われる。
+    /// バックログ起因（<see cref="SpoolSelfTestTimeoutBacklog"/>）との判別は Issue #202。
+    /// <see cref="ActiveNotificationConstants.SelfTestTimeout"/>）。レベル: エラー（障害時専用
     /// 経路——スプール退避・drain——が平常時に検証できていない = 実障害時の救済経路が機能する
     /// 保証を失っている状態のため。security.md §4.3 の割当方針「機能停止を伴う事象」に相当する）。
     /// 1009 以降は additive-only（security.md §4.3）で本クラスに定義する最初の ID。
     /// </summary>
     public static readonly EventId SpoolSelfTestFailed = new(1009, "SpoolSelfTestFailed");
+
+    /// <summary>
+    /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）がタイムアウトしたが、同じ
+    /// 期待時間内に drain の進捗（スプール使用量の減少）を観測しており、経路自体は生きていて
+    /// 未消化バックログの滞留（§3.2.2 が「隠れた欠陥ではない」正常な運用状態と明記する持続的な
+    /// 速度不足）に起因すると判定できた場合の通知（PR #200 レビューのフォローアップ。Issue #202）。
+    /// レベル: 警告（<see cref="SpoolEvacuationContinuing"/>（1004）と同じ「機能停止を伴わない、
+    /// 対応が必要な運用状態の継続」区分——security.md §4.3 の割当方針）。<see cref="SpoolSelfTestFailed"/>
+    /// （1009。進捗が観測されない場合）との住み分けは
+    /// <see cref="ActiveNotificationMonitor.EvaluateOnceAsync"/> の実装コメントを参照。
+    /// additive-only（security.md §4.3）で 1009 の次に採番した ID。
+    /// </summary>
+    public static readonly EventId SpoolSelfTestTimeoutBacklog = new(1010, "SpoolSelfTestTimeoutBacklog");
 }
