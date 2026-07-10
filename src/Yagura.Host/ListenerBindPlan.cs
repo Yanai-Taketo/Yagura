@@ -80,7 +80,15 @@ public static class ListenerBindPlan
         // configuration.md §1「起動失敗」の対象ではない縮小継続の判断は Program 側に委ねる）。
         if (configuration.AdminRemoteBindingEnabled)
         {
-            entries.Add(ListenerBindEntry.AnyIP(ListenerKind.Admin, configuration.AdminHttpsPort, requiresHttps: true));
+            // ポート 0(OS 採番。テスト用)の場合、ここで具体ポートへ確定させる——Kestrel の
+            // ListenAnyIP(0, ...) 自体は起動時に自然にエフェメラルポートを採番するが、
+            // Program 側が UseYaguraListenerPortGuard/YaguraAdminListenerPort へ渡す「管理ポート
+            // 一式」は本メソッドが返す ListenerBindEntry.Port を読むだけの設計（effectiveAdminPort
+            // と同じパターン）であるため、0 のまま返すと「実際に bind されるポート」と「ポート
+            // ガードが認識するポート」が食い違う（実際に踏んだ実装バグ——PR レビューで発見）。
+            // loopback dual-stack と同じ「予約してから離す」手法をここでも適用し、常に具体値を返す。
+            var remoteHttpsPort = ResolvePortForAnyIP(configuration.AdminHttpsPort);
+            entries.Add(ListenerBindEntry.AnyIP(ListenerKind.Admin, remoteHttpsPort, requiresHttps: true));
         }
 
         return entries;
@@ -106,6 +114,30 @@ public static class ListenerBindPlan
 
         using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return ((IPEndPoint)probe.LocalEndPoint!).Port;
+    }
+
+    /// <summary>
+    /// <paramref name="requestedPort"/> が <c>0</c>（OS 採番。テスト用）でなければそのまま返す。
+    /// <c>0</c> の場合、IPv6Any（DualMode）へ一時的に bind してポートを 1 個だけ予約し、その
+    /// 具体的なポート番号を返す（<see cref="ResolvePortForDualStackLoopback"/> と同じ「予約して
+    /// から離す」手法）。全インターフェース（AnyIP）bind エントリ 1 本のみが対象のため、複数の
+    /// <c>Listen</c> 呼び出しを一致させる必要はないが、呼び出し側（<c>Program</c>）が
+    /// <see cref="ListenerBindEntry.Port"/> をそのまま「実際に bind されるポート」として
+    /// 管理ポート一式（<c>YaguraAdminListenerPort</c>・<c>UseYaguraListenerPortGuard</c>）へ渡す
+    /// 設計であるため、<c>0</c> のまま返すとポートガードが実ポートを認識できず、リモート HTTPS
+    /// 経由の到達が全て 404 になる（実装時に発見した実バグ）。
+    /// </summary>
+    private static int ResolvePortForAnyIP(int requestedPort)
+    {
+        if (requestedPort != 0)
+        {
+            return requestedPort;
+        }
+
+        using var probe = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+        probe.DualMode = true;
+        probe.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
         return ((IPEndPoint)probe.LocalEndPoint!).Port;
     }
 }

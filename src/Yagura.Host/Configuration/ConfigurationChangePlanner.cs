@@ -20,7 +20,11 @@
 /// Issue #210 で残りの 5 キー（<c>Ingestion:Udp:ReceiveBufferBytes</c>・
 /// <c>Ingestion:Tcp:BindAddress</c>・<c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・
 /// <c>Retention:ExecutionTimeOfDay</c>）の比較漏れを追加修正。ADR-0010 Phase 1 の
-/// 管理 UI 認証 4 キー——PR #217——は #218 とのマージ順の意味的競合で漏れたため追補）。
+/// 管理 UI 認証 4 キー——PR #217——は #218 とのマージ順の意味的競合で漏れたため追補。
+/// ADR-0010 Phase 2 のリモートバインド + HTTPS 4 キー（<c>Admin:RemoteBinding:Enabled</c>・
+/// <c>Admin:Https:Enabled</c>・<c>Admin:Https:CertificateThumbprint</c>・<c>Admin:Https:Port</c>）
+/// は導入と同じ PR で本メソッドへ追加した——Phase 1 の教訓（新キー追加と比較ロジック更新を
+/// 同じ PR で行う）をそのまま踏襲）。
 /// 新しいキーを <see cref="YaguraConfigurationOptions"/> に追加する際は、本クラスの
 /// 比較ロジックと <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
 /// </para>
@@ -59,6 +63,10 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Admin:Authentication:Windows:KerberosOnly", before.Admin?.Authentication?.Windows?.KerberosOnly, after.Admin?.Authentication?.Windows?.KerberosOnly);
         CompareKey(changedKeys, "Admin:Authentication:App:Enabled", before.Admin?.Authentication?.App?.Enabled, after.Admin?.Authentication?.App?.Enabled);
         CompareKey(changedKeys, "Admin:Authentication:RequireForLoopback", before.Admin?.Authentication?.RequireForLoopback, after.Admin?.Authentication?.RequireForLoopback);
+        CompareKey(changedKeys, "Admin:RemoteBinding:Enabled", before.Admin?.RemoteBinding?.Enabled, after.Admin?.RemoteBinding?.Enabled);
+        CompareKey(changedKeys, "Admin:Https:Enabled", before.Admin?.Https?.Enabled, after.Admin?.Https?.Enabled);
+        CompareKey(changedKeys, "Admin:Https:CertificateThumbprint", before.Admin?.Https?.CertificateThumbprint, after.Admin?.Https?.CertificateThumbprint);
+        CompareKey(changedKeys, "Admin:Https:Port", before.Admin?.Https?.Port, after.Admin?.Https?.Port);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
         CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);

@@ -71,6 +71,14 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         _context.IsAdminListener = httpContext is null
             ? null
             : _adminPort.Contains(httpContext.Connection.LocalPort);
+
+        // loopback 束縛ポート（YaguraAdminListenerPort.Port は常に loopback 用ポートを指す——
+        // Program.cs が構築する配列の先頭要素。ADR-0010 Phase 2）との一致を別途判定する
+        // （YaguraCircuitContext.IsLoopbackListener の remarks 参照）。
+        _context.IsLoopbackListener = httpContext is null
+            ? null
+            : httpContext.Connection.LocalPort == _adminPort.Port;
+
         _context.RemoteAddress = httpContext?.Connection.RemoteIpAddress?.ToString();
 
         _registry.Register(new CircuitRecord(

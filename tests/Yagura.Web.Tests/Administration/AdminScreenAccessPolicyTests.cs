@@ -52,16 +52,45 @@ public sealed class AdminScreenAccessPolicyTests
     // ---- IsAuthenticationSatisfied（ADR-0010 決定 1・2。loopback 認証 opt-in 実効時の第二段判定） ----
 
     [Theory]
-    [InlineData(false, false, false, true)] // 認証不要なら常に充足
-    [InlineData(false, false, true, true)]
-    [InlineData(true, true, false, true)]   // ログイン画面自身は判定対象外
-    [InlineData(true, false, true, true)]   // 認証要求 + 未ログイン画面 + 認可済み → 充足
-    [InlineData(true, false, false, false)] // 認証要求 + 未ログイン画面 + 未認可 → 不充足
-    public void IsAuthenticationSatisfied_FollowsTruthTable(
-        bool authenticationRequired, bool isLoginRoute, bool isAuthorizedUser, bool expected)
+    [InlineData(false, true, false, false, true)]  // 認証不要 + loopback なら常に充足
+    [InlineData(false, true, false, true, true)]
+    [InlineData(true, true, true, false, true)]    // ログイン画面自身は判定対象外
+    [InlineData(true, true, false, true, true)]    // 認証要求(loopback) + 未ログイン画面 + 認可済み → 充足
+    [InlineData(true, true, false, false, false)]  // 認証要求(loopback) + 未ログイン画面 + 未認可 → 不充足
+    public void IsAuthenticationSatisfied_LoopbackCircuit_FollowsTruthTable(
+        bool authenticationRequiredForLoopback, bool isLoopbackListener, bool isLoginRoute, bool isAuthorizedUser, bool expected)
     {
         Assert.Equal(
             expected,
-            AdminScreenAccessPolicy.IsAuthenticationSatisfied(authenticationRequired, isLoginRoute, isAuthorizedUser));
+            AdminScreenAccessPolicy.IsAuthenticationSatisfied(
+                authenticationRequiredForLoopback, isLoopbackListener, isLoginRoute, isAuthorizedUser));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)] // ADR-0010 Phase 2: loopback 認証 opt-in が無効でも、
+                                       // リモート HTTPS ポート経由（isLoopbackListener=false）は
+                                       // 常に認証必須——RequireForLoopback の値に関わらず不充足
+    [InlineData(true, false, false)]
+    public void IsAuthenticationSatisfied_RemoteCircuit_AlwaysRequiresAuthentication_RegardlessOfLoopbackOptIn(
+        bool authenticationRequiredForLoopback, bool isLoginRoute, bool isAuthorizedUser)
+    {
+        Assert.False(AdminScreenAccessPolicy.IsAuthenticationSatisfied(
+            authenticationRequiredForLoopback, isLoopbackListener: false, isLoginRoute, isAuthorizedUser));
+    }
+
+    [Fact]
+    public void IsAuthenticationSatisfied_RemoteCircuit_AuthorizedUser_Satisfied()
+    {
+        Assert.True(AdminScreenAccessPolicy.IsAuthenticationSatisfied(
+            authenticationRequiredForLoopback: false, isLoopbackListener: false, isLoginRoute: false, isAuthorizedUser: true));
+    }
+
+    [Fact]
+    public void IsAuthenticationSatisfied_UndeterminedListenerAttribution_TreatedAsRemote_FailClosed()
+    {
+        // 帰属不明（circuit のリスナ帰属取得が失陥している等）は安全側（リモート相当 = 認証必須）
+        // として扱う——configuration.md §1 の縮小側原則と同じ向き。
+        Assert.False(AdminScreenAccessPolicy.IsAuthenticationSatisfied(
+            authenticationRequiredForLoopback: false, isLoopbackListener: null, isLoginRoute: false, isAuthorizedUser: false));
     }
 }

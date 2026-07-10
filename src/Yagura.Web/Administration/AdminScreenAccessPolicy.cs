@@ -61,9 +61,20 @@ public static class AdminScreenAccessPolicy
     /// （認証は「誰が到達できるか」を絞る機構であり、「どの経路が存在するか」を検証する
     /// リスナ帰属検査とは直交する。security.md §1 決定 7 の整理と同じ考え方）。
     /// </summary>
-    /// <param name="authenticationRequired">
-    /// loopback 認証 opt-in の実効値（<see cref="AdminAuthenticationRuntimeOptions.RequireAuthentication"/>）。
-    /// <see langword="false"/> の場合、認証状態に関わらず常に充足する（既定は現状維持）。
+    /// <param name="authenticationRequiredForLoopback">
+    /// loopback 認証 opt-in の実効値（<see cref="AdminAuthenticationRuntimeOptions.RequireAuthentication"/>。
+    /// <c>Admin:Authentication:RequireForLoopback</c>）。<see langword="false"/>（既定）の場合、
+    /// **loopback 経由の circuit に限り**認証状態に関わらず充足する。
+    /// </param>
+    /// <param name="isLoopbackListener">
+    /// 現在の circuit が管理リスナの loopback 束縛ポート経由かどうか
+    /// （<see cref="Yagura.Web.Circuits.YaguraCircuitContext.IsLoopbackListener"/>）。
+    /// <see langword="false"/>（リモート HTTPS ポート経由。ADR-0010 Phase 2）の場合、
+    /// <paramref name="authenticationRequiredForLoopback"/> の値に関わらず認証を要求する——
+    /// リモート経由の管理操作は常に認証必須（決定 1 の fail-closed 前提と対応する。
+    /// <c>Admin:Authentication:RequireForLoopback</c> はその名のとおり loopback 面にのみ影響し、
+    /// リモート面の認証要否を左右しない）。<see langword="null"/>（帰属不明）は
+    /// <see langword="false"/> と同じ安全側（認証必須）で扱う。
     /// </param>
     /// <param name="isLoginRoute">
     /// ログイン画面自身への遷移かどうか。ログイン画面は認証充足判定の対象外
@@ -75,8 +86,14 @@ public static class AdminScreenAccessPolicy
     /// <c>IsAppAuthenticated</c>。呼び出し側が判定して渡す——本メソッドはクレーム判定の詳細を
     /// 知らない、純粋な組み立てに留める）。
     /// </param>
-    public static bool IsAuthenticationSatisfied(bool authenticationRequired, bool isLoginRoute, bool isAuthorizedUser) =>
-        !authenticationRequired || isLoginRoute || isAuthorizedUser;
+    public static bool IsAuthenticationSatisfied(
+        bool authenticationRequiredForLoopback,
+        bool? isLoopbackListener,
+        bool isLoginRoute,
+        bool isAuthorizedUser) =>
+        isLoginRoute ||
+        isAuthorizedUser ||
+        (isLoopbackListener == true && !authenticationRequiredForLoopback);
 }
 
 /// <summary>管理画面の描画可否。</summary>

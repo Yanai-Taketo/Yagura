@@ -175,6 +175,75 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task RemoteBinding_WithRequireForLoopbackFalse_LoopbackStaysUnauthenticated_ButRemoteRequiresAuthentication()
+    {
+        // ADR-0010 Phase 2 決定 1 の核心: Admin:Authentication:RequireForLoopback を既定
+        // （false）のまま Admin:RemoteBinding:Enabled を有効化した、最も典型的な Phase 2 構成。
+        // loopback 経由の管理操作は既定どおり無認証のまま到達できる一方、リモート HTTPS 経由の
+        // 管理操作は（RequireForLoopback の値に関わらず）常に認証を要求されることを実機で確認する
+        // （AdminAuthenticationExtensions.IsUnauthenticatedLoopbackBypassAllowed /
+        // AdminScreenAccessPolicy.IsAuthenticationSatisfied の実装が実際に機能することの検証——
+        // 単体テストでの真理値表確認だけでなく、実プロセスに対する実 HTTP 要求で固定する）。
+        var (thumbprint, _) = IssueAndInstallTestCertificate(TimeSpan.FromDays(365));
+
+        var (process, adminPort, adminHttpsPort) = await StartHostProcessAsync($$"""
+            {
+              "Admin": {
+                "RemoteBinding": { "Enabled": "true" },
+                "Authentication": { "App": { "Enabled": "true" } },
+                "Https": { "Enabled": "true", "CertificateThumbprint": "{{thumbprint}}" }
+              }
+            }
+            """);
+
+        try
+        {
+            // フォワーダキットのダウンロードエンドポイント（素の minimal API。AdminPolicyName の
+            // RequireAuthorization 対象——YaguraAdminExtensions.MapForwarderKitDownload）を使う。
+            // 未認証時の応答は Cookie 認証スキームの既定挙動（LoginPath への 302 リダイレクト）。
+            const string path = "/admin/forwarder-kit/download";
+
+            // --- loopback: 無認証のまま到達できる（認証を要求されない = 302 リダイレクトされない） ---
+            using (var loopbackClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }))
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var response = await loopbackClient.GetAsync($"http://127.0.0.1:{adminPort}{path}", cts.Token);
+
+                Assert.NotEqual(HttpStatusCode.Redirect, response.StatusCode);
+                Assert.NotEqual(HttpStatusCode.Found, response.StatusCode);
+                Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+
+            // --- リモート（HTTPS）: 未認証だと認証へリダイレクトされる（管理操作を実行できない） ---
+            using (var socketsHandler = new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
+            })
+            using (var remoteClient = new HttpClient(socketsHandler))
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var response = await remoteClient.GetAsync($"https://127.0.0.1:{adminHttpsPort}{path}", cts.Token);
+
+                Assert.True(
+                    response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found or HttpStatusCode.Unauthorized,
+                    $"リモート経由の未認証アクセスが認証を要求されなかった（実際の応答: {response.StatusCode}）。" +
+                    "ADR-0010 Phase 2 決定 1 の「リモート経由の管理操作は常に認証必須」不変条件違反。");
+
+                if (response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found)
+                {
+                    Assert.NotNull(response.Headers.Location);
+                    Assert.Contains("/admin/login", response.Headers.Location!.ToString(), StringComparison.Ordinal);
+                }
+            }
+        }
+        finally
+        {
+            KillAndWait(process);
+        }
+    }
+
     // ------------------------------------------------------------------
     // 証明書が解決できない場合の縮小継続（決定 4。configuration.md §4.1 と同型の扱い）
     // ------------------------------------------------------------------

@@ -279,8 +279,13 @@ public static class Program
         // 具体ポート番号はここでしか得られない(ResolvedYaguraConfiguration 自体は 0 のまま——
         // ListenerBindPlan の ResolvePortForDualStackLoopback コメント参照)。
         var effectiveAdminPort = listenerBindEntries.First(e => e is { Kind: ListenerKind.Admin, RequiresHttps: false }).Port;
+        // リモート HTTPS の実ポートも同様に listenerBindEntries から読む(resolvedConfiguration.AdminHttpsPort
+        // ではない——OS 採番(0)指定時、ListenerBindPlan.Create が実際に予約した具体ポート番号は
+        // ここでしか得られない。ListenerBindPlan.ResolvePortForAnyIP のコメント参照。
+        // resolvedConfiguration.AdminHttpsPort をそのまま使うと、テスト用の 0 指定時にポート
+        // ガードが実ポートを認識できず、リモート HTTPS 経由の到達が全て 404 になる実バグを踏む)。
         var effectiveAdminPorts = adminHttpsCertificate is not null
-            ? new[] { effectiveAdminPort, resolvedConfiguration.AdminHttpsPort }
+            ? new[] { effectiveAdminPort, listenerBindEntries.First(e => e.RequiresHttps).Port }
             : [effectiveAdminPort];
 
         // Windows サービス統合（M3-2 #31。architecture.md §1.1 「ホスト」の責務）。
@@ -672,7 +677,16 @@ public static class Program
         // 同居しても安全側に働く——管理者がローカルで全部見られることはむしろ自然)。
         // Host 側で個別に MapGet 等を追加しない(各拡張メソッドのコメント参照)。
         var razorComponents = app.MapYaguraWebViewer();
-        app.MapYaguraAdmin(razorComponents, resolvedConfiguration.AdminAuthRequireForLoopback);
+        // 認可(AdminPolicyName)を管理系エンドポイントへ「付与するかどうか」の判定
+        // (ADR-0010 Phase 1 決定 1 の RequireForLoopback だけでなく、Phase 2 のリモートバインドが
+        // 有効な場合も付与が要る——リモート経由の管理操作は RequireForLoopback の値に関わらず
+        // 常に認証必須のため(決定 1)。実際に「loopback は無条件許可・リモートは必須」という
+        // 接続元による分岐は、付与された認可ポリシー自体(AdminAuthenticationExtensions.AdminPolicyName
+        // の RequireAssertion)の内部で行う——ここでは「ポリシーを一切付与しない」既定運用
+        // (Phase 1 のみで RequireForLoopback も RemoteBinding も無効な既定構成)との切り分けのみ行う。
+        var adminAuthorizationRequired =
+            resolvedConfiguration.AdminAuthRequireForLoopback || resolvedConfiguration.AdminRemoteBindingEnabled;
+        app.MapYaguraAdmin(razorComponents, adminAuthorizationRequired);
 
         // 管理者アカウントストアのスキーマ初期化（ADR-0010 Phase 1。ILogStore と同じ
         // 「受信開始（Kestrel の listen 開始）より前に初期化を終える」順序——
