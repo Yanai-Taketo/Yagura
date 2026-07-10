@@ -219,7 +219,7 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         // 1 対 1 対応させる。IsLoss の区分は同 §4.1 の表の「意味」列に従う（スプール退避・
         // TCP 接続拒否は損失ではない）。
         //
-        // 「スプール末尾破損破棄」（Issue #201）は他の 6 種と単位が異なる（レコード数ではなく
+        // 「スプール末尾破損破棄」（Issue #201）は本一覧の他 7 種と単位が異なる（レコード数ではなく
         // バイト数——SpoolSegmentReader・IngestionMetrics remarks 参照）が、IsLoss: true とする
         // 判断はここでも他と揃える——「サーバに届いた後、回収不能な形で失われた」という性質は
         // 同質であり、単位差を理由にここで除外すると本来の目的（観測ギャップの解消。
