@@ -15,9 +15,24 @@
 /// </para>
 /// <para>
 /// 比較するキーは <see cref="ConfigurationKeyMetadata"/> に登録済みのキーと同期させる
-/// （M4-3 でスプール 3 キーを追加）。新しいキーを <see cref="YaguraConfigurationOptions"/>
-/// に追加する際は、本クラスの比較ロジックと <see cref="ConfigurationKeyMetadata"/> の
-/// 両方を同じ PR で更新する。
+/// （M4-3 でスプール 3 キーを追加。Issue #191 で <c>Viewer:ReverseDns:Enabled</c> の
+/// 比較漏れを追加修正——PR #190 の調査で発見され、本 Issue に記録されていた既知ギャップ）。
+/// 新しいキーを <see cref="YaguraConfigurationOptions"/> に追加する際は、本クラスの
+/// 比較ロジックと <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
+/// </para>
+/// <para>
+/// <b>Issue #191 対応時点の既知の残ギャップ</b>: 本メソッドが比較する 11 キーは
+/// <see cref="ConfigurationKeyMetadata.RegisteredKeys"/>（18 キー）の真部分集合であり、
+/// <c>Ingestion:Udp:ReceiveBufferBytes</c>・<c>Ingestion:Tcp:BindAddress</c>・
+/// <c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・<c>Retention:ExecutionTimeOfDay</c>
+/// は未比較のまま残っている（<c>Storage:Provider</c>・<c>Storage:SqlServer:ConnectionString</c>
+/// は database.md §6.1 の専用切替手順が扱うため、通常の差分適用の対象外——意図的な除外）。
+/// このうち <c>Ingestion:Tcp:Port</c> と <c>Retention:Days</c> は
+/// <see cref="Administration.SetupWizardService.ApplyAsync"/> が現に書き換える値であり、
+/// 初期セットアップウィザードでこれらを変更しても <see cref="ConfigurationChangePlan.ChangedKeys"/>
+/// に現れず、UI 表示・監査記録（security.md §4.1 の 2001）の差分要約から欠落する
+/// （ReverseDns より実害の到達可能性が高い）。Issue #191 のスコープ外として本 PR では
+/// 修正しない（対応 PR の body に別 Issue 起票の要否を記録した）。
 /// </para>
 /// </remarks>
 public static class ConfigurationChangePlanner
@@ -37,6 +52,7 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Ingestion:Rfc3164:DefaultTimeZone", before.Ingestion?.Rfc3164?.DefaultTimeZone, after.Ingestion?.Rfc3164?.DefaultTimeZone);
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
         CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);
+        CompareKey(changedKeys, "Viewer:ReverseDns:Enabled", before.Viewer?.ReverseDns?.Enabled, after.Viewer?.ReverseDns?.Enabled);
         CompareKey(changedKeys, "Admin:HttpPort", before.Admin?.HttpPort, after.Admin?.HttpPort);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
