@@ -86,9 +86,12 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
             """);
 
         Assert.NotEqual(0, exitCode);
+        // 日本語の本文は E2E テストでは照合しない(リダイレクトされた子プロセス stdout の
+        // コードページ次第で化け得るため——AdminAuthenticationFailClosedRegressionTests と
+        // 同じ判断。ロケール非依存の ASCII トークン(設定キー名・イベント ID)のみ照合する)。
         Assert.Contains("Admin:RemoteBinding:Enabled", output, StringComparison.Ordinal);
-        Assert.Contains("認証方式", output, StringComparison.Ordinal);
-        Assert.Contains("HTTPS", output, StringComparison.Ordinal);
+        Assert.Contains("Admin:Authentication:Windows:Enabled", output, StringComparison.Ordinal);
+        Assert.Contains("Admin:Https:Enabled", output, StringComparison.Ordinal);
         Assert.Contains("[1012]", output, StringComparison.Ordinal);
         Assert.DoesNotContain("Now listening on:", output, StringComparison.Ordinal);
     }
@@ -108,7 +111,7 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
             """);
 
         Assert.NotEqual(0, exitCode);
-        Assert.Contains("HTTPS", output, StringComparison.Ordinal);
+        Assert.Contains("Admin:Https:Enabled", output, StringComparison.Ordinal);
         Assert.Contains("[1012]", output, StringComparison.Ordinal);
     }
 
@@ -127,7 +130,7 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
             """);
 
         Assert.NotEqual(0, exitCode);
-        Assert.Contains("認証方式", output, StringComparison.Ordinal);
+        Assert.Contains("Admin:Authentication:Windows:Enabled", output, StringComparison.Ordinal);
         Assert.Contains("[1012]", output, StringComparison.Ordinal);
     }
 
