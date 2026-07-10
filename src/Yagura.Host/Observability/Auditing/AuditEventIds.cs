@@ -46,6 +46,14 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId AdminLoginSucceeded = new(2008, "AdminLoginSucceeded");
 
+    /// <summary>
+    /// 管理リスナ HTTPS 証明書の秘密鍵読み取り権限をサービスアカウントへ付与した
+    /// （ADR-0010 Phase 2 決定 4。configuration.md §6 の既存方式——閲覧 UI の HTTPS 証明書選択時の
+    /// 付与——と同型。付与対象・拇印を記録し秘密鍵そのものは記録しない）。レベルは情報。
+    /// </summary>
+    public static readonly EventId AdminHttpsCertificatePrivateKeyAccessGranted =
+        new(2009, "AdminHttpsCertificatePrivateKeyAccessGranted");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

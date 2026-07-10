@@ -75,4 +75,33 @@ public static class BenchConfigurationFile
 
         File.WriteAllText(Path.Combine(dataRoot, FileName), json);
     }
+
+    /// <summary>
+    /// 管理リスナのリモートバインド + アプリ独自認証 + HTTPS を有効化した設定ファイルを書く
+    /// （ADR-0010 Phase 2 決定 8 受け入れ条件 (iv)「認証処理とログ受信の分離」の負荷試験用。
+    /// Windows 統合認証（AD 依存）ではなくアプリ独自認証を使う——ベンチ実行環境が AD を
+    /// 持たないことを前提にしない）。
+    /// </summary>
+    public static void WriteAdminRemoteHttpsAuthLoadConfiguration(string dataRoot, string certificateThumbprint, int adminHttpsPort)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(certificateThumbprint);
+
+        var json = JsonSerializer.Serialize(new
+        {
+            Admin = new
+            {
+                RemoteBinding = new { Enabled = "true" },
+                Authentication = new { App = new { Enabled = "true" } },
+                Https = new
+                {
+                    Enabled = "true",
+                    CertificateThumbprint = certificateThumbprint,
+                    Port = adminHttpsPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                },
+            },
+        }, new JsonSerializerOptions { WriteIndented = true });
+
+        File.WriteAllText(Path.Combine(dataRoot, FileName), json);
+    }
 }

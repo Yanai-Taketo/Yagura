@@ -90,4 +90,30 @@ public static class ActiveNotificationEventIds
     /// additive-only（security.md §4.3）で 1009 の次に採番した ID。
     /// </summary>
     public static readonly EventId SpoolSelfTestTimeoutBacklog = new(1010, "SpoolSelfTestTimeoutBacklog");
+
+    // 1011（管理 UI 認証 fail-closed）・1012（リモートバインド fail-closed）・1013（リモート HTTPS
+    // 証明書の起動時解決失敗）は Yagura.Host.Configuration.ConfigurationEventIds 側に定義
+    // （設定検証・起動時の事象であり周期監視の管轄ではないため。番号の正本は security.md §4.3 の表）。
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 証明書の有効期限が接近している（ADR-0010 Phase 2 決定 4
+    /// 「期限接近の事前警告は configuration.md §6 既存の能動通知がそのまま管理リスナ用証明書にも
+    /// 適用される」の実体。閾値は
+    /// <see cref="ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow"/>——仮値
+    /// 30 日）。レベル: 警告。
+    /// </summary>
+    public static readonly EventId AdminHttpsCertificateExpiryApproaching =
+        new(1014, "AdminHttpsCertificateExpiryApproaching");
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 証明書が稼働中に使用不能になった——証明書ストアからの削除・
+    /// 秘密鍵アクセス不能・有効期限切れへの遷移（期限切れ中は Kestrel の
+    /// <c>ServerCertificateSelector</c> が新規 TLS ハンドシェイクを拒否している状態。ADR-0010
+    /// Phase 2 決定 4。PR #224 レビュー指摘 #3——起動時警告 1013 だけでは稼働中の異常が無音に
+    /// なるギャップへの対応）。レベル: 警告（1013 と同じ判断——リモート HTTPS 面のみの縮退であり、
+    /// loopback 経由の管理リスナ・syslog 受信は影響を受けないため、「機能停止を伴う事象 = エラー」
+    /// までは引き上げない）。
+    /// </summary>
+    public static readonly EventId AdminHttpsCertificateUnavailableWhileRunning =
+        new(1015, "AdminHttpsCertificateUnavailableWhileRunning");
 }

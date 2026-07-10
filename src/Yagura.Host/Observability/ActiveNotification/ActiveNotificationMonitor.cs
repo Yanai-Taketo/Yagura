@@ -66,6 +66,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly IMonitoredVolumeInfo _volumeInfo;
     private readonly IExpressCapacityChecker _expressChecker;
     private readonly SpoolSelfTestTracker? _selfTestTracker;
+    private readonly IAdminHttpsCertificateStatusProbe? _adminHttpsCertificateProbe;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
@@ -88,7 +89,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         IExpressCapacityChecker expressChecker,
         TimeProvider? timeProvider = null,
         ILogger<ActiveNotificationMonitor>? logger = null,
-        SpoolSelfTestTracker? selfTestTracker = null)
+        SpoolSelfTestTracker? selfTestTracker = null,
+        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -101,6 +103,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<ActiveNotificationMonitor>.Instance;
         _selfTestTracker = selfTestTracker;
+        _adminHttpsCertificateProbe = adminHttpsCertificateProbe;
     }
 
     /// <summary>周期監視ループを開始する。</summary>
@@ -201,6 +204,78 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateMonitoredVolumesFreeSpace();
         await EvaluateExpressCapacityAsync(cancellationToken).ConfigureAwait(false);
         await EvaluateSpoolSelfTestAsync(cancellationToken).ConfigureAwait(false);
+        EvaluateAdminHttpsCertificate();
+    }
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 証明書の期限接近・稼働中の使用不能を検知する
+    /// （ADR-0010 Phase 2 決定 4。PR #224 レビュー指摘 #2・#3 への対応。
+    /// <see cref="IAdminHttpsCertificateStatusProbe"/> の remarks 参照）。
+    /// リモートバインド opt-in が無効・起動時に証明書を解決できず縮小継続した構成
+    /// （プローブ未注入 = <see langword="null"/>）では何もしない——後者は起動時警告
+    /// （EventId 1013）が既に一度報告しており、再起動なしに bind が有効化されることもないため、
+    /// 周期監視の対象にしない（重複警告の抑制。<c>Program</c> の結線コメント参照）。
+    /// </summary>
+    private void EvaluateAdminHttpsCertificate()
+    {
+        if (_adminHttpsCertificateProbe is null)
+        {
+            return;
+        }
+
+        var status = _adminHttpsCertificateProbe.Check();
+        var now = _timeProvider.GetUtcNow();
+
+        if (!status.IsAvailable)
+        {
+            NotifyIfDue("admin-https-certificate-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminHttpsCertificateUnavailableWhileRunning,
+                    "[admin-https-certificate-unavailable-while-running] 管理リスナのリモート HTTPS 証明書が" +
+                    "使用できなくなりました（理由: {Reason}）。リモート HTTPS の新規接続は受け付けられません。" +
+                    "loopback 経由の管理リスナ・syslog 受信は影響を受けません（ADR-0010 Phase 2 決定 4）。" +
+                    "証明書の再取り込み・設定の見直し後、反映にはサービス再起動が必要です。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.FailureReason,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        if (now > status.NotAfter)
+        {
+            // 期限切れへの遷移（稼働中）。Kestrel の ServerCertificateSelector が新規 TLS
+            // ハンドシェイクを拒否している状態を、ハンドシェイク単位ではなく状態として周期通知する
+            // （個々のハンドシェイク失敗イベントを Kestrel から拾う配線は持たない——
+            // security.md §2.5 の限界明示のとおり）。
+            NotifyIfDue("admin-https-certificate-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminHttpsCertificateUnavailableWhileRunning,
+                    "[admin-https-certificate-unavailable-while-running] 管理リスナのリモート HTTPS 証明書の" +
+                    "有効期限（{NotAfter}）が切れました。リモート HTTPS の新規 TLS ハンドシェイクは拒否されています。" +
+                    "loopback 経由の管理リスナ・syslog 受信は影響を受けません（ADR-0010 Phase 2 決定 4）。" +
+                    "証明書を更新し、サービスを再起動してください。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.NotAfter,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        var remaining = status.NotAfter - now;
+        if (remaining <= ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow)
+        {
+            NotifyIfDue("admin-https-certificate-expiry-approaching", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminHttpsCertificateExpiryApproaching,
+                    "[admin-https-certificate-expiry-approaching] 管理リスナのリモート HTTPS 証明書の" +
+                    "有効期限が接近しています（期限: {NotAfter}、残り {RemainingDays:F1} 日、警告閾値: {WarningWindow}）。" +
+                    "期限切れになるとリモート HTTPS の新規接続は拒否されます（loopback 経由の管理リスナは" +
+                    "影響を受けません）。証明書の更新を計画してください。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.NotAfter,
+                    remaining.TotalDays,
+                    ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
     }
 
     /// <summary>スプール使用量の上限接近・到達（architecture.md §3.2.3・§4.6）。</summary>

@@ -53,7 +53,7 @@ public sealed class KerberosOnlyFilterMiddleware
         // 自然な挙動であり、本 opt-in（管理面の保護水準の選択）が閲覧面の応答を変える
         // べきではない。判定は ListenerPortGuardMiddleware と同じく接続の実ローカルポート
         // （クライアントが偽装できない値）で行う。
-        if (context.Connection.LocalPort != _adminPort.Port)
+        if (!_adminPort.Contains(context.Connection.LocalPort))
         {
             await _next(context).ConfigureAwait(false);
             return;

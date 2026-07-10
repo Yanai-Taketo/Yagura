@@ -151,6 +151,44 @@ public sealed class ListenerPortGuardMiddlewareTests
     }
 
     [Fact]
+    public async Task InvokeAsync_AdminEndpoint_MultipleAdminPorts_SecondPortCallsNext_ViewerStillRejected()
+    {
+        // ADR-0010 Phase 2: リモートバインド有効時、管理ポートは複数(loopback 8515 +
+        // リモート HTTPS 8516)になる。第二の管理ポート経由の管理系エンドポイント到達も実行され、
+        // 依然として管理ポート以外(閲覧 8514)は 404 のままであることを直接検証する
+        // (PR #224 レビューの Low 指摘への対応——単一ポートの配列化に留まらない複数要素の検証)。
+        const int remoteHttpsPort = 8516;
+        var auditRecorder = new RecordingAuditRecorder();
+        var metrics = new WebGuardMetrics();
+
+        var viaSecondPortCalled = false;
+        var secondPortMiddleware = new ListenerPortGuardMiddleware(
+            _ => { viaSecondPortCalled = true; return Task.CompletedTask; },
+            [AdminPort, remoteHttpsPort],
+            auditRecorder,
+            metrics);
+        var secondPortContext = CreateContext(localPort: remoteHttpsPort, endpointMetadata: ListenerPortGuardEndpointMetadata.Admin);
+
+        await secondPortMiddleware.InvokeAsync(secondPortContext);
+
+        Assert.True(viaSecondPortCalled, "第二の管理ポート(リモート HTTPS)経由の管理系エンドポイントは実行されるべき。");
+        Assert.Empty(auditRecorder.RecordedEvents);
+
+        var viaViewerCalled = false;
+        var viewerMiddleware = new ListenerPortGuardMiddleware(
+            _ => { viaViewerCalled = true; return Task.CompletedTask; },
+            [AdminPort, remoteHttpsPort],
+            auditRecorder,
+            metrics);
+        var viewerContext = CreateContext(localPort: ViewerPort, endpointMetadata: ListenerPortGuardEndpointMetadata.Admin);
+
+        await viewerMiddleware.InvokeAsync(viewerContext);
+
+        Assert.False(viaViewerCalled);
+        Assert.Equal(StatusCodes.Status404NotFound, viewerContext.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task InvokeAsync_NoEndpointResolvedYet_CallsNext()
     {
         // ルーティング未確定(GetEndpoint が null を返す)の段階では判定できないため通す
@@ -178,7 +216,7 @@ public sealed class ListenerPortGuardMiddlewareTests
         out WebGuardMetrics metrics)
     {
         metrics = new WebGuardMetrics();
-        return new ListenerPortGuardMiddleware(next, AdminPort, auditRecorder, metrics);
+        return new ListenerPortGuardMiddleware(next, [AdminPort], auditRecorder, metrics);
     }
 
     private static DefaultHttpContext CreateContext(

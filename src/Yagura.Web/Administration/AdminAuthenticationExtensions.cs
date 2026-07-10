@@ -162,7 +162,9 @@ public static class AdminAuthenticationExtensions
 
         services.AddAuthorizationBuilder()
             .AddPolicy(AdminPolicyName, policy => policy.RequireAssertion(context =>
-                IsWindowsAdministrator(context.User) || IsAppAuthenticated(context.User)));
+                IsWindowsAdministrator(context.User) ||
+                IsAppAuthenticated(context.User) ||
+                IsUnauthenticatedLoopbackBypassAllowed(context)));
 
         return services;
     }
@@ -184,6 +186,52 @@ public static class AdminAuthenticationExtensions
     public static bool IsAppAuthenticated(ClaimsPrincipal user) =>
         string.Equals(user.Identity?.AuthenticationType, AppAuthenticationScheme, StringComparison.Ordinal) &&
         (user.Identity?.IsAuthenticated ?? false);
+
+    /// <summary>
+    /// 未認証のまま <see cref="AdminPolicyName"/> を通す例外条件（ADR-0010 決定 1）:
+    /// 現在の接続が管理リスナの<b>loopback 束縛ポート</b>（<c>Admin:HttpPort</c>）経由であり、
+    /// かつ loopback 認証 opt-in（<c>Admin:Authentication:RequireForLoopback</c>）が無効な場合。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>なぜここで判定するか（HTTP エンドポイント向け。circuit 向けは <c>AdminScreenAccessPolicy</c>
+    /// が同じ判定を独立に行う）</b>: <c>RequireAssertion</c> に渡る
+    /// <see cref="AuthorizationHandlerContext.Resource"/> は、
+    /// <c>AuthorizationMiddleware</c> の既定動作（<c>SuppressUseHttpContextAsAuthorizationResource</c>
+    /// が既定 <see langword="false"/>）により現在の <see cref="HttpContext"/> そのものである
+    /// （dotnet/aspnetcore の <c>AuthorizationMiddleware.InvokeAsync</c> ソース確認。確認日
+    /// 2026-07-10）——追加の <c>IHttpContextAccessor</c> 注入なしに接続の実ローカルポートへ
+    /// 到達できる。
+    /// </para>
+    /// <para>
+    /// <b>ADR-0010 Phase 2 決定 1 の実装</b>: 「既定は現状（loopback 無認証）を維持する。
+    /// リモート経由の管理操作は常に認証必須」——<c>Admin:Authentication:RequireForLoopback</c> は
+    /// その名のとおり loopback 面にのみ作用し、リモート HTTPS ポート（別ポート。
+    /// ADR-0010 Phase 2）経由の接続はこの例外条件の対象外（<c>httpContext.Connection.LocalPort</c>
+    /// が loopback ポートと一致しない）ため、常にフルの認可判定（Windows 管理者 or アプリ認証済み）
+    /// を要求する。
+    /// </para>
+    /// </remarks>
+    private static bool IsUnauthenticatedLoopbackBypassAllowed(AuthorizationHandlerContext context)
+    {
+        if (context.Resource is not HttpContext httpContext)
+        {
+            // Resource が HttpContext として取得できない場合は fail-closed
+            // （configuration.md §1 の縮小側原則と同じ向き——判定不能を許可側へ倒さない）。
+            return false;
+        }
+
+        var runtimeOptions = httpContext.RequestServices.GetService<AdminAuthenticationRuntimeOptions>();
+        var adminListenerPort = httpContext.RequestServices.GetService<YaguraAdminListenerPort>();
+
+        if (runtimeOptions is null || adminListenerPort is null)
+        {
+            return false;
+        }
+
+        return !runtimeOptions.RequireAuthentication &&
+            httpContext.Connection.LocalPort == adminListenerPort.Port;
+    }
 
     /// <summary>
     /// 認証パイプラインをアプリケーションビルダーへ組み込む

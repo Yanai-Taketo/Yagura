@@ -347,7 +347,10 @@ public static class YaguraAdminExtensions
     /// <see cref="ListenerPortGuardMiddleware"/> をパイプラインに組み込む。
     /// </summary>
     /// <param name="app">アプリケーションビルダー。</param>
-    /// <param name="adminPort">管理リスナの実ポート番号（<c>ResolvedYaguraConfiguration.AdminHttpPort</c>）。</param>
+    /// <param name="adminPorts">
+    /// 管理リスナが実際に bind している全ポート（<c>ResolvedYaguraConfiguration.AdminHttpPort</c> +
+    /// リモートバインド有効時は <c>AdminHttpsPort</c> も含む。ADR-0010 Phase 2 決定 1）。
+    /// </param>
     /// <remarks>
     /// <para>
     /// <c>UseRouting</c>（または暗黙にルーティングを組み込む <c>MapRazorComponents</c> 等）の
@@ -364,11 +367,12 @@ public static class YaguraAdminExtensions
     /// <c>WebGuardMetrics</c> は本クラスと対称のシングルトンとして Program.cs が登録する）。
     /// </para>
     /// </remarks>
-    public static IApplicationBuilder UseYaguraListenerPortGuard(this IApplicationBuilder app, int adminPort)
+    public static IApplicationBuilder UseYaguraListenerPortGuard(this IApplicationBuilder app, IReadOnlyList<int> adminPorts)
     {
         ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(adminPorts);
 
-        return app.UseMiddleware<ListenerPortGuardMiddleware>(adminPort);
+        return app.UseMiddleware<ListenerPortGuardMiddleware>(adminPorts);
     }
 
     /// <summary>

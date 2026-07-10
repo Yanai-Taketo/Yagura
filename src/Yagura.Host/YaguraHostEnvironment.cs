@@ -39,6 +39,12 @@ public static class YaguraHostEnvironment
     public const string AdminPortEnvironmentVariable = "YAGURA_ADMIN_PORT";
 
     /// <summary>
+    /// 管理リスナのリモート HTTPS ポート（ADR-0010 Phase 2 決定 4）を上書きする環境変数名。
+    /// <c>0</c> を指定すると OS がポートを採番する（テスト用。他の *_PORT 環境変数と同じ流儀）。
+    /// </summary>
+    public const string AdminHttpsPortEnvironmentVariable = "YAGURA_ADMIN_HTTPS_PORT";
+
+    /// <summary>
     /// 閲覧 HTTP リスナの既定ポート。
     /// </summary>
     /// <remarks>

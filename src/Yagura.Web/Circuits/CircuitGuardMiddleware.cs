@@ -108,7 +108,7 @@ public sealed class CircuitGuardMiddleware
         if (HttpMethods.IsGet(context.Request.Method) &&
             context.GetEndpoint()?.Metadata.GetMetadata<ComponentTypeMetadata>() is not null)
         {
-            var isAdminListener = context.Connection.LocalPort == _adminPort.Port;
+            var isAdminListener = _adminPort.Contains(context.Connection.LocalPort);
             var limit = isAdminListener
                 ? CircuitGovernanceDefaults.AdminCircuitLimit
                 : CircuitGovernanceDefaults.ViewerCircuitLimit;

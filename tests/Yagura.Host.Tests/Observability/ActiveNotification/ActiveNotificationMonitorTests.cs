@@ -742,6 +742,126 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // 管理リスナのリモート HTTPS 証明書の周期監視（EventId 1014 / 1015。
+    // ADR-0010 Phase 2 決定 4。PR #224 レビュー指摘 #2・#3）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateOnce_AdminHttpsCertificateProbeNotWired_DoesNotWarn()
+    {
+        // リモートバインド opt-in が無効（プローブ未注入）の既定構成では評価自体を行わない。
+        var collector = new FakeLogCollector();
+        var monitor = CreateMonitor(spool: null, collector, out _);
+
+        await monitor.EvaluateOnceAsync();
+
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id is 1014 or 1015);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_AdminHttpsCertificateHealthyAndFarFromExpiry_DoesNotWarn()
+    {
+        var collector = new FakeLogCollector();
+        FakeTimeProvider timeProvider = null!;
+        var monitor = CreateMonitor(spool: null, collector, out timeProvider,
+            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
+                new AdminHttpsCertificateStatus(
+                    IsAvailable: true,
+                    NotAfter: timeProvider.GetUtcNow().AddDays(365),
+                    FailureReason: null)));
+
+        await monitor.EvaluateOnceAsync();
+
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id is 1014 or 1015);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_AdminHttpsCertificateExpiryWithinWarningWindow_WarnsWithApproachingEventId()
+    {
+        var collector = new FakeLogCollector();
+        FakeTimeProvider timeProvider = null!;
+        var monitor = CreateMonitor(spool: null, collector, out timeProvider,
+            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
+                new AdminHttpsCertificateStatus(
+                    IsAvailable: true,
+                    NotAfter: timeProvider.GetUtcNow().AddDays(10), // 閾値(仮値 30 日)以内
+                    FailureReason: null)));
+
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id is 1014 or 1015);
+        Assert.Equal(1014, record.Id.Id);
+        Assert.Contains("[admin-https-certificate-expiry-approaching]", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_AdminHttpsCertificateExpired_WarnsWithUnavailableEventId_NotApproaching()
+    {
+        // 稼働中に期限切れへ遷移した状態(ServerCertificateSelector が新規ハンドシェイクを
+        // 拒否している)は 1015 で通知し、1014(接近)とは区別する。
+        var collector = new FakeLogCollector();
+        FakeTimeProvider timeProvider = null!;
+        var monitor = CreateMonitor(spool: null, collector, out timeProvider,
+            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
+                new AdminHttpsCertificateStatus(
+                    IsAvailable: true,
+                    NotAfter: timeProvider.GetUtcNow().AddDays(-1), // 既に期限切れ
+                    FailureReason: null)));
+
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id is 1014 or 1015);
+        Assert.Equal(1015, record.Id.Id);
+        Assert.Contains("[admin-https-certificate-unavailable-while-running]", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_AdminHttpsCertificateRemovedFromStoreWhileRunning_WarnsWithUnavailableEventId()
+    {
+        // 稼働中の遷移を模す: 1 周期目は健全(警告なし)、2 周期目でストアから削除された状態へ。
+        var collector = new FakeLogCollector();
+        FakeTimeProvider timeProvider = null!;
+        var available = true;
+        var monitor = CreateMonitor(spool: null, collector, out timeProvider,
+            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
+                available
+                    ? new AdminHttpsCertificateStatus(true, timeProvider.GetUtcNow().AddDays(365), null)
+                    : new AdminHttpsCertificateStatus(false, default, "拇印 XXXX の証明書が LocalMachine\\My ストアに見つかりません。")));
+
+        await monitor.EvaluateOnceAsync();
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id is 1014 or 1015);
+
+        available = false;
+        timeProvider.Advance(ActiveNotificationConstants.PollInterval);
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1015);
+        Assert.Contains("見つかりません", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_AdminHttpsCertificateWarnings_AreSuppressedWithinWindow()
+    {
+        // 抑制窓(15 分の仮値)の適用——他トリガと同じ NotifyIfDue に乗ること。
+        var collector = new FakeLogCollector();
+        FakeTimeProvider timeProvider = null!;
+        var monitor = CreateMonitor(spool: null, collector, out timeProvider,
+            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
+                new AdminHttpsCertificateStatus(true, timeProvider.GetUtcNow().AddDays(10), null)));
+
+        await monitor.EvaluateOnceAsync();
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1014);
+
+        timeProvider.Advance(TimeSpan.FromMinutes(10));
+        await monitor.EvaluateOnceAsync();
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1014);
+
+        timeProvider.Advance(TimeSpan.FromMinutes(10));
+        await monitor.EvaluateOnceAsync();
+        Assert.Equal(2, collector.GetSnapshot().Count(r => r.Id.Id == 1014));
+    }
+
+    // ------------------------------------------------------------------
     // ヘルパー
     // ------------------------------------------------------------------
 
@@ -752,7 +872,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         IngestionMetrics? metrics = null,
         IMonitoredVolumeInfo? volumeInfo = null,
         IExpressCapacityChecker? expressChecker = null,
-        SpoolSelfTestTracker? selfTestTracker = null)
+        SpoolSelfTestTracker? selfTestTracker = null,
+        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null)
     {
         timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
         var ownedMetrics = metrics ?? new IngestionMetrics();
@@ -764,7 +885,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
             expressChecker ?? new FakeExpressCapacityChecker(reading: null),
             timeProvider,
             new FakeLogger<ActiveNotificationMonitor>(collector),
-            selfTestTracker);
+            selfTestTracker,
+            adminHttpsCertificateProbe);
     }
 
     /// <summary>
@@ -871,5 +993,14 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     {
         public Task<ExpressCapacityReading?> CheckAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(reading);
+    }
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 証明書の状態プローブのフェイク（呼び出しごとに差し替え可能——
+    /// 「健全 → ストアから削除」等の稼働中遷移を模す）。
+    /// </summary>
+    private sealed class FakeAdminHttpsCertificateStatusProbe(Func<AdminHttpsCertificateStatus> behavior) : IAdminHttpsCertificateStatusProbe
+    {
+        public AdminHttpsCertificateStatus Check() => behavior();
     }
 }

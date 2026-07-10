@@ -20,10 +20,20 @@ public sealed class BenchHostProcess : IAsyncDisposable
         new(@"Now listening on:\s*http://\[::\]:(\d+)\s*$", RegexOptions.Compiled);
     private static readonly Regex ViewerListeningLoopbackPortPattern =
         new(@"Now listening on:\s*http://(?:127\.0\.0\.1|\[::1\]):(\d+)\s*$", RegexOptions.Compiled);
+    private static readonly Regex AdminLoopbackPortPattern =
+        new(@"Now listening on:\s*http://127\.0\.0\.1:(\d+)\s*$", RegexOptions.Compiled);
+    // 管理リスナのリモート HTTPS bind エントリ（ADR-0010 Phase 2。Yagura.Host.Program 参照）は
+    // https:// スキームで "Now listening on:" に現れる（平文の閲覧リスナ AnyIP 行と URL スキームで
+    // 判別できる——tests/Yagura.E2E.Tests/AdminRemoteBindingRegressionTests.cs で実機確認済み）。
+    private static readonly Regex AdminRemoteHttpsPortPattern =
+        new(@"Now listening on:\s*https://\[::\]:(\d+)\s*$", RegexOptions.Compiled);
 
     private readonly Process _process;
     private readonly List<string> _stdoutLines = [];
     private readonly object _stdoutLock = new();
+
+    private readonly TaskCompletionSource<int> _adminPortTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<int> _adminHttpsPortTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private BenchHostProcess(Process process)
     {
@@ -35,6 +45,20 @@ public sealed class BenchHostProcess : IAsyncDisposable
     public int TcpPort { get; private set; }
 
     public int ViewerHttpPort { get; private set; }
+
+    /// <summary>
+    /// 管理リスナ（loopback）の実バインドポート（ADR-0010 Phase 2 の認証負荷分離ベンチで使用。
+    /// 待機対象には含めない——既存シナリオでは不要なため <see cref="StartAsync"/> は本値の解決を
+    /// 待たない。呼び出し側が必要な場合は起動後に <see cref="StdoutLines"/> を走査するか、
+    /// 専用の待機ヘルパー（<c>Verification</c> 配下）を別途使うこと）。
+    /// </summary>
+    public int AdminPort { get; private set; }
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS bind エントリの実ポート（<c>Admin:RemoteBinding:Enabled</c> を
+    /// 有効化した場合のみ現れる。未使用の構成では 0 のまま）。
+    /// </summary>
+    public int AdminHttpsPort { get; private set; }
 
     /// <summary>子プロセスの標準出力全行（デバッグ・障害調査用に保持）。</summary>
     public IReadOnlyList<string> StdoutLines
@@ -107,6 +131,7 @@ public sealed class BenchHostProcess : IAsyncDisposable
         int tcpPort = 0,
         int httpPort = 0,
         int adminPort = 0,
+        int adminHttpsPort = 0,
         TimeSpan? startupTimeout = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
@@ -133,6 +158,7 @@ public sealed class BenchHostProcess : IAsyncDisposable
         startInfo.Environment["YAGURA_UDP_PORT"] = udpPort.ToString();
         startInfo.Environment["YAGURA_TCP_PORT"] = tcpPort.ToString();
         startInfo.Environment["YAGURA_ADMIN_PORT"] = adminPort.ToString();
+        startInfo.Environment["YAGURA_ADMIN_HTTPS_PORT"] = adminHttpsPort.ToString();
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var bench = new BenchHostProcess(process);
@@ -177,6 +203,20 @@ public sealed class BenchHostProcess : IAsyncDisposable
             if (viewerMatch.Success && int.TryParse(viewerMatch.Groups[1].Value, out var parsedViewerPort))
             {
                 viewerPortTcs.TrySetResult(parsedViewerPort);
+            }
+
+            var adminMatch = AdminLoopbackPortPattern.Match(e.Data);
+            if (adminMatch.Success && int.TryParse(adminMatch.Groups[1].Value, out var parsedAdminPort))
+            {
+                bench.AdminPort = parsedAdminPort;
+                bench._adminPortTcs.TrySetResult(parsedAdminPort);
+            }
+
+            var adminHttpsMatch = AdminRemoteHttpsPortPattern.Match(e.Data);
+            if (adminHttpsMatch.Success && int.TryParse(adminHttpsMatch.Groups[1].Value, out var parsedAdminHttpsPort))
+            {
+                bench.AdminHttpsPort = parsedAdminHttpsPort;
+                bench._adminHttpsPortTcs.TrySetResult(parsedAdminHttpsPort);
             }
         };
 
@@ -235,6 +275,22 @@ public sealed class BenchHostProcess : IAsyncDisposable
 
         return bench;
     }
+
+    /// <summary>
+    /// 管理リスナ（loopback）の listen ログを待って実ポートを取得する（ADR-0010 Phase 2 の
+    /// 認証負荷分離ベンチ用。既定では待機しない——本メソッドを呼んだ場合のみ待機コストが乗る）。
+    /// </summary>
+    public async Task<int> WaitForAdminPortAsync(TimeSpan? timeout = null) =>
+        await WaitWithTimeoutAsync(_adminPortTcs.Task, timeout ?? TimeSpan.FromSeconds(30), "管理リスナ(loopback) HTTP listening ログ")
+            .ConfigureAwait(false);
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS bind エントリの listen ログを待って実ポートを取得する
+    /// （<c>Admin:RemoteBinding:Enabled</c> を有効化した構成でのみ現れる）。
+    /// </summary>
+    public async Task<int> WaitForAdminHttpsPortAsync(TimeSpan? timeout = null) =>
+        await WaitWithTimeoutAsync(_adminHttpsPortTcs.Task, timeout ?? TimeSpan.FromSeconds(30), "管理リスナ リモート HTTPS listening ログ")
+            .ConfigureAwait(false);
 
     /// <summary>
     /// グレースフル停止（<see cref="ConsoleCtrlSender"/> で Ctrl+C を送出し、.NET Generic Host の

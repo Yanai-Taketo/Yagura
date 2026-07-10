@@ -73,7 +73,7 @@
         _access = AdminScreenAccessPolicy.Decide(
             HttpContext?.Connection.LocalPort,
             CircuitContext.IsAdminListener,
-            AdminPort.Port);
+            AdminPort.Ports);
 
         if (_access == AdminScreenAccess.Denied && _auditedDeniedUri != Navigation.Uri)
         {
@@ -110,7 +110,7 @@
             AdminAuthenticationExtensions.IsAppAuthenticated(user);
 
         _authenticationSatisfied = AdminScreenAccessPolicy.IsAuthenticationSatisfied(
-            AuthOptions.RequireAuthentication, isLoginRoute, isAuthorizedUser);
+            AuthOptions.RequireAuthentication, CircuitContext.IsLoopbackListener, isLoginRoute, isAuthorizedUser);
 
         if (!_authenticationSatisfied)
         {

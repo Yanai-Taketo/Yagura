@@ -35,6 +35,18 @@ public sealed class YaguraCircuitContext
     /// </summary>
     public bool? IsAdminListener { get; internal set; }
 
+    /// <summary>
+    /// この circuit が管理リスナの<b>loopback 束縛ポート</b>（<c>Admin:HttpPort</c>）経由で
+    /// 確立されたか（ADR-0010 Phase 2）。<see cref="IsAdminListener"/> が <see langword="true"/> の
+    /// 場合にのみ意味を持つ——管理リスナがリモートバインド opt-in（別ポートの HTTPS 必須エントリ。
+    /// <c>Admin:RemoteBinding:Enabled</c>）を有効化している環境では、<see cref="IsAdminListener"/>
+    /// は loopback・リモートの両方で <see langword="true"/> になるが、認証の要否
+    /// （loopback 認証 opt-in が無効なら loopback は無条件許可・リモートは常に認証必須——
+    /// ADR-0010 Phase 2 決定 1）を判定するにはこの区別が要る（<c>AdminScreenAccessPolicy</c> 参照）。
+    /// <see langword="null"/> は帰属を判定できなかった状態（安全側 = リモート相当として扱う）。
+    /// </summary>
+    public bool? IsLoopbackListener { get; internal set; }
+
     /// <summary>circuit 確立時の接続元アドレス（監査記録・一覧表示用）。</summary>
     public string? RemoteAddress { get; internal set; }
 

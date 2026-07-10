@@ -72,7 +72,66 @@ public sealed class ListenerBindPlanTests
         Assert.All(adminEntries, e => Assert.Equal(19999, e.Port));
     }
 
-    private static ResolvedYaguraConfiguration CreateConfiguration(ViewerPublicAccess viewerPublicAccess, int adminHttpPort) =>
+    [Fact]
+    public void Create_AdminRemoteBindingEnabled_AddsAnyIpHttpsEntryAlongsideLoopback()
+    {
+        // ADR-0010 Phase 2 決定 1・4: リモートバインド有効時は loopback 2 エントリを置き換えず、
+        // 別ポートへの AnyIP + HTTPS エントリを追加する（loopback 経由の復旧が常に残る）。
+        var configuration = CreateConfiguration(
+            ViewerPublicAccess.Lan,
+            adminHttpPort: 8515,
+            adminRemoteBindingEnabled: true,
+            adminHttpsPort: 8516);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        var adminEntries = entries.Where(e => e.Kind == ListenerKind.Admin).ToList();
+        Assert.Equal(3, adminEntries.Count);
+
+        var loopbackEntries = adminEntries.Where(e => !e.RequiresHttps).ToList();
+        Assert.Equal(2, loopbackEntries.Count);
+        Assert.All(loopbackEntries, e => Assert.False(e.IsAnyIP));
+        Assert.All(loopbackEntries, e => Assert.Equal(8515, e.Port));
+
+        var remoteEntry = Assert.Single(adminEntries, e => e.RequiresHttps);
+        Assert.True(remoteEntry.IsAnyIP);
+        Assert.Equal(8516, remoteEntry.Port);
+    }
+
+    [Fact]
+    public void Create_AdminRemoteBindingDisabled_NoHttpsEntry()
+    {
+        var configuration = CreateConfiguration(ViewerPublicAccess.Lan, adminHttpPort: 8515);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        Assert.DoesNotContain(entries, e => e.RequiresHttps);
+    }
+
+    [Fact]
+    public void Create_AdminRemoteBindingWithOsAssignedPort_ResolvesToConcretePort()
+    {
+        // ポート 0(OS 採番。テスト用)指定時、ListenerBindPlan が具体ポートへ確定させて返すこと
+        // (PR #224 の実バグ回帰: 0 のまま返すと Program 側のポートガード
+        // (UseYaguraListenerPortGuard/YaguraAdminListenerPort)が実ポートを認識できず、
+        // リモート HTTPS 経由の到達が全て 404 になる——ResolvePortForAnyIP のコメント参照)。
+        var configuration = CreateConfiguration(
+            ViewerPublicAccess.Lan,
+            adminHttpPort: 8515,
+            adminRemoteBindingEnabled: true,
+            adminHttpsPort: 0);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        var remoteEntry = Assert.Single(entries, e => e.RequiresHttps);
+        Assert.True(remoteEntry.Port > 0, "OS 採番(0)指定でも具体ポートへ解決されること。");
+    }
+
+    private static ResolvedYaguraConfiguration CreateConfiguration(
+        ViewerPublicAccess viewerPublicAccess,
+        int adminHttpPort,
+        bool adminRemoteBindingEnabled = false,
+        int adminHttpsPort = 8516) =>
         new(
             DataRoot: Path.GetTempPath(),
             UdpBindAddress: "0.0.0.0",
@@ -89,6 +148,10 @@ public sealed class ListenerBindPlanTests
             AdminWindowsAuthKerberosOnly: false,
             AdminAppAuthEnabled: false,
             AdminAuthRequireForLoopback: false,
+            AdminRemoteBindingEnabled: adminRemoteBindingEnabled,
+            AdminHttpsEnabled: adminRemoteBindingEnabled,
+            AdminHttpsCertificateThumbprint: adminRemoteBindingEnabled ? new string('A', 40) : null,
+            AdminHttpsPort: adminHttpsPort,
             SqliteFileName: "yagura.db",
             SpoolEnabled: true,
             SpoolDirectory: Path.Combine(Path.GetTempPath(), "spool"),

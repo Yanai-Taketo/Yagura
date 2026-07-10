@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Linq;
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -66,6 +67,10 @@ public static class YaguraConfigurationLoader
         "Admin:Authentication:Windows:KerberosOnly",
         "Admin:Authentication:App:Enabled",
         "Admin:Authentication:RequireForLoopback",
+        "Admin:RemoteBinding:Enabled",
+        "Admin:Https:Enabled",
+        "Admin:Https:CertificateThumbprint",
+        "Admin:Https:Port",
         "Storage:SqliteFileName",
         "Storage:Provider",
         "Storage:SqlServer:ConnectionString",
@@ -150,6 +155,51 @@ public static class YaguraConfigurationLoader
         var adminAuthRequireForLoopback = ResolveSecurityFlag(
             options.Admin?.Authentication?.RequireForLoopback, "Admin:Authentication:RequireForLoopback", warnings);
 
+        // --- UI: 管理リスナのリモートバインド・HTTPS（ADR-0010 Phase 2。opt-in。§1「縮小側で継続」——
+        //     公開範囲・bind 先・認証関連のセキュリティ項目は不正値で開放側へ落とさない） ---
+        var adminRemoteBindingEnabled = ResolveSecurityFlag(
+            options.Admin?.RemoteBinding?.Enabled, "Admin:RemoteBinding:Enabled", warnings);
+        var adminHttpsEnabled = ResolveSecurityFlag(
+            options.Admin?.Https?.Enabled, "Admin:Https:Enabled", warnings);
+        var adminHttpsCertificateThumbprint = ResolveAdminHttpsCertificateThumbprint(options, warnings);
+        var adminHttpsPort = ResolveAdminHttpsPort(options, warnings);
+
+        // --- fail-closed 不変条件（ADR-0010 Phase 2 決定 1・4。リモートバインドの解禁は
+        //     「認証が有効」かつ「HTTPS が構成済み」の両方を前提条件とする。configuration.md §1
+        //     「縮小側で継続」ではなく「起動失敗」に分類する——既存 L-4（リモートバインドの
+        //     fail-closed）・ADR-0010 Phase 1 の loopback 認証 opt-in fail-closed と対称の扱い。
+        //     ここで検証できるのは設定の静的な形（フラグ・拇印の形式）のみであり、拇印が実際に
+        //     証明書ストアで解決できるかどうかは Program 側で確認する（縮小側の扱い——下記
+        //     ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup 参照）) ---
+        if (adminRemoteBindingEnabled)
+        {
+            var authenticationConfigured = adminWindowsAuthEnabled || adminAppAuthEnabled;
+            var httpsConfigured = adminHttpsEnabled && adminHttpsCertificateThumbprint is not null;
+
+            if (!authenticationConfigured || !httpsConfigured)
+            {
+                var missing = new List<string>();
+                if (!authenticationConfigured)
+                {
+                    missing.Add("認証方式（Admin:Authentication:Windows:Enabled または Admin:Authentication:App:Enabled）");
+                }
+
+                if (!httpsConfigured)
+                {
+                    missing.Add("HTTPS（Admin:Https:Enabled = true と有効な Admin:Https:CertificateThumbprint）");
+                }
+
+                throw new ConfigurationValidationException(
+                    "Admin:RemoteBinding:Enabled が有効ですが、次の前提条件が満たされていません: " +
+                    string.Join(" / ", missing) + "。" +
+                    "この組み合わせのまま起動すると、認証または通信保護のいずれかを欠いた状態で" +
+                    "管理リスナが loopback 以外へ束縛されてしまいます（ADR-0010 Phase 2 決定 1・4 の" +
+                    "fail-closed 不変条件）。上記の前提条件をすべて満たすか、Admin:RemoteBinding:Enabled を" +
+                    "false に戻してから再起動してください。",
+                    ConfigurationEventIds.AdminRemoteBindingFailClosedStartupRejected);
+            }
+        }
+
         // --- fail-closed 不変条件（ADR-0010 決定 1・委任事項 5。configuration.md §1 の
         //     「縮小側で継続」ではなく「起動失敗」に分類する——リモートバインドの fail-closed
         //     （configuration.md §1 の既存 L-4 不変条件）と対称の扱い。「loopback 認証 opt-in が
@@ -212,6 +262,10 @@ public static class YaguraConfigurationLoader
             AdminWindowsAuthKerberosOnly: adminWindowsAuthKerberosOnly,
             AdminAppAuthEnabled: adminAppAuthEnabled,
             AdminAuthRequireForLoopback: adminAuthRequireForLoopback,
+            AdminRemoteBindingEnabled: adminRemoteBindingEnabled,
+            AdminHttpsEnabled: adminHttpsEnabled,
+            AdminHttpsCertificateThumbprint: adminHttpsCertificateThumbprint,
+            AdminHttpsPort: adminHttpsPort,
             SqliteFileName: sqliteFileName,
             SpoolEnabled: spoolEnabled,
             SpoolDirectory: spoolDirectory,
@@ -668,6 +722,94 @@ public static class YaguraConfigurationLoader
                 "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない）"));
 
         return false;
+    }
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 証明書拇印を解決する（ADR-0010 Phase 2 決定 4。
+    /// configuration.md §6 と同型——SHA-1・16 進 40 桁）。空白・コロン・ハイフン区切りは
+    /// 正規化して受理する（証明書 MMC スナップイン等の一般的な表示形式に合わせるため）。
+    /// 不正な形式は §1「縮小側で継続」——HTTPS 未構成として扱う（<see langword="null"/> を返す）。
+    /// </summary>
+    private static string? ResolveAdminHttpsCertificateThumbprint(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Admin?.Https?.CertificateThumbprint;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var normalized = raw.Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(":", string.Empty, StringComparison.Ordinal)
+            .ToUpperInvariant();
+
+        if (normalized.Length == 40 && normalized.All(Uri.IsHexDigit))
+        {
+            return normalized;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Admin:Https:CertificateThumbprint",
+            InvalidValue: "(証明書拇印として不正な形式——値は記録しない)",
+            AppliedValue: "(未設定として扱う)",
+            Reason: "SHA-1 拇印（16 進 40 桁）として解釈できないため、HTTPS 未構成として扱います" +
+                "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない。" +
+                "Admin:RemoteBinding:Enabled が有効な場合、この状態は fail-closed 拒否の対象になります）"));
+
+        return null;
+    }
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 用ポートを解決する（ADR-0010 Phase 2 決定 4。既定 8516。
+    /// <see cref="ResolveAdminHttpPortFromFileOrDefault"/> と同じ「§1 既定値で継続」の分類——
+    /// リモート HTTPS 自体が opt-in であり受信の成立に不可欠なキーではない）。
+    /// </summary>
+    private static int ResolveAdminHttpsPort(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        const int defaultPort = 8516;
+
+        // 環境変数（テスト用。0 = OS 採番）が最優先——Admin:HttpPort 等の既存 4 ポートと
+        // 同じ優先順位（環境変数 > 設定ファイル > 既定値。configuration.md §2）。
+        var envOverride = Environment.GetEnvironmentVariable(YaguraHostEnvironment.AdminHttpsPortEnvironmentVariable);
+        var envIsSet = !string.IsNullOrWhiteSpace(envOverride);
+
+        if (envIsSet
+            && int.TryParse(envOverride, NumberStyles.Integer, CultureInfo.InvariantCulture, out var envPort)
+            && IsValidPort(envPort))
+        {
+            return envPort;
+        }
+
+        var raw = options.Admin?.Https?.Port;
+        int portFromFileOrDefault;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            portFromFileOrDefault = defaultPort;
+        }
+        else if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) && IsValidPort(port))
+        {
+            portFromFileOrDefault = port;
+        }
+        else
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Admin:Https:Port",
+                InvalidValue: raw,
+                AppliedValue: defaultPort.ToString(CultureInfo.InvariantCulture),
+                Reason: "ポート番号として不正なため既定値を適用"));
+            portFromFileOrDefault = defaultPort;
+        }
+
+        if (envIsSet)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: YaguraHostEnvironment.AdminHttpsPortEnvironmentVariable,
+                InvalidValue: envOverride!,
+                AppliedValue: portFromFileOrDefault.ToString(CultureInfo.InvariantCulture),
+                Reason: "環境変数の値がポート番号として不正なため設定ファイル値/既定値を適用"));
+        }
+
+        return portFromFileOrDefault;
     }
 
     /// <summary>

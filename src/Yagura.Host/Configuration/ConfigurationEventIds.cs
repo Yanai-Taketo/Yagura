@@ -26,4 +26,32 @@ public static class ConfigurationEventIds
     /// </remarks>
     public static readonly EventId AdminAuthenticationFailClosedStartupRejected =
         new(1011, "AdminAuthenticationFailClosedStartupRejected");
+
+    /// <summary>
+    /// 管理リスナのリモートバインド（<c>Admin:RemoteBinding:Enabled</c>）が有効なのに、
+    /// 認証（Windows 統合認証・アプリ独自認証のいずれか）と HTTPS（<c>Admin:Https:Enabled</c> +
+    /// 有効な証明書拇印）の少なくとも一方が構成されていない設定の fail-closed 拒否
+    /// （ADR-0010 Phase 2 決定 1・4）。レベルはエラー（<see cref="AdminAuthenticationFailClosedStartupRejected"/>
+    /// と同じ「起動失敗に直結する重大事象」区分）。
+    /// </summary>
+    /// <remarks>
+    /// 採番の経緯: 1011 は main 側で ADR-0010 Phase 1（PR #217）に割り当て済みのため、
+    /// 本イベントは additive-only 規約に従い次の 1012 を採る。
+    /// </remarks>
+    public static readonly EventId AdminRemoteBindingFailClosedStartupRejected =
+        new(1012, "AdminRemoteBindingFailClosedStartupRejected");
+
+    /// <summary>
+    /// 管理リスナのリモートバインドが有効かつ静的な設定検証（fail-closed。上記）は通過したが、
+    /// 実際の証明書ストア参照（<c>Admin:Https:CertificateThumbprint</c>）が失敗した（証明書が
+    /// 見つからない・秘密鍵にアクセスできない・既に期限切れ等）場合の起動時警告
+    /// （ADR-0010 Phase 2 決定 4）。**起動は中止しない**——configuration.md §4.1「指定した bind 先が
+    /// 使用できない場合...そのリスナは開かずに縮小側で継続する」と同じ縮小側の扱いを、リモート
+    /// HTTPS の bind エントリ 1 本に対して適用する（管理リスナ全体・loopback 面は影響を受けない。
+    /// ADR-0010 Phase 2 決定 4「loopback 経由の管理リスナは HTTPS の対象外のまま残る」）。
+    /// レベルは警告（機能停止を伴わない縮退——リモート面のみ開けないだけで loopback 経由の
+    /// 復旧は引き続き可能なため）。
+    /// </summary>
+    public static readonly EventId AdminHttpsCertificateUnavailableAtStartup =
+        new(1013, "AdminHttpsCertificateUnavailableAtStartup");
 }

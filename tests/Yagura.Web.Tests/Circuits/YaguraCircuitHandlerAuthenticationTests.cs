@@ -82,6 +82,75 @@ public sealed class YaguraCircuitHandlerAuthenticationTests
         Assert.Equal("CONTOSO\\jdoe", state.User.Identity?.Name);
     }
 
+    // ---- リスナ帰属の汲み直し（ADR-0010 Phase 2。PR #224 レビュー指摘 #1） ----
+
+    [Fact]
+    public async Task OnConnectionUpAsync_ReconnectViaRemoteHttpsPort_DowngradesLoopbackAttribution()
+    {
+        // loopback 束縛ポート(8515)で確立した circuit が、リモート HTTPS ポート(8516)経由の
+        // 物理コネクションで再接続した場合、IsLoopbackListener が false へ更新されること
+        // (「リモート経由の管理操作は常に認証必須」——ADR-0010 決定 1——の不変条件を再接続
+        // 経路でも成立させる。確立時のスナップショットに帰属が固定されない)。
+        // OnCircuitOpenedAsync は circuit.Id へアクセスするため未初期化 Circuit を渡せない
+        // (クラス remarks 参照)。OnConnectionUpAsync は初回接続時にも呼ばれる公式フックであり、
+        // 帰属の導出はどちらの経路でも同一の RefreshListenerAttribution を通る——初回接続の
+        // 模擬にも OnConnectionUpAsync を使う(以下のテストも同じ)。
+        const int loopbackPort = 8515;
+        const int remoteHttpsPort = 8516;
+        var (handler, context, httpContextAccessor) = CreateHandlerWithContext([loopbackPort, remoteHttpsPort]);
+
+        httpContextAccessor.HttpContext = CreateHttpContext(CreatePrincipal("YaguraAppAuth", "admin1"), loopbackPort);
+        await handler.OnConnectionUpAsync(CreateUninitializedCircuit(), CancellationToken.None);
+        Assert.True(context.IsAdminListener);
+        Assert.True(context.IsLoopbackListener);
+
+        // 再接続: 物理コネクションがリモート HTTPS ポートへ切り替わる。
+        httpContextAccessor.HttpContext = CreateHttpContext(CreatePrincipal("YaguraAppAuth", "admin1"), remoteHttpsPort);
+        await handler.OnConnectionUpAsync(CreateUninitializedCircuit(), CancellationToken.None);
+
+        Assert.True(context.IsAdminListener, "リモート HTTPS ポートも管理リスナ帰属であること(描画可否の判定)。");
+        Assert.False(context.IsLoopbackListener, "リモート HTTPS ポート経由の再接続後は loopback 帰属を持ち越してはならない(認証必須側)。");
+    }
+
+    [Fact]
+    public async Task OnConnectionUpAsync_ReconnectWithoutHttpContext_DowngradesAttributionToUnknown()
+    {
+        // 再接続時に HttpContext を取得できない場合、直前の帰属(loopback = 無認証許可側)を
+        // 持ち越さず不明(null)へ降格すること(fail-closed。YaguraCircuitHandler.
+        // RefreshListenerAttribution の remarks 参照)。
+        const int loopbackPort = 8515;
+        var (handler, context, httpContextAccessor) = CreateHandlerWithContext([loopbackPort]);
+
+        httpContextAccessor.HttpContext = CreateHttpContext(CreatePrincipal("YaguraAppAuth", "admin1"), loopbackPort);
+        await handler.OnConnectionUpAsync(CreateUninitializedCircuit(), CancellationToken.None);
+        Assert.True(context.IsLoopbackListener);
+
+        httpContextAccessor.HttpContext = null;
+        await handler.OnConnectionUpAsync(CreateUninitializedCircuit(), CancellationToken.None);
+
+        Assert.Null(context.IsAdminListener);
+        Assert.Null(context.IsLoopbackListener);
+    }
+
+    [Fact]
+    public async Task OnConnectionUpAsync_ReconnectBackToLoopback_RestoresLoopbackAttribution()
+    {
+        // 帰属の汲み直しは双方向: リモート経由の後に loopback へ戻れば loopback 帰属も回復する
+        // (毎回の再導出であり、片方向のラッチではないことの確認)。
+        const int loopbackPort = 8515;
+        const int remoteHttpsPort = 8516;
+        var (handler, context, httpContextAccessor) = CreateHandlerWithContext([loopbackPort, remoteHttpsPort]);
+
+        httpContextAccessor.HttpContext = CreateHttpContext(CreatePrincipal("YaguraAppAuth", "admin1"), remoteHttpsPort);
+        await handler.OnConnectionUpAsync(CreateUninitializedCircuit(), CancellationToken.None);
+        Assert.False(context.IsLoopbackListener);
+
+        httpContextAccessor.HttpContext = CreateHttpContext(CreatePrincipal("YaguraAppAuth", "admin1"), loopbackPort);
+        await handler.OnConnectionUpAsync(CreateUninitializedCircuit(), CancellationToken.None);
+
+        Assert.True(context.IsLoopbackListener);
+    }
+
     [Fact]
     public void IsWindowsAdministrator_RequiresNegotiateSchemeAndBuiltinAdministratorsGroupSid()
     {
@@ -126,6 +195,28 @@ public sealed class YaguraCircuitHandlerAuthenticationTests
             authStateProvider);
 
         return (handler, authStateProvider, httpContextAccessor);
+    }
+
+    /// <summary>
+    /// リスナ帰属の検証用（<see cref="YaguraCircuitContext"/> を返す変種。ADR-0010 Phase 2 の
+    /// 複数管理ポート——loopback + リモート HTTPS——を渡せる）。
+    /// </summary>
+    private static (YaguraCircuitHandler Handler, YaguraCircuitContext Context, TestHttpContextAccessor HttpContextAccessor)
+        CreateHandlerWithContext(IReadOnlyList<int> adminPorts)
+    {
+        var registry = new CircuitRegistry();
+        var context = new YaguraCircuitContext();
+        var httpContextAccessor = new TestHttpContextAccessor();
+        var authStateProvider = new YaguraCircuitAuthenticationStateProvider();
+
+        var handler = new YaguraCircuitHandler(
+            registry,
+            context,
+            httpContextAccessor,
+            new YaguraAdminListenerPort(adminPorts),
+            authStateProvider);
+
+        return (handler, context, httpContextAccessor);
     }
 
     private static HttpContext CreateHttpContext(ClaimsPrincipal user, int localPort)
