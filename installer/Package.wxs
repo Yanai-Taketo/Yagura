@@ -8,7 +8,8 @@
     (Administrators のみ書込可。ADR-0008 設計条件 9・security.md §5.1・Issue #171)
   - ファイアウォール規則(UDP 514 / TCP 514 / TCP 8514。オプトアウト可。Firewall.wxs)
   - イベントログソース "Yagura" の事前登録(Program.cs の M9 申し送り)
-  - 完了画面での閲覧 URL 案内 + スタートメニューリンク
+  - 完了画面での閲覧・管理 URL 案内 + スタートメニューリンク(Issue #131)
+  - デスクトップの閲覧ショートカット(opt-in・既定 ON。Issue #131)
   - MajorUpgrade の基本定義
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -60,9 +61,21 @@
          (SecureCustomProperties への登録)が必須。 -->
     <Property Id="YAGURA_FIREWALL" Value="1" Secure="yes" />
 
-    <!-- 完了画面(ExitDialog): 閲覧 URL の案内テキスト + 「ブラウザで開く」チェックボックス
+    <!-- デスクトップの閲覧ショートカット作成のオプトアウト(Issue #131。オーナー決定
+         2026-07-09「案A フル構成」の 2)。既定 = 作成する(1)。スタートメニューの管理リンク
+         (AdminMenuShortcut)は無条件で作るのに対し、デスクトップは「必要な人だけ増やす」
+         opt-in(既定 ON)に留める。UI のチェックボックス(YaguraShortcutDlg)または
+         サイレントインストール時のプロパティ(YAGURA_DESKTOP_SHORTCUT="")で解除できる。
+         YAGURA_FIREWALL と同じ理由(elevated 実行シーケンスのコンポーネント条件で参照)で
+         Secure="yes" が必須。 -->
+    <Property Id="YAGURA_DESKTOP_SHORTCUT" Value="1" Secure="yes" />
+
+    <!-- 完了画面(ExitDialog): 閲覧・管理 URL の案内テキスト + 「ブラウザで開く」チェックボックス
          (WixUI 公式のカスタマイズ機構。docs.firegiant.com/wix/tools/wixext/wixui/
-         「Adding text or a checkbox to the completion dialog」、確認日 2026-07-06)。 -->
+         「Adding text or a checkbox to the completion dialog」、確認日 2026-07-06)。
+         案内文には両 URL を併記する(Issue #131。オーナー決定 2026-07-09「案A フル構成」の 3)。
+         案内テキスト用コントロールは WixToolset.UI.wixext 同梱 ExitDialog.wxs の
+         OptionalText(X=135 Y=110 Width=220 Height=80)を使う。 -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="!(loc.ExitDialogViewerText)" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.ExitDialogLaunchCheckBox)" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
@@ -93,6 +106,8 @@
       <ComponentRef Id="FirewallInstallRecord" />
       <ComponentRef Id="FirewallRules" />
       <ComponentRef Id="ViewerShortcut" />
+      <ComponentRef Id="AdminMenuShortcut" />
+      <ComponentRef Id="ViewerDesktopShortcut" />
     </Feature>
   </Package>
 
@@ -114,6 +129,13 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="YaguraMenuFolder" Name="Yagura" />
     </StandardDirectory>
+
+    <!-- デスクトップ(Issue #131「案A フル構成」の 2)。専用サブフォルダは作らず
+         ショートカットを直下に置く(スタートメニューと異なりデスクトップにフォルダを
+         作ると煩雑なため)。docs.firegiant.com/wix/schema/wxs/standarddirectory/ の作法どおり、
+         サブディレクトリなしで宣言するだけで Component の Directory 属性から
+         "DesktopFolder" を直接参照できる(確認日 2026-07-09)。 -->
+    <StandardDirectory Id="DesktopFolder" />
   </Fragment>
 
   <Fragment>
@@ -279,6 +301,41 @@
            確認)。per-machine インストールでも HKCU KeyPath がショートカットの定石。 -->
       <RegistryValue Root="HKCU" Key="SOFTWARE\Yagura" Name="ViewerShortcut" Type="integer" Value="1" KeyPath="yes" />
       <RemoveFolder Id="RemoveYaguraMenuFolder" On="uninstall" />
+    </Component>
+
+    <!--
+      スタートメニューの管理画面リンク(Issue #131。オーナー決定 2026-07-09「案A フル構成」の 1)。
+      閲覧と並べて無条件でインストールする(管理 UI は既に実装・稼働しているのに入口が
+      ドキュメントにしかない、という Issue #131 の課題を「入れれば入口がある」既定にする)。
+      管理 UI は loopback 固定(TCP 8515・configuration.md)のため、このショートカットは
+      サーバー機で開いたときのみ機能する。その制約は YaguraShortcutDlg の案内文で明示する。
+      YaguraMenuFolder は ViewerShortcut と共有するため RemoveFolder は上の 1 個所のみで足りる
+      (同一トランザクション内でアンインストールされるため二重登録は不要)。
+    -->
+    <Component Id="AdminMenuShortcut" Directory="YaguraMenuFolder">
+      <util:InternetShortcut Id="AdminUrlShortcut"
+                             Name="!(loc.AdminShortcutName)"
+                             Target="http://localhost:8515/admin"
+                             Type="url" />
+      <!-- ICE38 対策(ViewerShortcut と同じ理由): KeyPath は HKCU 配下。 -->
+      <RegistryValue Root="HKCU" Key="SOFTWARE\Yagura" Name="AdminShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      デスクトップの閲覧ショートカット(Issue #131。オーナー決定 2026-07-09「案A フル構成」の 2)。
+      opt-in・既定 ON(YAGURA_DESKTOP_SHORTCUT。上の Property 定義参照)。
+      DesktopFolder は OS 標準のデスクトップそのものであり、Yagura が作成したフォルダではない
+      ため RemoveFolder は使わない(削除してよいのはこのコンポーネントが作った .url ファイルのみ。
+      MSI は File テーブルに載る全ファイルを標準の RemoveFiles アクションでコンポーネント単位に
+      削除するため、KeyPath でなくても .url はアンインストール時に消える——ViewerShortcut /
+      AdminMenuShortcut と同じ仕組み)。
+    -->
+    <Component Id="ViewerDesktopShortcut" Directory="DesktopFolder" Condition="YAGURA_DESKTOP_SHORTCUT = 1">
+      <util:InternetShortcut Id="ViewerDesktopUrlShortcut"
+                             Name="!(loc.ViewerDesktopShortcutName)"
+                             Target="http://localhost:8514/"
+                             Type="url" />
+      <RegistryValue Root="HKCU" Key="SOFTWARE\Yagura" Name="ViewerDesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
     </Component>
   </Fragment>
 

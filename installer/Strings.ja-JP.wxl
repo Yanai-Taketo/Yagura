@@ -11,9 +11,14 @@
   <String Id="ServiceDescription" Value="Windows ネイティブの syslog 集約サーバ。UDP/TCP 514 で syslog を受信し、http://localhost:8514/ で閲覧できます。" />
 
   <String Id="ViewerShortcutName" Value="Yagura ログ閲覧" />
+  <!-- スタートメニューの管理画面リンク(Issue #131「案A フル構成」の 1。無条件で作成)。 -->
+  <String Id="AdminShortcutName" Value="Yagura 管理" />
+  <!-- デスクトップの閲覧ショートカット(Issue #131「案A フル構成」の 2。opt-in・既定 ON)。 -->
+  <String Id="ViewerDesktopShortcutName" Value="Yagura" />
 
-  <!-- 完了画面(configuration.md §4.3「最後にどこを開けばログが見えるかまで案内して 30 分動線を閉じる」)。 -->
-  <String Id="ExitDialogViewerText" Value="受信したログは次の URL で閲覧できます: http://localhost:8514/ (スタートメニューの「Yagura ログ閲覧」からも開けます)" />
+  <!-- 完了画面(configuration.md §4.3「最後にどこを開けばログが見えるかまで案内して 30 分動線を閉じる」)。
+       Issue #131「案A フル構成」の 3: 閲覧・管理の両 URL を併記する。 -->
+  <String Id="ExitDialogViewerText" Value="受信したログは次の URL で閲覧できます: http://localhost:8514/ (スタートメニューの「Yagura ログ閲覧」からも開けます)&#13;&#10;設定変更や DB の本番昇格などの管理操作は次の URL から行えます: http://localhost:8515/admin (スタートメニューの「Yagura 管理」からも開けます。このサーバー上でのみ開けます)" />
   <String Id="ExitDialogLaunchCheckBox" Value="今すぐブラウザで閲覧画面を開く" />
 
   <!-- ファイアウォールダイアログ。 -->
@@ -23,6 +28,14 @@
   <String Id="YaguraFirewallDlgCheckBox" Value="Windows ファイアウォールに受信許可規則を作成する(推奨)" />
   <String Id="YaguraFirewallDlgRuleList" Value="作成する規則(いずれも「Yagura」で始まる名前で作成されます):&#13;&#10;  ・Yagura Syslog (UDP 514) : syslog 受信&#13;&#10;  ・Yagura Syslog (TCP 514) : syslog 受信&#13;&#10;  ・Yagura Viewer (TCP 8514) : ログ閲覧画面" />
   <String Id="YaguraFirewallDlgOptOutNote" Value="ファイアウォールをグループポリシー等で集中管理している環境では、チェックを外して規則の作成を省略できます。その場合、syslog が届くためには同等の受信許可規則を手動で構成する必要があります。管理ポート 8515 は localhost 専用のため、規則は作成されません。選択の結果はデータフォルダーの firewall-rules.ini に記録されます。" />
+
+  <!-- ショートカットダイアログ(Issue #131「案A フル構成」)。 -->
+  <String Id="YaguraShortcutDlg_Title" Value="[ProductName] セットアップ" />
+  <String Id="YaguraShortcutDlgTitle" Value="{\WixUI_Font_Title}ショートカット" />
+  <String Id="YaguraShortcutDlgDescription" Value="スタートメニューとデスクトップに作成するショートカットを確認します。" />
+  <String Id="YaguraShortcutDlgAdminNote" Value="スタートメニューに「Yagura 管理」を作成します(管理画面 http://localhost:8515/admin)。管理画面は localhost 専用のため、このショートカットはこのサーバー上でのみ機能します。" />
+  <String Id="YaguraShortcutDlgCheckBox" Value="デスクトップに「Yagura」(ログ閲覧画面)のショートカットを作成する(既定)" />
+  <String Id="YaguraShortcutDlgOptOutNote" Value="ショートカットは、この PC を使うすべてのユーザーに共有されるデスクトップ(パブリック デスクトップ)に作成されます。チェックを外すとデスクトップにはショートカットを作成しません(スタートメニューの「Yagura ログ閲覧」は既定で作成されます)。サイレントインストールでは msiexec のプロパティ YAGURA_DESKTOP_SHORTCUT で指定できます(YAGURA_DESKTOP_SHORTCUT=&quot;&quot; で無効化)。" />
 
   <!-- ファイアウォール規則の説明(Windows ファイアウォール管理画面に表示される)。 -->
   <String Id="FwDescriptionUdp514" Value="Yagura syslog 受信 (UDP 514)" />

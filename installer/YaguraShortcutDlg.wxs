@@ -1,0 +1,40 @@
+<!--
+  ショートカット作成の確認ダイアログ(Issue #131。オーナー決定 2026-07-09「案A フル構成」)。
+  レイアウトは YaguraFirewallDlg.wxs(= WixUI 標準 InstallDirDlg.wxs を雛形にしたもの)を
+  さらに雛形にした。役割は 2 つ:
+    1. スタートメニューに「Yagura 管理」を無条件で作ることの案内(管理 UI は loopback 固定
+       のため、サーバー機で開いたときのみ機能する旨を明示する)
+    2. デスクトップの閲覧ショートカット作成を選べるチェックボックス
+       (公開プロパティ YAGURA_DESKTOP_SHORTCUT。Package.wxs で既定値 1 = opt-in・既定 ON)
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Fragment>
+        <UI>
+            <Dialog Id="YaguraShortcutDlg" Width="370" Height="270" Title="!(loc.YaguraShortcutDlg_Title)">
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="SpawnDialog" Value="CancelDlg" />
+                </Control>
+
+                <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.YaguraShortcutDlgDescription)" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.YaguraShortcutDlgTitle)" />
+                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+
+                <!-- 管理画面のスタートメニューリンクは無条件で作られる(チェックボックスなし)。
+                     loopback 固定である旨をここで案内する。 -->
+                <Control Id="AdminNoteLabel" Type="Text" X="20" Y="58" Width="330" Height="40" NoPrefix="yes"
+                         Text="!(loc.YaguraShortcutDlgAdminNote)" />
+
+                <Control Id="DesktopCheckBox" Type="CheckBox" X="20" Y="104" Width="330" Height="18"
+                         Property="YAGURA_DESKTOP_SHORTCUT" CheckBoxValue="1"
+                         Text="!(loc.YaguraShortcutDlgCheckBox)" />
+
+                <Control Id="OptOutNote" Type="Text" X="20" Y="128" Width="330" Height="90" NoPrefix="yes"
+                         Text="!(loc.YaguraShortcutDlgOptOutNote)" />
+            </Dialog>
+        </UI>
+    </Fragment>
+</Wix>
