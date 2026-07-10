@@ -496,6 +496,28 @@ try {
                 }
                 return ('blazor.web.js served: HTTP 200, {0} bytes' -f $response.Content.Length)
             })
+
+            # 観測性カウンタの出力確認(architecture.md §4.1.1。ADR-0009 決定6 Phase1 完了条件①・
+            # 委任事項5「カウンタ出力の正しさ」)。/status ページに現れる計器名を照合する
+            # (.github/workflows/adr-0009-arm64-phase0-gate.yml の照合方式と同じ——
+            # yagura.ingestion.udp.receive_error は §4.1.1 の設計判断で状態画面の対象外のため
+            # 照合対象にしない)。x64・ARM64 いずれの Full E2E でも実行される共通ステップにして
+            # 両アーキで同じ検証水準を保つ。
+            [void](Invoke-E2EStep -Name 'verify-observability-counters' -Action {
+                $statusUrl = ('{0}/status' -f $ViewerBaseUrl.TrimEnd('/'))
+                $expectedInstruments = @(
+                    'yagura.ingestion.internal_buffer.dropped',
+                    'yagura.ingestion.spool.evacuated',
+                    'yagura.ingestion.persistence.failed'
+                )
+                $response = Invoke-WebRequest -Uri $statusUrl -UseBasicParsing -TimeoutSec 10
+                foreach ($inst in $expectedInstruments) {
+                    if (-not $response.Content.Contains($inst)) {
+                        throw ('counter instrument "{0}" not found on {1}' -f $inst, $statusUrl)
+                    }
+                }
+                return ('observability counters present on {0} ({1})' -f $statusUrl, ($expectedInstruments -join ', '))
+            })
         }
 
         # -------------------------------------------------------------------
