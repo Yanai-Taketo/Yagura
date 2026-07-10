@@ -108,6 +108,25 @@ public sealed class ListenerBindPlanTests
         Assert.DoesNotContain(entries, e => e.RequiresHttps);
     }
 
+    [Fact]
+    public void Create_AdminRemoteBindingWithOsAssignedPort_ResolvesToConcretePort()
+    {
+        // ポート 0(OS 採番。テスト用)指定時、ListenerBindPlan が具体ポートへ確定させて返すこと
+        // (PR #224 の実バグ回帰: 0 のまま返すと Program 側のポートガード
+        // (UseYaguraListenerPortGuard/YaguraAdminListenerPort)が実ポートを認識できず、
+        // リモート HTTPS 経由の到達が全て 404 になる——ResolvePortForAnyIP のコメント参照)。
+        var configuration = CreateConfiguration(
+            ViewerPublicAccess.Lan,
+            adminHttpPort: 8515,
+            adminRemoteBindingEnabled: true,
+            adminHttpsPort: 0);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        var remoteEntry = Assert.Single(entries, e => e.RequiresHttps);
+        Assert.True(remoteEntry.Port > 0, "OS 採番(0)指定でも具体ポートへ解決されること。");
+    }
+
     private static ResolvedYaguraConfiguration CreateConfiguration(
         ViewerPublicAccess viewerPublicAccess,
         int adminHttpPort,

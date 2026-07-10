@@ -431,6 +431,17 @@ public static class Program
         builder.Services.AddSingleton<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(
             sp => new Yagura.Host.Observability.ActiveNotification.LogStoreExpressCapacityChecker(
                 sp.GetRequiredService<ILogStore>()));
+        // 管理リスナのリモート HTTPS 証明書の周期監視プローブ（ADR-0010 Phase 2 決定 4。
+        // 期限接近の事前警告 = 1014・稼働中の使用不能検知 = 1015）。リモート HTTPS bind が実際に
+        // 有効な場合（= 起動時に証明書を解決できた場合）にのみ結線する——起動時に解決できず
+        // 縮小継続した構成は 1013 が既に報告済みで、再起動なしに bind が有効化されることもない
+        // ため周期監視の対象にしない（EvaluateAdminHttpsCertificate の doc コメント参照）。
+        Yagura.Host.Observability.ActiveNotification.IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe =
+            adminHttpsCertificate is not null
+                ? new Yagura.Host.Administration.Https.StoreAdminHttpsCertificateStatusProbe(
+                    resolvedConfiguration.AdminHttpsCertificateThumbprint!)
+                : null;
+
         builder.Services.AddSingleton(sp => new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
             spool,
             sp.GetRequiredService<IngestionPipeline>().Metrics,
@@ -438,7 +449,8 @@ public static class Program
             sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
             timeProvider: null,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
-            selfTestTracker));
+            selfTestTracker,
+            adminHttpsCertificateProbe));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
