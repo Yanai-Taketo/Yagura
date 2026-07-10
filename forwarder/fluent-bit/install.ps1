@@ -33,7 +33,17 @@
 # rather than silently doing nothing. Explicit -MsiPath bypasses this
 # detection (the admin's explicit choice); msiexec itself refuses to install
 # a wrong-architecture MSI (Windows Installer ERROR_INSTALL_PLATFORM_UNSUPPORTED,
-# verified for the Yagura MSI itself -- see installer/README.md "ARM64 対応").
+# verified for the Yagura MSI itself -- see installer/README.md, ARM64 section).
+#
+# Detection order (see Get-LocalMsiFilenamePattern): the primary source is
+# WMI/CIM (Win32_Processor.Architecture), which is answered by the native WMI
+# service and therefore reflects the actual machine regardless of the calling
+# process's own emulation state. The PROCESSOR_ARCHITECTURE /
+# PROCESSOR_ARCHITEW6432 environment variables are only a fallback: they are
+# known to be unreliable when an x64-emulated process runs on an ARM64 host
+# (both report AMD64 -- the ARCHITEW6432 promotion only covers classic 32-bit
+# WOW64, not x64-on-ARM64 emulation), which would misdetect an ARM64 machine
+# as x64 (PR #222 review, 2026-07-10).
 #
 # Usage:
 #   powershell -NoProfile -File install.ps1 -YaguraHost 192.0.2.10
@@ -163,15 +173,47 @@ function Get-ParsedVersion([string]$raw) {
 function Get-LocalMsiFilenamePattern {
     # Detect the local machine's processor architecture and return the
     # matching Fluent Bit MSI filename pattern (ADR-0009 decision 7 /
-    # delegation #4). PROCESSOR_ARCHITECTURE reports the architecture of the
-    # *current process*, not the OS -- a 32-bit (x86) PowerShell running under
-    # WOW64 on an x64/ARM64 OS reports "x86" there, while the true OS
-    # architecture is exposed via PROCESSOR_ARCHITEW6432 in that case (a
-    # well-known Windows environment-variable convention; this script's own
-    # msiexec/service operations still act on the real OS regardless of the
-    # hosting PowerShell's own bitness). Prefer PROCESSOR_ARCHITEW6432 when
-    # present so the detection reflects the OS, not an incidentally 32-bit
-    # PowerShell host.
+    # delegation #4).
+    #
+    # Primary source: WMI/CIM Win32_Processor.Architecture. The query is
+    # answered by the native WMI service (a separate native process), so the
+    # value describes the actual machine and is not skewed by the calling
+    # PowerShell host's own bitness or emulation state. Documented values
+    # (Win32_Processor class, learn.microsoft.com/en-us/windows/win32/
+    # cimwin32prov/win32-processor, checked 2026-07-10): x86 = 0, ARM = 5,
+    # x64 = 9, ARM64 = 12. Live-verified on this x64 dev machine
+    # (Architecture = 9, 2026-07-10); the ARM64-side value (12) is from the
+    # official documentation -- not machine-verified here (no ARM64 hardware
+    # in this dev environment).
+    #
+    # Fallback (CIM unavailable/failed): PROCESSOR_ARCHITECTURE, promoted by
+    # PROCESSOR_ARCHITEW6432 when present. PROCESSOR_ARCHITECTURE reports the
+    # architecture of the *current process*, not the OS; ARCHITEW6432 only
+    # covers the classic 32-bit WOW64 case. Known limitation of this fallback:
+    # an x64-emulated process on an ARM64 host sees AMD64 in both variables
+    # and would be misdetected as x64 (PR #222 review, 2026-07-10) -- which is
+    # exactly why CIM is the primary source above.
+    $cimArch = $null
+    try {
+        $cimArch = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop |
+            Select-Object -First 1).Architecture
+    } catch {
+        Log ("WARN: CIM processor architecture query failed (" + $_.Exception.Message +
+             "); falling back to environment variables.")
+    }
+
+    if ($null -ne $cimArch) {
+        switch ([int]$cimArch) {
+            9  { return "fluent-bit-*-win64.msi" }
+            12 { return "fluent-bit-*-winarm64.msi" }
+            default {
+                Fail ("Unsupported processor architecture (Win32_Processor.Architecture = " + $cimArch + "). " +
+                      "The Yagura forwarder kit supports Windows x64 (win64) and ARM64 (winarm64) only " +
+                      "(ADR-0009); Windows x86 (32-bit) is not supported by Yagura or by this kit.")
+            }
+        }
+    }
+
     $arch = $env:PROCESSOR_ARCHITECTURE
     if (-not [string]::IsNullOrEmpty($env:PROCESSOR_ARCHITEW6432)) {
         $arch = $env:PROCESSOR_ARCHITEW6432

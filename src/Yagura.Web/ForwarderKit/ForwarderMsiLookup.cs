@@ -9,7 +9,7 @@ namespace Yagura.Web.ForwarderKit;
 /// </summary>
 public enum ForwarderMsiArchitecture
 {
-    /// <summary>64bit x86（Fluent Bit の <c>win64</c> ビルド）。</summary>
+    /// <summary>x64（Fluent Bit の <c>win64</c> ビルド）。</summary>
     Win64,
 
     /// <summary>ARM64（Fluent Bit の <c>winarm64</c> ビルド。2026-07-10 ライブ確認で公式提供を確認済み）。</summary>

@@ -309,16 +309,41 @@
             return;
         }
 
-        var architectureValue = _selectedArchitecture == ForwarderMsiArchitecture.WinArm64 ? "arm64" : "x64";
-        var query = $"host={Uri.EscapeDataString(host)}&port={port}&channels={Uri.EscapeDataString(string.Join(",", channels))}" +
-                    $"&includeMsi={(_includeMsi ? "true" : "false")}&architecture={architectureValue}";
+        var query = BuildDownloadQuery(
+            host, port, channels, _selectedArchitecture,
+            _includeMsi, _versionMismatch, _versionMismatchAcknowledged);
+        Navigation.NavigateTo($"/admin/forwarder-kit/download?{query}", forceLoad: true);
+    }
 
-        if (_includeMsi && _versionMismatch)
+    /// <summary>
+    /// ダウンロードエンドポイントへ渡すクエリ文字列を組み立てる（テスト固定のため static に分離）。
+    /// </summary>
+    /// <remarks>
+    /// <b>msiVersionMismatchAcknowledged の付与は回帰防止の対象</b>: 本パラメータは以前この画面の
+    /// URL 組み立てに含まれておらず、版不一致時に画面の確認チェックを入れてもサーバ側
+    /// （<c>ForwarderKitRequest.TryCreate</c> の最終防御）で常に「未確認」扱いになり 400 で
+    /// 生成に失敗していた（PR #222 レビューで確認された既存不具合。同 PR で修正）。
+    /// <c>ForwarderKitScreenDownloadQueryTests</c> が本メソッドの出力を固定する。
+    /// </remarks>
+    internal static string BuildDownloadQuery(
+        string host,
+        int port,
+        IReadOnlyList<string> channels,
+        ForwarderMsiArchitecture architecture,
+        bool includeMsi,
+        bool versionMismatch,
+        bool versionMismatchAcknowledged)
+    {
+        var architectureValue = architecture == ForwarderMsiArchitecture.WinArm64 ? "arm64" : "x64";
+        var query = $"host={Uri.EscapeDataString(host)}&port={port}&channels={Uri.EscapeDataString(string.Join(",", channels))}" +
+                    $"&includeMsi={(includeMsi ? "true" : "false")}&architecture={architectureValue}";
+
+        if (includeMsi && versionMismatch)
         {
-            query += $"&msiVersionMismatchAcknowledged={(_versionMismatchAcknowledged ? "true" : "false")}";
+            query += $"&msiVersionMismatchAcknowledged={(versionMismatchAcknowledged ? "true" : "false")}";
         }
 
-        Navigation.NavigateTo($"/admin/forwarder-kit/download?{query}", forceLoad: true);
+        return query;
     }
 
     private List<string> SelectedChannels()
