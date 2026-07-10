@@ -73,6 +73,45 @@
 </MudPaper>
 
 <MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6">@UiText.ForwarderKitModeTitle</MudText>
+    <MudText Typo="Typo.caption" Class="mb-2">@UiText.ForwarderKitModeNote</MudText>
+    <div role="radiogroup" aria-label="@UiText.ForwarderKitModeTitle">
+        <label class="yagura-checkbox-row d-block mb-1">
+            <input type="radio"
+                   name="forwarder-kit-mode"
+                   value="udp"
+                   checked="@(_selectedForwardMode == ForwarderKitMode.Udp)"
+                   @onchange="() => SelectForwardMode(ForwarderKitMode.Udp)" />
+            @UiText.ForwarderKitModeUdp
+        </label>
+        <label class="yagura-checkbox-row d-block mb-1">
+            <input type="radio"
+                   name="forwarder-kit-mode"
+                   value="tcp"
+                   checked="@(_selectedForwardMode == ForwarderKitMode.Tcp)"
+                   @onchange="() => SelectForwardMode(ForwarderKitMode.Tcp)" />
+            @UiText.ForwarderKitModeTcp
+        </label>
+        <label class="yagura-checkbox-row d-block mb-1">
+            <input type="radio"
+                   name="forwarder-kit-mode"
+                   value="tls"
+                   checked="@(_selectedForwardMode == ForwarderKitMode.Tls)"
+                   @onchange="() => SelectForwardMode(ForwarderKitMode.Tls)" />
+            @UiText.ForwarderKitModeTls
+        </label>
+    </div>
+    @if (_selectedForwardMode == ForwarderKitMode.Tcp)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Warning" role="alert">@UiText.ForwarderKitModeTcpNote</MudText>
+    }
+    else if (_selectedForwardMode == ForwarderKitMode.Tls)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Warning" role="alert">@UiText.ForwarderKitModeTlsNote</MudText>
+    }
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
     <MudText Typo="Typo.h6">@UiText.ForwarderKitChannelsTitle</MudText>
 
     <YaguraCheckboxField Label="@UiText.ForwarderKitChannelSystem" @bind-Value="_channelSystem" />
@@ -195,6 +234,7 @@
     private string? _selectedAddress;
     private string? _manualHost;
     private string _portText = ForwarderKitConstraints.DefaultPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private ForwarderKitMode _selectedForwardMode = ForwarderKitMode.Udp;
     private bool _channelSystem = true;
     private bool _channelApplication = true;
     private bool _channelSecurity;
@@ -266,6 +306,29 @@
         _selectedMode = DestinationMode.Manual;
     }
 
+    /// <summary>
+    /// 転送方式を切り替える（Issue #137）。ポート欄がまだ「モード切替前の既定値」のまま
+    /// （手動で書き換えられていない）場合に限り、新しいモードの既定ポート（TLS = 6514、
+    /// それ以外 = 514）へ追従させる——install.ps1 -Mode tls の「明示指定がなければ 6514 を既定に
+    /// する」挙動と同じ考え方。既に手動編集済みのポートは上書きしない。
+    /// </summary>
+    private void SelectForwardMode(ForwarderKitMode mode)
+    {
+        var previousDefault = _selectedForwardMode == ForwarderKitMode.Tls
+            ? ForwarderKitConstraints.DefaultTlsPort
+            : ForwarderKitConstraints.DefaultPort;
+
+        if (int.TryParse(_portText, out var currentPort) && currentPort == previousDefault)
+        {
+            var newDefault = mode == ForwarderKitMode.Tls
+                ? ForwarderKitConstraints.DefaultTlsPort
+                : ForwarderKitConstraints.DefaultPort;
+            _portText = newDefault.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        _selectedForwardMode = mode;
+    }
+
     private void GenerateAsync()
     {
         _errorText = null;
@@ -311,7 +374,7 @@
 
         var query = BuildDownloadQuery(
             host, port, channels, _selectedArchitecture,
-            _includeMsi, _versionMismatch, _versionMismatchAcknowledged);
+            _includeMsi, _versionMismatch, _versionMismatchAcknowledged, _selectedForwardMode);
         Navigation.NavigateTo($"/admin/forwarder-kit/download?{query}", forceLoad: true);
     }
 
@@ -332,7 +395,8 @@
         ForwarderMsiArchitecture architecture,
         bool includeMsi,
         bool versionMismatch,
-        bool versionMismatchAcknowledged)
+        bool versionMismatchAcknowledged,
+        ForwarderKitMode mode = ForwarderKitMode.Udp)
     {
         var architectureValue = architecture == ForwarderMsiArchitecture.WinArm64 ? "arm64" : "x64";
         var query = $"host={Uri.EscapeDataString(host)}&port={port}&channels={Uri.EscapeDataString(string.Join(",", channels))}" +
@@ -341,6 +405,14 @@
         if (includeMsi && versionMismatch)
         {
             query += $"&msiVersionMismatchAcknowledged={(versionMismatchAcknowledged ? "true" : "false")}";
+        }
+
+        // 既定（udp）は Issue #137 以前と同じクエリ文字列を保つ——後方互換
+        // （ForwarderKitScreenDownloadQueryTests の既存スナップショットを崩さない）。
+        if (mode != ForwarderKitMode.Udp)
+        {
+            var modeValue = mode == ForwarderKitMode.Tls ? "tls" : "tcp";
+            query += $"&mode={modeValue}";
         }
 
         return query;

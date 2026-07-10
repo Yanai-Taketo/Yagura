@@ -52,7 +52,7 @@
 ### 4.1 受信（syslog）
 
 - **UDP 514・TCP 514 を既定**とする（syslog の標準ポート。多くのネットワーク機器の既定と合わせ、送信元の設定変更なしで届くことを優先する——ADR-0004 決定 2 の「導入体験を守る」の具体化）
-- TLS 受信（opt-in。v1.0 までに提供）は **TCP 6514**（RFC 5425 の標準ポート）を既定とする
+- TLS 受信（syslog over TLS。RFC 5425。opt-in・既定無効）は **TCP 6514**（RFC 5425 の標準ポート）を既定とする（実装済み。Issue #137。設定キー `Ingestion:Tls:*`——§8 参照）
 - **bind 先は既定で全インターフェース・IPv4/IPv6 両対応**とする（Issue #133）。既定値 `BindAddress = "::"`（IPv6 ワイルドカード）を `Socket.DualMode = true` の単一ソケットで bind し、IPv4・IPv6 双方の送信元から受信する（Windows は DualMode を標準サポート——閲覧・管理リスナの Kestrel 側と同じ仕組み。実装は `Yagura.Ingestion.Net.DualStackBindAddress` / `UdpSyslogListener` / `TcpSyslogListener`）。設定で特定アドレス（IPv4 または IPv6 のいずれか一方）に縮小できる
   - **`0.0.0.0` 明示指定 = IPv4 専用への後方互換の逃げ道**: `BindAddress` に `0.0.0.0`（IPv4 ワイルドカード）を明示指定した場合のみ、IPv4 単独ソケットで bind し IPv6 を受けない。v0.1〜v0.2（既定が `0.0.0.0` だった時期）からの手編集設定を持つ環境が、アップグレード後も意図せず IPv6 を新たに受け始めないようにするための設計判断——**縮小方向の変更を伴わない設定は、アップグレードで挙動を変えない**（§1 の additive-only の精神を bind 先の意味づけにも適用した）
   - **送信元アドレスの表現の正規化**: DualMode ソケットが受ける IPv4 送信元は、OS レベルでは IPv4-mapped IPv6（`::ffff:x.x.x.x`）として現れる。これをそのまま記録すると、同一の IPv4 送信元が「`0.0.0.0` 時代のログ」と「DualMode 化後のログ」で異なる文字列表現に分裂し、検索・送信元別集計・逆引き（[ADR-0007](../adr/0007-reverse-dns-display.md)）の一致判定が壊れる。受信段は `ReverseDnsResolver`（ADR-0007 決定 2）と同じ規約——IPv4-mapped IPv6 は `IPAddress.MapToIPv4()` で純粋な IPv4 表記へ正規化してから記録する——を適用し、アップグレード前後で IPv4 送信元の表示形式を変えない
@@ -151,6 +151,10 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Ingestion:Udp:ReceiveBufferBytes` | 受信 | 再起動（同上。ソケット構築時に `SO_RCVBUF` を設定するためリスナ再構成が必要。M-2） | 既定値で継続（既定 **1 MiB = 1,048,576 バイト**——M-2 実測確定値（2026-07-05 開発機。architecture.md §3.1）。バイト数として不正、または下限 64 KiB（OS 既定値）未満・上限 256 MiB（安全弁）超過は既定値へ。受信の成立に不可欠なキーではない） |
 | `Ingestion:Tcp:BindAddress` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | 縮小側で継続（loopback へ縮小）。**既定・`0.0.0.0` の意味づけ・IPv6 不可時の分岐は UDP と同一**（`::` = DualMode 両受信 / `0.0.0.0` = IPv4 専用 / IPv6 不可時は既定値のみ IPv4 自動縮小 + 警告。Issue #133——§4.1） |
 | `Ingestion:Tcp:Port` | 受信 | 再起動（同上。UDP と同じ分類。M4-1） | **起動失敗**（受信の成立に不可欠） |
+| `Ingestion:Tls:Enabled` | 受信（TLS 受信。opt-in。RFC 5425。[security.md](security.md) §6。Issue #137） | 再起動（TLS リスナの構築は起動時処理に固定。目標はリスナ再構成） | 縮小側で継続（真偽値として不正なら**無効**へ。既定 `false`） |
+| `Ingestion:Tls:BindAddress` | 受信（同上） | 再起動（同上） | 縮小側で継続（loopback へ縮小）。**既定・`0.0.0.0` の意味づけ・IPv6 不可時の分岐は UDP/TCP と同一**（Issue #133 と同型） |
+| `Ingestion:Tls:Port` | 受信（同上） | 再起動（同上） | 既定値で継続（既定 **6514**。RFC 5425 の標準ポート）。UDP/TCP ポートと異なり**起動失敗の対象ではない**——TLS 受信は opt-in であり平文受信の成立に不可欠ではないため |
+| `Ingestion:Tls:CertificateThumbprint` | 受信（同上） | 再起動（同上） | 縮小側で継続（`Admin:Https:CertificateThumbprint` と同型の正規化・不正形式は未設定として扱う）。**値が実際に証明書ストアで解決できるかは静的検証の対象外**——解決できない場合は TLS 受信の bind エントリのみ縮小継続（起動時警告イベント ID 1016）。**`Admin:Https:CertificateThumbprint` とは独立**（暗黙の連動をしない。同一証明書の流用は両方のキーに指定することで実現する） |
 | `Ingestion:Rfc3164:DefaultTimeZone` | 受信 | 再起動（目標は即時——ソケットの bind を伴わず解析段の解釈のみに影響するため。現時点は `ParsingStage` の DI 構築時にのみ値が渡るため再起動。Issue #134） | 既定値で継続（**未設定時は UTC**——現状互換。値は Windows タイムゾーン ID（例 `Tokyo Standard Time`）または IANA タイムゾーン ID（例 `Asia/Tokyo`）を受理し、`TimeZoneInfo.FindSystemTimeZoneById` で解決できない値は UTC へフォールバックし警告する。**送信元付記の TZ（Issue #135。TIMESTAMP 直後の数値オフセットまたは `UTC`/`GMT`/`JST` 略号）が取れる場合はそちらが優先され、本設定は取れない場合のフォールバックとして使われる**——優先順位の詳細は [database.md](database.md) §2.2 参照） |
 | `Viewer:HttpPort` | UI | 再起動（同上） | 既定値で継続（既定 **8514**。CF-1 確定値。M6-1） |
 | `Viewer:PublicAccess` | UI | 再起動（目標はリスナ再構成。M6-1） | **縮小側で継続**（`Lan`/`LocalhostOnly` 以外の値は `LocalhostOnly` へ縮小——既定は開放側の `Lan` だが、不正値の縮小先は必ず狭い側。§1「公開範囲・bind 先の不正値は製品既定へ落とさない」の適用。M6-1） |
@@ -173,7 +177,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Retention:ExecutionTimeOfDay` | 保持期間 | 再起動（同上） | 既定値で継続（HH:mm として不正なら既定 03:00 = 暫定値へ） |
 | `Viewer:ReverseDns:Enabled` | UI | 再起動（宣言は即時 = `ConfigurationKeyMetadata`——解決サービスは呼び出しごとに参照できリスナ再構成を要しないが、設定読み込みが起動時のみのため現時点の実効は他キー同様に再起動。§3 のライブ再読込配線時に即時へ）（[ADR-0007](../adr/0007-reverse-dns-display.md) 決定 4。実装済み——`YaguraConfigurationLoader.ResolveViewerReverseDnsEnabled`） | **縮小側で継続**（真偽値として不正なら**無効**へ。既定は**オン**だが、本機能は外向きの DNS クエリを発生させるため、不正値では発生しない側へ倒す——§1 の縮小側原則をセキュリティ 3 項目（公開範囲・bind 先・認証）以外へ適用した初のキー。オフ時は DNS クエリを一切発せず、キャッシュ済みの名前の表示も行わない。解決対象はオンでもプライベート/サイトローカル系の帯域に限る——ADR-0007 決定 2） |
 
-環境変数 `YAGURA_DATAROOT` / `YAGURA_UDP_PORT` / `YAGURA_TCP_PORT`（M4-1 で追加） / `YAGURA_HTTP_PORT` / `YAGURA_ADMIN_PORT`（M6-1 で追加） / `YAGURA_ADMIN_HTTPS_PORT`（ADR-0010 Phase 2 で追加）は上書き手段（優先順位: 環境変数 > 設定ファイル > 既定値）。スプール 3 キーと `Viewer:PublicAccess` は環境変数による上書きを現時点で提供しない（既存の上書き対象は受信ポート/データルート/HTTP ポート/管理ポート/管理リモート HTTPS ポートに限定する既存方針を踏襲）。
+環境変数 `YAGURA_DATAROOT` / `YAGURA_UDP_PORT` / `YAGURA_TCP_PORT`（M4-1 で追加） / `YAGURA_HTTP_PORT` / `YAGURA_ADMIN_PORT`（M6-1 で追加） / `YAGURA_ADMIN_HTTPS_PORT`（ADR-0010 Phase 2 で追加） / `YAGURA_INGESTION_TLS_PORT`（Issue #137 で追加）は上書き手段（優先順位: 環境変数 > 設定ファイル > 既定値）。スプール 3 キーと `Viewer:PublicAccess` は環境変数による上書きを現時点で提供しない（既存の上書き対象は受信ポート/データルート/HTTP ポート/管理ポート/管理リモート HTTPS ポート/TLS 受信ポートに限定する既存方針を踏襲）。
 
 **TCP 受信の細目 5 項目（同時接続数上限・1 メッセージのバイト数上限・アイドルタイムアウト・
 再同期バイト数上限・フレーミング進捗タイムアウト）は、現時点では `Ingestion:Tcp:*` の JSON

@@ -4,6 +4,7 @@ using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Tcp;
+using Yagura.Ingestion.Tls;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage.Spool;
 
@@ -58,6 +59,10 @@ public static class YaguraConfigurationLoader
         "Ingestion:Udp:ReceiveBufferBytes",
         "Ingestion:Tcp:BindAddress",
         "Ingestion:Tcp:Port",
+        "Ingestion:Tls:Enabled",
+        "Ingestion:Tls:BindAddress",
+        "Ingestion:Tls:Port",
+        "Ingestion:Tls:CertificateThumbprint",
         "Ingestion:Rfc3164:DefaultTimeZone",
         "Viewer:HttpPort",
         "Viewer:PublicAccess",
@@ -128,6 +133,20 @@ public static class YaguraConfigurationLoader
 
         // --- 受信: TCP ポート（§1「起動失敗」——UDP と同じ分類。M4-1） ---
         var tcpPort = ResolveTcpPort(options);
+
+        // --- 受信: TLS 受信 opt-in（RFC 5425。security.md §6。Issue #137）。§1「縮小側で継続」——
+        //     TLS 受信は opt-in 機能であり、不正値・未解決の証明書は無効側・非稼働側へ倒す
+        //     （fail-closed の起動拒否は行わない。実際の証明書ストア参照の成否は Program 側で
+        //     確認し、開けなければリスナ 1 本のみ縮小継続する——Admin:Https と同じ二段構え） ---
+        var ingestionTlsEnabled = ResolveSecurityFlag(options.Ingestion?.Tls?.Enabled, "Ingestion:Tls:Enabled", warnings);
+        var (ingestionTlsBindAddress, ingestionTlsBindAddressIsExplicit) = ResolveIngestionTlsBindAddress(options, warnings);
+        var ingestionTlsPort = ResolveIngestionTlsPort(options, warnings);
+        var ingestionTlsCertificateThumbprint = NormalizeCertificateThumbprintOrNull(
+            options.Ingestion?.Tls?.CertificateThumbprint,
+            "Ingestion:Tls:CertificateThumbprint",
+            warnings,
+            "TLS 受信は未構成のまま扱います（Ingestion:Tls:Enabled が true の場合、Program 起動時に" +
+                "縮小継続の警告として記録されます）");
 
         // --- 受信: RFC 3164 TIMESTAMP の既定タイムゾーン（§1「既定値で継続」。Issue #134） ---
         var defaultRfc3164TimeZone = ResolveDefaultRfc3164TimeZone(options, warnings);
@@ -273,12 +292,17 @@ public static class YaguraConfigurationLoader
             RetentionDays: retentionDays,
             RetentionExecutionTimeOfDay: retentionExecutionTimeOfDay,
             StorageProvider: storageProvider,
-            SqlServerConnectionString: sqlServerConnectionString)
+            SqlServerConnectionString: sqlServerConnectionString,
+            IngestionTlsEnabled: ingestionTlsEnabled,
+            IngestionTlsBindAddress: ingestionTlsBindAddress,
+            IngestionTlsPort: ingestionTlsPort,
+            IngestionTlsCertificateThumbprint: ingestionTlsCertificateThumbprint)
         {
             // bind アドレスの明示指定フラグ（PR #193 レビュー対応。IPv6 不可の環境での
             // 「既定は IPv4 縮小 / 明示は fail-fast」の分岐の入力——受信段へ引き渡す）。
             UdpBindAddressIsExplicit = udpBindAddressIsExplicit,
             TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
+            IngestionTlsBindAddressIsExplicit = ingestionTlsBindAddressIsExplicit,
         };
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
@@ -465,6 +489,84 @@ public static class YaguraConfigurationLoader
         }
 
         return ParsePortOrThrow(raw, "Ingestion:Tcp:Port", "設定ファイル");
+    }
+
+    /// <summary>
+    /// TLS 受信（RFC 5425。opt-in。Issue #137）の bind アドレスを解決する。TCP と同じ分類
+    /// （§1「縮小側で継続」）を適用する。戻り値の意味は <see cref="ResolveTcpBindAddress"/> と同一。
+    /// </summary>
+    private static (string Address, bool IsExplicit) ResolveIngestionTlsBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var raw = options.Ingestion?.Tls?.BindAddress;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return (TlsSyslogListenerOptions.DefaultBindAddress, IsExplicit: false);
+        }
+
+        if (IPAddress.TryParse(raw, out _))
+        {
+            return (raw, IsExplicit: true);
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Ingestion:Tls:BindAddress",
+            InvalidValue: raw,
+            AppliedValue: IPAddress.Loopback.ToString(),
+            Reason: "bind 先アドレスの形式が不正なため安全側（loopback）へ縮小"));
+
+        return (IPAddress.Loopback.ToString(), IsExplicit: true);
+    }
+
+    /// <summary>
+    /// TLS 受信ポートを解決する（環境変数 <see cref="YaguraHostEnvironment.IngestionTlsPortEnvironmentVariable"/>
+    /// が最優先。Issue #137）。§1「既定値で継続」——TLS 受信は opt-in であり、平文受信の成立には
+    /// 不可欠ではないため、UDP/TCP ポート（§1「起動失敗」）とは分類を分ける。既定 6514（RFC 5425）。
+    /// <see cref="ResolveAdminHttpsPort"/> と同じ「不正値は既定値へフォールカックし警告する」構造。
+    /// </summary>
+    private static int ResolveIngestionTlsPort(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var defaultPort = TlsSyslogListenerOptions.DefaultPort;
+
+        var envOverride = Environment.GetEnvironmentVariable(YaguraHostEnvironment.IngestionTlsPortEnvironmentVariable);
+        var envIsSet = !string.IsNullOrWhiteSpace(envOverride);
+
+        if (envIsSet
+            && int.TryParse(envOverride, NumberStyles.Integer, CultureInfo.InvariantCulture, out var envPort)
+            && IsValidPort(envPort))
+        {
+            return envPort;
+        }
+
+        var raw = options.Ingestion?.Tls?.Port;
+        int portFromFileOrDefault;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            portFromFileOrDefault = defaultPort;
+        }
+        else if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) && IsValidPort(port))
+        {
+            portFromFileOrDefault = port;
+        }
+        else
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Ingestion:Tls:Port",
+                InvalidValue: raw,
+                AppliedValue: defaultPort.ToString(CultureInfo.InvariantCulture),
+                Reason: "ポート番号として不正なため既定値を適用"));
+            portFromFileOrDefault = defaultPort;
+        }
+
+        if (envIsSet)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: YaguraHostEnvironment.IngestionTlsPortEnvironmentVariable,
+                InvalidValue: envOverride!,
+                AppliedValue: portFromFileOrDefault.ToString(CultureInfo.InvariantCulture),
+                Reason: "環境変数の値がポート番号として不正なため設定ファイル値/既定値を適用"));
+        }
+
+        return portFromFileOrDefault;
     }
 
     /// <summary>
@@ -732,7 +834,37 @@ public static class YaguraConfigurationLoader
     /// </summary>
     private static string? ResolveAdminHttpsCertificateThumbprint(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
     {
-        var raw = options.Admin?.Https?.CertificateThumbprint;
+        return NormalizeCertificateThumbprintOrNull(
+            options.Admin?.Https?.CertificateThumbprint,
+            "Admin:Https:CertificateThumbprint",
+            warnings,
+            "HTTPS 未構成として扱います（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は" +
+                "不正値で開放側へ落とさない。Admin:RemoteBinding:Enabled が有効な場合、この状態は" +
+                "fail-closed 拒否の対象になります）");
+    }
+
+    /// <summary>
+    /// Windows 証明書ストア拇印（SHA-1・16 進 40 桁）を正規化する共通処理（configuration.md §6 と
+    /// 同型の形式検証）。空白・コロン・ハイフン区切りは正規化して受理する（証明書 MMC スナップイン
+    /// 等の一般的な表示形式に合わせるため）。<see cref="ResolveAdminHttpsCertificateThumbprint"/>
+    /// （管理リスナのリモート HTTPS）と TLS 受信証明書（<c>Ingestion:Tls:CertificateThumbprint</c>。
+    /// Issue #137）の両方から呼ばれる——参照方式（拇印の形式検証）は共有し、重複実装しない
+    /// （security.md §6「参照方式は Web UI の HTTPS と同型」の設定検証層での具体化）。
+    /// 不正な形式は §1「縮小側で継続」——未構成として扱う（<see langword="null"/> を返す）。
+    /// </summary>
+    /// <param name="raw">設定ファイルの生値。</param>
+    /// <param name="key">警告に記録するキー名（呼び出し元ごとに異なる）。</param>
+    /// <param name="warnings">警告の収集先。</param>
+    /// <param name="unconfiguredConsequenceMessage">
+    /// 未構成として扱われた場合の帰結を説明する文言（呼び出し元ごとに異なる——呼び出し元の
+    /// fail-closed の有無等を反映するため、共通処理側では固定文言にしない）。
+    /// </param>
+    private static string? NormalizeCertificateThumbprintOrNull(
+        string? raw,
+        string key,
+        List<ConfigurationWarning> warnings,
+        string unconfiguredConsequenceMessage)
+    {
         if (string.IsNullOrWhiteSpace(raw))
         {
             return null;
@@ -749,12 +881,10 @@ public static class YaguraConfigurationLoader
         }
 
         warnings.Add(new ConfigurationWarning(
-            Key: "Admin:Https:CertificateThumbprint",
+            Key: key,
             InvalidValue: "(証明書拇印として不正な形式——値は記録しない)",
             AppliedValue: "(未設定として扱う)",
-            Reason: "SHA-1 拇印（16 進 40 桁）として解釈できないため、HTTPS 未構成として扱います" +
-                "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない。" +
-                "Admin:RemoteBinding:Enabled が有効な場合、この状態は fail-closed 拒否の対象になります）"));
+            Reason: $"SHA-1 拇印（16 進 40 桁）として解釈できないため、{unconfiguredConsequenceMessage}"));
 
         return null;
     }

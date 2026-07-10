@@ -67,6 +67,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly IExpressCapacityChecker _expressChecker;
     private readonly SpoolSelfTestTracker? _selfTestTracker;
     private readonly IAdminHttpsCertificateStatusProbe? _adminHttpsCertificateProbe;
+    private readonly IAdminHttpsCertificateStatusProbe? _ingestionTlsCertificateProbe;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
@@ -90,7 +91,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         TimeProvider? timeProvider = null,
         ILogger<ActiveNotificationMonitor>? logger = null,
         SpoolSelfTestTracker? selfTestTracker = null,
-        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null)
+        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
+        IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -104,6 +106,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _logger = logger ?? NullLogger<ActiveNotificationMonitor>.Instance;
         _selfTestTracker = selfTestTracker;
         _adminHttpsCertificateProbe = adminHttpsCertificateProbe;
+        _ingestionTlsCertificateProbe = ingestionTlsCertificateProbe;
     }
 
     /// <summary>周期監視ループを開始する。</summary>
@@ -205,6 +208,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         await EvaluateExpressCapacityAsync(cancellationToken).ConfigureAwait(false);
         await EvaluateSpoolSelfTestAsync(cancellationToken).ConfigureAwait(false);
         EvaluateAdminHttpsCertificate();
+        EvaluateIngestionTlsCertificate();
     }
 
     /// <summary>
@@ -270,6 +274,80 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "有効期限が接近しています（期限: {NotAfter}、残り {RemainingDays:F1} 日、警告閾値: {WarningWindow}）。" +
                     "期限切れになるとリモート HTTPS の新規接続は拒否されます（loopback 経由の管理リスナは" +
                     "影響を受けません）。証明書の更新を計画してください。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.NotAfter,
+                    remaining.TotalDays,
+                    ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+    }
+
+    /// <summary>
+    /// TLS 受信（RFC 5425。opt-in。security.md §6。Issue #137）証明書の期限接近・稼働中の
+    /// 使用不能を検知する。TLS 受信が無効・起動時に証明書を解決できず縮小継続した構成
+    /// （プローブ未注入 = <see langword="null"/>）では何もしない
+    /// （<see cref="EvaluateAdminHttpsCertificate"/> と同じ「重複警告の抑制」判断——後者は起動時
+    /// 警告 EventId 1016 が既に一度報告済みで、再起動なしに TLS 受信が有効化されることもない）。
+    /// </summary>
+    /// <remarks>
+    /// <b>管理 UI HTTPS（<see cref="EvaluateAdminHttpsCertificate"/>）との非対称</b>: 管理 UI HTTPS は
+    /// 期限切れを「新規ハンドシェイクを拒否している状態」として通知するが、TLS 受信は
+    /// 「止めない」設計（security.md §6）のため、期限切れ後も新規ハンドシェイクは引き続き受理
+    /// される——本メソッドが出す通知はいずれも状態の可視化のみを目的とし、リスナの挙動を変えない
+    /// （文言もその前提で書く）。
+    /// </remarks>
+    private void EvaluateIngestionTlsCertificate()
+    {
+        if (_ingestionTlsCertificateProbe is null)
+        {
+            return;
+        }
+
+        var status = _ingestionTlsCertificateProbe.Check();
+        var now = _timeProvider.GetUtcNow();
+
+        if (!status.IsAvailable)
+        {
+            NotifyIfDue("ingestion-tls-certificate-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.IngestionTlsCertificateUnavailableWhileRunning,
+                    "[ingestion-tls-certificate-unavailable-while-running] TLS 受信証明書がストアから" +
+                    "参照できなくなりました（理由: {Reason}）。起動時に読み込み済みの証明書はプロセス内に" +
+                    "保持されているため、TLS 受信リスナは動作を継続します（security.md §6「止めない」判断）。" +
+                    "証明書を更新・再取り込みした場合は反映にサービス再起動が必要です。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.FailureReason,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        if (now > status.NotAfter)
+        {
+            NotifyIfDue("ingestion-tls-certificate-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.IngestionTlsCertificateUnavailableWhileRunning,
+                    "[ingestion-tls-certificate-unavailable-while-running] TLS 受信証明書の有効期限" +
+                    "（{NotAfter}）が切れました。TLS 受信リスナは期限切れの証明書のまま受信を継続します" +
+                    "（security.md §6「止めない」判断——受信断より通信の真正性の低下を許容する）。" +
+                    "送信側の証明書検証ポリシー次第では TLS ハンドシェイクが拒否され得ます——送信元別の" +
+                    "ハンドシェイク失敗カウンタ（yagura.ingestion.tcp.tls_handshake_failure）と送信元別の" +
+                    "受信状況（無音化検出）をあわせて確認し、脱落があれば証明書を更新してください。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.NotAfter,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        var remaining = status.NotAfter - now;
+        if (remaining <= ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow)
+        {
+            NotifyIfDue("ingestion-tls-certificate-expiry-approaching", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.IngestionTlsCertificateExpiryApproaching,
+                    "[ingestion-tls-certificate-expiry-approaching] TLS 受信証明書の有効期限が接近しています" +
+                    "（期限: {NotAfter}、残り {RemainingDays:F1} 日、警告閾値: {WarningWindow}）。期限切れに" +
+                    "なっても TLS 受信リスナは止まりません（security.md §6）が、送信側の検証ポリシー次第で" +
+                    "ハンドシェイクが拒否され始める可能性があります。証明書の更新を計画してください。" +
                     "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.NotAfter,
                     remaining.TotalDays,

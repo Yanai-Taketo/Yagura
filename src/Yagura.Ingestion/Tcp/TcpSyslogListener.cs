@@ -150,7 +150,9 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         var bindAddress = IPAddress.Parse(_options.BindAddress);
         if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
         {
-            _tcpListener = CreateDualModeTcpListenerOrFallBack();
+            // Issue #137: TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）と共有する
+            // 共通処理へ委譲した（DualStackTcpListenerFactory の remarks 参照）。
+            _tcpListener = DualStackTcpListenerFactory.CreateOrFallBack(_options.Port, _options.BindAddressIsExplicit, _logger);
         }
         else
         {
@@ -166,80 +168,6 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_stoppingCts.Token), CancellationToken.None);
 
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// IPv6 ワイルドカード（<c>::</c>）向けの DualMode リスナを作成し <c>Start()</c> まで行う。
-    /// IPv6 スタックが無効な環境（PR #193 レビュー指摘 Major）の分岐は UDP 側
-    /// （<c>UdpSyslogListener.CreateDualModeUdpClientOrFallBack</c>）と対称:
-    /// 既定値（<see cref="TcpSyslogListenerOptions.BindAddressIsExplicit"/> = <c>false</c>）なら
-    /// IPv4 ワイルドカードへ自動縮小して警告ログを出し、明示指定なら復旧手順を含むエラーで
-    /// 起動を失敗させる。
-    /// </summary>
-    private TcpListener CreateDualModeTcpListenerOrFallBack()
-    {
-        // 事前チェック: OS が IPv6 を提供しない環境ではソケット作成の実試行を待たずに分岐する。
-        if (!Socket.OSSupportsIPv6)
-        {
-            return HandleIPv6Unavailable(socketException: null);
-        }
-
-        TcpListener? listener = null;
-        try
-        {
-            listener = new TcpListener(IPAddress.IPv6Any, _options.Port);
-
-            // DualMode ソケット（Issue #133）。TcpListener.Server は Start() 前であれば
-            // 直接設定できる（.NET の確立されたパターン——Kestrel 側の同種の扱いは
-            // Yagura.Host.ListenerBindPlan の remarks 参照）。
-            listener.Server.DualMode = true;
-            listener.Start();
-            return listener;
-        }
-        catch (SocketException ex)
-        {
-            listener?.Dispose();
-
-            // 縮小の対象は「IPv6 が使えない」場合のみ。ポート競合（AddressInUse）等の
-            // 別要因を IPv4 縮小で握り潰すと、ポート事故が黙って「IPv4 のみ受信」に化ける
-            // （DualStackBindAddress の remarks）。
-            if (ex.SocketErrorCode != SocketError.AddressFamilyNotSupported)
-            {
-                throw;
-            }
-
-            return HandleIPv6Unavailable(ex);
-        }
-        catch
-        {
-            listener?.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// IPv6 不可（事前チェックまたは bind 実試行での確定）時の分岐: 既定値なら IPv4 縮小、
-    /// 明示指定なら fail-fast（UDP 側と対称）。
-    /// </summary>
-    private TcpListener HandleIPv6Unavailable(SocketException? socketException)
-    {
-        if (_options.BindAddressIsExplicit)
-        {
-            throw new InvalidOperationException(
-                DualStackBindAddress.BuildExplicitIPv6WildcardUnavailableMessage(),
-                socketException);
-        }
-
-        // 警告はイベントログに届くレベル（Warning）で出す——既定構成の縮小は無言にしない。
-        _logger?.LogWarning(
-            socketException,
-            "この環境では IPv6 が利用できないため、TCP 受信リスナは既定の '::'（IPv4/IPv6 両受信）" +
-            "ではなく IPv4 のみ（0.0.0.0）で受信します。IPv6 の syslog を受信する必要がある場合は" +
-            " OS の IPv6 スタックを有効化してください。");
-
-        var fallback = new TcpListener(IPAddress.Any, _options.Port);
-        fallback.Start();
-        return fallback;
     }
 
     /// <summary>
@@ -334,267 +262,62 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         var sourceAddress = remoteAddress?.ToString() ?? "unknown";
         var sourcePort = remoteEndPoint?.Port ?? 0;
 
-        var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions
-        {
-            MaxMessageLength = _options.MaxMessageLength,
-            MaxResyncBytes = _options.MaxResyncBytes,
-        });
-        var buffer = new byte[8192];
-        var previousOversizedDiscardedCount = 0;
-        var idleTimedOut = false;
-        var resyncLimitExceeded = false;
-        var framingProgressTimedOut = false;
+        // 読み取りループ本体は TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）と共有する
+        // （Issue #137。TcpFramedConnectionProcessor の remarks 参照——ソケット取得後は Stream の
+        // 抽象メンバーのみに依存するため、平文/TLS で複製する理由がない）。
+        var processor = new TcpFramedConnectionProcessor(_q1Writer, _ingressGate, _metrics, _logger, _timeProvider);
 
-        // フレーミング進捗タイムアウト（オーナー決定 2026-07-09。PR #169 レビュー指摘 3 の B）:
-        // バイトは届き続けているのに有効なメッセージが 1 件も確定しない接続を回収する
-        // （低速トリクル対策。アイドルタイムアウトは「読み取りが起きない」接続を回収する別軸）。
-        // 基準時刻は「最初のバイトを受信した時刻」で初期化し、有効なメッセージが 1 件確定する
-        // たびに取り直す。判定は読み取り完了ごとに行う——読み取りが起きない接続はアイドル
-        // タイムアウト側の管轄のため、ここで能動的なタイマーは張らない。
-        var framingProgressEnabled = _options.FramingProgressTimeout > TimeSpan.Zero;
-        DateTimeOffset? lastFramingProgressAt = null;
-
-        // Issue #140: アイドルタイムアウト。読み取りのたびに stoppingToken にリンクした新しい
-        // CTS を生成し、CancelAfter でその読み取り 1 回分のタイマーを張る（PR #169 レビュー
-        // 指摘 1 への対応——単一 CTS の CancelAfter 再スケジュール方式は、タイマー発火と
-        // 読み取り成功が僅差で競合すると「キャンセル済みソースへの CancelAfter は no-op」という
-        // .NET の仕様により再スケジュールが黙って無視され、直前までデータを受信していた活性
-        // 接続を次の読み取りで誤ってアイドル扱いする。読み取りごとに CTS を作り直せば、
-        // キャンセル済みソースが次の読み取りへ持ち越される経路自体が存在しない）。
-        // 副次効果として、Q1 満杯による WriteAsync の停滞時間（§3.1 の意図された読み取り停止）が
-        // アイドル時間へ誤算入される経路も閉じる——タイマーが覆うのは ReadAsync の待機だけになる。
-        // IdleTimeout が Zero 以下なら無効化し、stoppingToken をそのまま使う（主にテスト用途）。
-        var idleTimeoutEnabled = _options.IdleTimeout > TimeSpan.Zero;
-        CancellationTokenSource? idleCts = null;
-
+        TcpFramedConnectionProcessor.Outcome outcome;
         try
         {
             using (client)
             await using (var stream = client.GetStream())
             {
-                while (!stoppingToken.IsCancellationRequested)
-                {
-                    CancellationToken readToken;
-                    if (idleTimeoutEnabled)
+                outcome = await processor.RunAsync(
+                    stream,
+                    Protocol.Tcp,
+                    sourceAddress,
+                    sourcePort,
+                    remoteAddress,
+                    new TcpFrameDecoderOptions
                     {
-                        idleCts = RenewIdleReadCancellation(idleCts, stoppingToken, _options.IdleTimeout);
-                        readToken = idleCts.Token;
-                    }
-                    else
-                    {
-                        readToken = stoppingToken;
-                    }
-
-                    int bytesRead;
-                    try
-                    {
-                        bytesRead = await stream.ReadAsync(buffer, readToken).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (idleTimeoutEnabled && !stoppingToken.IsCancellationRequested)
-                    {
-                        // アイドルタイムアウトによる打ち切り（stoppingToken 自体はキャンセルされて
-                        // いない——この読み取りのために張ったタイマーが発火した）。無通信接続が
-                        // 同時接続枠（§3.1・M-14）を占有し続けることを防ぐ有限化（Issue #140）。
-                        // readToken はこの読み取り専用に生成されたため、このキャンセルは
-                        // 「この ReadAsync の待機が IdleTimeout 続いた」ことを確実に意味する
-                        // （過去の読み取りのタイマー発火が持ち越される競合は構造上起きない）。
-                        idleTimedOut = true;
-                        break;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (IOException)
-                    {
-                        // 相手の異常切断（RST 等）。接続断として扱い、読みかけデータを Incomplete で流す。
-                        break;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        break;
-                    }
-
-                    if (bytesRead == 0)
-                    {
-                        // 相手が正常にシャットダウン（FIN）した。接続断。
-                        break;
-                    }
-
-                    var receivedAt = _timeProvider.GetUtcNow();
-                    lastFramingProgressAt ??= receivedAt;
-
-                    // PR #169 レビュー指摘 2 への対応: 回復不能なフレーミング違反の例外が出ても、
-                    // 同一チャンク内で既に境界が確定していた正常メッセージは失わない——例外の
-                    // CompletedMessages から取り出して通常どおり Q1 へ流し、その後に切断する。
-                    IReadOnlyList<byte[]> messages;
-                    var unrecoverableViolation = false;
-                    try
-                    {
-                        messages = decoder.Push(buffer.AsSpan(0, bytesRead));
-                    }
-                    catch (TcpFrameSizeExceededException ex)
-                    {
-                        // 回復不能なフレーミング違反のときのみ、安全側判断として当該接続を
-                        // 切断する（Issue #143 で例外の用途を絞った）: ①再同期不能な深刻な破損
-                        // （MSG-LEN の桁の途中に数字以外が混入・桁数異常・int 範囲超過）、
-                        // ②再同期バイト数上限の超過（オーナー決定 2026-07-09）。1 メッセージの
-                        // サイズ上限超過は decoder 内部で当該メッセージを破棄するだけで済み、
-                        // この例外には現れない（下の OversizedMessagesDiscardedCount 参照）。
-                        // 切断前に、例外送出までに確定していた正常メッセージ
-                        // （ex.CompletedMessages）を Q1 へ流し、読みかけデータが残っていれば
-                        // 通常の切断経路と同じく Incomplete として Q1 へ流す（decoder の内部
-                        // バッファはそのまま残るため、ループ終了後の Flush() が拾う）。
-                        if (ex.Kind == TcpFrameViolationKind.ResyncByteLimitExceeded)
-                        {
-                            resyncLimitExceeded = true;
-                            _logger?.LogWarning(
-                                ex,
-                                "TCP 接続 {SourceAddress}:{SourcePort} で有効なメッセージが確定しないまま読み捨てたバイト数が " +
-                                "上限 {MaxResyncBytes} を超えたため切断します。",
-                                sourceAddress,
-                                sourcePort,
-                                _options.MaxResyncBytes);
-                        }
-                        else
-                        {
-                            _logger?.LogWarning(
-                                ex,
-                                "TCP 接続 {SourceAddress}:{SourcePort} で再同期不能なフレーム破損を検出したため切断します。",
-                                sourceAddress,
-                                sourcePort);
-                        }
-
-                        messages = ex.CompletedMessages;
-                        unrecoverableViolation = true;
-                    }
-
-                    // Issue #143: 1 メッセージのサイズ上限超過による破棄をカウンタ・ログへ計上する
-                    // （decoder は計測 API を持たない純粋ロジックのため、呼び出し元が差分を計上する）。
-                    if (decoder.OversizedMessagesDiscardedCount != previousOversizedDiscardedCount)
-                    {
-                        var discardedThisPush = decoder.OversizedMessagesDiscardedCount - previousOversizedDiscardedCount;
-                        previousOversizedDiscardedCount = decoder.OversizedMessagesDiscardedCount;
-
-                        for (var i = 0; i < discardedThisPush; i++)
-                        {
-                            _metrics.RecordTcpMessageDiscardedOversized();
-                        }
-
-                        _logger?.LogWarning(
-                            "TCP 接続 {SourceAddress}:{SourcePort} で 1 メッセージのサイズ上限超過により " +
-                            "{Count} 件を破棄しました（接続は継続します）。",
-                            sourceAddress,
-                            sourcePort,
-                            discardedThisPush);
-                    }
-
-                    foreach (var message in messages)
-                    {
-                        if (!_ingressGate.ShouldAdmit(remoteAddress ?? IPAddress.None, message))
-                        {
-                            // 挿入点のみ（architecture.md §3.3）。UDP 側と同じく計上の枠を設ける
-                            // （M4-4。v0.1 の NoopIngressGate ではこの分岐に到達しない）。
-                            _metrics.RecordFlowControlDropped();
-                            continue;
-                        }
-
-                        var datagram = new RawDatagram(
-                            ReceivedAt: receivedAt,
-                            SourceAddress: sourceAddress,
-                            SourcePort: sourcePort,
-                            Protocol: Protocol.Tcp,
-                            Payload: message);
-
-                        // architecture.md §3.1: TCP は Q1 満杯時に破棄せず読み取りを停止する。
-                        // WriteAsync を await することで、Q1 が満杯の間はこの接続の読み取り
-                        // ループ自体が進まなくなり、OS の TCP フロー制御が送信側へ伝搬する。
-                        await _q1Writer.WriteAsync(datagram, CancellationToken.None).ConfigureAwait(false);
-                    }
-
-                    if (unrecoverableViolation)
-                    {
-                        // 確定済みメッセージを流し終えてから切断する（Flush() による Incomplete
-                        // 退避はループ終了後の共通経路が行う）。
-                        break;
-                    }
-
-                    if (messages.Count > 0)
-                    {
-                        // 有効なメッセージが確定した——フレーミング進捗の基準時刻を取り直す。
-                        // 取り直しは上の WriteAsync（Q1 満杯時は §3.1 の意図された読み取り停止で
-                        // 長時間停滞し得る）の完了後に行う——停滞時間をフレーミング進捗の停滞と
-                        // 誤判定して正常な送信元を切断しないため。
-                        lastFramingProgressAt = _timeProvider.GetUtcNow();
-                    }
-                    else if (framingProgressEnabled
-                        && _timeProvider.GetUtcNow() - lastFramingProgressAt!.Value > _options.FramingProgressTimeout)
-                    {
-                        // オーナー決定 2026-07-09 の B: バイトは届いているのに有効なメッセージが
-                        // 1 件も確定しないまま FramingProgressTimeout が経過した（低速トリクル・
-                        // LF を送らないゴミデータ等——読み取りが起き続けるためアイドルタイム
-                        // アウトでは回収できない接続）。切断して同時接続枠を返す。
-                        framingProgressTimedOut = true;
-                        _logger?.LogWarning(
-                            "TCP 接続 {SourceAddress}:{SourcePort} で有効なメッセージが確定しないまま " +
-                            "{FramingProgressTimeout} が経過したため切断します（フレーミング進捗タイムアウト）。",
-                            sourceAddress,
-                            sourcePort,
-                            _options.FramingProgressTimeout);
-                        break;
-                    }
-                }
-
-                // 切断時（正常シャットダウン・異常切断・停止要求・アイドルタイムアウト・
-                // 再同期不能な破損のいずれか）に読みかけの不完全データが残っていれば、
-                // Incomplete として Q1 へ流す（database.md §2.1「不完全は解析失敗に優先」——捨てない）。
-                var incomplete = decoder.Flush();
-                if (incomplete is not null)
-                {
-                    var datagram = new RawDatagram(
-                        ReceivedAt: _timeProvider.GetUtcNow(),
-                        SourceAddress: sourceAddress,
-                        SourcePort: sourcePort,
-                        Protocol: Protocol.Tcp,
-                        Payload: incomplete,
-                        Incomplete: true);
-
-                    // 停止経路でも drain のベストエフォートを揃えるため CancellationToken.None を使う
-                    // （UDP 側 ParsingStage の drain 方針と同じ考え方）。
-                    await _q1Writer.WriteAsync(datagram, CancellationToken.None).ConfigureAwait(false);
-                }
+                        MaxMessageLength = _options.MaxMessageLength,
+                        MaxResyncBytes = _options.MaxResyncBytes,
+                    },
+                    _options.IdleTimeout,
+                    _options.FramingProgressTimeout,
+                    "TCP",
+                    stoppingToken).ConfigureAwait(false);
             }
         }
         finally
         {
-            idleCts?.Dispose();
-
             Interlocked.Decrement(ref _currentConnectionCount);
 
             // architecture.md §4.5「TCP 接続断」（Issue #140）: 理由を問わず接続終了を 1 件計上する。
             _metrics.RecordTcpConnectionClosed();
+        }
 
-            if (idleTimedOut)
-            {
-                _metrics.RecordTcpConnectionIdleTimeout();
-                _logger?.LogInformation(
-                    "TCP 接続 {SourceAddress}:{SourcePort} をアイドルタイムアウト（{IdleTimeout}）により切断しました。",
-                    sourceAddress,
-                    sourcePort,
-                    _options.IdleTimeout);
-            }
-            else if (resyncLimitExceeded)
-            {
-                // オーナー決定 2026-07-09 の A: 再同期バイト数上限超過による切断（内訳計上。
-                // ログは検出箇所で出力済み）。
-                _metrics.RecordTcpConnectionResyncLimitExceeded();
-            }
-            else if (framingProgressTimedOut)
-            {
-                // オーナー決定 2026-07-09 の B: フレーミング進捗タイムアウトによる切断
-                // （内訳計上。ログは検出箇所で出力済み）。
-                _metrics.RecordTcpConnectionFramingTimeout();
-            }
+        if (outcome.IdleTimedOut)
+        {
+            _metrics.RecordTcpConnectionIdleTimeout();
+            _logger?.LogInformation(
+                "TCP 接続 {SourceAddress}:{SourcePort} をアイドルタイムアウト（{IdleTimeout}）により切断しました。",
+                sourceAddress,
+                sourcePort,
+                _options.IdleTimeout);
+        }
+        else if (outcome.ResyncLimitExceeded)
+        {
+            // オーナー決定 2026-07-09 の A: 再同期バイト数上限超過による切断（内訳計上。
+            // ログは検出箇所で出力済み）。
+            _metrics.RecordTcpConnectionResyncLimitExceeded();
+        }
+        else if (outcome.FramingProgressTimedOut)
+        {
+            // オーナー決定 2026-07-09 の B: フレーミング進捗タイムアウトによる切断
+            // （内訳計上。ログは検出箇所で出力済み）。
+            _metrics.RecordTcpConnectionFramingTimeout();
         }
     }
 

@@ -54,6 +54,10 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Ingestion:Udp:ReceiveBufferBytes", before.Ingestion?.Udp?.ReceiveBufferBytes, after.Ingestion?.Udp?.ReceiveBufferBytes);
         CompareKey(changedKeys, "Ingestion:Tcp:BindAddress", before.Ingestion?.Tcp?.BindAddress, after.Ingestion?.Tcp?.BindAddress);
         CompareKey(changedKeys, "Ingestion:Tcp:Port", before.Ingestion?.Tcp?.Port, after.Ingestion?.Tcp?.Port);
+        CompareKey(changedKeys, "Ingestion:Tls:Enabled", before.Ingestion?.Tls?.Enabled, after.Ingestion?.Tls?.Enabled);
+        CompareKey(changedKeys, "Ingestion:Tls:BindAddress", before.Ingestion?.Tls?.BindAddress, after.Ingestion?.Tls?.BindAddress);
+        CompareKey(changedKeys, "Ingestion:Tls:Port", before.Ingestion?.Tls?.Port, after.Ingestion?.Tls?.Port);
+        CompareKey(changedKeys, "Ingestion:Tls:CertificateThumbprint", before.Ingestion?.Tls?.CertificateThumbprint, after.Ingestion?.Tls?.CertificateThumbprint);
         CompareKey(changedKeys, "Ingestion:Rfc3164:DefaultTimeZone", before.Ingestion?.Rfc3164?.DefaultTimeZone, after.Ingestion?.Rfc3164?.DefaultTimeZone);
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
         CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);

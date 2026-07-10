@@ -220,4 +220,72 @@ public sealed class ForwarderKitRequestTests
             OfficialHashMatch: OfficialHashMatchResult.Unverified,
             VersionMismatch: versionMismatch,
             VersionMismatchAcknowledged: acknowledged);
+
+    // ---- 転送方式（Issue #137: Udp（既定）/ Tcp / Tls） ----
+
+    [Fact]
+    public void TryCreate_NoModeSpecified_DefaultsToUdp()
+    {
+        var ok = ForwarderKitRequest.TryCreate("192.0.2.10", 514, "System", out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Equal(ForwarderKitMode.Udp, request!.Mode);
+        Assert.Null(request.TlsCaCertificatePem);
+    }
+
+    [Fact]
+    public void TryCreate_ModeTls_WithCaCertificate_TrimsAndKeepsPem()
+    {
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", 6514, "System", msiBundle: null,
+            ForwarderKitMode.Tls, "  -----BEGIN CERTIFICATE-----\nAB==\n-----END CERTIFICATE-----  ",
+            out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Equal(ForwarderKitMode.Tls, request!.Mode);
+        Assert.Equal("-----BEGIN CERTIFICATE-----\nAB==\n-----END CERTIFICATE-----", request.TlsCaCertificatePem);
+    }
+
+    [Fact]
+    public void TryCreate_ModeTls_WithoutCaCertificate_TlsCaCertificatePemIsNull()
+    {
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", 6514, "System", msiBundle: null,
+            ForwarderKitMode.Tls, tlsCaCertificatePem: null,
+            out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Null(request!.TlsCaCertificatePem);
+    }
+
+    [Fact]
+    public void TryCreate_ModeUdp_CaCertificateProvidedAnyway_IsIgnored()
+    {
+        // モード切替 UI で残った入力値が無関係なモードへ混入しないことの確認
+        // （TryCreate の doc コメント参照）。
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", 514, "System", msiBundle: null,
+            ForwarderKitMode.Udp, tlsCaCertificatePem: "leftover-pem-content",
+            out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Null(request!.TlsCaCertificatePem);
+    }
+
+    [Fact]
+    public void TryCreate_ModeTcp_Succeeds()
+    {
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", 514, "System", msiBundle: null,
+            ForwarderKitMode.Tcp, tlsCaCertificatePem: null,
+            out var request, out var error);
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.Equal(ForwarderKitMode.Tcp, request!.Mode);
+    }
 }

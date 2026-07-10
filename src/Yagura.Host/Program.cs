@@ -8,6 +8,7 @@ using Yagura.Host.Configuration;
 using Yagura.Ingestion;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
+using Yagura.Ingestion.Tls;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Abstractions.Auditing;
@@ -214,6 +215,42 @@ public static class Program
             }
         }
 
+        // TLS 受信（RFC 5425。opt-in・既定無効。security.md §6。Issue #137）: 証明書ストア参照は
+        // 管理リスナのリモート HTTPS（上記）と同一の実装（AdminCertificateProvider.Load）を再利用
+        // する——設定キーは独立（Ingestion:Tls:*）だが、参照方式（Windows 証明書ストア・拇印指定）
+        // は共有し、重複実装しない（security.md §6「参照方式は Web UI の HTTPS と同型」）。
+        // <b>管理 HTTPS との非対称</b>: 管理 HTTPS は IsExpired を「未解決」として扱い bind を
+        // スキップするが、TLS 受信は「止めない」設計のため、起動時点で既に期限切れの証明書でも
+        // そのまま受け入れる（IsExpired は判定に使わない）——縮小継続の対象になるのは、拇印が
+        // 未設定・不正形式、または証明書そのものが解決できない（見つからない・秘密鍵が無い）
+        // 場合のみである。
+        System.Security.Cryptography.X509Certificates.X509Certificate2? ingestionTlsCertificate = null;
+        string? ingestionTlsCertificateUnavailableReason = null;
+
+        if (resolvedConfiguration.IngestionTlsEnabled)
+        {
+            if (resolvedConfiguration.IngestionTlsCertificateThumbprint is null)
+            {
+                ingestionTlsCertificateUnavailableReason =
+                    "TLS 受信証明書拇印（Ingestion:Tls:CertificateThumbprint）が未設定、または" +
+                    "SHA-1 拇印（16 進 40 桁）として解釈できない形式です。";
+            }
+            else
+            {
+                var ingestionTlsCertificateLoadResult = Yagura.Host.Administration.Https.AdminCertificateProvider.Load(
+                    resolvedConfiguration.IngestionTlsCertificateThumbprint);
+
+                if (!ingestionTlsCertificateLoadResult.Succeeded)
+                {
+                    ingestionTlsCertificateUnavailableReason = ingestionTlsCertificateLoadResult.FailureReason;
+                }
+                else
+                {
+                    ingestionTlsCertificate = ingestionTlsCertificateLoadResult.Certificate;
+                }
+            }
+        }
+
         builder.WebHost.ConfigureKestrel(kestrelOptions =>
         {
             foreach (var entry in listenerBindEntries)
@@ -373,6 +410,23 @@ public static class Program
             Port = resolvedConfiguration.TcpPort,
         });
 
+        // TLS 受信（Issue #137）: 証明書が解決できた場合のみ構成する（null の間は
+        // IngestionPipeline へ tlsListenerOptions = null を渡し、TLS 受信自体を構成しない——
+        // DI 経由ではなくローカル変数の閉包で IngestionPipeline のファクトリへ渡す。adminHttpsCertificate
+        // の扱い（上記 ConfigureKestrel 内 capturedCertificate）と同じパターン）。
+        TlsSyslogListenerOptions? tlsListenerOptions = ingestionTlsCertificate is not null
+            ? new TlsSyslogListenerOptions
+            {
+                BindAddress = resolvedConfiguration.IngestionTlsBindAddress,
+                BindAddressIsExplicit = resolvedConfiguration.IngestionTlsBindAddressIsExplicit,
+                Port = resolvedConfiguration.IngestionTlsPort,
+            }
+            : null;
+        Func<System.Security.Cryptography.X509Certificates.X509Certificate2?>? tlsCertificateSelector =
+            ingestionTlsCertificate is not null
+                ? () => ingestionTlsCertificate
+                : null;
+
         // ILogStore の書き込みゲート（Issue #151。LogStoreWriteGate の doc コメント参照）:
         // ライブ書き込み（PersistenceWriter）・スプール drain（SpoolDrainCoordinator）・
         // 保持期間削除（RetentionScheduler）の 3 経路を単一のゲートで直列化し、
@@ -405,7 +459,9 @@ public static class Program
             sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>(),
             resolvedConfiguration.DefaultRfc3164TimeZone,
             sp.GetRequiredService<LogStoreWriteGate>(),
-            selfTestTracker));
+            selfTestTracker,
+            tlsListenerOptions,
+            tlsCertificateSelector));
 
         // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
         // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。
@@ -442,6 +498,16 @@ public static class Program
                     resolvedConfiguration.AdminHttpsCertificateThumbprint!)
                 : null;
 
+        // TLS 受信証明書の周期監視プローブ（security.md §6。期限接近の事前警告 = 1017・稼働中の
+        // 使用不能検知 = 1018）。証明書が実際に解決できて TLS 受信が有効な場合にのみ結線する——
+        // 上記 adminHttpsCertificateProbe と同じ「起動時に解決できず縮小継続した構成は重複監視
+        // しない」判断（EvaluateIngestionTlsCertificate の doc コメント参照）。
+        Yagura.Host.Observability.ActiveNotification.IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe =
+            ingestionTlsCertificate is not null
+                ? new Yagura.Host.Ingestion.Tls.StoreIngestionTlsCertificateStatusProbe(
+                    resolvedConfiguration.IngestionTlsCertificateThumbprint!)
+                : null;
+
         builder.Services.AddSingleton(sp => new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
             spool,
             sp.GetRequiredService<IngestionPipeline>().Metrics,
@@ -450,7 +516,8 @@ public static class Program
             timeProvider: null,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
             selfTestTracker,
-            adminHttpsCertificateProbe));
+            adminHttpsCertificateProbe,
+            ingestionTlsCertificateProbe));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
@@ -649,6 +716,56 @@ public static class Program
                     "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2）。",
                     YaguraServiceAccountName,
                     grantResult.FailureReason);
+            }
+        }
+
+        // TLS 受信（RFC 5425。opt-in。security.md §6。Issue #137）: 証明書が解決できなかった場合の
+        // 起動時警告（縮小継続——起動は中止しない。平文 UDP/TCP 受信には一切影響しない。
+        // ConfigurationEventIds.IngestionTlsCertificateUnavailableAtStartup = 1016 参照）。
+        // 管理リスナのリモート HTTPS（上記）と同じパターン。
+        if (ingestionTlsCertificateUnavailableReason is not null)
+        {
+            var tlsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Ingestion.Tls");
+            tlsLogger.LogWarning(
+                Yagura.Host.Configuration.ConfigurationEventIds.IngestionTlsCertificateUnavailableAtStartup,
+                "[ingestion-tls-certificate-unavailable] TLS 受信（ポート {TlsPort}）用証明書を解決できなかったため、" +
+                "このリスナは開かずに縮小継続します（平文 UDP/TCP 受信（ポート {UdpPort}/{TcpPort}）は影響を" +
+                "受けません——ADR-0004 決定 3）。理由: {Reason}",
+                resolvedConfiguration.IngestionTlsPort,
+                resolvedConfiguration.UdpPort,
+                resolvedConfiguration.TcpPort,
+                ingestionTlsCertificateUnavailableReason);
+        }
+        else if (ingestionTlsCertificate is not null)
+        {
+            // 秘密鍵の読み取り権限をサービスアカウントへ付与する（管理リスナのリモート HTTPS と
+            // 同型。付与は監査記録の対象——security.md §6）。ベストエフォート: 付与に失敗しても
+            // TLS 受信自体は（証明書が現在の実行アカウントから既に読める限り）動作を継続できるため、
+            // 起動は妨げない——警告のみ残す。
+            var tlsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Ingestion.Tls");
+            var ingestionTlsGrantResult = Yagura.Host.Administration.Https.AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess(
+                ingestionTlsCertificate, YaguraServiceAccountName);
+
+            var ingestionTlsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
+            if (ingestionTlsGrantResult.Succeeded)
+            {
+                await ingestionTlsAuditRecorder.RecordAsync(new AuditEvent(
+                    OccurredAt: TimeProvider.System.GetUtcNow(),
+                    Kind: AuditEventKind.IngestionTlsCertificatePrivateKeyAccessGranted,
+                    RemoteAddress: null,
+                    RemotePort: null,
+                    Detail: $"thumbprint={resolvedConfiguration.IngestionTlsCertificateThumbprint};account={YaguraServiceAccountName}"))
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                tlsLogger.LogWarning(
+                    "[ingestion-tls-private-key-grant-failed] TLS 受信証明書の秘密鍵読み取り権限を" +
+                    "{Account} へ自動付与できませんでした（理由: {Reason}）。サービスアカウントが証明書へ既存の権限で" +
+                    "アクセスできない場合、TLS 受信の接続受付が失敗する可能性があります。証明書スナップイン" +
+                    "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2 と同型の手順）。",
+                    YaguraServiceAccountName,
+                    ingestionTlsGrantResult.FailureReason);
             }
         }
 

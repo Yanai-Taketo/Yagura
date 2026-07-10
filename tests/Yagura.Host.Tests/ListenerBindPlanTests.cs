@@ -159,5 +159,9 @@ public sealed class ListenerBindPlanTests
             RetentionDays: null,
             RetentionExecutionTimeOfDay: new TimeOnly(3, 0),
             StorageProvider: StorageProvider.Sqlite,
-            SqlServerConnectionString: null);
+            SqlServerConnectionString: null,
+            IngestionTlsEnabled: false,
+            IngestionTlsBindAddress: "0.0.0.0",
+            IngestionTlsPort: 6514,
+            IngestionTlsCertificateThumbprint: null);
 }

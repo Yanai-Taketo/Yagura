@@ -95,6 +95,7 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _tcpConnectionResyncLimitExceeded;
     private readonly Counter<long> _tcpConnectionFramingTimeout;
     private readonly Counter<long> _spoolCorruptTailDiscarded;
+    private readonly Counter<long> _tlsHandshakeFailure;
 
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
@@ -244,6 +245,18 @@ public sealed class IngestionMetrics : IDisposable
             "yagura.ingestion.tcp_connection.framing_timeout",
             unit: "{connection}",
             description: "有効メッセージが確定しないまま一定時間が経過し切断した TCP 接続数（TCP 接続断の内訳）。");
+
+        // architecture.md §4.1「TLS ハンドシェイク失敗」（Issue #137 で新設）: TLS 受信（RFC 5425。
+        // opt-in）の TLS ハンドシェイク確立失敗数。送信元別に計上する——証明書期限切れ時に送信側が
+        // 検証拒否した場合の一次シグナルであり（security.md §6）、「どの送信元が脱落しているか」が
+        // 初動解析の手がかりになるため、本計器は既存 7 種と異なり送信元アドレスをタグに持つ
+        // （§4.1.1 の「意味論の異なる別々の事象」原則はそのまま——本計器はタグ付き単一カウンタ方式
+        // への転換ではなく、TLS ハンドシェイク失敗という単一の事象を送信元次元で展開したもの）。
+        _tlsHandshakeFailure = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp.tls_handshake_failure",
+            unit: "{connection}",
+            description: "TLS 受信（RFC 5425）の TLS ハンドシェイク確立失敗数（送信元別。証明書期限切れ時の" +
+                "送信側拒否の検出に使う。security.md §6）。");
 
         // architecture.md §4.2 OS レベル取りこぼしの観測（M4-4 で実機検証: Windows ARM64・
         // SDK 10.0.301 で IPGlobalProperties.GetUdpIPv4Statistics()/GetUdpIPv6Statistics() の
@@ -463,6 +476,19 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// TLS 受信（RFC 5425。opt-in）の TLS ハンドシェイク確立失敗を 1 件計上する（Issue #137）。
+    /// <paramref name="sourceAddress"/> はタグとして付与する（送信元別の脱落確認。security.md §6）。
+    /// UDP 受信エラー・逆引き解決カウンタと同じ「診断用カウンタ」の扱い——個々の失敗が必ずしも
+    /// メッセージ損失と 1 対 1 対応するとは限らないため、プロセス内累積のみで再起動をまたぐ
+    /// 永続化（<see cref="SeedCumulativeCounters"/>・<see cref="SnapshotCumulativeCounters"/>）の
+    /// 対象には含めない。
+    /// </summary>
+    public void RecordTlsHandshakeFailure(string sourceAddress)
+    {
+        _tlsHandshakeFailure.Add(1, new KeyValuePair<string, object?>("source_address", sourceAddress ?? "unknown"));
+    }
+
+    /// <summary>
     /// 起動時、メタデータ領域（§4.3）から読み込んだ前回までの累積値を引き継ぐ
     /// （「前回までの累積 + 今回プロセス分」の合成。Counter&lt;T&gt; 自体は加算専用で
     /// 初期値を設定する API を持たないため、本クラス自身が保持する
@@ -557,6 +583,9 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>スプール末尾破損破棄カウンタの計器そのもの（テスト用。Issue #201）。</summary>
     public Counter<long> SpoolCorruptTailDiscardedCounter => _spoolCorruptTailDiscarded;
+
+    /// <summary>TLS ハンドシェイク失敗カウンタの計器そのもの（テスト用。Issue #137）。</summary>
+    public Counter<long> TlsHandshakeFailureCounter => _tlsHandshakeFailure;
 
     /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
     public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;

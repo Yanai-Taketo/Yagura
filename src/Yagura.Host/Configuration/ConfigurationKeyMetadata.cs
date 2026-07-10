@@ -53,6 +53,15 @@ public static class ConfigurationKeyMetadata
             // M5-1 のレビューで追補した(KnownKeys との整合はテストで機械検証される)。
             ["Ingestion:Tcp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Ingestion:Tcp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
+            // TLS 受信（RFC 5425。opt-in。Issue #137）: §8 表の目標は他の受信系キーと同じ
+            // 「リスナ再構成」だが、現時点の実効は Admin:Https:* と同じ理由（証明書ストア参照・
+            // 秘密鍵アクセス権付与を含む TLS リスナの構築が Program.cs の起動時処理に固定され、
+            // 実行中の付け替え API を持たない）でサービス再起動——CertificateThumbprint は
+            // 秘密鍵アクセス権の再付与を要するため特に無瞬断化の優先度が低い。
+            ["Ingestion:Tls:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Ingestion:Tls:BindAddress"] = ConfigurationReloadEffect.RestartRequired,
+            ["Ingestion:Tls:Port"] = ConfigurationReloadEffect.RestartRequired,
+            ["Ingestion:Tls:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             // RFC 3164 既定タイムゾーン（Issue #134）はソケットの bind を要さず、解析段
             // （ParsingStage/SyslogParser）の解釈だけに影響するため、リスナ再構成は不要——
             // Retention:* と同じ「即時」を目標とする。現時点の実効は他の即時目標キーと同様、

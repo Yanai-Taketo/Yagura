@@ -33,6 +33,13 @@ internal static class YaguraConfigurationOptionsCloner
                     BindAddress = source.Ingestion.Tcp.BindAddress,
                     Port = source.Ingestion.Tcp.Port,
                 },
+                Tls = source.Ingestion.Tls is null ? null : new YaguraConfigurationOptions.IngestionOptions.TlsOptions
+                {
+                    Enabled = source.Ingestion.Tls.Enabled,
+                    BindAddress = source.Ingestion.Tls.BindAddress,
+                    Port = source.Ingestion.Tls.Port,
+                    CertificateThumbprint = source.Ingestion.Tls.CertificateThumbprint,
+                },
                 Rfc3164 = source.Ingestion.Rfc3164 is null ? null : new YaguraConfigurationOptions.IngestionOptions.Rfc3164Options
                 {
                     DefaultTimeZone = source.Ingestion.Rfc3164.DefaultTimeZone,

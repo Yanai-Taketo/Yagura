@@ -381,4 +381,120 @@ public sealed class ForwarderKitBuilderTests
         var preamble = System.Text.Encoding.UTF8.GetPreamble();
         return bytes.Length >= preamble.Length && bytes.AsSpan(0, preamble.Length).SequenceEqual(preamble);
     }
+
+    // ---- TLS 受信（RFC 5425。opt-in。Issue #137） ----
+
+    [Fact]
+    public void Build_ModeTls_WithoutCaCertificate_ConfHasTlsOnAndVerifyOff()
+    {
+        var request = CreateRequest(ForwarderKitMode.Tls, tlsCaCertificatePem: null, port: 6514);
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var conf = ReadEntry(archive, "fluent-bit-yagura.conf");
+
+        // Fluent Bit の out_syslog に Mode = tls は無い(Mode tcp + tls On で有効化する)。
+        Assert.Contains("Mode                tcp", conf);
+        Assert.Contains("tls                 On", conf);
+        Assert.Contains("tls.verify          Off", conf);
+        Assert.DoesNotContain("tls.ca_file", conf);
+        Assert.DoesNotContain("@@", conf);
+        Assert.DoesNotContain(archive.Entries, e => e.FullName == "yagura-tls-ca.pem");
+    }
+
+    [Fact]
+    public void Build_ModeTls_WithCaCertificate_ConfHasVerifyOnAndCaFilePath_AndZipContainsPem()
+    {
+        var request = CreateRequest(ForwarderKitMode.Tls, tlsCaCertificatePem: "-----BEGIN CERTIFICATE-----\nAB==\n-----END CERTIFICATE-----", port: 6514);
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var conf = ReadEntry(archive, "fluent-bit-yagura.conf");
+
+        Assert.Contains("tls                 On", conf);
+        Assert.Contains("tls.verify          On", conf);
+        Assert.Contains("tls.ca_file", conf);
+        Assert.Contains("yagura-tls-ca.pem", conf);
+
+        var pemEntry = archive.GetEntry("yagura-tls-ca.pem");
+        Assert.NotNull(pemEntry);
+        using var pemStream = pemEntry!.Open();
+        using var pemReader = new StreamReader(pemStream, System.Text.Encoding.UTF8);
+        Assert.Equal("-----BEGIN CERTIFICATE-----\nAB==\n-----END CERTIFICATE-----", pemReader.ReadToEnd());
+    }
+
+    [Fact]
+    public void Build_ModeUdp_ConfHasNoTlsConfigLinesAndNoPemEntry()
+    {
+        var request = CreateRequest();
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var conf = ReadEntry(archive, "fluent-bit-yagura.conf");
+
+        // ヘッダのコメントには "TLS" の説明文言が残るため（@@TLS_BLOCK@@ の役割注記）、
+        // 実際に投入される Fluent Bit の設定行（インデント付き "tls" キー）のみを見る。
+        Assert.DoesNotContain("    tls", conf);
+        Assert.DoesNotContain(archive.Entries, e => e.FullName == "yagura-tls-ca.pem");
+    }
+
+    [Fact]
+    public void Build_ModeTcp_GeneratedTxt_DestinationSlugIsTcp()
+    {
+        var request = CreateRequest(ForwarderKitMode.Tcp, tlsCaCertificatePem: null, port: 514);
+
+        var zipBytes = ForwarderKitBuilder.Build(request, GeneratedAt);
+
+        using var archive = OpenArchive(zipBytes);
+        var generatedTxt = ReadEntry(archive, "GENERATED.txt");
+
+        Assert.Contains("Destination: 192.0.2.10:514/tcp", generatedTxt);
+    }
+
+    [Fact]
+    public void Build_ModeTls_GeneratedTxt_DestinationSlugIsTlsAndRecordsCaBundleFlag()
+    {
+        var withPem = CreateRequest(ForwarderKitMode.Tls, tlsCaCertificatePem: "pem-content", port: 6514);
+        var withoutPem = CreateRequest(ForwarderKitMode.Tls, tlsCaCertificatePem: null, port: 6514);
+
+        using var archiveWithPem = OpenArchive(ForwarderKitBuilder.Build(withPem, GeneratedAt));
+        using var archiveWithoutPem = OpenArchive(ForwarderKitBuilder.Build(withoutPem, GeneratedAt));
+
+        var generatedTxtWithPem = ReadEntry(archiveWithPem, "GENERATED.txt");
+        var generatedTxtWithoutPem = ReadEntry(archiveWithoutPem, "GENERATED.txt");
+
+        Assert.Contains("Destination: 192.0.2.10:6514/tls", generatedTxtWithPem);
+        Assert.Contains("Tls-Ca-Certificate-Bundled: true", generatedTxtWithPem);
+        Assert.Contains("Tls-Ca-Certificate-Bundled: false", generatedTxtWithoutPem);
+    }
+
+    [Fact]
+    public void Build_ModeTls_ReadmeEntry_MentionsVerificationState()
+    {
+        var withPem = CreateRequest(ForwarderKitMode.Tls, tlsCaCertificatePem: "pem-content", port: 6514);
+        var withoutPem = CreateRequest(ForwarderKitMode.Tls, tlsCaCertificatePem: null, port: 6514);
+
+        using var archiveWithPem = OpenArchive(ForwarderKitBuilder.Build(withPem, GeneratedAt));
+        using var archiveWithoutPem = OpenArchive(ForwarderKitBuilder.Build(withoutPem, GeneratedAt));
+
+        var readmeWithPem = ReadEntry(archiveWithPem, "README.md");
+        var readmeWithoutPem = ReadEntry(archiveWithoutPem, "README.md");
+
+        Assert.Contains("TLS 検証: 有効", readmeWithPem);
+        Assert.Contains("TLS 検証: 無効", readmeWithoutPem);
+        Assert.DoesNotContain("@@", readmeWithPem);
+        Assert.DoesNotContain("@@", readmeWithoutPem);
+    }
+
+    private static ForwarderKitRequest CreateRequest(ForwarderKitMode mode, string? tlsCaCertificatePem, int port)
+    {
+        var ok = ForwarderKitRequest.TryCreate(
+            "192.0.2.10", port, "System,Application", msiBundle: null,
+            mode, tlsCaCertificatePem, out var request, out _);
+        Assert.True(ok);
+        return request!;
+    }
 }

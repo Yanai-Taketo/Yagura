@@ -45,6 +45,12 @@ public static class YaguraHostEnvironment
     public const string AdminHttpsPortEnvironmentVariable = "YAGURA_ADMIN_HTTPS_PORT";
 
     /// <summary>
+    /// TLS 受信ポート（RFC 5425。opt-in。Issue #137）を上書きする環境変数名。<c>0</c> を指定すると
+    /// OS がポートを採番する（テスト用。他の *_PORT 環境変数と同じ流儀）。
+    /// </summary>
+    public const string IngestionTlsPortEnvironmentVariable = "YAGURA_INGESTION_TLS_PORT";
+
+    /// <summary>
     /// 閲覧 HTTP リスナの既定ポート。
     /// </summary>
     /// <remarks>

@@ -96,4 +96,57 @@ public sealed class ForwarderKitScreenDownloadQueryTests
         // カンマは Uri.EscapeDataString で %2C にエスケープされる。
         Assert.Contains("channels=System%2CApplication%2CSecurity", query);
     }
+
+    // ---- 転送方式（Issue #137） ----
+
+    [Fact]
+    public void BuildDownloadQuery_ModeOmitted_DefaultsToUdpAndOmitsModeParameter()
+    {
+        // 後方互換の固定: mode 未指定（既定引数）は Issue #137 以前と同じクエリ文字列になる。
+        var query = ForwarderKitScreen.BuildDownloadQuery(
+            host: "192.0.2.10",
+            port: 514,
+            channels: ["System"],
+            architecture: ForwarderMsiArchitecture.Win64,
+            includeMsi: false,
+            versionMismatch: false,
+            versionMismatchAcknowledged: false);
+
+        Assert.DoesNotContain("mode=", query);
+    }
+
+    [Theory]
+    [InlineData(ForwarderKitMode.Udp, false)]
+    [InlineData(ForwarderKitMode.Tcp, true)]
+    [InlineData(ForwarderKitMode.Tls, true)]
+    public void BuildDownloadQuery_Mode_IncludedOnlyWhenNonUdp(ForwarderKitMode mode, bool expectModeParameter)
+    {
+        var query = ForwarderKitScreen.BuildDownloadQuery(
+            host: "192.0.2.10",
+            port: 514,
+            channels: ["System"],
+            architecture: ForwarderMsiArchitecture.Win64,
+            includeMsi: false,
+            versionMismatch: false,
+            versionMismatchAcknowledged: false,
+            mode: mode);
+
+        Assert.Equal(expectModeParameter, query.Contains("mode="));
+    }
+
+    [Fact]
+    public void BuildDownloadQuery_ModeTls_QueryContainsModeTls()
+    {
+        var query = ForwarderKitScreen.BuildDownloadQuery(
+            host: "192.0.2.10",
+            port: 6514,
+            channels: ["System"],
+            architecture: ForwarderMsiArchitecture.Win64,
+            includeMsi: false,
+            versionMismatch: false,
+            versionMismatchAcknowledged: false,
+            mode: ForwarderKitMode.Tls);
+
+        Assert.Contains("mode=tls", query);
+    }
 }
