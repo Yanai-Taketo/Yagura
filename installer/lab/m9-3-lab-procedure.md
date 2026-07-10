@@ -393,7 +393,8 @@ Get-Content "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Yagura\Yagura 
 ## H. アップグレード挙動(検証項目 3)
 
 v0.1.0 → v0.1.1 の MajorUpgrade で、(1) yagura.json・SQLite DB・スプールが残ること、
-(2) アップグレード中の受信断区間の長さ、を確認する。
+(2) アップグレード中の受信断区間の長さ、(3) 旧ファイアウォール規則が残存せず新規則に
+置き換わること、を確認する。
 
 ### H-1. 事前状態の記録
 
@@ -404,10 +405,14 @@ Get-FileHash C:\ProgramData\Yagura\yagura.json -Algorithm SHA256
 & $sqlite3 -readonly C:\ProgramData\Yagura\yagura.db "SELECT COUNT(*) FROM LogRecords;"
 Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\* |
     Where-Object DisplayName -eq 'Yagura' | Format-List DisplayName,DisplayVersion
+Get-NetFirewallRule -DisplayName 'Yagura*' | Select-Object Name,DisplayName,Profile,Enabled,Direction,Action
 ```
 
-- 期待結果: DisplayVersion = `0.1.0`。件数・ハッシュが取れる
-- 採取してほしい出力: 上記全部(アップグレード後との比較対象)
+- 期待結果: DisplayVersion = `0.1.0`。件数・ハッシュが取れる。ファイアウォール規則は
+  旧版が作成したもの(Issue #125 修正前のビルドなら 3 規則・Profile=Any、修正後の
+  ビルドなら 3 規則・Profile=Domain+Private 複合)が一覧できる
+- 採取してほしい出力: 上記全部(アップグレード後との比較対象。**規則一覧は Name 列 =
+  規則 Id も含めて採取する**——アップグレード後に旧 Id の規則が消えたことの照合に使う)
 
 ### H-2. 連続送信を流しながらアップグレード
 
@@ -452,10 +457,18 @@ Get-ChildItem C:\ProgramData\Yagura -Recurse | Select-Object FullName,Length,Las
 & $sqlite3 -readonly C:\ProgramData\Yagura\yagura.db "WITH s AS (SELECT CAST(substr(Message,9,6) AS INTEGER) n FROM LogRecords WHERE Message LIKE 'UPG-SEQ-%') SELECT MIN(n) AS first, MAX(n) AS last, COUNT(*) AS received, (MAX(n)-MIN(n)+1)-COUNT(*) AS missing FROM s;"
 & $sqlite3 -readonly C:\ProgramData\Yagura\yagura.db "WITH s AS (SELECT CAST(substr(Message,9,6) AS INTEGER) n FROM LogRecords WHERE Message LIKE 'UPG-SEQ-%') SELECT n+1 AS gap_start FROM s WHERE n+1 NOT IN (SELECT n FROM s) AND n < (SELECT MAX(n) FROM s) LIMIT 20;"
 icacls C:\ProgramData\Yagura    # 参考: アップグレード後も C と同じ ACL のままか
+Get-NetFirewallRule -DisplayName 'Yagura*' | Select-Object Name,DisplayName,Profile,Enabled,Direction,Action
 ```
 
 - 期待結果:
   - DisplayVersion = `0.1.1`・サービス Running・製品エントリは 1 件のみ(旧版が残らない)
+  - **ファイアウォール規則が新版の規則のみに置き換わる(Issue #125)**: H-1 で採取した
+    旧規則が旧設定のまま残っておらず、新ビルドの 3 規則(各系統 1 本・Profile =
+    Domain+Private 複合)のみが存在し、**Profile 列に Any / Public を含む規則が
+    1 件もない**こと。MajorUpgrade の既定 Schedule(afterInstallValidate)は旧製品を
+    全削除してから新製品をインストールするため設計上は旧規則(Profile=Any)も除去される
+    はずだが、これはここで初めて実証される——旧規則が残存した場合は Public 開放が固定化
+    する回帰であり、必ず記録して Issue 化する
   - **yagura.json の SHA256 が H-1 と一致**(設定が保持される)・**yagura.db が同一ファイルの
     まま残り、UPG-SEQ 以前の既存レコード件数を含む**・スプールディレクトリが残る
   - `missing` = アップグレード中に失われた連番数。**受信断 ≒ missing × 0.1 秒**。

@@ -9,7 +9,9 @@
     実行手順(Full モード):
       1. MSI サイレントインストール(msiexec /i /qn。管理者権限が必要)
       2. Windows サービス "Yagura" が Running になるまで待機
-      3. インストール状態の証拠採取(ファイアウォール規則 3 本・データルート・firewall-rules.ini)
+      3. インストール状態の証拠採取(ファイアウォール規則 3 本 = 各系統 1 本・
+         プロファイルが Domain+Private 複合で Public/Any を含まないこと・
+         データルート・firewall-rules.ini)
       4. UDP 514 へ syslog テストメッセージ送出 → 閲覧リスナ(既定 http://localhost:8514/)の
          HTML に RunId トークンが現れることを確認
       5. アンインストール(msiexec /x /qn)
@@ -401,15 +403,30 @@ try {
         # 3. インストール状態の証拠採取
         # -------------------------------------------------------------------
         if ($DryRun) {
-            Add-SkippedStep -Name 'installed-state-evidence' -Reason 'dry-run: would record firewall rules / data root / firewall-rules.ini'
+            Add-SkippedStep -Name 'installed-state-evidence' -Reason 'dry-run: would record firewall rules (incl. Domain/Private profile check) / data root / firewall-rules.ini'
         }
         else {
             [void](Invoke-E2EStep -Name 'installed-state-evidence' -Action {
                 $rules = @(Get-YaguraFirewallRules)
                 $ruleNames = @($rules | ForEach-Object { $_.DisplayName })
+                # 各系統は 1 規則で、プロファイルは Domain + Private の複合(Public/Any を含まない)。
+                # Issue #125 の回帰検知: Profile 属性の欠落 = 既定 Any への逆戻り、および
+                # 同名規則分割による片プロファイル残存(PR #187 で実際に検出した Firewall CA の
+                # Name 衝突上書き)をここで検出する。
                 foreach ($expected in $script:FirewallDisplayNames) {
-                    if ($ruleNames -notcontains $expected) {
+                    $matching = @($rules | Where-Object { $_.DisplayName -eq $expected })
+                    if ($matching.Count -eq 0) {
                         throw ('expected firewall rule missing: {0} (found: {1})' -f $expected, ($ruleNames -join '; '))
+                    }
+                    if ($matching.Count -ne 1) {
+                        throw ('firewall rule "{0}" must be a single rule, found {1}' -f $expected, $matching.Count)
+                    }
+                    # Get-NetFirewallRule の Profile はフラグ列挙。複合時の文字列表現は
+                    # "Domain, Private" のためトークンに分解して集合で比較する。
+                    # @() はパイプライン全体を包む(1 件時のスカラー化対策 — Get-YaguraFirewallRules の注意書きと同じ)。
+                    $profileTokens = @(([string]$matching[0].Profile) -split ',' | ForEach-Object { $_.Trim() } | Sort-Object)
+                    if ($profileTokens.Count -ne 2 -or $profileTokens[0] -ne 'Domain' -or $profileTokens[1] -ne 'Private') {
+                        throw ('firewall rule "{0}" must have profile Domain+Private exactly (Public/Any not allowed - Issue #125), found: "{1}"' -f $expected, ([string]$matching[0].Profile))
                     }
                 }
                 if (-not (Test-Path -Path $script:DataRoot)) {
@@ -419,7 +436,7 @@ try {
                 if (-not (Test-Path -Path $iniPath)) {
                     throw ('firewall-rules.ini not found in data root: {0}' -f $iniPath)
                 }
-                return ('firewall rules present ({0}), data root and firewall-rules.ini present' -f ($ruleNames -join '; '))
+                return ('firewall rules present with Domain+Private profile ({0} rules: {1}), data root and firewall-rules.ini present' -f $rules.Count, ($ruleNames -join '; '))
             })
         }
 
