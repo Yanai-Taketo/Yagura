@@ -20,6 +20,10 @@
       6. 残置物確認(サービス消滅・ファイアウォール規則消滅・スタートメニュー消滅・
          デスクトップショートカット消滅・データルート保持 = 設計どおり。
          installer/README.md の責務表参照)
+      7. 修復(Repair)時の opt-out 記憶の検証(Issue #203。主フローとは独立した
+         専用シーケンス): オプトアウト状態でインストール → プロパティ無指定で修復
+         (msiexec /fa /qn。ARP の「修復」実行時と同じ入力条件)→ オプトアウトが
+         既定値へ戻っていないことを確認 → アンインストール
 
     照合は必ず ASCII トークン(RunId)で行う。日本語本文の照合は en-US CI の
     コードページ(CP437)で文字化けして誤判定するため使用しない(旧リポジトリ PR #42 実障害)。
@@ -85,6 +89,11 @@ $script:Steps = New-Object System.Collections.Generic.List[object]
 $script:Failed = $false
 $script:InstallCompleted = $false
 $script:UninstallCompleted = $false
+# Issue #203 の remember property 検証(手順 7)専用の完了フラグ。主フローの
+# InstallCompleted/UninstallCompleted とは独立して追跡する(2 つの独立した MSI
+# トランザクションであるため)。
+$script:OptOutInstallCompleted = $false
+$script:OptOutUninstallCompleted = $false
 $script:StartedUtc = [DateTime]::UtcNow
 
 if ($DryRun) { $script:Mode = 'DryRun' }
@@ -652,6 +661,91 @@ try {
                 return 'install dir removed'
             })
         }
+
+        # -------------------------------------------------------------------
+        # 7. 修復(Repair)時の opt-out 記憶(remember property)検証(Issue #203)
+        #    上の主フロー(既定 = opt-in)の install/uninstall とは独立した専用シーケンス:
+        #    (a) オプトアウト状態(YAGURA_FIREWALL="" YAGURA_DESKTOP_SHORTCUT="")で
+        #        インストール
+        #    (b) プロパティ無指定で修復(msiexec /fa <msi> /qn)。ARP の「修復」実行時は
+        #        YaguraFirewallDlg / YaguraShortcutDlg を経由しない(WixUI_YaguraInstallDir.wxs
+        #        の設計。ダイアログは「NOT Installed」の初回インストール分岐にのみ挿入)ため、
+        #        この「プロパティ無指定での修復」が実際の ARP 修復と同じ入力条件になる
+        #    (c) オプトアウトが既定値(1)へ戻っていない(規則・ショートカットが復活していない)
+        #        ことを確認する——これが Issue #203 の回帰そのものの検知
+        #    実装(Package.wxs の RegistrySearch + Firewall.wxs/Package.wxs の無条件
+        #    InstallRecord コンポーネント)の正しさを、実機の Get-NetFirewallRule /
+        #    ファイルシステムで直接確認する(WindowsInstaller COM でのテーブル照合では
+        #    実行時の値の上書き有無までは確認できないため)。
+        # -------------------------------------------------------------------
+        if ($DryRun) {
+            Add-SkippedStep -Name 'repair-remember-optout-install' -Reason ('dry-run: would run msiexec /i "{0}" /qn YAGURA_FIREWALL="" YAGURA_DESKTOP_SHORTCUT=""' -f $MsiPath)
+            Add-SkippedStep -Name 'repair-remember-optout-verify-before' -Reason 'dry-run: would assert no Yagura firewall rules and no desktop shortcut'
+            Add-SkippedStep -Name 'repair-remember-optout-repair' -Reason ('dry-run: would run msiexec /fa "{0}" /qn (no properties - simulates ARP Repair)' -f $MsiPath)
+            Add-SkippedStep -Name 'repair-remember-optout-verify-after' -Reason 'dry-run: would assert opt-out still in effect after repair (Issue #203 regression check)'
+            Add-SkippedStep -Name 'repair-remember-optout-cleanup' -Reason 'dry-run: would uninstall'
+        }
+        else {
+            [void](Invoke-E2EStep -Name 'repair-remember-optout-install' -Action {
+                if ($null -ne (Get-YaguraService)) {
+                    throw ('service "{0}" already exists before opt-out install; aborting to avoid polluting the verdict' -f $script:ServiceName)
+                }
+                $msiFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-optout-install.log'
+                $exitCode = Invoke-Msiexec -Description 'opt-out install' -ArgumentString ('/i "{0}" /qn /norestart YAGURA_FIREWALL="" YAGURA_DESKTOP_SHORTCUT="" /l*v "{1}"' -f $msiFull, $msiLog)
+                $script:OptOutInstallCompleted = $true
+                $running = Wait-E2ECondition -TimeoutSec $ServiceStartTimeoutSec -Probe {
+                    $svc = Get-YaguraService
+                    ($null -ne $svc -and $svc.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running)
+                }
+                if (-not $running) {
+                    throw ('service "{0}" did not reach Running after opt-out install' -f $script:ServiceName)
+                }
+                return ('msiexec exit code {0}, service Running (log: msiexec-optout-install.log)' -f $exitCode)
+            })
+
+            [void](Invoke-E2EStep -Name 'repair-remember-optout-verify-before' -Action {
+                $rules = @(Get-YaguraFirewallRules | Where-Object { $script:FirewallDisplayNames -contains $_.DisplayName })
+                if ($rules.Count -ne 0) {
+                    throw ('opt-out install unexpectedly created {0} Yagura firewall rule(s)' -f $rules.Count)
+                }
+                if (Test-Path -Path $script:PublicDesktopShortcut) {
+                    throw ('opt-out install unexpectedly created desktop shortcut: {0}' -f $script:PublicDesktopShortcut)
+                }
+                return 'opt-out honored on fresh install: 0 firewall rules, no desktop shortcut'
+            })
+
+            [void](Invoke-E2EStep -Name 'repair-remember-optout-repair' -Action {
+                $msiFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-optout-repair.log'
+                # /fa: force all files/resources reinstalled, no properties on the command line
+                # (this is the scenario Issue #203 reports: no dialogs, no property overrides).
+                $exitCode = Invoke-Msiexec -Description 'repair (no properties)' -ArgumentString ('/fa "{0}" /qn /norestart /l*v "{1}"' -f $msiFull, $msiLog)
+                return ('msiexec exit code {0} (log: msiexec-optout-repair.log)' -f $exitCode)
+            })
+
+            [void](Invoke-E2EStep -Name 'repair-remember-optout-verify-after' -Action {
+                $rules = @(Get-YaguraFirewallRules | Where-Object { $script:FirewallDisplayNames -contains $_.DisplayName })
+                if ($rules.Count -ne 0) {
+                    throw ('Issue #203 regression: repair with no properties recreated {0} Yagura firewall rule(s) despite the initial opt-out (YAGURA_FIREWALL should have been remembered as empty)' -f $rules.Count)
+                }
+                if (Test-Path -Path $script:PublicDesktopShortcut) {
+                    throw ('Issue #203 regression: repair with no properties recreated the desktop shortcut despite the initial opt-out (YAGURA_DESKTOP_SHORTCUT should have been remembered as empty): {0}' -f $script:PublicDesktopShortcut)
+                }
+                return 'opt-out survived repair with no properties: 0 firewall rules, no desktop shortcut (Issue #203 fixed)'
+            })
+
+            [void](Invoke-E2EStep -Name 'repair-remember-optout-cleanup' -ContinueOnFailure $true -Action {
+                if (-not $script:OptOutInstallCompleted) {
+                    return 'nothing to clean up (install step did not complete)'
+                }
+                $msiFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-optout-uninstall.log'
+                $exitCode = Invoke-Msiexec -Description 'opt-out cleanup uninstall' -ArgumentString ('/x "{0}" /qn /norestart /l*v "{1}"' -f $msiFull, $msiLog)
+                $script:OptOutUninstallCompleted = $true
+                return ('msiexec exit code {0} (log: msiexec-optout-uninstall.log)' -f $exitCode)
+            })
+        }
     }
 }
 catch {
@@ -670,7 +764,12 @@ catch {
 finally {
     # 失敗時の後片付け: インストール済みのままなら CI ランナー/lab を汚さないよう
     # アンインストールを試みる(結果は cleanup ステップとして記録するが合否には含めない)。
-    if ($script:InstallCompleted -and -not $script:UninstallCompleted) {
+    # 手順 7(Issue #203 の remember property 検証)のオプトアウトインストールが
+    # 完了未清掃のまま例外で中断した場合もここで拾う(同じ製品を対象とするため
+    # $script:InstallCompleted 側と競合しないよう、いずれかが未清掃なら試みる)。
+    $leftoverInstall = ($script:InstallCompleted -and -not $script:UninstallCompleted) -or
+        ($script:OptOutInstallCompleted -and -not $script:OptOutUninstallCompleted)
+    if ($leftoverInstall) {
         try {
             Write-E2ELog 'cleanup: attempting uninstall of leftover install'
             $msiFull = (Resolve-Path -Path $MsiPath).Path
