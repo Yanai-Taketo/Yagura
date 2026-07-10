@@ -277,10 +277,16 @@ public sealed class LogSearchCsvExportEndpointTests
         public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default)
             => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default)
             => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
 
         public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
+
+        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
+
+        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
             => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
     }
 }
