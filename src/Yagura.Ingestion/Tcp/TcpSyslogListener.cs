@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.FlowControl;
+using Yagura.Ingestion.Net;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 
@@ -72,6 +73,15 @@ namespace Yagura.Ingestion.Tcp;
 /// <see cref="IngestionMetrics.RecordTcpConnectionClosed"/> を 1 件計上する（損失ではなく
 /// 解釈の手がかり。アイドルタイムアウト由来の切断はこれに加えて専用カウンタも計上する）。
 /// </para>
+/// <para>
+/// <b>IPv4/IPv6 デュアルスタック受信（Issue #133）</b>: <see cref="TcpSyslogListenerOptions.BindAddress"/>
+/// が IPv6 ワイルドカード（<c>::</c>。既定値）のときは、<see cref="Socket.DualMode"/> を有効にした
+/// 単一ソケットで bind し、IPv4・IPv6 双方からの接続を受け付ける（<see cref="DualStackBindAddress"/>
+/// 参照）。DualMode ソケットが受ける IPv4 由来の接続は <c>RemoteEndPoint.Address</c> が
+/// IPv4-mapped IPv6（<c>::ffff:x.x.x.x</c>）として現れるため、<see cref="RawDatagram.SourceAddress"/>
+/// へ書き込む前に <see cref="DualStackBindAddress.NormalizeSourceAddress"/> で純粋な IPv4 表現へ
+/// 正規化する（UDP 側・ADR-0007 決定 2 と同じ規約）。
+/// </para>
 /// </remarks>
 public sealed class TcpSyslogListener : IAsyncDisposable
 {
@@ -131,15 +141,99 @@ public sealed class TcpSyslogListener : IAsyncDisposable
             throw new InvalidOperationException("TcpSyslogListener は既に開始されている。");
         }
 
-        var endpoint = new IPEndPoint(IPAddress.Parse(_options.BindAddress), _options.Port);
-        _tcpListener = new TcpListener(endpoint);
-        _tcpListener.Start();
+        var bindAddress = IPAddress.Parse(_options.BindAddress);
+        if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
+        {
+            _tcpListener = CreateDualModeTcpListenerOrFallBack();
+        }
+        else
+        {
+            // 明示的な 0.0.0.0（IPv4 のみ）・特定の IPv4/IPv6 アドレス指定は、
+            // 従来どおりそのアドレスファミリ単独のソケットで bind する。
+            _tcpListener = new TcpListener(bindAddress, _options.Port);
+            _tcpListener.Start();
+        }
+
         BoundPort = ((IPEndPoint)_tcpListener.LocalEndpoint).Port;
 
         _stoppingCts = new CancellationTokenSource();
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_stoppingCts.Token), CancellationToken.None);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// IPv6 ワイルドカード（<c>::</c>）向けの DualMode リスナを作成し <c>Start()</c> まで行う。
+    /// IPv6 スタックが無効な環境（PR #193 レビュー指摘 Major）の分岐は UDP 側
+    /// （<c>UdpSyslogListener.CreateDualModeUdpClientOrFallBack</c>）と対称:
+    /// 既定値（<see cref="TcpSyslogListenerOptions.BindAddressIsExplicit"/> = <c>false</c>）なら
+    /// IPv4 ワイルドカードへ自動縮小して警告ログを出し、明示指定なら復旧手順を含むエラーで
+    /// 起動を失敗させる。
+    /// </summary>
+    private TcpListener CreateDualModeTcpListenerOrFallBack()
+    {
+        // 事前チェック: OS が IPv6 を提供しない環境ではソケット作成の実試行を待たずに分岐する。
+        if (!Socket.OSSupportsIPv6)
+        {
+            return HandleIPv6Unavailable(socketException: null);
+        }
+
+        TcpListener? listener = null;
+        try
+        {
+            listener = new TcpListener(IPAddress.IPv6Any, _options.Port);
+
+            // DualMode ソケット（Issue #133）。TcpListener.Server は Start() 前であれば
+            // 直接設定できる（.NET の確立されたパターン——Kestrel 側の同種の扱いは
+            // Yagura.Host.ListenerBindPlan の remarks 参照）。
+            listener.Server.DualMode = true;
+            listener.Start();
+            return listener;
+        }
+        catch (SocketException ex)
+        {
+            listener?.Dispose();
+
+            // 縮小の対象は「IPv6 が使えない」場合のみ。ポート競合（AddressInUse）等の
+            // 別要因を IPv4 縮小で握り潰すと、ポート事故が黙って「IPv4 のみ受信」に化ける
+            // （DualStackBindAddress の remarks）。
+            if (ex.SocketErrorCode != SocketError.AddressFamilyNotSupported)
+            {
+                throw;
+            }
+
+            return HandleIPv6Unavailable(ex);
+        }
+        catch
+        {
+            listener?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// IPv6 不可（事前チェックまたは bind 実試行での確定）時の分岐: 既定値なら IPv4 縮小、
+    /// 明示指定なら fail-fast（UDP 側と対称）。
+    /// </summary>
+    private TcpListener HandleIPv6Unavailable(SocketException? socketException)
+    {
+        if (_options.BindAddressIsExplicit)
+        {
+            throw new InvalidOperationException(
+                DualStackBindAddress.BuildExplicitIPv6WildcardUnavailableMessage(),
+                socketException);
+        }
+
+        // 警告はイベントログに届くレベル（Warning）で出す——既定構成の縮小は無言にしない。
+        _logger?.LogWarning(
+            socketException,
+            "この環境では IPv6 が利用できないため、TCP 受信リスナは既定の '::'（IPv4/IPv6 両受信）" +
+            "ではなく IPv4 のみ（0.0.0.0）で受信します。IPv6 の syslog を受信する必要がある場合は" +
+            " OS の IPv6 スタックを有効化してください。");
+
+        var fallback = new TcpListener(IPAddress.Any, _options.Port);
+        fallback.Start();
+        return fallback;
     }
 
     /// <summary>
@@ -228,7 +322,10 @@ public sealed class TcpSyslogListener : IAsyncDisposable
     private async Task HandleConnectionAsync(TcpClient client, CancellationToken stoppingToken)
     {
         var remoteEndPoint = client.Client.RemoteEndPoint as IPEndPoint;
-        var sourceAddress = remoteEndPoint?.Address.ToString() ?? "unknown";
+        // DualMode ソケットが受けた IPv4 接続は ::ffff:x.x.x.x として現れるため正規化する
+        // （Issue #133。DualStackBindAddress の remarks 参照）。
+        var remoteAddress = remoteEndPoint is null ? null : DualStackBindAddress.NormalizeSourceAddress(remoteEndPoint.Address);
+        var sourceAddress = remoteAddress?.ToString() ?? "unknown";
         var sourcePort = remoteEndPoint?.Port ?? 0;
 
         var decoder = new TcpFrameDecoder(new TcpFrameDecoderOptions
@@ -388,7 +485,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
 
                     foreach (var message in messages)
                     {
-                        if (!_ingressGate.ShouldAdmit(remoteEndPoint?.Address ?? IPAddress.None, message))
+                        if (!_ingressGate.ShouldAdmit(remoteAddress ?? IPAddress.None, message))
                         {
                             // 挿入点のみ（architecture.md §3.3）。UDP 側と同じく計上の枠を設ける
                             // （M4-4。v0.1 の NoopIngressGate ではこの分岐に到達しない）。

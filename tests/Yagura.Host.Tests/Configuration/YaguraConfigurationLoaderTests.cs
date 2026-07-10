@@ -70,6 +70,10 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         Assert.Equal("yagura.db", result.Configuration.SqliteFileName);
         Assert.Empty(result.Warnings);
         Assert.Empty(result.UnknownKeys);
+
+        // bind アドレスは既定値のまま = 非明示（IPv6 不可の環境で IPv4 縮小が許される側。PR #193）。
+        Assert.False(result.Configuration.UdpBindAddressIsExplicit);
+        Assert.False(result.Configuration.TcpBindAddressIsExplicit);
     }
 
     // ------------------------------------------------------------------
@@ -765,8 +769,10 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     [Fact]
-    public void Load_UdpBindAddressAllInterfaces_IsAcceptedAsDefault()
+    public void Load_UdpBindAddressIPv4Wildcard_IsAccepted()
     {
+        // 0.0.0.0 の明示指定は「IPv4 専用」の後方互換の逃げ道として引き続き正当な値
+        // （Issue #133。configuration.md §4.1——意味づけの解釈は受信段が行う）。
         WriteConfigurationFile("""{ "Ingestion": { "Udp": { "BindAddress": "0.0.0.0" } } }""");
         var logger = new FakeLogger();
 
@@ -774,6 +780,23 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Equal("0.0.0.0", result.Configuration.UdpBindAddress);
         Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_UdpBindAddressIPv6Wildcard_IsAccepted()
+    {
+        // :: の明示指定 = 既定と同じ DualMode（IPv4/IPv6 両受信）。Issue #133。
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "BindAddress": "::" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("::", result.Configuration.UdpBindAddress);
+        Assert.Empty(result.Warnings);
+
+        // 明示指定フラグが立つ——IPv6 不可の環境では IPv4 へ縮小せず fail-fast する側（PR #193）。
+        Assert.True(result.Configuration.UdpBindAddressIsExplicit);
+        Assert.False(result.Configuration.TcpBindAddressIsExplicit);
     }
 
     [Fact]
@@ -806,8 +829,9 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     [Fact]
-    public void Load_TcpBindAddressAllInterfaces_IsAcceptedAsDefault()
+    public void Load_TcpBindAddressIPv4Wildcard_IsAccepted()
     {
+        // UDP 側と同じ後方互換の逃げ道（Issue #133）。
         WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "BindAddress": "0.0.0.0" } } }""");
         var logger = new FakeLogger();
 
@@ -815,6 +839,22 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Equal("0.0.0.0", result.Configuration.TcpBindAddress);
         Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_TcpBindAddressIPv6Wildcard_IsAccepted()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "Tcp": { "BindAddress": "::" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("::", result.Configuration.TcpBindAddress);
+        Assert.Empty(result.Warnings);
+
+        // 明示指定フラグが立つ——IPv6 不可の環境では IPv4 へ縮小せず fail-fast する側（PR #193）。
+        Assert.True(result.Configuration.TcpBindAddressIsExplicit);
+        Assert.False(result.Configuration.UdpBindAddressIsExplicit);
     }
 
     // ------------------------------------------------------------------

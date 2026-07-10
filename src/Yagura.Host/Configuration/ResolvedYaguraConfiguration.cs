@@ -72,4 +72,19 @@ public sealed record ResolvedYaguraConfiguration(
     int? RetentionDays,
     TimeOnly RetentionExecutionTimeOfDay,
     StorageProvider StorageProvider,
-    string? SqlServerConnectionString);
+    string? SqlServerConnectionString)
+{
+    /// <summary>
+    /// <see cref="UdpBindAddress"/> が設定ファイルで明示指定された値か（<c>false</c> = 既定値。
+    /// PR #193 レビュー対応）。IPv6 スタックが無効な環境で、既定の <c>::</c> は IPv4 のみへ
+    /// 自動縮小して起動を継続するが、明示指定の <c>::</c> は縮小せず起動失敗にする——
+    /// この分岐の入力（<c>UdpSyslogListenerOptions.BindAddressIsExplicit</c> 参照）。
+    /// </summary>
+    public bool UdpBindAddressIsExplicit { get; init; }
+
+    /// <summary>
+    /// <see cref="TcpBindAddress"/> が設定ファイルで明示指定された値か（意味づけは
+    /// <see cref="UdpBindAddressIsExplicit"/> と同一）。
+    /// </summary>
+    public bool TcpBindAddressIsExplicit { get; init; }
+}

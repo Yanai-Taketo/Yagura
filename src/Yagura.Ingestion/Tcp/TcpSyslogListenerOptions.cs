@@ -9,8 +9,13 @@
 /// </remarks>
 public sealed class TcpSyslogListenerOptions
 {
-    /// <summary>既定の bind アドレス（すべてのインターフェース）。UDP と同じ既定に揃える。</summary>
-    public const string DefaultBindAddress = "0.0.0.0";
+    /// <summary>
+    /// 既定の bind アドレス。UDP と同じ既定に揃える——<c>::</c>（IPv6 ワイルドカード）を DualMode
+    /// ソケットで bind し、IPv4・IPv6 の両方を単一ソケットで受信する（Issue #133。
+    /// <see cref="TcpSyslogListener"/> の remarks・<see cref="Yagura.Ingestion.Net.DualStackBindAddress"/>
+    /// 参照）。<c>0.0.0.0</c> を明示指定すると IPv4 のみに縮小される（後方互換の逃げ道）。
+    /// </summary>
+    public const string DefaultBindAddress = "::";
 
     /// <summary>syslog の既定 TCP ポート（RFC 6587 は UDP と同じ 514 番を前提とする実装が一般的）。</summary>
     public const int DefaultPort = 514;
@@ -64,6 +69,13 @@ public sealed class TcpSyslogListenerOptions
 
     /// <summary>bind するアドレス。既定は <see cref="DefaultBindAddress"/>。</summary>
     public string BindAddress { get; init; } = DefaultBindAddress;
+
+    /// <summary>
+    /// <see cref="BindAddress"/> が設定で明示指定された値か（<c>false</c> = 既定値のまま）。
+    /// 意味づけは <see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.BindAddressIsExplicit"/>
+    /// と同一（IPv6 不可時: 既定は IPv4 へ自動縮小 / 明示は fail-fast。PR #193 レビュー対応）。
+    /// </summary>
+    public bool BindAddressIsExplicit { get; init; }
 
     /// <summary>
     /// bind するポート。既定は <see cref="DefaultPort"/>。

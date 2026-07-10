@@ -25,6 +25,12 @@
         受け付けるため、YaguraFwProfile=3(= 0x1 DOMAIN | 0x2 PRIVATE)で
         1 規則を Domain+Private の複合プロファイルにできる。プロパティ名を小文字混じり
         (private property)にして msiexec コマンドラインからの上書きを不可にしている
+  - IPv4/IPv6 の両方に適用される(Issue #133 のデュアルスタック受信に追加の規則は不要):
+    本規則は Port/Protocol/Program/Profile のみを指定し、アドレススコープ
+    (LocalAddress/RemoteAddress)を持たない。この形の規則のアドレスフィルタは
+    LocalAddress=Any / RemoteAddress=Any になり、アドレスファミリを制限しない
+    (実機確認 2026-07-10: 同形の規則を New-NetFirewallRule で作成し
+    Get-NetFirewallAddressFilter で Any/Any を確認)
   - YAGURA_FIREWALL=1 のときのみ規則コンポーネントをインストール(オプトアウト可)
   - 選択(YAGURA_FIREWALL の値)と作成した規則の一覧をデータルート直下の
     firewall-rules.ini に記録する。初回起動時のイベントログ転記(security.md §4.1)は
