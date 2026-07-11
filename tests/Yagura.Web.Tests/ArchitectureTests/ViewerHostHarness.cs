@@ -284,6 +284,9 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
+        public Task<Yagura.Abstractions.Administration.SetupWizardSnapshot> GoBackAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
         public Task<Yagura.Abstractions.Administration.SetupWizardApplyResult> ApplyAsync(
             string idempotencyToken,
             string? operatorAddress = null,

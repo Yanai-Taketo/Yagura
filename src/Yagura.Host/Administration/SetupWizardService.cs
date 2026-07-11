@@ -136,6 +136,38 @@ public sealed class SetupWizardService : ISetupWizardService
     }
 
     /// <inheritdoc/>
+    public Task<SetupWizardSnapshot> GoBackAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            if (_appliedResult is not null)
+            {
+                throw new WizardValidationException("設定は既に保存済みです。変更はやり直しではなく設定変更として行ってください。");
+            }
+
+            if (_confirmedSteps.Count == 0)
+            {
+                throw new WizardValidationException("最初のステップのため、これ以上前へは戻れません。");
+            }
+
+            // 最後に確定したステップの確定を取り消し、そのステップへ戻る（NextStep がそこへ戻る）。
+            // 入力値（_values）は保持する——戻り先フォームに再表示して再編集できるようにするため。
+            var lastConfirmed = _confirmedSteps[^1];
+            _confirmedSteps.RemoveAt(_confirmedSteps.Count - 1);
+
+            // 確認ステップを取り消す場合は、発行済みの適用用トークンと読み込み済みスナップショットも破棄する
+            // （前ステップの値が変わり得るため、確認〔読み込み → トークン発行〕を再度やり直す）。
+            if (lastConfirmed == SetupWizardStep.Review)
+            {
+                _reviewSnapshot = null;
+                _applyToken = null;
+            }
+
+            return Task.FromResult(BuildSnapshot());
+        }
+    }
+
+    /// <inheritdoc/>
     public async Task<SetupWizardApplyResult> ApplyAsync(
         string idempotencyToken,
         string? operatorAddress = null,

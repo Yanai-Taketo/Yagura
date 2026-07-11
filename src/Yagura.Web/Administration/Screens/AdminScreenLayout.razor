@@ -109,8 +109,18 @@
             AdminAuthenticationExtensions.IsWindowsAdministrator(user) ||
             AdminAuthenticationExtensions.IsAppAuthenticated(user);
 
+        // loopback 帰属の判定は _access（Decide）と同じ根拠に揃える（issue #242 の回帰の修正）:
+        // SSR/prerender（HttpContext あり）は circuit 未確立で CircuitContext.IsLoopbackListener が
+        // null のため、接続の実ローカルポート（IsLoopbackAdminConnection——管理 loopback ポートか）で
+        // 判定する。対話的描画（HttpContext == null）では circuit 確立時に束縛した帰属を使う。
+        // リモート HTTPS ポート経由は IsLoopbackAdminConnection が false を返すため「リモートは常に
+        // 認証必須」（ADR-0010 Phase 2・決定 1）はそのまま保たれる。
+        var isLoopbackListener = HttpContext is not null
+            ? AdminAuthenticationExtensions.IsLoopbackAdminConnection(HttpContext)
+            : CircuitContext.IsLoopbackListener;
+
         _authenticationSatisfied = AdminScreenAccessPolicy.IsAuthenticationSatisfied(
-            AuthOptions.RequireAuthentication, CircuitContext.IsLoopbackListener, isLoginRoute, isAuthorizedUser);
+            AuthOptions.RequireAuthentication, isLoopbackListener, isLoginRoute, isAuthorizedUser);
 
         if (!_authenticationSatisfied)
         {

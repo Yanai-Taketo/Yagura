@@ -59,7 +59,15 @@ else
                 break;
             case SetupWizardStep.ViewerAccess:
                 <YaguraTextField Label="閲覧ポート" Required="true" @bind-Value="_viewerPort" />
-                <YaguraTextField Label="公開範囲（Lan または LocalhostOnly）" Required="true" @bind-Value="_publicAccess" />
+                @* 公開範囲は 2 値（Lan / LocalhostOnly）のため自由入力ではなく選択式にする
+                   （誤入力防止。Issue #241 由来のオーナー指摘）。 *@
+                <div class="mt-2">
+                    <MudText Typo="Typo.body2">公開範囲</MudText>
+                    <MudRadioGroup T="string" @bind-Value="_publicAccess">
+                        <MudRadio T="string" Value="@("Lan")" Color="Color.Primary">LAN に公開（同一ネットワークの端末から閲覧できる）</MudRadio>
+                        <MudRadio T="string" Value="@("LocalhostOnly")" Color="Color.Primary">このサーバ自身のみ（localhost 限定）</MudRadio>
+                    </MudRadioGroup>
+                </div>
                 <YaguraTextField Label="管理ポート" Required="true" @bind-Value="_adminPort" />
                 break;
             case SetupWizardStep.Retention:
@@ -79,6 +87,11 @@ else
         }
 
         <div class="mt-4">
+            @* 前ステップへ戻る導線（確定済みステップがある = 最初のステップではない場合のみ。オーナー指摘）。 *@
+            @if (_snapshot.ConfirmedSteps.Count > 0)
+            {
+                <MudButton Variant="Variant.Text" OnClick="GoBackAsync" Class="mr-2">戻る</MudButton>
+            }
             @if (_snapshot.NextStep == SetupWizardStep.Review && _snapshot.ApplyIdempotencyToken is not null)
             {
                 <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ApplyAsync">@UiText.WizardApply</YaguraButton>
@@ -111,6 +124,47 @@ else
         {
             _resultMessage = UiText.WizardApplied;
         }
+
+        // 再開時（confirmed 済みステップがある）は確定済みの入力値をフォームへ復元する
+        // （既定値の空フォームに戻さない。configuration.md §7 の趣旨。戻る導線とも一貫させる）。
+        SyncFieldsFromSnapshot();
+    }
+
+    private async Task GoBackAsync()
+    {
+        if (_snapshot is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _errorText = null;
+            _snapshot = await SetupWizard.GoBackAsync();
+            // 戻り先ステップの確定済み入力値をフォームへ復元して再編集できるようにする。
+            SyncFieldsFromSnapshot();
+        }
+        catch (WizardValidationException ex)
+        {
+            _errorText = ex.Message;
+        }
+    }
+
+    /// <summary>確定済みの入力値（サーバ側セッション）をフォームの各フィールドへ復元する。</summary>
+    private void SyncFieldsFromSnapshot()
+    {
+        if (_snapshot is null)
+        {
+            return;
+        }
+
+        var values = _snapshot.ConfirmedValues;
+        if (values.TryGetValue(SetupWizardValueKeys.UdpPort, out var udpPort)) { _udpPort = udpPort; }
+        if (values.TryGetValue(SetupWizardValueKeys.TcpPort, out var tcpPort)) { _tcpPort = tcpPort; }
+        if (values.TryGetValue(SetupWizardValueKeys.ViewerHttpPort, out var viewerPort)) { _viewerPort = viewerPort; }
+        if (values.TryGetValue(SetupWizardValueKeys.ViewerPublicAccess, out var publicAccess)) { _publicAccess = publicAccess; }
+        if (values.TryGetValue(SetupWizardValueKeys.AdminHttpPort, out var adminPort)) { _adminPort = adminPort; }
+        if (values.TryGetValue(SetupWizardValueKeys.RetentionDays, out var retentionDays)) { _retentionDays = retentionDays; }
     }
 
     private static string StepTitle(SetupWizardStep step) => step switch
