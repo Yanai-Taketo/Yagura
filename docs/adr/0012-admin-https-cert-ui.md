@@ -1,6 +1,6 @@
 # ADR-0012: 管理リモート HTTPS の証明書選択の UI 設定化
 
-- 状態: proposed
+- 状態: accepted（2026-07-11 マージ）
 - 日付: 2026-07-11
 - 決定者: YANAI Taketo（予定）
 - 関連: [ADR-0010](0010-admin-ui-authentication.md)（管理 UI 認証・リモート管理の解禁。本 ADR は決定 1・決定 4 が確定した「認証必須・HTTPS 必須で解禁されるリモートバインド」の**設定手段**を、`yagura.json` 手編集から管理 UI へ拡張する——ただし決定 1・決定 4 のどの記述も偽にはならないため supersession ではなく独立 ADR。委任事項 15 の CF-5 依存を本 ADR が引き継ぐ）/ [ADR-0003](0003-ui-policy.md)（Blazor Interactive Server 単一モード。新規画面も同方式）/ [ADR-0002](0002-architecture-principles.md) 決定 5（設定ファイル手編集は常に可能——本 ADR は手編集を禁止せず、UI を「既定の設定手段」にする。復旧経路としての手編集は残す）/ [ADR-0004](0004-security-model.md) 決定 2・3（リモート管理は認証 + HTTPS 有効化時に開放。信頼ネットワーク前提 + opt-in 強化）/ [docs/design/architecture.md](../design/architecture.md) §1.1（UI は Host アセンブリを参照できない・UI 用の抽象は `Yagura.Abstractions` に置く参照構造）/ [docs/design/configuration.md](../design/configuration.md) §6・§8（証明書の取り扱い・確定済み設定キー一覧）/ [docs/design/security.md](../design/security.md) §4.3（監査イベント ID の採番）/ Issue #241（起案元。5 ペルソナレビューとオーナー裁定 2026-07-11 を PR/Issue 上に保存）
