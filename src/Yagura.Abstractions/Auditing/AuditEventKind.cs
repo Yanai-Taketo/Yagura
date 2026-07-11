@@ -107,6 +107,19 @@ public enum AuditEventKind
     AdminLoginSucceeded,
 
     /// <summary>
+    /// 拒否・セキュリティ事象: 認証には成功したが管理者権限がないため管理 UI へのアクセスを拒否
+    /// （Windows 統合認証で認証は成立したが <c>BUILTIN\Administrators</c> に所属していない等。
+    /// イベント ID 3006。issue #237）。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
+    /// </summary>
+    /// <remarks>
+    /// <b><see cref="WindowsAuthenticationHandshakeFailed"/>（3003）とは別事象</b>: 3003 は
+    /// プロトコルレベルの握手失敗（トークン不正・SPN 不一致等——認証が成立していない）を表す。
+    /// 本種別は「認証は成立したが認可で拒否された」を表し、名（握手失敗）と実（認証成功）の乖離を避け、
+    /// 運用者が Kind だけで両者を切り分けられるようにする（Detail 文字列一致に頼らせない。issue #237）。
+    /// </remarks>
+    AdminAuthorizationDenied,
+
+    /// <summary>
     /// 管理操作: 管理リスナ HTTPS 証明書の秘密鍵読み取り権限をサービスアカウントへ付与
     /// （ADR-0010 Phase 2 決定 4。イベント ID 2009）。記録内容は証明書拇印・付与先アカウントのみ。
     /// </summary>

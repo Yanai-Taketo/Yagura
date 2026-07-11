@@ -84,4 +84,10 @@ public static class AuditEventIds
     /// 個別事象が存在しないため（PR #217 レビューの決着。明示的な解除操作の実装時に採番する）。
     /// </summary>
     public static readonly EventId AdminAccountLockedOut = new(3005, "AdminAccountLockedOut");
+
+    /// <summary>
+    /// 認証成功後の認可拒否（管理者権限なし。ADR-0010 決定 6・issue #237）。レベルは警告。
+    /// プロトコル握手失敗（<see cref="WindowsAuthenticationHandshakeFailed"/>=3003）とは別事象として分離する。
+    /// </summary>
+    public static readonly EventId AdminAuthorizationDenied = new(3006, "AdminAuthorizationDenied");
 }

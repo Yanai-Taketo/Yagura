@@ -69,9 +69,12 @@ internal static class AdminAuthEndpoints
                 // チャレンジで止まる——[Authorize] の効果）が、BUILTIN\Administrators では
                 // ない。「認証されている」ことと「管理権限を持つ」ことを混同しない
                 // （ADR-0010 決定 5 が却下した選択肢 (c)）——監査記録のうえで拒否する。
+                // 事象種別は AdminAuthorizationDenied（3006）: 認証は成立しているため、握手失敗
+                // （WindowsAuthenticationHandshakeFailed=3003）とは別 Kind で記録し、運用者が Kind だけで
+                // 「握手失敗」と「認証成功だが権限不足」を切り分けられるようにする（issue #237）。
                 await auditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: timeProvider.GetUtcNow(),
-                    Kind: AuditEventKind.WindowsAuthenticationHandshakeFailed,
+                    Kind: AuditEventKind.AdminAuthorizationDenied,
                     RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
                     RemotePort: context.Connection.RemotePort,
                     AttemptedPath: context.Request.Path,

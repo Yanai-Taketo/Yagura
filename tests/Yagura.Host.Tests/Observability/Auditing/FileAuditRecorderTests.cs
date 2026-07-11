@@ -103,6 +103,7 @@ public sealed class FileAuditRecorderTests : IDisposable
     [InlineData(AuditEventKind.PromotionExecuted, 2003, "本番昇格を実行")]
     [InlineData(AuditEventKind.CircuitDisconnected, 2004, "circuit を切断")]
     [InlineData(AuditEventKind.CircuitOriginRejected, 3002, "circuit 確立要求の origin 検証で拒否")]
+    [InlineData(AuditEventKind.AdminAuthorizationDenied, 3006, "認証成功後に管理者権限がなくアクセスを拒否")]
     public async Task RecordAsync_EventLogMessage_UsesJapaneseDescriptionAndPreservesEventId(
         AuditEventKind kind,
         int expectedEventId,
