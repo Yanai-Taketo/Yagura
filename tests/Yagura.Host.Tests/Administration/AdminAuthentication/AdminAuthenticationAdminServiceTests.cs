@@ -11,6 +11,8 @@ namespace Yagura.Host.Tests.Administration.AdminAuthentication;
 /// </summary>
 public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
 {
+    private static readonly AdminAuthAttemptContext LoopbackContext = new(System.Net.IPAddress.Loopback, IsLoopback: true);
+
     private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-authadmin-test-{Guid.NewGuid():N}");
     private readonly string _databasePath;
     private SqliteAdminAccountStore _accountStore = null!;
@@ -112,7 +114,8 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         Assert.Equal("True", snapshot.Options.Admin?.Authentication?.App?.Enabled);
 
         // アカウントで実際に認証できること。
-        var outcome = await _appAuthService.TryAuthenticateAsync("admin1", "correct-horse-battery-staple");
+        var outcome = await _appAuthService.TryAuthenticateAsync(
+            "admin1", "correct-horse-battery-staple", LoopbackContext);
         Assert.Equal(Yagura.Abstractions.Administration.AppAuthenticationResult.Success, outcome.Result);
 
         // 監査記録(2006 設定変更 + 2007 アカウント作成)——「誰が」欄（AuthenticationScheme/
@@ -180,11 +183,47 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
 
         Assert.True(status.HasAppAccount);
 
-        var withOld = await _appAuthService.TryAuthenticateAsync("admin1", "first-password");
-        var withNew = await _appAuthService.TryAuthenticateAsync("admin1", "second-password");
+        var withOld = await _appAuthService.TryAuthenticateAsync("admin1", "first-password", LoopbackContext);
+        var withNew = await _appAuthService.TryAuthenticateAsync("admin1", "second-password", LoopbackContext);
 
         Assert.Equal(Yagura.Abstractions.Administration.AppAuthenticationResult.InvalidCredentials, withOld.Result);
         Assert.Equal(Yagura.Abstractions.Administration.AppAuthenticationResult.Success, withNew.Result);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_WeakPassword_ThrowsValidationException_WrappingPasswordPolicyViolation()
+    {
+        // ADR-0011 決定 7: AppAdminAuthenticationService.SetAccountAsync のパスワード強度検証
+        // （AdminPasswordPolicyViolationException）は、ウィザード画面が既に扱う
+        // WizardValidationException（sealed のためラップ）へ変換される。
+        var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
+            _service.ConfigureAsync(
+                windowsAuthEnabled: false,
+                kerberosOnly: false,
+                appAuthEnabled: true,
+                requireForLoopback: false,
+                newAppUsername: "admin1",
+                newAppPassword: "short"));
+
+        Assert.Contains("12 文字以上", exception.Message);
+
+        // アカウントは作成されていないこと（検証失敗時に部分的な状態を残さない）。
+        Assert.False(await _accountStore.HasAnyAccountAsync());
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_BlocklistedPassword_ThrowsValidationException()
+    {
+        var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
+            _service.ConfigureAsync(
+                windowsAuthEnabled: false,
+                kerberosOnly: false,
+                appAuthEnabled: true,
+                requireForLoopback: false,
+                newAppUsername: "admin1",
+                newAppPassword: "000000000000"));
+
+        Assert.Contains("ブロックリスト", exception.Message);
     }
 
     [Fact]

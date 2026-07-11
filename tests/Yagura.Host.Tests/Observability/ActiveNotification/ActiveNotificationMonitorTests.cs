@@ -862,6 +862,57 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // アプリ独自認証の三層防御の能動通知への昇格（ADR-0011 決定 6。EventId 1019）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateOnce_AdminAuthBackoffCapReachedBeyondThreshold_LogsEscalationWarning()
+    {
+        var collector = new FakeLogCollector();
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
+        var defense = new Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense(timeProvider);
+
+        // cap に到達するまで十分な回数失敗させ、cap 到達状態のまま昇格閾値を超えて時間を進める。
+        for (var i = 0; i < Yagura.Host.Administration.AdminAuthenticationDefaults.BackoffThreshold + 10; i++)
+        {
+            defense.RecordFailure("admin1", isLoopback: false, null);
+        }
+
+        timeProvider.Advance(Yagura.Host.Administration.AdminAuthenticationDefaults.EscalationThreshold + TimeSpan.FromMinutes(1));
+        defense.RecordFailure("admin1", isLoopback: false, null);
+
+        var monitor = new ActiveNotificationMonitor(
+            spool: null,
+            new IngestionMetrics(),
+            new FakeMonitoredVolumeInfo(),
+            new FakeExpressCapacityChecker(reading: null),
+            timeProvider,
+            new FakeLogger<ActiveNotificationMonitor>(collector),
+            selfTestTracker: null,
+            adminHttpsCertificateProbe: null,
+            ingestionTlsCertificateProbe: null,
+            adminAuthFailureDefense: defense);
+
+        await monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1019);
+        Assert.Contains("バックオフ", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_AdminAuthFailureDefenseNotWired_DoesNothing()
+    {
+        // adminAuthFailureDefense 未注入（アプリ独自認証が結線されていない構成）では
+        // EventId 1019 は一切発火しない。
+        var collector = new FakeLogCollector();
+        var monitor = CreateMonitor(spool: null, collector, out _);
+
+        await monitor.EvaluateOnceAsync();
+
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1019);
+    }
+
+    // ------------------------------------------------------------------
     // ヘルパー
     // ------------------------------------------------------------------
 
@@ -873,7 +924,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         IMonitoredVolumeInfo? volumeInfo = null,
         IExpressCapacityChecker? expressChecker = null,
         SpoolSelfTestTracker? selfTestTracker = null,
-        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null)
+        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
+        Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null)
     {
         timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
         var ownedMetrics = metrics ?? new IngestionMetrics();
@@ -886,7 +938,9 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
             timeProvider,
             new FakeLogger<ActiveNotificationMonitor>(collector),
             selfTestTracker,
-            adminHttpsCertificateProbe);
+            adminHttpsCertificateProbe,
+            ingestionTlsCertificateProbe: null,
+            adminAuthFailureDefense: adminAuthFailureDefense);
     }
 
     /// <summary>

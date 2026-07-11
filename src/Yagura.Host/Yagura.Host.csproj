@@ -82,4 +82,16 @@
     <InternalsVisibleTo Include="Yagura.Host.Tests" />
   </ItemGroup>
 
+  <!--
+    ADR-0011 決定 7・委任事項 5: パスワードブロックリスト辞書の静的同梱（実行時ネットワーク
+    取得はしない）。出典・ライセンス・加工内容は
+    Administration/AdminAuthentication/PasswordBlocklist/PROVENANCE.md 参照。
+    LogicalName を AdminPasswordBlocklist.ResourceName と一致させる。
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Administration\AdminAuthentication\PasswordBlocklist\blocklist.txt.gz">
+      <LogicalName>Yagura.Host.Administration.AdminAuthentication.PasswordBlocklist.blocklist.txt.gz</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

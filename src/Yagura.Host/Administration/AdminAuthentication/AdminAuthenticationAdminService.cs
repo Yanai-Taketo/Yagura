@@ -105,7 +105,18 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
 
         if (hasCreatingAccount)
         {
-            await _appAuthenticationService.SetAccountAsync(newAppUsername!, newAppPassword!, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _appAuthenticationService.SetAccountAsync(newAppUsername!, newAppPassword!, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AdminPasswordPolicyViolationException ex)
+            {
+                // ADR-0011 決定 7 のパスワード強度要件違反を、ウィザード画面が既に扱う
+                // WizardValidationException（メッセージをそのまま画面表示。sealed のためラップする）
+                // へ変換する——ConfigureAsync の他の検証（fail-closed 不変条件等）と同じ経路に揃える。
+                throw new WizardValidationException(ex.Message);
+            }
+
             createdUsername = newAppUsername;
         }
 

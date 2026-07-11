@@ -1,10 +1,12 @@
+using Microsoft.Data.Sqlite;
 using Yagura.Storage.Administration;
 using Yagura.Storage.Administration.Sqlite;
 
 namespace Yagura.Storage.Tests.Administration;
 
 /// <summary>
-/// <see cref="SqliteAdminAccountStore"/> の単体テスト（ADR-0010 決定 3。Phase 1）。
+/// <see cref="SqliteAdminAccountStore"/> の単体テスト（ADR-0010 決定 3。ADR-0011 決定 8 の
+/// スキーマ簡素化——<c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> 列削除——を反映）。
 /// </summary>
 public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
 {
@@ -35,6 +37,7 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
     {
         // 冪等性(ILogStore と同じ規約): 2 回目の初期化も例外を投げない。
         await _store.InitializeAsync();
+        await _store.InitializeAsync();
     }
 
     [Fact]
@@ -55,8 +58,7 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
         Assert.NotNull(byExactCase);
         Assert.Equal("Admin1", byExactCase!.Username);
         Assert.Equal("hash-1", byExactCase.PasswordHash);
-        Assert.Equal(0, byExactCase.FailedAttemptCount);
-        Assert.Null(byExactCase.LockoutUntilUtc);
+        Assert.Null(byExactCase.LastLoginAtUtc);
 
         var byDifferentCase = await _store.FindByUsernameAsync("admin1");
         Assert.NotNull(byDifferentCase);
@@ -68,20 +70,13 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UpsertAsync_ExistingUsername_ReplacesHashAndResetsLockout()
+    public async Task UpsertAsync_ExistingUsername_ReplacesHash()
     {
         await _store.UpsertAsync("admin1", "hash-old");
-        await _store.RecordFailedLoginAsync("admin1", DateTimeOffset.UtcNow, lockoutThreshold: 1, lockoutDuration: TimeSpan.FromMinutes(5));
-
-        var locked = await _store.FindByUsernameAsync("admin1");
-        Assert.NotNull(locked!.LockoutUntilUtc);
-
         await _store.UpsertAsync("admin1", "hash-new");
 
         var reset = await _store.FindByUsernameAsync("admin1");
         Assert.Equal("hash-new", reset!.PasswordHash);
-        Assert.Equal(0, reset.FailedAttemptCount);
-        Assert.Null(reset.LockoutUntilUtc);
     }
 
     [Fact]
@@ -91,92 +86,177 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RecordSuccessfulLoginAsync_ResetsFailedAttemptCountAndSetsLastLogin()
+    public async Task RecordSuccessfulLoginAsync_SetsLastLogin()
     {
         await _store.UpsertAsync("admin1", "hash-1");
-        await _store.RecordFailedLoginAsync("admin1", DateTimeOffset.UtcNow, lockoutThreshold: 5, lockoutDuration: TimeSpan.FromMinutes(5));
 
         var now = DateTimeOffset.UtcNow;
         await _store.RecordSuccessfulLoginAsync("admin1", now);
 
         var account = await _store.FindByUsernameAsync("admin1");
-        Assert.Equal(0, account!.FailedAttemptCount);
-        Assert.Null(account.LockoutUntilUtc);
-        Assert.NotNull(account.LastLoginAtUtc);
+        Assert.NotNull(account!.LastLoginAtUtc);
     }
 
     [Fact]
-    public async Task RecordFailedLoginAsync_BelowThreshold_IncrementsWithoutLockout()
+    public async Task Schema_DoesNotContainLegacyLockoutColumns()
     {
-        await _store.UpsertAsync("admin1", "hash-1");
+        // ADR-0011 決定 8: FailedAttemptCount/LockoutUntilUtc は削除済み——判定はインメモリの
+        // AdminAuthFailureDefense に一本化し、DB 上に古い判定用状態を残さない。
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString());
+        await connection.OpenAsync();
 
-        var result = await _store.RecordFailedLoginAsync(
-            "admin1", DateTimeOffset.UtcNow, lockoutThreshold: 3, lockoutDuration: TimeSpan.FromMinutes(5));
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(AdminAccounts);";
+        await using var reader = await command.ExecuteReaderAsync();
 
-        Assert.Equal(1, result.FailedAttemptCount);
-        Assert.False(result.LockedOutNow);
-        Assert.Null(result.LockoutUntilUtc);
+        var columns = new List<string>();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(1));
+        }
+
+        Assert.DoesNotContain("FailedAttemptCount", columns);
+        Assert.DoesNotContain("LockoutUntilUtc", columns);
+        Assert.Contains("Username", columns);
+        Assert.Contains("PasswordHash", columns);
+        Assert.Contains("LastLoginAtUtc", columns);
+    }
+}
+
+/// <summary>
+/// v1（PR #217 まで。<c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> 列を持つ形）から v2
+/// （ADR-0011 決定 8）への削除マイグレーションの単体テスト。既存データベースファイルを
+/// v1 形状で直接構築し、<see cref="SqliteAdminAccountStore.InitializeAsync"/> が正しく移行することを
+/// 確認する（委任事項 2）。
+/// </summary>
+public sealed class SqliteAdminAccountStoreMigrationTests : IAsyncLifetime
+{
+    private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"yagura-admin-accounts-migration-{Guid.NewGuid():N}.db");
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public Task DisposeAsync()
+    {
+        foreach (var path in new[] { _databasePath, _databasePath + "-wal", _databasePath + "-shm" })
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task RecordFailedLoginAsync_ReachesThreshold_LocksOut()
+    public async Task InitializeAsync_ExistingV1Database_DropsLegacyColumns_PreservingData()
     {
-        await _store.UpsertAsync("admin1", "hash-1");
-        var baseline = DateTimeOffset.UtcNow;
+        await CreateLegacyV1DatabaseAsync();
 
-        await _store.RecordFailedLoginAsync("admin1", baseline, lockoutThreshold: 2, lockoutDuration: TimeSpan.FromMinutes(15));
-        var second = await _store.RecordFailedLoginAsync("admin1", baseline, lockoutThreshold: 2, lockoutDuration: TimeSpan.FromMinutes(15));
+        var store = new SqliteAdminAccountStore(_databasePath);
+        try
+        {
+            await store.InitializeAsync();
 
-        Assert.Equal(2, second.FailedAttemptCount);
-        Assert.True(second.LockedOutNow);
-        Assert.Equal(baseline.AddMinutes(15), second.LockoutUntilUtc);
+            // データ（ユーザー名・パスワードハッシュ）は保持されたまま列だけが削除されること。
+            var account = await store.FindByUsernameAsync("admin1");
+            Assert.NotNull(account);
+            Assert.Equal("admin1", account!.Username);
+            Assert.Equal("legacy-hash", account.PasswordHash);
 
-        var account = await _store.FindByUsernameAsync("admin1");
-        Assert.Equal(baseline.AddMinutes(15), account!.LockoutUntilUtc);
+            await AssertLegacyColumnsAbsentAsync();
+        }
+        finally
+        {
+            await store.DisposeAsync();
+        }
     }
 
     [Fact]
-    public async Task RecordFailedLoginAsync_ConcurrentFailures_DoNotLoseUpdates()
+    public async Task InitializeAsync_ExistingV1Database_MigrationIsIdempotent()
     {
-        // 原子的インクリメントの並行検証（PR #217 レビュー指摘——read-modify-write の
-        // lost update があると、並行するログイン失敗（分散送信元からの同時試行）でカウンタが
-        // 実際の失敗回数より小さくなり、ロックアウト閾値到達が遅れる。ADR-0010 委任事項 4）。
-        await _store.UpsertAsync("admin1", "hash-1");
-        var baseline = DateTimeOffset.UtcNow;
-        const int parallelAttempts = 20;
+        await CreateLegacyV1DatabaseAsync();
 
-        var results = await Task.WhenAll(Enumerable.Range(0, parallelAttempts)
-            .Select(_ => _store.RecordFailedLoginAsync(
-                "admin1", baseline, lockoutThreshold: 100, lockoutDuration: TimeSpan.FromMinutes(15))));
+        var store = new SqliteAdminAccountStore(_databasePath);
+        try
+        {
+            await store.InitializeAsync();
+            // 2 回目以降の初期化（例: サービス再起動）でも例外を投げず、同じ収束状態を保つ。
+            await store.InitializeAsync();
+            await store.InitializeAsync();
 
-        // 各試行が一意な増分後カウンタ値を観測する（重複 = lost update の証拠）。
-        var observedCounts = results.Select(r => r.FailedAttemptCount).OrderBy(c => c).ToList();
-        Assert.Equal(Enumerable.Range(1, parallelAttempts), observedCounts);
+            var account = await store.FindByUsernameAsync("admin1");
+            Assert.NotNull(account);
 
-        // 最終カウンタ = 実際の失敗回数。
-        var account = await _store.FindByUsernameAsync("admin1");
-        Assert.Equal(parallelAttempts, account!.FailedAttemptCount);
+            await AssertLegacyColumnsAbsentAsync();
+        }
+        finally
+        {
+            await store.DisposeAsync();
+        }
     }
 
-    [Fact]
-    public async Task RecordFailedLoginAsync_ConcurrentFailuresAcrossThreshold_LockoutIsNotDelayed()
+    private async Task CreateLegacyV1DatabaseAsync()
     {
-        await _store.UpsertAsync("admin1", "hash-1");
-        var baseline = DateTimeOffset.UtcNow;
-        const int parallelAttempts = 10;
-        const int threshold = 5;
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString();
 
-        var results = await Task.WhenAll(Enumerable.Range(0, parallelAttempts)
-            .Select(_ => _store.RecordFailedLoginAsync(
-                "admin1", baseline, threshold, TimeSpan.FromMinutes(15))));
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync();
 
-        // 閾値以上を観測した試行はすべてロックアウト到達として報告される。
-        Assert.All(
-            results.Where(r => r.FailedAttemptCount >= threshold),
-            r => Assert.True(r.LockedOutNow));
+        await using (var create = connection.CreateCommand())
+        {
+            // PR #217 までの v1 形状（バージョン管理表は存在しない）。
+            create.CommandText =
+                """
+                CREATE TABLE AdminAccounts (
+                    UsernameNormalized TEXT PRIMARY KEY,
+                    Username TEXT NOT NULL,
+                    PasswordHash TEXT NOT NULL,
+                    FailedAttemptCount INTEGER NOT NULL DEFAULT 0,
+                    LockoutUntilUtc TEXT NULL,
+                    LastLoginAtUtc TEXT NULL
+                );
+                """;
+            await create.ExecuteNonQueryAsync();
+        }
 
-        var account = await _store.FindByUsernameAsync("admin1");
-        Assert.Equal(parallelAttempts, account!.FailedAttemptCount);
-        Assert.NotNull(account.LockoutUntilUtc);
+        await using var insert = connection.CreateCommand();
+        insert.CommandText =
+            """
+            INSERT INTO AdminAccounts (UsernameNormalized, Username, PasswordHash, FailedAttemptCount, LockoutUntilUtc, LastLoginAtUtc)
+            VALUES ('admin1', 'admin1', 'legacy-hash', 3, '2026-07-11T00:00:00.0000000Z', NULL);
+            """;
+        await insert.ExecuteNonQueryAsync();
+    }
+
+    private async Task AssertLegacyColumnsAbsentAsync()
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString());
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(AdminAccounts);";
+        await using var reader = await command.ExecuteReaderAsync();
+
+        var columns = new List<string>();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(1));
+        }
+
+        Assert.DoesNotContain("FailedAttemptCount", columns);
+        Assert.DoesNotContain("LockoutUntilUtc", columns);
     }
 }

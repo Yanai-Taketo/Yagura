@@ -755,6 +755,13 @@ public static class UiText
     /// </summary>
     public const string AdminLoginError = "ユーザー名またはパスワードが正しくないか、現在サインインできません。";
 
+    /// <summary>
+    /// 待機表示の統一文言（ADR-0011 決定 3・6）: 実在アカウントのバックオフ待機・非実在ユーザー名・
+    /// IP レート制限/グローバルトークンバケット拒否のいずれでも同一の文言・体裁で表示する
+    /// （原因を明かさない）。<c>{0}</c> に秒数を埋め込む。
+    /// </summary>
+    public const string AdminLoginWait = "しばらくお待ちください。あと {0} 秒で再試行できます。";
+
     /// <summary>管理画面が認証を要求しているが未認証のときの表示（AdminScreenLayout のリダイレクト経路の直前表示）。</summary>
     public const string AdminScreenRequiresAuthentication = "サインインが必要です…";
 
