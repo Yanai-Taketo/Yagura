@@ -73,7 +73,6 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         _registry.Register(new CircuitRecord(
             circuit.Id,
             _context.RemoteAddress,
-            _context.IsAdminListener,
             _timeProvider.GetUtcNow(),
             _context));
 

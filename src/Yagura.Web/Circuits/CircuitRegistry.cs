@@ -96,7 +96,6 @@ public sealed class CircuitRecord
     public CircuitRecord(
         string circuitId,
         string? remoteAddress,
-        bool? isAdminListener,
         DateTimeOffset openedAt,
         YaguraCircuitContext context)
     {
@@ -105,7 +104,6 @@ public sealed class CircuitRecord
 
         CircuitId = circuitId;
         RemoteAddress = remoteAddress;
-        IsAdminListener = isAdminListener;
         OpenedAt = openedAt;
         LastActivityAt = openedAt;
         Context = context;
@@ -115,8 +113,16 @@ public sealed class CircuitRecord
 
     public string? RemoteAddress { get; }
 
-    /// <summary><see langword="null"/> = 帰属を判定できなかった circuit（閲覧側として扱う）。</summary>
-    public bool? IsAdminListener { get; }
+    /// <summary>
+    /// <see langword="null"/> = 帰属を判定できなかった circuit（閲覧側として扱う）。
+    /// <see cref="Context"/>（<see cref="YaguraCircuitContext.IsAdminListener"/>）から都度読み出す
+    /// 計算プロパティであり、単一の真実源（single authority）とする——再接続時に
+    /// <see cref="YaguraCircuitHandler.RefreshListenerAttribution"/> が更新するのは
+    /// <see cref="Context"/> 側のみであり、ここを固定値として保持すると再接続後の帰属変化が
+    /// 反映されず、無操作回収のタイムアウト選択（<see cref="CircuitRegistry.ReclaimIdleAsync"/>）
+    /// や一覧表示が実際の帰属と食い違う（authorization には影響しない——別経路）。
+    /// </summary>
+    public bool? IsAdminListener => Context.IsAdminListener;
 
     public DateTimeOffset OpenedAt { get; }
 

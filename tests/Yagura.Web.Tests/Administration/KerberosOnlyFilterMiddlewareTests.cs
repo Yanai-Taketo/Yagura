@@ -18,6 +18,12 @@ public sealed class KerberosOnlyFilterMiddlewareTests
     private static readonly string NtlmToken = Convert.ToBase64String(
         [.. "NTLMSSP\0"u8.ToArray(), 0x01, 0x00, 0x00, 0x00]);
 
+    // SPNEGO（GSS-API）でラップされた NTLM: 先頭は 0x60 の SPNEGO タグで始まり、NTLM の
+    // 署名 "NTLMSSP\0" は非ゼロオフセット（mechToken 内）に現れる。旧来の先頭一致判定では
+    // 見逃したケースを代表する。
+    private static readonly string SpnegoWrappedNtlmToken = Convert.ToBase64String(
+        [0x60, 0x82, 0x01, 0x00, .. "NTLMSSP\0"u8.ToArray(), 0x01, 0x00]);
+
     // Kerberos（SPNEGO）トークンは NTLM 署名で始まらない任意のバイト列で代表する。
     private static readonly string KerberosLikeToken = Convert.ToBase64String(
         [0x60, 0x82, 0x01, 0x00, 0x06, 0x06, 0x2b, 0x06]);
@@ -39,6 +45,27 @@ public sealed class KerberosOnlyFilterMiddlewareTests
         var recorded = Assert.Single(audit.Recorded);
         Assert.Equal(AuditEventKind.WindowsAuthenticationHandshakeFailed, recorded.Kind);
         Assert.Contains("ntlm-rejected", recorded.Detail);
+    }
+
+    [Fact]
+    public async Task AdminPort_SpnegoWrappedNtlmToken_IsRejectedWith403AndAudit()
+    {
+        // 回帰テスト（M-1）: NTLM 署名がオフセット 0 ではなく mechToken 内（非ゼロオフセット）に
+        // 埋め込まれた SPNEGO トークンも拒否されること。先頭一致だけの旧判定では通過していた。
+        var audit = new RecordingAuditRecorder();
+        var (middleware, nextCalled) = CreateMiddleware(audit);
+
+        var context = CreateContext(AdminPort, $"Negotiate {SpnegoWrappedNtlmToken}");
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(nextCalled());
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+
+        var recorded = Assert.Single(audit.Recorded);
+        Assert.Equal(AuditEventKind.WindowsAuthenticationHandshakeFailed, recorded.Kind);
+        Assert.Equal("ntlm-rejected-by-kerberos-only-policy", recorded.Detail);
     }
 
     [Fact]
