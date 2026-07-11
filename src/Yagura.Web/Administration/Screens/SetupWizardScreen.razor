@@ -16,6 +16,15 @@
     - 適用は冪等トークンつき（§7 の一回性保証）。反映方式（§3）を適用前に表示する。
     - 書き込み系サービスの参照は本画面（Yagura.Web.Administration.Screens）に限る——
       閲覧側コンポーネントからの参照は ViewerComponentReferenceIsolationTests が検出する。
+
+    Issue #248: ステップ移動を一方向固定にしない。
+    - どのステップを表示するかは UI ローカル状態（_currentStep）——確定済みステップ・
+      次に確定すべきステップ（snapshot.NextStep）へはステップヘッダーから任意に移動できる。
+      表示の移動はサーバ側の確定状態を変えない（確定の取り消しではない——GoBackAsync は
+      互換のため契約に残すが、本画面は呼ばない）。
+    - 適用完了後も行き止まりにしない: 「設定を変更する」で BeginReconfigurationAsync により
+      現在の設定値を種にウィザードを再開できる（適用にはあらためて確認の確定 = 新トークンが
+      必要——§7 の一回性はトークンごとに保たれる）。
 *@
 <PageTitle>@UiText.AdminSetupWizardTitle - Yagura</PageTitle>
 
@@ -33,6 +42,14 @@ else if (_snapshot.Applied || _applyResult is not null)
         {
             <MudText Class="mt-2">@FormatEffect(_applyResult.RequiredEffect)</MudText>
         }
+        @if (!string.IsNullOrEmpty(_errorText))
+        {
+            <MudText Class="mt-2">@_errorText</MudText>
+        }
+        <div class="mt-4">
+            @* 適用後の再編集導線（Issue #248——適用完了を行き止まりにしない）。 *@
+            <YaguraButton Role="YaguraButtonRole.Primary" OnClick="BeginReconfigurationAsync">@UiText.WizardBeginReconfiguration</YaguraButton>
+        </div>
     </MudPaper>
 }
 else
@@ -43,15 +60,29 @@ else
         <MudText Class="mt-2">@string.Format(UiText.WizardResumeNoticeFormat, StepTitle(_snapshot.NextStep))</MudText>
     }
 
+    @* ステップヘッダー（Issue #248）: 確定済みステップ・次に確定すべきステップへは任意に
+       移動できる。未到達のステップは無効表示（前が未確定のうちは飛べない——サービス側の
+       ConfirmStepAsync の制約と同じ）。MudStepper は使わず素朴なボタン列にとどめる
+       （依存部品の挙動を増やさない）。 *@
+    <div class="mt-4 d-flex flex-wrap align-center" role="navigation" aria-label="セットアップのステップ">
+        @foreach (var step in WizardStepOrder)
+        {
+            <MudButton Variant="Variant.Text"
+                       Color="@(step == _currentStep ? Color.Primary : Color.Default)"
+                       Disabled="@(!CanNavigateTo(step))"
+                       OnClick="() => NavigateToStep(step)">@StepTitle(step)</MudButton>
+        }
+    </div>
+
     <MudPaper Elevation="1" Class="pa-4 mt-4">
-        <MudText Typo="Typo.h6">@StepTitle(_snapshot.NextStep)</MudText>
+        <MudText Typo="Typo.h6">@StepTitle(_currentStep)</MudText>
 
         @if (!string.IsNullOrEmpty(_errorText))
         {
             <MudText Class="mt-2">@_errorText</MudText>
         }
 
-        @switch (_snapshot.NextStep)
+        @switch (_currentStep)
         {
             case SetupWizardStep.Reception:
                 <YaguraTextField Label="UDP 受信ポート" Required="true" @bind-Value="_udpPort" />
@@ -87,12 +118,12 @@ else
         }
 
         <div class="mt-4">
-            @* 前ステップへ戻る導線（確定済みステップがある = 最初のステップではない場合のみ。オーナー指摘）。 *@
-            @if (_snapshot.ConfirmedSteps.Count > 0)
+            @* 前ステップへ戻る導線（表示の移動——確定の取り消しではない。Issue #248）。 *@
+            @if (_currentStep != WizardStepOrder[0])
             {
-                <MudButton Variant="Variant.Text" OnClick="GoBackAsync" Class="mr-2">戻る</MudButton>
+                <MudButton Variant="Variant.Text" OnClick="GoBack" Class="mr-2">@UiText.WizardBack</MudButton>
             }
-            @if (_snapshot.NextStep == SetupWizardStep.Review && _snapshot.ApplyIdempotencyToken is not null)
+            @if (_currentStep == SetupWizardStep.Review && _snapshot.ApplyIdempotencyToken is not null)
             {
                 <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ApplyAsync">@UiText.WizardApply</YaguraButton>
             }
@@ -105,10 +136,29 @@ else
 }
 
 @code {
+    /// <summary>
+    /// ステップの表示順（サービス側 SetupWizardService.StepOrder と同一の並び。契約上の
+    /// 列挙 SetupWizardStep の定義順に依存せず、画面側で明示する）。
+    /// </summary>
+    private static readonly SetupWizardStep[] WizardStepOrder =
+    [
+        SetupWizardStep.Reception,
+        SetupWizardStep.ViewerAccess,
+        SetupWizardStep.Retention,
+        SetupWizardStep.Review,
+    ];
+
     private SetupWizardSnapshot? _snapshot;
     private SetupWizardApplyResult? _applyResult;
     private string? _resultMessage;
     private string? _errorText;
+
+    /// <summary>
+    /// 現在表示中のステップ（UI ローカル状態。Issue #248）。サーバ側の確定状態
+    /// （configuration.md §7 のサーバ側セッション）とは独立で、確定済みステップの間は
+    /// 自由に行き来できる。初期値は snapshot.NextStep（再開位置）。
+    /// </summary>
+    private SetupWizardStep _currentStep = SetupWizardStep.Reception;
 
     private string? _udpPort = "514";
     private string? _tcpPort = "514";
@@ -120,6 +170,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         _snapshot = await SetupWizard.GetSnapshotAsync();
+        _currentStep = _snapshot.NextStep;
         if (_snapshot.Applied)
         {
             _resultMessage = UiText.WizardApplied;
@@ -130,18 +181,54 @@ else
         SyncFieldsFromSnapshot();
     }
 
-    private async Task GoBackAsync()
+    /// <summary>そのステップをステップヘッダーから表示できるか（確定済み or 次に確定すべきステップ）。</summary>
+    private bool CanNavigateTo(SetupWizardStep step) =>
+        _snapshot is not null && (_snapshot.ConfirmedSteps.Contains(step) || step == _snapshot.NextStep);
+
+    /// <summary>表示ステップを移動する（サーバ側の確定状態は変えない）。</summary>
+    private void NavigateToStep(SetupWizardStep step)
     {
-        if (_snapshot is null)
+        if (!CanNavigateTo(step))
         {
             return;
         }
 
+        _currentStep = step;
+        _errorText = null;
+        // 移動先ステップの確定済み入力値をフォームへ復元して再編集できるようにする。
+        SyncFieldsFromSnapshot();
+    }
+
+    /// <summary>
+    /// 1 つ前のステップへ表示を移動する（確定の取り消しではない——サービスの GoBackAsync は
+    /// 呼ばない。Issue #248）。
+    /// </summary>
+    private void GoBack()
+    {
+        var index = Array.IndexOf(WizardStepOrder, _currentStep);
+        if (index <= 0)
+        {
+            return;
+        }
+
+        _currentStep = WizardStepOrder[index - 1];
+        _errorText = null;
+        SyncFieldsFromSnapshot();
+    }
+
+    /// <summary>
+    /// 適用済みの設定の再編集を開始する（Issue #248）。全入力ステップが確定済みの状態で
+    /// 再開するため、表示は確認ステップから（編集したいステップはヘッダーで選ぶ）。
+    /// </summary>
+    private async Task BeginReconfigurationAsync()
+    {
         try
         {
             _errorText = null;
-            _snapshot = await SetupWizard.GoBackAsync();
-            // 戻り先ステップの確定済み入力値をフォームへ復元して再編集できるようにする。
+            _snapshot = await SetupWizard.BeginReconfigurationAsync();
+            _applyResult = null;
+            _resultMessage = null;
+            _currentStep = SetupWizardStep.Review;
             SyncFieldsFromSnapshot();
         }
         catch (WizardValidationException ex)
@@ -189,7 +276,7 @@ else
             return;
         }
 
-        var values = _snapshot.NextStep switch
+        var values = _currentStep switch
         {
             SetupWizardStep.Reception => new Dictionary<string, string>
             {
@@ -212,7 +299,11 @@ else
         try
         {
             _errorText = null;
-            _snapshot = await SetupWizard.ConfirmStepAsync(_snapshot.NextStep, values);
+            _snapshot = await SetupWizard.ConfirmStepAsync(_currentStep, values);
+            // 確定に成功したら、次に確定すべきステップへ表示を進める（確定済みステップの
+            // 再確定では、残りの未確定ステップ——通常は確認——へ進む）。
+            _currentStep = _snapshot.NextStep;
+            SyncFieldsFromSnapshot();
         }
         catch (WizardValidationException ex)
         {
@@ -245,6 +336,7 @@ else
         {
             // 再読み込み（確認ステップからのやり直し）のため最新スナップショットを取り直す。
             _snapshot = await SetupWizard.GetSnapshotAsync();
+            _currentStep = _snapshot.NextStep;
         }
     }
 }

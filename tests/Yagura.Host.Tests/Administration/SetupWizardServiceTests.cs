@@ -240,6 +240,97 @@ public sealed class SetupWizardServiceTests : IDisposable
         Assert.Empty(_audit.RecordedEvents);
     }
 
+    [Fact]
+    public async Task BeginReconfiguration_AfterApply_UnlocksAndSeedsCurrentValues()
+    {
+        // Issue #248: 適用完了後の再編集開始。適用ロックが解除され、現在の設定値を種に
+        // 全入力ステップ確定済みで再開できる。
+        var service = new SetupWizardService(_dataRoot, _audit);
+        var snapshot = await ConfirmAllStepsAsync(service);
+        await service.ApplyAsync(snapshot.ApplyIdempotencyToken!, operatorAddress: "127.0.0.1");
+
+        var reopened = await service.BeginReconfigurationAsync();
+
+        // 適用ロックの解除 + 3 つの入力ステップは確定済み扱い（ステッパーで全ステップへ移動できる）。
+        Assert.False(reopened.Applied);
+        Assert.Contains(SetupWizardStep.Reception, reopened.ConfirmedSteps);
+        Assert.Contains(SetupWizardStep.ViewerAccess, reopened.ConfirmedSteps);
+        Assert.Contains(SetupWizardStep.Retention, reopened.ConfirmedSteps);
+        Assert.DoesNotContain(SetupWizardStep.Review, reopened.ConfirmedSteps);
+        Assert.Equal(SetupWizardStep.Review, reopened.NextStep);
+        Assert.Null(reopened.ApplyIdempotencyToken);
+
+        // 入力値は適用した値（= 現在の設定ファイルの内容）が種になる。
+        Assert.Equal("514", reopened.ConfirmedValues[SetupWizardValueKeys.UdpPort]);
+        Assert.Equal("8514", reopened.ConfirmedValues[SetupWizardValueKeys.ViewerHttpPort]);
+        Assert.Equal("Lan", reopened.ConfirmedValues[SetupWizardValueKeys.ViewerPublicAccess]);
+        Assert.Equal("8515", reopened.ConfirmedValues[SetupWizardValueKeys.AdminHttpPort]);
+        Assert.Equal("30", reopened.ConfirmedValues[SetupWizardValueKeys.RetentionDays]);
+
+        // 値を変えて再確定 → 確認の確定で新トークン → 2 回目の適用が成立する（一回性は
+        // トークンごとに保たれる——新トークンの適用は妨げられない。configuration.md §7）。
+        await service.ConfirmStepAsync(SetupWizardStep.ViewerAccess, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.ViewerHttpPort] = "9514",
+            [SetupWizardValueKeys.ViewerPublicAccess] = "LocalhostOnly",
+            [SetupWizardValueKeys.AdminHttpPort] = "8515",
+        });
+        var review = await service.ConfirmStepAsync(SetupWizardStep.Review, new Dictionary<string, string>());
+        Assert.NotNull(review.ApplyIdempotencyToken);
+        Assert.NotEqual(snapshot.ApplyIdempotencyToken, review.ApplyIdempotencyToken);
+
+        var second = await service.ApplyAsync(review.ApplyIdempotencyToken!, operatorAddress: "127.0.0.1");
+
+        Assert.Equal(WizardApplyOutcome.Applied, second.Outcome);
+        Assert.Contains("Viewer:HttpPort", second.ChangedKeys);
+
+        // 変更後の値がファイルに反映され、監査記録（2001）も 2 回目が残る。
+        var configPath = Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
+        using var document = JsonDocument.Parse(File.ReadAllBytes(configPath));
+        Assert.Equal("9514", document.RootElement.GetProperty("Viewer").GetProperty("HttpPort").GetString());
+        Assert.Equal(2, _audit.RecordedEvents.Count);
+    }
+
+    [Fact]
+    public async Task BeginReconfiguration_WhenNothingApplied_Throws()
+    {
+        // 未適用・設定ファイル無しでは再編集する対象がない（通常のウィザード進行で足りる）。
+        var service = new SetupWizardService(_dataRoot, _audit);
+
+        await Assert.ThrowsAsync<WizardValidationException>(() => service.BeginReconfigurationAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmInputStep_AfterReviewConfirmed_DiscardsReviewAndToken()
+    {
+        // Issue #248: 確認ステップ確定後に入力ステップを再確定したら、古い確認内容・トークンの
+        // まま適用される事故を防ぐため、確認の確定とトークンを破棄する（GoBackAsync の
+        // Review 破棄と同じ意味論）。
+        var service = new SetupWizardService(_dataRoot, _audit);
+        var snapshot = await ConfirmAllStepsAsync(service);
+        var oldToken = snapshot.ApplyIdempotencyToken!;
+
+        var afterReconfirm = await service.ConfirmStepAsync(SetupWizardStep.Reception, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.UdpPort] = "1514",
+            [SetupWizardValueKeys.TcpPort] = "514",
+        });
+
+        // 確認の確定とトークンは破棄される。3 つの入力ステップは確定済みのまま → 次は確認。
+        Assert.Null(afterReconfirm.ApplyIdempotencyToken);
+        Assert.Equal(SetupWizardStep.Review, afterReconfirm.NextStep);
+        Assert.DoesNotContain(SetupWizardStep.Review, afterReconfirm.ConfirmedSteps);
+        Assert.Contains(SetupWizardStep.Reception, afterReconfirm.ConfirmedSteps);
+        Assert.Contains(SetupWizardStep.ViewerAccess, afterReconfirm.ConfirmedSteps);
+        Assert.Contains(SetupWizardStep.Retention, afterReconfirm.ConfirmedSteps);
+
+        // 破棄済みの古いトークンでの適用は拒否される（configuration.md §7 の一回性——
+        // トークンは「確認した内容」と 1 対 1）。
+        var result = await service.ApplyAsync(oldToken);
+        Assert.Equal(WizardApplyOutcome.InvalidToken, result.Outcome);
+        Assert.Empty(_audit.RecordedEvents);
+    }
+
     private static async Task ConfirmReceptionAsync(SetupWizardService service) =>
         await service.ConfirmStepAsync(SetupWizardStep.Reception, new Dictionary<string, string>
         {
