@@ -625,6 +625,12 @@ public static class Program
                 sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>(),
                 sp.GetRequiredService<IAuditRecorder>()));
 
+        // 管理リモート HTTPS 証明書の選択 UI 用の read-only 列挙（ADR-0012 決定 2）。副作用なし・
+        // 依存なし（LocalMachine\My を ReadOnly で開くだけ）。実体は Windows 専用（他の Store* 型と
+        // 同様、合成ルートで直接 new する）。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminCertificateStoreReader>(
+            _ => new Yagura.Host.Administration.Https.StoreAdminCertificateStoreReader());
+
         // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシーの登録（AdminAuthenticationExtensions
         // 参照）。実効値は起動時に固定される（設定キーの反映方式は §3「サービス再起動」——
         // ConfigurationKeyMetadata 参照）。
