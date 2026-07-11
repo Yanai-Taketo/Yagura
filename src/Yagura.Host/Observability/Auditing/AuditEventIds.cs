@@ -69,6 +69,21 @@ public static class AuditEventIds
     public static readonly EventId IngestionTlsCertificatePrivateKeyAccessGranted =
         new(2010, "IngestionTlsCertificatePrivateKeyAccessGranted");
 
+    /// <summary>
+    /// 管理リスナのリモートバインド（<c>Admin:RemoteBinding:Enabled</c>）の有効化・無効化
+    /// （ADR-0012 決定 7。認証設定変更（2006）と別 ID——「機の公開」を他のフラグ変更に
+    /// 埋もれさせない）。レベルは情報。
+    /// </summary>
+    public static readonly EventId AdminRemoteBindingConfigured =
+        new(2011, "AdminRemoteBindingConfigured");
+
+    /// <summary>
+    /// 管理リスナのリモート HTTPS 設定（<c>Admin:Https:Enabled</c>・証明書拇印・ポート）の変更
+    /// （ADR-0012 決定 7）。レベルは情報。
+    /// </summary>
+    public static readonly EventId AdminHttpsCertificateConfigured =
+        new(2012, "AdminHttpsCertificateConfigured");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

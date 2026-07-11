@@ -870,12 +870,8 @@ public static class YaguraConfigurationLoader
             return null;
         }
 
-        var normalized = raw.Replace(" ", string.Empty, StringComparison.Ordinal)
-            .Replace("-", string.Empty, StringComparison.Ordinal)
-            .Replace(":", string.Empty, StringComparison.Ordinal)
-            .ToUpperInvariant();
-
-        if (normalized.Length == 40 && normalized.All(Uri.IsHexDigit))
+        var normalized = TryNormalizeCertificateThumbprint(raw);
+        if (normalized is not null)
         {
             return normalized;
         }
@@ -887,6 +883,29 @@ public static class YaguraConfigurationLoader
             Reason: $"SHA-1 拇印（16 進 40 桁）として解釈できないため、{unconfiguredConsequenceMessage}"));
 
         return null;
+    }
+
+    /// <summary>
+    /// 証明書拇印の正規化の核（空白・ハイフン・コロン区切りを除去して大文字化し、SHA-1 拇印
+    /// = 16 進 40 桁として解釈できなければ <see langword="null"/>）。起動時検証
+    /// （<see cref="NormalizeCertificateThumbprintOrNull"/>）と保存前検証
+    /// （<c>AdminRemoteAccessAdminService</c>。ADR-0012 決定 4 の「事前検証と起動時検証の
+    /// 乖離ゼロ = D-6」）が同一の正規化規則を共有するため、警告収集を伴わない純粋関数として
+    /// 切り出してある。
+    /// </summary>
+    internal static string? TryNormalizeCertificateThumbprint(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var normalized = raw.Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(":", string.Empty, StringComparison.Ordinal)
+            .ToUpperInvariant();
+
+        return normalized.Length == 40 && normalized.All(Uri.IsHexDigit) ? normalized : null;
     }
 
     /// <summary>

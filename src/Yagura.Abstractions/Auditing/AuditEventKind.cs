@@ -148,4 +148,18 @@ public enum AuditEventKind
     /// 含める）を区別する——利用者応答では区別しない（決定 3）。記録内容は送信元 IP・拒否理由の別。
     /// </summary>
     AdminAuthRateLimited,
+
+    /// <summary>
+    /// 管理操作: 管理リスナのリモートバインド（<c>Admin:RemoteBinding:Enabled</c>）の有効化・無効化
+    /// （ADR-0012 決定 7。「機の公開」という最重要のセキュリティ状態遷移を認証設定変更（2006）に
+    /// 畳み込まず独立 ID で記録する。イベント ID 2011）。
+    /// </summary>
+    AdminRemoteBindingConfigured,
+
+    /// <summary>
+    /// 管理操作: 管理リスナのリモート HTTPS 設定（<c>Admin:Https:Enabled</c>・証明書拇印・ポート）の
+    /// 変更（ADR-0012 決定 7。イベント ID 2012）。記録内容は変更キーと新値（拇印は証明書の公開識別子
+    /// であり秘密ではないため値を残す）。
+    /// </summary>
+    AdminHttpsCertificateConfigured,
 }
