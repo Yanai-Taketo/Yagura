@@ -34,6 +34,17 @@ public interface ISetupWizardService : IYaguraWriteService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// 直前に確定したステップの確定を取り消し、そのステップへ戻る（前進専用ではなく、確定済みの
+    /// 前ステップを再編集できるようにする——オーナー指摘）。確定済みの入力値は保持し、戻り先ステップの
+    /// フォームに再表示できるようにする。取り消すのは「最後に確定した 1 ステップ」のみ。確認ステップを
+    /// 取り消す場合は発行済みの適用用冪等トークンも破棄する（前ステップの値が変わり得るため確認は再度行う）。
+    /// </summary>
+    /// <exception cref="WizardValidationException">
+    /// 既に適用済みの場合、または戻れる確定済みステップが存在しない（最初のステップにいる）場合。
+    /// </exception>
+    Task<SetupWizardSnapshot> GoBackAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 確定済みの全ステップの内容で設定ファイル（yagura.json）を生成・保存する
     /// （configuration.md §1「初期設定はセットアップウィザードが生成する」・§3 の
     /// 「読み込み → 変更 → 検証 → 保存」+ 楽観競合検出）。管理操作として監査記録

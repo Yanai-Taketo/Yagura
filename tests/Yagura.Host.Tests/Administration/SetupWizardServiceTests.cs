@@ -55,6 +55,54 @@ public sealed class SetupWizardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GoBack_RevertsLastConfirmedStep_AndPreservesValues()
+    {
+        var service = new SetupWizardService(_dataRoot, _audit);
+        await ConfirmReceptionAsync(service);
+        Assert.Equal(SetupWizardStep.ViewerAccess, (await service.GetSnapshotAsync()).NextStep);
+
+        var afterBack = await service.GoBackAsync();
+
+        // 直前に確定した Reception の確定が取り消され、そこへ戻る。
+        Assert.Equal(SetupWizardStep.Reception, afterBack.NextStep);
+        Assert.DoesNotContain(SetupWizardStep.Reception, afterBack.ConfirmedSteps);
+        // 入力値は保持され、戻り先フォームへ再表示できる。
+        Assert.Equal("514", afterBack.ConfirmedValues[SetupWizardValueKeys.UdpPort]);
+    }
+
+    [Fact]
+    public async Task GoBack_OnFirstStep_Throws()
+    {
+        var service = new SetupWizardService(_dataRoot, _audit);
+        await Assert.ThrowsAsync<WizardValidationException>(() => service.GoBackAsync());
+    }
+
+    [Fact]
+    public async Task GoBack_FromConfirmedReview_DiscardsApplyToken()
+    {
+        var service = new SetupWizardService(_dataRoot, _audit);
+        await ConfirmReceptionAsync(service);
+        await service.ConfirmStepAsync(SetupWizardStep.ViewerAccess, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.ViewerHttpPort] = "8514",
+            [SetupWizardValueKeys.ViewerPublicAccess] = "Lan",
+            [SetupWizardValueKeys.AdminHttpPort] = "8515",
+        });
+        await service.ConfirmStepAsync(SetupWizardStep.Retention, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.RetentionDays] = "30",
+        });
+        var review = await service.ConfirmStepAsync(SetupWizardStep.Review, new Dictionary<string, string>());
+        Assert.NotNull(review.ApplyIdempotencyToken);
+
+        var afterBack = await service.GoBackAsync();
+
+        // 確認ステップの取り消しで適用用トークンが破棄される（確認を再度やり直す）。
+        Assert.Null(afterBack.ApplyIdempotencyToken);
+        Assert.DoesNotContain(SetupWizardStep.Review, afterBack.ConfirmedSteps);
+    }
+
+    [Fact]
     public async Task ConfirmStep_SkippingAhead_IsRejected()
     {
         var service = new SetupWizardService(_dataRoot, _audit);
