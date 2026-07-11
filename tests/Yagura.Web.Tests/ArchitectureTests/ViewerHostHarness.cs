@@ -114,6 +114,12 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService, StubSetupWizardService>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService, StubPromotionWizardService>();
 
+        // ADR-0012（B3）: リモートアクセス設定画面（/admin/remote-access）が要求するサービス。
+        // 実処理（証明書ストア列挙・保存前 fail-closed 検証）は Yagura.Host.Tests の
+        // StoreAdminCertificateStoreReaderTests / AdminRemoteAccessAdminServiceTests が検証する。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminCertificateStoreReader, StubAdminCertificateStoreReader>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminRemoteAccessAdminService, StubAdminRemoteAccessAdminService>();
+
         // ADR-0010 Phase 1: 管理 UI 認証(既定は無効——ルーティング表の機械列挙用。
         // appAuthEnabled: true はアプリ独自認証の実 HTTP フロー検証用の構成。
         // windowsAuthEnabled: true は /admin/login/windows の条件付き登録を検証する構成)。
@@ -350,6 +356,29 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             bool requireForLoopback,
             string? newAppUsername,
             string? newAppPassword,
+            string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubAdminCertificateStoreReader : Yagura.Abstractions.Administration.IAdminCertificateStoreReader
+    {
+        public IReadOnlyList<Yagura.Abstractions.Administration.AdminCertificateCandidate> ListServerAuthCertificates()
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubAdminRemoteAccessAdminService : Yagura.Abstractions.Administration.IAdminRemoteAccessAdminService
+    {
+        public Task<Yagura.Abstractions.Administration.AdminRemoteAccessStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.AdminRemoteAccessConfigureResult> ConfigureAsync(
+            bool remoteBindingEnabled,
+            bool httpsEnabled,
+            string? certificateThumbprint,
+            string? httpsPort,
             string? operatorAddress = null,
             string? operatorScheme = null,
             string? operatorPrincipal = null,
