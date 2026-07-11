@@ -20,7 +20,7 @@
 
   <Package Name="Yagura"
            Manufacturer="Yagura Project"
-           Version="0.2.1"
+           Version="0.3.0"
            UpgradeCode="2BF11897-147B-4770-8071-399158378C7E"
            Language="1041"
            Scope="perMachine"
