@@ -138,11 +138,22 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
 
         try
         {
-            using var client = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false });
+            using var client = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false })
+            {
+                // 初回の Razor SSR 描画は Razor/JIT コンパイルで数秒〜十数秒かかりうる。CI の並列実行負荷下で
+                // 10 秒固定タイムアウトだと初回要求が TaskCanceledException で散発的に落ちるため余裕を持たせる。
+                Timeout = TimeSpan.FromSeconds(30),
+            };
+
+            // 応答性のウォームアップ: listen 直後でも初回描画は Razor/JIT コンパイル待ちで遅れるため、
+            // 本検証(302 させないこと)に入る前に、応答(ステータス不問)が返るまで最大 60 秒リトライして
+            // コンパイルを済ませる(断続的な接続失敗・タイムアウトも吸収する)。回帰の検出力は下げない
+            // ——ウォームアップは「応答が返るか」だけを見て、302/200 の判定は下の本検証で行う。
+            await WaitUntilAdminListenerRespondsAsync(client, adminPort, TimeSpan.FromSeconds(60));
+
             foreach (var path in new[] { "/admin", "/admin/setup", "/admin/auth-setup" })
             {
-                using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
-                var response = await client.GetAsync($"http://127.0.0.1:{adminPort}{path}", cts.Token);
+                using var response = await client.GetAsync($"http://127.0.0.1:{adminPort}{path}");
 
                 Assert.True(
                     response.StatusCode == System.Net.HttpStatusCode.OK,
@@ -158,6 +169,32 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
                 process.Kill(entireProcessTree: true);
             }
         }
+    }
+
+    /// <summary>
+    /// 管理 loopback リスナが最初の HTTP 応答を返すまで待つ（Razor/JIT の初回コンパイル待ちを吸収する）。
+    /// ステータスは問わない——「応答が返るか」だけを確認し、302/200 の本判定は呼び出し側で行う。
+    /// </summary>
+    private static async Task WaitUntilAdminListenerRespondsAsync(System.Net.Http.HttpClient client, int adminPort, TimeSpan budget)
+    {
+        var deadline = DateTime.UtcNow + budget;
+        Exception? last = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var response = await client.GetAsync($"http://127.0.0.1:{adminPort}/admin");
+                return;
+            }
+            catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException)
+            {
+                last = ex;
+                await Task.Delay(TimeSpan.FromMilliseconds(500));
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            $"管理 loopback（ポート {adminPort}）が {budget.TotalSeconds:0} 秒以内に応答しなかった: {last?.Message}");
     }
 
     private async Task<(int ExitCode, string Output)> RunHostProcessToExitAsync(string configJson)
