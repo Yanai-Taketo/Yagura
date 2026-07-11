@@ -104,6 +104,8 @@ public sealed class FileAuditRecorderTests : IDisposable
     [InlineData(AuditEventKind.CircuitDisconnected, 2004, "circuit を切断")]
     [InlineData(AuditEventKind.CircuitOriginRejected, 3002, "circuit 確立要求の origin 検証で拒否")]
     [InlineData(AuditEventKind.AdminAuthorizationDenied, 3008, "認証成功後に管理者権限がなくアクセスを拒否")]
+    [InlineData(AuditEventKind.AdminRemoteBindingConfigured, 2011, "管理リスナのリモートバインド設定を変更")]
+    [InlineData(AuditEventKind.AdminHttpsCertificateConfigured, 2012, "管理 UI リモート HTTPS の証明書設定を変更")]
     public async Task RecordAsync_EventLogMessage_UsesJapaneseDescriptionAndPreservesEventId(
         AuditEventKind kind,
         int expectedEventId,

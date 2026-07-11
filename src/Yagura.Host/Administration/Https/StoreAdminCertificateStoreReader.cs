@@ -124,8 +124,10 @@ public sealed class StoreAdminCertificateStoreReader : IAdminCertificateStoreRea
     /// 含まれなければ鍵ハンドルの取得は失敗する（lab 実測: <c>NTE_BAD_KEYSET 0x80090016</c>）。
     /// 「UI では秘密鍵ありと見えたが、サービスアカウントからは読めず再起動後に縮小継続」という
     /// 乖離を保存前に可視化するための読取検証（ADR-0012 決定 3・受け入れ基準の「読取検証」）。
+    /// internal なのは、保存前 fail-closed 検証（<see cref="AdminRemoteAccessAdminService"/>。
+    /// ADR-0012 決定 4）が列挙 UI と同一の読取検証を共有するため（判定ロジックの二重実装をしない）。
     /// </remarks>
-    private static bool IsPrivateKeyReadable(X509Certificate2 certificate)
+    internal static bool IsPrivateKeyReadable(X509Certificate2 certificate)
     {
         try
         {

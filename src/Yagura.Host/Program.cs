@@ -631,6 +631,14 @@ public static class Program
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminCertificateStoreReader>(
             _ => new Yagura.Host.Administration.Https.StoreAdminCertificateStoreReader());
 
+        // 管理リモート HTTPS の設定保存・保存前 fail-closed 検証 + 監査（ADR-0012 決定 1・4・7。
+        // 上記 read-only 列挙とは別契約の書き込み系サービス——IAdminAuthenticationAdminService と
+        // 同じ「dataRoot + IAuditRecorder を渡して Host 実体を結線する」形式）。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminRemoteAccessAdminService>(sp =>
+            new Yagura.Host.Administration.Https.AdminRemoteAccessAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>()));
+
         // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシーの登録（AdminAuthenticationExtensions
         // 参照）。実効値は起動時に固定される（設定キーの反映方式は §3「サービス再起動」——
         // ConfigurationKeyMetadata 参照）。
