@@ -27,8 +27,11 @@
 | [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用） | accepted |
 | [0010](0010-admin-ui-authentication.md) | 管理 UI への認証追加（opt-in）とリモート管理の解禁 | accepted（決定 3 のロックアウト機構は ADR-0011 により superseded） |
 | [0011](0011-app-auth-failure-backoff.md) | アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定 3 の supersession） | accepted |
+| [0012](0012-admin-https-cert-ui.md) | 管理リモート HTTPS の証明書選択の UI 設定化 | proposed |
 
 ## 起案予定
 
 （現在なし。新しい委任・決定事項が生じたらここに登録してから起案する）
+
+なお TLS 受信（`Ingestion:Tls:*`）の証明書 UI は ADR-0012 のスコープから分離済み（オーナー裁定 2026-07-11・論点 4）。別 ADR・別 Issue で扱うため、起票時にここへ登録する。
 
