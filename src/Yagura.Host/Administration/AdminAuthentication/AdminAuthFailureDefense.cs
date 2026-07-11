@@ -156,20 +156,41 @@ public sealed class AdminAuthFailureDefense
     public int IpRateLimitTrackedAddressCount => _ipWindows.Count;
 
     /// <summary>
-    /// アイドル化した IP レート制限エントリ（Issue #233）を辞書から掃き出す。「アイドル」の定義は
-    /// 現在の窓が既に失効している（直近 <see cref="AdminAuthenticationDefaults.IpRateLimitWindow"/>
-    /// の間、当該送信元 IP からの試行が一件もない）<b>かつ</b>能動的な拒否ストリーク
+    /// アイドル化した IP レート制限エントリ（Issue #233）を辞書から掃き出す。除去条件は「現在の窓が
+    /// 既に失効している（直近 <see cref="AdminAuthenticationDefaults.IpRateLimitWindow"/> の間、当該
+    /// 送信元 IP からの試行が一件もない）」<b>かつ</b>「能動的な拒否ストリーク
     /// （<see cref="IpWindowState.DenyStreakStartAtUtc"/>。決定 6 の <see cref="GetIpRateLimitEscalations"/>
-    /// エスカレーション判定の起点）を持たないこと——後者を必要条件に加えたのは PR #236 レビュー
-    /// 指摘への対応（下記 remarks 参照）。窓の失効のみを条件にしていた旧実装は、毎窓の先頭で上限
-    /// 超のバーストを打ち残りをアイドルにする「ペース調整型」の持続的攻撃に対し、毎周期のスイープが
-    /// 窓失効直後（=攻撃者が次のバーストを打つ前のアイドル区間）にストリークごとエントリを消してしまい、
-    /// エスカレーション（能動通知）が永久に成立しなくなる副作用を持っていた——<see cref="CheckIpRateLimit"/>
-    /// 自身が窓境界でストリークを引き継ぐロールオーバー処理（同メソッドのコメント参照）を持つのは
-    /// まさにこの種の攻撃を検知し続けるためであり、スイープがその前提（エントリが窓境界をまたいで
-    /// 生存し続けること）を壊してはならない。
+    /// エスカレーション判定の起点）を持たない、または staleness-cap（<see cref="AdminAuthenticationDefaults.EscalationThreshold"/>
+    /// の 2 倍）を超えて窓が凍結している」——ストリーク保護と staleness-cap の 2 条件は PR #236
+    /// レビュー指摘への 2 段階の対応（下記 remarks 参照）。
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>ストリーク保護（PR #236 レビュー指摘 その 1）</b>: 窓の失効のみを条件にしていた当初実装は、
+    /// 毎窓の先頭で上限超のバーストを打ち残りをアイドルにする「ペース調整型」の持続的攻撃に対し、
+    /// 毎周期のスイープが窓失効直後（= 攻撃者が次のバーストを打つ前のアイドル区間）にストリークごと
+    /// エントリを消してしまい、エスカレーション（能動通知）が永久に成立しなくなる副作用を持っていた
+    /// ——<see cref="CheckIpRateLimit"/> 自身が窓境界でストリークを引き継ぐロールオーバー処理（同
+    /// メソッドのコメント参照）を持つのはまさにこの種の攻撃を検知し続けるためであり、スイープが
+    /// その前提（エントリが窓境界をまたいで生存し続けること）を壊してはならない。
+    /// </para>
+    /// <para>
+    /// <b>staleness-cap（PR #236 レビュー指摘 その 2）</b>: ストリーク保護だけでは別の穴が開く——
+    /// <see cref="IpWindowState.DenyStreakStartAtUtc"/> が <c>null</c> へ戻るのは <see cref="CheckIpRateLimit"/>
+    /// の窓ロールオーバーが「直前の窓を上限未満」と観測したときだけであり、ストリークを立てた後
+    /// アクセスが二度と来なければストリークは永久に非 <c>null</c> のまま。攻撃者が spoof した各 IPv6 から
+    /// 1 窓内に上限超の試行を打ってストリークを立て、そのまま放置すると、窓失効後もストリーク保護で
+    /// 除去されずロールオーバーも起きず、エントリが恒久ピン留めされる——IPv6 の無制限アドレス空間で
+    /// ピン留め数が攻撃者制御で無限に増え、Issue #233 が塞ぐべきメモリ無制限増加が別経路で復活する。
+    /// これを塞ぐため、ストリークを持つエントリでも <c>now - WindowStartAtUtc</c> が staleness-cap
+    /// （<see cref="AdminAuthenticationDefaults.EscalationThreshold"/> の 2 倍。≒ 30 分）を超えたら
+    /// 除去可能にする。撃ち逃げ放置ピンは <c>WindowStartAtUtc</c> が凍結するため約 2×閾値 で除去され、
+    /// メモリ有界性が回復する（放置ストリークも 15 分で 1 回はエスカレーションを出してから片付く）。
+    /// 一方、能動ペース攻撃は毎窓アクセスで <c>WindowStartAtUtc</c> が更新されるため <c>now - WindowStartAtUtc</c>
+    /// は常に 1 窓未満に留まり、staleness に到達せず保持され続ける（進行中の実攻撃でありエスカレーション
+    /// 対象）。「2×閾値」を使うのは、正当にエスカレーションするストリーク（閾値 = 15 分で発火）が
+    /// 確実に発火し終えた後にのみ staleness 除去が効くようにするため。
+    /// </para>
     /// <para>
     /// <b>原子性</b>: 列挙で得た <see cref="KeyValuePair{TKey,TValue}"/> のスナップショットを
     /// <see cref="ICollection{T}.Remove(T)"/>（キー一致 <b>かつ</b> 値一致でのみ削除する比較 &amp; 削除。
@@ -188,13 +209,12 @@ public sealed class AdminAuthFailureDefense
     /// アイドル判定に一致するエントリのみに限定する。
     /// </para>
     /// <para>
-    /// <b>ストリーク保持の代償（既知のトレードオフ）</b>: 拒否ストリークを一度でも記録した送信元は、
-    /// 以降その送信元から一件も試行が来ないまま完全に沈黙した場合、ストリークを自然に解除する
-    /// ロールオーバー（<see cref="CheckIpRateLimit"/> が窓失効後の新規試行を受けて初めて評価する）が
-    /// 発火する機会自体が無いため、エントリは除去されずに残り続ける。真にアイドル（ストリークを
-    /// 一度も記録していない）な送信元のメモリ回収（Issue #233 の主目的）は本条件追加後も維持される
-    /// ——影響を受けるのは「一度でも上限に達したことがある送信元」のみであり、無制限ではなく
-    /// 送信元が過去にレート制限へ到達した回数で有界。
+    /// <b>有界性のまとめ</b>: 純アイドル（ストリークなし）は窓失効で即除去、撃ち逃げ放置ピン
+    /// （ストリークありだがアクセス途絶）は staleness-cap（≒ 2×閾値）到達で除去、能動ペース攻撃
+    /// （ストリークあり + 毎窓アクセス）のみ保持される——最後のケースは進行中の実攻撃であり、
+    /// エスカレーション（1019）で通知したうえで保持するのが正しい挙動。よって辞書サイズは
+    /// 「現に進行中で通知対象の攻撃者数」で有界であり、攻撃者が任意に膨らませられる恒久ピン留めは
+    /// 残らない（Issue #233 の要件を staleness-cap で回復）。
     /// </para>
     /// </remarks>
     /// <returns>実際に除去したエントリ数。</returns>
@@ -204,6 +224,12 @@ public sealed class AdminAuthFailureDefense
         var window = AdminAuthenticationDefaults.IpRateLimitWindow;
         var removed = 0;
 
+        // 拒否ストリークを持つエントリを保護する期間の上限（staleness-cap）。エスカレーション
+        // 閾値の 2 倍を使うのは、正当にエスカレーションするストリーク（閾値 = 15 分で 1019 が
+        // 発火）が確実に発火し終えた後にのみ staleness 除去が効くようにするため（クラス remarks
+        // 参照）。ハードコードの生値は置かず、既存の仮値から導出する。
+        var streakStaleAfter = AdminAuthenticationDefaults.EscalationThreshold * 2;
+
         foreach (var entry in _ipWindows)
         {
             if (now - entry.Value.WindowStartAtUtc < window)
@@ -211,12 +237,21 @@ public sealed class AdminAuthFailureDefense
                 continue;
             }
 
-            if (entry.Value.DenyStreakStartAtUtc is not null)
+            if (entry.Value.DenyStreakStartAtUtc is not null &&
+                now - entry.Value.WindowStartAtUtc <= streakStaleAfter)
             {
-                // 能動的な拒否ストリーク（EventId 1019 エスカレーション判定の起点）が進行中——
-                // 窓は失効していても、除去するとストリークの起点時刻が失われ、能動通知が
-                // 永久に発火しなくなる（クラス remarks 参照）。メモリ回収より検知継続を優先し、
-                // この周期では除去しない。
+                // 能動的な拒否ストリーク（EventId 1019 エスカレーション判定の起点）が進行中で、
+                // まだ staleness-cap に達していない——窓は失効していても、除去するとストリークの
+                // 起点時刻が失われ、能動通知が永久に発火しなくなる（クラス remarks 参照）。
+                // メモリ回収より検知継続を優先し、この周期では除去しない。
+                //
+                // 撃ち逃げ放置ピン（ストリークを立てた後アクセスが二度と来ず WindowStartAtUtc が
+                // 凍結したエントリ）は now - WindowStartAtUtc が単調増加して streakStaleAfter を
+                // 超えるため、~2×閾値 経過後にこの保護から外れて除去可能になる（IPv6 アドレス空間
+                // での恒久ピン留めによるメモリ無制限増加の再発を防ぐ。Issue #233）。一方、能動
+                // ペース攻撃は毎窓アクセスで WindowStartAtUtc が更新されるため now - WindowStartAtUtc
+                // は常に 1 窓未満に留まり、staleness に到達せず保持され続ける（進行中の実攻撃であり
+                // エスカレーション対象）。
                 continue;
             }
 

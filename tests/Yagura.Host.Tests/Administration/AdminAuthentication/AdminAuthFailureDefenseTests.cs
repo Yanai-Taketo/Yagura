@@ -280,17 +280,21 @@ public sealed class AdminAuthFailureDefenseTests
     [Fact]
     public void SweepIdleIpRateLimitEntries_PacedAttackWithPeriodicSweepDuringIdleGaps_EscalationStillFires()
     {
-        // 回帰（レビュー指摘）: 毎窓の先頭で上限超のバーストを打ち、残りをアイドルにする
+        // 回帰（レビュー指摘 その 1）: 毎窓の先頭で上限超のバーストを打ち、残りをアイドルにする
         // 「ペース調整型」の持続的攻撃に対し、窓の失効のみを条件にスイープすると、攻撃者が次の
         // バーストを打つ前のアイドル区間（=窓失効直後）で毎周期エントリごとストリークが消え、
         // GetIpRateLimitEscalations（EventId 1019 相当の能動通知の起点）が 15 分到達しても
-        // 永久に発火しなくなっていた——修正前はこのテストが失敗する。
+        // 永久に発火しなくなっていた——ストリーク保護前はこのテストが失敗する。
+        // あわせて staleness-cap（レビュー指摘 その 2）の追加後も、能動ペース攻撃は毎窓アクセスで
+        // WindowStartAtUtc が更新され staleness に到達しないため、2×閾値 を超えても除去されず
+        // 保持され続けることを確認する（ループを 2×閾値 + 余裕まで回す）。
         var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
         var defense = new AdminAuthFailureDefense(timeProvider);
 
         var elapsed = TimeSpan.Zero;
-        var targetElapsed = AdminAuthenticationDefaults.EscalationThreshold + TimeSpan.FromMinutes(1);
+        var targetElapsed = (AdminAuthenticationDefaults.EscalationThreshold * 2) + TimeSpan.FromMinutes(1);
         var windowStep = AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1);
+        var escalationObservedDuringActiveAttack = false;
 
         while (elapsed < targetElapsed)
         {
@@ -309,15 +313,67 @@ public sealed class AdminAuthFailureDefenseTests
             // ActiveNotificationMonitor が毎周期呼ぶスイープを、まさにこのアイドル区間で実行する。
             var removed = defense.SweepIdleIpRateLimitEntries();
 
-            // 拒否ストリークが進行中である限り、窓が失効していても除去されない
-            // （除去されるとストリーク起点が失われ、以降このテストは失敗する）。
+            // 拒否ストリークが進行中で、かつ毎窓アクセスにより窓が更新され続けている限り、窓が
+            // 失効していても（staleness-cap を超える期間が経過しても）除去されない。
             Assert.Equal(0, removed);
             Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+            if (defense.GetIpRateLimitEscalations().Count == 1)
+            {
+                escalationObservedDuringActiveAttack = true;
+            }
         }
 
+        // 15 分（閾値）以降はエスカレーションが立っており、2×閾値 を超えて能動攻撃が続いても
+        // それは維持される（撃ち逃げ放置と異なり staleness で片付かない）。
+        Assert.True(escalationObservedDuringActiveAttack);
         var escalation = Assert.Single(defense.GetIpRateLimitEscalations());
         Assert.Equal(RemoteA.ToString(), escalation.RemoteAddress);
         Assert.True(timeProvider.GetUtcNow() - escalation.DenyStreakStartAtUtc >= AdminAuthenticationDefaults.EscalationThreshold);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_ShootAndLeaveStreakedPin_IsEvictedAfterStalenessCap()
+    {
+        // 回帰（レビュー指摘 その 2・本丸）: spoof IP で 1 窓内に上限超の試行を打って拒否ストリークを
+        // 立て、以後放置する「撃ち逃げ」。ストリーク保護のみ（staleness-cap 無し）だと、窓失効後も
+        // DenyStreakStartAtUtc が非 null（ロールオーバーが二度と起きないため永久に非 null）ゆえ
+        // 除去されず、IPv6 アドレス空間で恒久ピン留めが無制限に積み上がる（#233 が塞ぐべきメモリ
+        // 無制限増加の別経路での復活）。staleness-cap 追加後は約 2×閾値 経過で除去される。
+        // staleness-cap 追加前はこのテストが失敗する（除去されず残る）。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        // 1 窓内に上限超の試行 → 拒否ストリークを立てる。
+        for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts; i++)
+        {
+            defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+        }
+
+        Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // 窓は失効するが staleness-cap（2×閾値）にはまだ達していない区間——ストリーク保護により
+        // 除去されない。以後この IP からのアクセスは一切来ない（撃ち逃げ = WindowStartAtUtc 凍結）。
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // 昇格閾値（15 分）到達後は、放置ストリークも 1 回はエスカレーションを出す（片付く前に
+        // 能動通知の機会を与える設計）。
+        timeProvider.Advance(AdminAuthenticationDefaults.EscalationThreshold);
+        Assert.Single(defense.GetIpRateLimitEscalations());
+        // まだ staleness-cap（2×閾値）未満なので除去されない。
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // staleness-cap（2×閾値）を確実に超える時刻まで進める——ここで初めて除去可能になる。
+        timeProvider.Advance((AdminAuthenticationDefaults.EscalationThreshold * 2) + TimeSpan.FromSeconds(1));
+
+        var removed = defense.SweepIdleIpRateLimitEntries();
+
+        Assert.Equal(1, removed);
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
     }
 
     [Fact]
