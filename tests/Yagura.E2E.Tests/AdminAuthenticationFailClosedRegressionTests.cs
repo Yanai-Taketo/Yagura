@@ -122,6 +122,44 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task DefaultNoAuth_LoopbackRazorAdminPages_RenderWithoutRedirectingToLogin()
+    {
+        // 回帰(issue #242): 既定(ゼロ設定・無認証)で loopback 経由の Razor 管理ページ(AdminScreenLayout を
+        // 通る /admin・/admin/setup・/admin/auth-setup)が、ログイン画面へ 302 されず描画されること。
+        //
+        // AdminScreenLayout の認証充足判定は、SSR/prerender(circuit 未確立)では
+        // CircuitContext.IsLoopbackListener が null のため、接続の実ローカルポート(HttpContext)で
+        // loopback を判定しなければならない。これを誤ると既定無認証でも Razor 管理ページが
+        // /admin/login へ 302 され、初期セットアップ・認証有効化にすら到達できなくなる(P0)。
+        // 既存の loopback 検証は素の HTTP エンドポイント(/admin/forwarder-kit/download)のみを見ており、
+        // AdminScreenLayout を通る Razor ページを見ていなかったため本回帰を取りこぼしていた。
+        var (process, adminPort) = await StartHostProcessAsync("{}");
+
+        try
+        {
+            using var client = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false });
+            foreach (var path in new[] { "/admin", "/admin/setup", "/admin/auth-setup" })
+            {
+                using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var response = await client.GetAsync($"http://127.0.0.1:{adminPort}{path}", cts.Token);
+
+                Assert.True(
+                    response.StatusCode == System.Net.HttpStatusCode.OK,
+                    $"既定無認証の loopback で {path} が描画されず {(int)response.StatusCode} を返した" +
+                    $"(Location: {response.Headers.Location?.ToString() ?? "なし"})。" +
+                    "AdminScreenLayout の SSR loopback 判定の回帰(issue #242)。");
+            }
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+    }
+
     private async Task<(int ExitCode, string Output)> RunHostProcessToExitAsync(string configJson)
     {
         var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-authfailclosed-{Guid.NewGuid():N}");
