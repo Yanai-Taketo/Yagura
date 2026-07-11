@@ -148,6 +148,65 @@ public sealed class AdminAuthFailureDefense
         }
     }
 
+    /// <summary>
+    /// 現在追跡中の IP レート制限エントリ数（診断・テスト用。Issue #233）。<see cref="_ipWindows"/>
+    /// は非 loopback の送信元 IP のみをキーにする（loopback は <see cref="CheckIpRateLimit"/> が
+    /// 早期リターンし、本辞書に一切触れない）。
+    /// </summary>
+    public int IpRateLimitTrackedAddressCount => _ipWindows.Count;
+
+    /// <summary>
+    /// アイドル化した IP レート制限エントリ（Issue #233）を辞書から掃き出す。「アイドル」の定義は
+    /// 現在の窓が既に失効している（直近 <see cref="AdminAuthenticationDefaults.IpRateLimitWindow"/>
+    /// の間、当該送信元 IP からの試行が一件もない）ことのみ——<see cref="CheckIpRateLimit"/> は
+    /// 窓が失効した状態で新規試行を受けると常に <c>Count=1</c> の新しい窓として扱う（飽和していた
+    /// 前窓のストリークのみを引き継ぐ）ため、同じ条件で先回りして除去しても次回アクセス時の挙動と
+    /// 等価——アクティブに攻撃中（直近の窓内で上限に達し続けている）送信元は窓が失効しないため
+    /// 対象にならない（決定 2・4 の評価順序・loopback 無条件復旧経路のいずれにも影響しない。呼び出し元
+    /// remarks 参照）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>原子性</b>: 列挙で得た <see cref="KeyValuePair{TKey,TValue}"/> のスナップショットを
+    /// <see cref="ICollection{T}.Remove(T)"/>（キー一致 <b>かつ</b> 値一致でのみ削除する比較 &amp; 削除。
+    /// <see cref="IpWindowState"/> はレコード構造体のため値等価性で比較される）で除去する——スイープ中に
+    /// <see cref="CheckIpRateLimit"/> が同じキーを更新（新しい窓へロールオーバー等）していれば値が
+    /// 一致せず削除は不成立になるため、更新後の状態を誤って消す lost update は起きない（委任事項 1
+    /// と同じ設計意図）。
+    /// </para>
+    /// <para>
+    /// <b>呼び出し元</b>: <see cref="Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor"/>
+    /// の周期評価（仮値 1 分ごと）が毎周期呼ぶ——IP レート制限の窓（仮値 60 秒）と同オーダーの
+    /// 頻度で、送信元が攻撃者制御であるがゆえに無制限に増加し得る辞書（Issue #233 の問題提起）を
+    /// 定期的に縮退させる。辞書サイズの上限機構（LRU 等）は採用しない——アクティブな送信元を
+    /// 上限超過で強制退避すると、退避された攻撃者がレート制限を回避できてしまい「エビクションが
+    /// アクティブな攻撃者の状態を消して制限を回避させない」という要件に反するため、除去対象は
+    /// アイドル判定に一致するエントリのみに限定する。
+    /// </para>
+    /// </remarks>
+    /// <returns>実際に除去したエントリ数。</returns>
+    public int SweepIdleIpRateLimitEntries()
+    {
+        var now = _timeProvider.GetUtcNow();
+        var window = AdminAuthenticationDefaults.IpRateLimitWindow;
+        var removed = 0;
+
+        foreach (var entry in _ipWindows)
+        {
+            if (now - entry.Value.WindowStartAtUtc < window)
+            {
+                continue;
+            }
+
+            if (((ICollection<KeyValuePair<string, IpWindowState>>)_ipWindows).Remove(entry))
+            {
+                removed++;
+            }
+        }
+
+        return removed;
+    }
+
     // ==== ②グローバルトークンバケット（決定 2・4・5.1） ====
 
     /// <summary>

@@ -224,12 +224,24 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// （決定 6 の本文要件）。抑制窓はトリガキー（アカウントキー/送信元 IP 単位）ごとに独立させる
     /// （<see cref="EvaluateMonitoredVolumesFreeSpace"/> と同じパターン）。
     /// </summary>
+    /// <remarks>
+    /// <b>IP レート制限のアイドルエントリ掃引（Issue #233）</b>: 評価の先頭で
+    /// <see cref="Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense.SweepIdleIpRateLimitEntries"/>
+    /// を毎周期（仮値 1 分）呼ぶ——送信元 IP をキーにした状態辞書は攻撃者が制御できる次元（IP
+    /// アドレス）に無制限に増加し得るため（非実在ユーザー名に状態を持たせない設計の「状態空間は
+    /// 運用者制御」という根拠が成立しない）、アイドル化した（直近の窓内で試行が無い）エントリを
+    /// 周期的に縮退させる。エスカレーション判定（下記ループ）より先に行うことで、既に鎮静化した
+    /// 送信元の陳腐化した昇格状態（<c>DenyStreakStartAtUtc</c> が持ち越されたまま二度と解除されない
+    /// 状態）も同時に整理される副次効果を持つ。
+    /// </remarks>
     private void EvaluateAdminAuthFailureDefense()
     {
         if (_adminAuthFailureDefense is null)
         {
             return;
         }
+
+        _adminAuthFailureDefense.SweepIdleIpRateLimitEntries();
 
         var now = _timeProvider.GetUtcNow();
 
