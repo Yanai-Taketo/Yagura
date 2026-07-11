@@ -72,6 +72,22 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
                 "認証を課すと、管理 UI に一切到達できなくなります）。");
         }
 
+        // Phase 2 fail-closed（ADR-0010 Phase 2 決定 1）: 管理リスナのリモートバインドが有効な
+        // 構成で認証方式を両方とも無効にすると、次回起動時に起動時 fail-closed 検証（イベント 1012）が
+        // 起動を拒否し、syslog 受信ごと停止してしまう。その状態に陥る設定変更を UI 層で先に拒否する
+        // （起動時検証と対称の二段構え）。本画面は RemoteBinding を変更しない（認証フラグのみ）ため、
+        // 現在値は設定ファイルから読む。
+        var currentRemoteBindingEnabled = ParseBool(YaguraConfigurationWriter.Read(_dataRoot).Options.Admin?.RemoteBinding?.Enabled);
+        if (currentRemoteBindingEnabled && !windowsAuthEnabled && !appAuthEnabled)
+        {
+            throw new WizardValidationException(
+                "管理リスナのリモートバインド（Admin:RemoteBinding:Enabled）が有効な状態では、" +
+                "認証方式（Windows 統合認証・アプリ独自認証）を両方とも無効にできません。" +
+                "この設定のまま再起動すると、認証を欠いたリモート公開を防ぐ fail-closed 検証により" +
+                "サービスが起動できなくなり、syslog 受信も停止します。少なくとも一方の認証方式を" +
+                "有効に保つか、先に Admin:RemoteBinding:Enabled を false に戻してください。");
+        }
+
         var hasCreatingAccount = !string.IsNullOrWhiteSpace(newAppUsername) && !string.IsNullOrWhiteSpace(newAppPassword);
 
         if (appAuthEnabled && !hasCreatingAccount)
