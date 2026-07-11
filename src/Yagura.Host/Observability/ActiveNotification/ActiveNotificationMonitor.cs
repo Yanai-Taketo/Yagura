@@ -224,12 +224,30 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// （決定 6 の本文要件）。抑制窓はトリガキー（アカウントキー/送信元 IP 単位）ごとに独立させる
     /// （<see cref="EvaluateMonitoredVolumesFreeSpace"/> と同じパターン）。
     /// </summary>
+    /// <remarks>
+    /// <b>IP レート制限のアイドルエントリ掃引（Issue #233。PR #236 レビュー指摘で条件を修正）</b>:
+    /// 評価の先頭で
+    /// <see cref="Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense.SweepIdleIpRateLimitEntries"/>
+    /// を毎周期（仮値 1 分）呼ぶ——送信元 IP をキーにした状態辞書は攻撃者が制御できる次元（IP
+    /// アドレス）に無制限に増加し得るため（非実在ユーザー名に状態を持たせない設計の「状態空間は
+    /// 運用者制御」という根拠が成立しない）、これを周期的に縮退させる。除去条件は「窓失効かつ
+    /// （拒否ストリークを持たない、または staleness-cap ≒ 2×エスカレーション閾値を超えて窓が凍結）」
+    /// ——①拒否ストリーク中（<c>DenyStreakStartAtUtc</c> 設定済み——下記ループのエスカレーション判定の
+    /// 起点）で毎窓アクセスが続くペース調整型攻撃のエントリは保持し（消すと能動通知が永久に発火
+    /// しなくなるため。それ自体が進行中の実攻撃でありエスカレーション対象）、②ストリークを立てて
+    /// 放置された撃ち逃げピン（窓が凍結）は約 2×閾値 経過後に除去してメモリ有界性を回復する
+    /// （放置ストリークも 15 分で 1 回はエスカレーションを出してから片付く）。<b>辞書サイズは
+    /// 「現に進行中で通知対象の攻撃者数」で有界</b>であり、攻撃者が任意に膨らませられる恒久ピン留めは
+    /// 残らない（詳細は <c>SweepIdleIpRateLimitEntries</c> の remarks 参照）。
+    /// </remarks>
     private void EvaluateAdminAuthFailureDefense()
     {
         if (_adminAuthFailureDefense is null)
         {
             return;
         }
+
+        _adminAuthFailureDefense.SweepIdleIpRateLimitEntries();
 
         var now = _timeProvider.GetUtcNow();
 

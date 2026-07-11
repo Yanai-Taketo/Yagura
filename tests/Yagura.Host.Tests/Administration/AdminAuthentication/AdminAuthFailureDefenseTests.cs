@@ -98,6 +98,328 @@ public sealed class AdminAuthFailureDefenseTests
         }
     }
 
+    // ==== IP レート制限エントリのエビクション（Issue #233） ====
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_IdleEntry_IsRemoved()
+    {
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // 窓（仮値 60 秒）を超えて、当該 IP からの新規試行が一切無いまま経過する = アイドル。
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+
+        var removed = defense.SweepIdleIpRateLimitEntries();
+
+        Assert.Equal(1, removed);
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_ManyDistinctIdleAddresses_AllRemoved_BoundsDictionarySize()
+    {
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        const int distinctAddresses = 500;
+        for (var i = 0; i < distinctAddresses; i++)
+        {
+            // IPv6 アドレス空間を模した多数の異なる送信元（分散攻撃のシミュレーション）。
+            var address = IPAddress.Parse($"2001:db8::{i:x}");
+            defense.CheckIpRateLimit(address, isLoopback: false);
+        }
+
+        Assert.Equal(distinctAddresses, defense.IpRateLimitTrackedAddressCount);
+
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+
+        var removed = defense.SweepIdleIpRateLimitEntries();
+
+        Assert.Equal(distinctAddresses, removed);
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_ActivelyAttackingIp_IsNotRemoved_AndRateLimitStillApplies()
+    {
+        // 回帰: 失敗ストリークが継続中（直近の窓内で試行し続けている）IP はアイドルではないため
+        // エビクション対象にならない——誤って除去するとレート制限を回避させてしまう。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts; i++)
+        {
+            defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+        }
+
+        Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+
+        // 窓の途中（アイドルではない）でスイープを呼んでも除去されない。
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow - TimeSpan.FromSeconds(1));
+        var removed = defense.SweepIdleIpRateLimitEntries();
+
+        Assert.Equal(0, removed);
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+        // レート制限は引き続き有効——同じ窓の続きなのでまだ拒否される。
+        Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_ContinuousAttackAcrossManyWindows_NeverEvictedWhileActive()
+    {
+        // 窓をまたいで継続的に飽和させ続ける持続的な攻撃者は、毎周期スイープを挟んでも一度も
+        // アイドル判定されないこと（GetIpRateLimitEscalations の昇格テストと同じ攻撃パターン）。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        var windowStep = AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1);
+
+        for (var window = 0; window < 5; window++)
+        {
+            for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts; i++)
+            {
+                defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+            }
+
+            Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+
+            // 周期監視のスイープ（毎回、窓を超える直前まで進める）——アクティブな攻撃中は
+            // 除去されないはず。
+            var removed = defense.SweepIdleIpRateLimitEntries();
+            Assert.Equal(0, removed);
+            Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+            timeProvider.Advance(windowStep);
+        }
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_Loopback_NeverTracked_RecoveryPathUnaffected()
+    {
+        // loopback は CheckIpRateLimit が早期リターンし _ipWindows に一切触れない
+        // （ADR-0010 決定 1 の無条件復旧経路）——スイープの有無に関わらず追跡対象外。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts * 5; i++)
+        {
+            Assert.True(defense.CheckIpRateLimit(IPAddress.Loopback, isLoopback: true).Allowed);
+        }
+
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
+
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+
+        // スイープ後も loopback は引き続き無条件に許可される。
+        Assert.True(defense.CheckIpRateLimit(IPAddress.Loopback, isLoopback: true).Allowed);
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
+    }
+
+    [Fact]
+    public async Task SweepIdleIpRateLimitEntries_ConcurrentWithActiveUpdates_NoCorruptionAndActiveEntrySurvives()
+    {
+        // 並行安全性: スイープと同一キーへの更新が同時に走っても、クラッシュ・不整合
+        // （lost update によるアクティブなエントリの誤消去）が起きないこと。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        // RemoteA は窓が失効直前のアイドル寸前の状態、RemoteB は継続的にアクセスし続けるアクティブな
+        // 状態——両方に対して同時にスイープと更新を走らせる。
+        defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+
+        var sweepTasks = Enumerable.Range(0, 50)
+            .Select(_ => Task.Run(() => defense.SweepIdleIpRateLimitEntries()))
+            .ToArray();
+        var updateTasks = Enumerable.Range(0, 200)
+            .Select(i => Task.Run(() => defense.CheckIpRateLimit(RemoteB, isLoopback: false)))
+            .ToArray();
+
+        await Task.WhenAll(sweepTasks.Cast<Task>().Concat(updateTasks));
+
+        // 例外なく完了し、辞書は破損していない（RemoteB は引き続き参照できる状態のはず）。
+        Assert.True(defense.IpRateLimitTrackedAddressCount is 1 or 2);
+    }
+
+    [Fact]
+    public async Task SweepIdleIpRateLimitEntries_ConcurrentWithActiveUpdates_ActuallyDrivesRemovalRace()
+    {
+        // PR #236 レビュー指摘への対応: 上記テストは時刻を進めないため、どのスイープも
+        // 「窓未失効」で早期リターンするだけで、compare & remove による実際の除去と更新の競合が
+        // 一度も駆動されていなかった（弱いカバレッジ）。本テストは RemoteC を先に真にアイドル化
+        // させたうえで、実際に除去が成立し得る状態でスイープと（別 IP への）更新を同時に走らせ、
+        // 例外・不整合が起きないことを確認する。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+        var remoteC = IPAddress.Parse("203.0.113.30");
+
+        // RemoteC: 1 回だけ試行し、窓を失効させて真にアイドルにする（ストリークなし = 除去対象）。
+        defense.CheckIpRateLimit(remoteC, isLoopback: false);
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        var sweepTasks = Enumerable.Range(0, 50)
+            .Select(_ => Task.Run(() => defense.SweepIdleIpRateLimitEntries()))
+            .ToArray();
+        var updateTasks = Enumerable.Range(0, 200)
+            .Select(_ => Task.Run(() => defense.CheckIpRateLimit(RemoteB, isLoopback: false)))
+            .ToArray();
+
+        await Task.WhenAll(sweepTasks.Cast<Task>().Concat(updateTasks));
+
+        // RemoteC は（複数スイープが競合しても二重カウントなどなく）確実に除去され、RemoteB は
+        // 更新が競合しても消えない——除去済みの RemoteC への新規試行は新しい窓として即座に許可される。
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+        Assert.True(defense.CheckIpRateLimit(remoteC, isLoopback: false).Allowed);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_PacedAttackWithPeriodicSweepDuringIdleGaps_EscalationStillFires()
+    {
+        // 回帰（レビュー指摘 その 1）: 毎窓の先頭で上限超のバーストを打ち、残りをアイドルにする
+        // 「ペース調整型」の持続的攻撃に対し、窓の失効のみを条件にスイープすると、攻撃者が次の
+        // バーストを打つ前のアイドル区間（=窓失効直後）で毎周期エントリごとストリークが消え、
+        // GetIpRateLimitEscalations（EventId 1019 相当の能動通知の起点）が 15 分到達しても
+        // 永久に発火しなくなっていた——ストリーク保護前はこのテストが失敗する。
+        // あわせて staleness-cap（レビュー指摘 その 2）の追加後も、能動ペース攻撃は毎窓アクセスで
+        // WindowStartAtUtc が更新され staleness に到達しないため、2×閾値 を超えても除去されず
+        // 保持され続けることを確認する（ループを 2×閾値 + 余裕まで回す）。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        var elapsed = TimeSpan.Zero;
+        var targetElapsed = (AdminAuthenticationDefaults.EscalationThreshold * 2) + TimeSpan.FromMinutes(1);
+        var windowStep = AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1);
+        var escalationObservedDuringActiveAttack = false;
+
+        while (elapsed < targetElapsed)
+        {
+            // 窓の先頭でバースト（上限到達 + 1 回の拒否）。
+            for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts; i++)
+            {
+                defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+            }
+
+            Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+
+            // 窓を失効させる（= バースト後、次のバーストまでの「アイドル」区間に相当）。
+            timeProvider.Advance(windowStep);
+            elapsed += windowStep;
+
+            // ActiveNotificationMonitor が毎周期呼ぶスイープを、まさにこのアイドル区間で実行する。
+            var removed = defense.SweepIdleIpRateLimitEntries();
+
+            // 拒否ストリークが進行中で、かつ毎窓アクセスにより窓が更新され続けている限り、窓が
+            // 失効していても（staleness-cap を超える期間が経過しても）除去されない。
+            Assert.Equal(0, removed);
+            Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+            if (defense.GetIpRateLimitEscalations().Count == 1)
+            {
+                escalationObservedDuringActiveAttack = true;
+            }
+        }
+
+        // 15 分（閾値）以降はエスカレーションが立っており、2×閾値 を超えて能動攻撃が続いても
+        // それは維持される（撃ち逃げ放置と異なり staleness で片付かない）。
+        Assert.True(escalationObservedDuringActiveAttack);
+        var escalation = Assert.Single(defense.GetIpRateLimitEscalations());
+        Assert.Equal(RemoteA.ToString(), escalation.RemoteAddress);
+        Assert.True(timeProvider.GetUtcNow() - escalation.DenyStreakStartAtUtc >= AdminAuthenticationDefaults.EscalationThreshold);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_ShootAndLeaveStreakedPin_IsEvictedAfterStalenessCap()
+    {
+        // 回帰（レビュー指摘 その 2・本丸）: spoof IP で 1 窓内に上限超の試行を打って拒否ストリークを
+        // 立て、以後放置する「撃ち逃げ」。ストリーク保護のみ（staleness-cap 無し）だと、窓失効後も
+        // DenyStreakStartAtUtc が非 null（ロールオーバーが二度と起きないため永久に非 null）ゆえ
+        // 除去されず、IPv6 アドレス空間で恒久ピン留めが無制限に積み上がる（#233 が塞ぐべきメモリ
+        // 無制限増加の別経路での復活）。staleness-cap 追加後は約 2×閾値 経過で除去される。
+        // staleness-cap 追加前はこのテストが失敗する（除去されず残る）。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        // 1 窓内に上限超の試行 → 拒否ストリークを立てる。
+        for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts; i++)
+        {
+            defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+        }
+
+        Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // 窓は失効するが staleness-cap（2×閾値）にはまだ達していない区間——ストリーク保護により
+        // 除去されない。以後この IP からのアクセスは一切来ない（撃ち逃げ = WindowStartAtUtc 凍結）。
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // 昇格閾値（15 分）到達後は、放置ストリークも 1 回はエスカレーションを出す（片付く前に
+        // 能動通知の機会を与える設計）。
+        timeProvider.Advance(AdminAuthenticationDefaults.EscalationThreshold);
+        Assert.Single(defense.GetIpRateLimitEscalations());
+        // まだ staleness-cap（2×閾値）未満なので除去されない。
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // staleness-cap（2×閾値）を確実に超える時刻まで進める——ここで初めて除去可能になる。
+        timeProvider.Advance((AdminAuthenticationDefaults.EscalationThreshold * 2) + TimeSpan.FromSeconds(1));
+
+        var removed = defense.SweepIdleIpRateLimitEntries();
+
+        Assert.Equal(1, removed);
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
+    }
+
+    [Fact]
+    public void SweepIdleIpRateLimitEntries_GenuinelyIdleAfterStreakClears_IsEventuallyRemoved()
+    {
+        // メモリ回収の維持（Issue #233 の主目的）を、ストリーク保持の除外条件を加えた後も確認する:
+        // 攻撃が本当に止み（実需要が閾値未満の窓を挟み）ストリークが解除された後は、以前と同様
+        // アイドル化したエントリとして除去される。
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+        var defense = new AdminAuthFailureDefense(timeProvider);
+
+        for (var i = 0; i < AdminAuthenticationDefaults.IpRateLimitMaxAttempts; i++)
+        {
+            defense.CheckIpRateLimit(RemoteA, isLoopback: false);
+        }
+
+        Assert.False(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+
+        // 窓失効直後のスイープではストリークが進行中のため除去されない。
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // 真の鎮静化には 2 段階のロールオーバーが要る（CheckIpRateLimit のコメント・
+        // GetIpRateLimitEscalations_GenuineRecoveryWindow_ClearsStreak と同じ理由）:
+        // ①直前の飽和窓を引き継ぐロールオーバー（ストリークはまだ持ち越される）。
+        Assert.True(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+
+        // この時点ではまだストリークが持ち越されているため、スイープしても除去されない。
+        Assert.Equal(0, defense.SweepIdleIpRateLimitEntries());
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+
+        // ②直前の窓が上限未満だった（実需要が閾値未満）ことを確認するロールオーバーで、
+        // ここで初めてストリークが解除される。
+        Assert.True(defense.CheckIpRateLimit(RemoteA, isLoopback: false).Allowed);
+        timeProvider.Advance(AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(1));
+
+        // 以降、当該 IP からの新規試行は無いままアイドル化する——ストリークは既に無いため、
+        // 次のスイープで除去される。
+        var removed = defense.SweepIdleIpRateLimitEntries();
+
+        Assert.Equal(1, removed);
+        Assert.Equal(0, defense.IpRateLimitTrackedAddressCount);
+    }
+
     // ==== ②グローバルトークンバケット ====
 
     [Fact]

@@ -912,6 +912,46 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1019);
     }
 
+    [Fact]
+    public async Task EvaluateOnce_SweepsIdleIpRateLimitEntries_ButNotActiveOnes()
+    {
+        // Issue #233: 周期評価のたびに、IP レート制限のアイドルエントリ（直近の窓内で試行が無い
+        // 送信元）を掃き出す。アクティブな送信元（窓が失効していない）は残る。
+        var collector = new FakeLogCollector();
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
+        var defense = new Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense(timeProvider);
+
+        var idleAddress = System.Net.IPAddress.Parse("203.0.113.10");
+        var activeAddress = System.Net.IPAddress.Parse("203.0.113.20");
+
+        defense.CheckIpRateLimit(idleAddress, isLoopback: false);
+        defense.CheckIpRateLimit(activeAddress, isLoopback: false);
+        Assert.Equal(2, defense.IpRateLimitTrackedAddressCount);
+
+        // 両方の窓が失効するまで進める——idleAddress は以後アクセスなしのまま。
+        timeProvider.Advance(Yagura.Host.Administration.AdminAuthenticationDefaults.IpRateLimitWindow + TimeSpan.FromSeconds(5));
+
+        // activeAddress だけがちょうど今、新しい窓を開始する再アクセスをする
+        // （CheckIpRateLimit 自身の窓ロールオーバー判定により WindowStartAtUtc が現在時刻へ更新される）。
+        defense.CheckIpRateLimit(activeAddress, isLoopback: false);
+
+        var monitor = new ActiveNotificationMonitor(
+            spool: null,
+            new IngestionMetrics(),
+            new FakeMonitoredVolumeInfo(),
+            new FakeExpressCapacityChecker(reading: null),
+            timeProvider,
+            new FakeLogger<ActiveNotificationMonitor>(collector),
+            selfTestTracker: null,
+            adminHttpsCertificateProbe: null,
+            ingestionTlsCertificateProbe: null,
+            adminAuthFailureDefense: defense);
+
+        await monitor.EvaluateOnceAsync();
+
+        Assert.Equal(1, defense.IpRateLimitTrackedAddressCount);
+    }
+
     // ------------------------------------------------------------------
     // ヘルパー
     // ------------------------------------------------------------------
