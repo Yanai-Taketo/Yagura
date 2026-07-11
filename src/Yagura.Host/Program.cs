@@ -517,7 +517,11 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
             selfTestTracker,
             adminHttpsCertificateProbe,
-            ingestionTlsCertificateProbe));
+            ingestionTlsCertificateProbe,
+            // ADR-0011 決定 6: 三層防御の能動通知への昇格。AdminAuthFailureDefense は
+            // 本メソッド内で後段に登録されるが、AddSingleton のファクトリは遅延解決されるため
+            // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
+            sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>()));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
@@ -607,6 +611,10 @@ public static class Program
                 new Yagura.Storage.Administration.SqlServer.SqlServerAdminAccountStore(resolvedConfiguration.SqlServerConnectionString!),
             _ => new Yagura.Storage.Administration.Sqlite.SqliteAdminAccountStore(databasePath),
         });
+        // ADR-0011 決定 2〜5.1: 三層防御（バックオフ・IP レート制限・グローバルトークンバケット）の
+        // 状態保持はプロセス内シングルトン——AppAdminAuthenticationService（ログイン判定）と
+        // ActiveNotificationMonitor（能動通知への昇格。決定 6）の両方が同一インスタンスを参照する。
+        builder.Services.AddSingleton<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>();
         builder.Services.AddSingleton<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator>(
             sp => sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>());

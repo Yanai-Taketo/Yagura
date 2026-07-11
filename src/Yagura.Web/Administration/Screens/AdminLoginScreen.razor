@@ -30,6 +30,14 @@
 
 @if (_hasError)
 {
+    @* ADR-0011 決定 3（列挙耐性の核心）: ログイン失敗の応答は、実在アカウントのバックオフ
+       待機中・非実在ユーザー名・誤パスワードのいずれでも完全に同一（`?error=1`・原因を
+       明かさない単一の汎用文言）とする。バックオフ待機であることを UI 文言からも明かさない
+       （原因を暴く分岐文言・カウントダウンをこの画面には出さない——AdminAuthEndpoints の
+       バックオフ層の応答統一コメント参照）。アクセス集中（IP レート制限/グローバルバケット）の
+       カウントダウンは、そもそも本画面ではなく 429 応答（AdminAuthEndpoints の
+       WriteRateLimitedResponseAsync）が自己完結ページとして表示する（そちらは送信元 IP 単位で
+       実在/非実在に依存しないため列挙シグナルにならない）。 *@
     <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.AdminLoginError</MudAlert>
 }
 
@@ -107,6 +115,9 @@
 
         var uri = new Uri(Navigation.Uri);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        // ADR-0011 決定 3: 失敗時の応答は原因（バックオフ/誤パスワード/非実在ユーザー名）に
+        // 依らず単一の `?error=1` に統一する。本画面はエラーの有無だけを見て単一の汎用文言を
+        // 出し、待機理由・カウントダウンを一切表示しない（列挙シグナルを画面に持ち込まない）。
         _hasError = query.ContainsKey("error");
     }
 

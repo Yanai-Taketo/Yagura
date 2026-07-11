@@ -140,4 +140,11 @@ public static class ActiveNotificationEventIds
     /// </summary>
     public static readonly EventId IngestionTlsCertificateUnavailableWhileRunning =
         new(1018, "IngestionTlsCertificateUnavailableWhileRunning");
+
+    /// <summary>
+    /// アプリ独自認証の三層防御（バックオフ・IP レート制限・グローバルトークンバケット）のいずれかが
+    /// 昇格閾値（仮値 15 分。<see cref="Yagura.Host.Administration.AdminAuthenticationDefaults.EscalationThreshold"/>）
+    /// 以上継続して発動している（ADR-0011 決定 6）。レベル: 警告。
+    /// </summary>
+    public static readonly EventId AdminAuthFailureDefenseEscalated = new(1019, "AdminAuthFailureDefenseEscalated");
 }

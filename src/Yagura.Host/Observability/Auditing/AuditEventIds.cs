@@ -17,7 +17,7 @@ namespace Yagura.Host.Observability.Auditing;
 /// <para>
 /// <b>例外記録（v0.1 期の訂正。issue #237）</b>: 3003（<see cref="WindowsAuthenticationHandshakeFailed"/>）は
 /// 当初「握手失敗」と「認証成功だが管理者権限なし」の両方を含めていたが、issue #237 で後者を
-/// <see cref="AdminAuthorizationDenied"/>（3006）へ分離し、3003 を握手失敗のみへ narrow した
+/// <see cref="AdminAuthorizationDenied"/>（3008）へ分離し、3003 を握手失敗のみへ narrow した
 /// （名実の乖離を早期に正す意図的な意味変更。v0.1 期・オーナー承認のうえの例外。security.md §4.3 参照）。
 /// v1.0 での ID 凍結以降は同種の意味変更を行わない。
 /// </para>
@@ -87,14 +87,26 @@ public static class AuditEventIds
 
     /// <summary>
     /// アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6）。レベルは警告。
-    /// 「解除」側の ID は Phase 1 では採番しない——時間経過による自動失効のみで「解除」という
-    /// 個別事象が存在しないため（PR #217 レビューの決着。明示的な解除操作の実装時に採番する）。
+    /// <b>凍結（ADR-0011 決定 9）</b>: 三層防御（バックオフ + IP レート制限 + グローバルトークン
+    /// バケット）の採用以降、本 ID は発火しない。意味・レベルは変更しない。
     /// </summary>
     public static readonly EventId AdminAccountLockedOut = new(3005, "AdminAccountLockedOut");
+
+    /// <summary>
+    /// アプリ独自認証のアカウント単位バックオフが cap（上限遅延）に到達（ADR-0011 決定 3・9）。
+    /// レベルは警告。
+    /// </summary>
+    public static readonly EventId AdminAuthBackoffCapReached = new(3006, "AdminAuthBackoffCapReached");
+
+    /// <summary>
+    /// IP レート制限またはグローバルトークンバケットによる拒否（ADR-0011 決定 2・4・5.1・9）。
+    /// レベルは警告。
+    /// </summary>
+    public static readonly EventId AdminAuthRateLimited = new(3007, "AdminAuthRateLimited");
 
     /// <summary>
     /// 認証成功後の認可拒否（管理者権限なし。ADR-0010 決定 6・issue #237）。レベルは警告。
     /// プロトコル握手失敗（<see cref="WindowsAuthenticationHandshakeFailed"/>=3003）とは別事象として分離する。
     /// </summary>
-    public static readonly EventId AdminAuthorizationDenied = new(3006, "AdminAuthorizationDenied");
+    public static readonly EventId AdminAuthorizationDenied = new(3008, "AdminAuthorizationDenied");
 }

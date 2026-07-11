@@ -91,11 +91,11 @@ public enum AuditEventKind
     /// イベント ID 3005）。
     /// </summary>
     /// <remarks>
-    /// <b>「解除」側の事象は Phase 1 では定義しない</b>（PR #217 レビュー指摘の決着）:
-    /// Phase 1 のロックアウト解除は時間経過による自動失効のみであり、「解除」という個別の
-    /// 事象が発生する時点が存在しない（明示的な解除操作も未実装）。到達不能な事象種別を
-    /// 定義したままにせず、管理者による明示的なロックアウト解除操作を実装する際に
-    /// 新しい ID とともに追加する（申し送り: security.md §2.4）。
+    /// <b>凍結（ADR-0011 決定 9）</b>: 本 ID は ADR-0011 の三層防御（バックオフ + IP レート制限 +
+    /// グローバルトークンバケット）の採用以降、発火しなくなった——ハードロックアウト機構自体が
+    /// supersede されたため。意味・レベルは変更しない（additive-only 規約の「凍結」扱い。
+    /// security.md §4.3）。後継の事象は <see cref="AdminAuthBackoffCapReached"/>（3006）・
+    /// <see cref="AdminAuthRateLimited"/>（3007）。
     /// </remarks>
     AdminAccountLockedOut,
 
@@ -109,7 +109,7 @@ public enum AuditEventKind
     /// <summary>
     /// 拒否・セキュリティ事象: 認証には成功したが管理者権限がないため管理 UI へのアクセスを拒否
     /// （Windows 統合認証で認証は成立したが <c>BUILTIN\Administrators</c> に所属していない等。
-    /// イベント ID 3006。issue #237）。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
+    /// イベント ID 3008。issue #237）。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
     /// </summary>
     /// <remarks>
     /// <b><see cref="WindowsAuthenticationHandshakeFailed"/>（3003）とは別事象</b>: 3003 は
@@ -131,4 +131,21 @@ public enum AuditEventKind
     /// 自動操作。イベント ID 2010。Issue #137）。記録内容は証明書拇印・付与先アカウントのみ。
     /// </summary>
     IngestionTlsCertificatePrivateKeyAccessGranted,
+
+    /// <summary>
+    /// 拒否・セキュリティ事象: アプリ独自認証のアカウント単位バックオフが cap（上限遅延）に到達
+    /// （ADR-0011 決定 3・9。イベント ID 3006）。<see cref="AppAuthenticationLoginFailed"/>（3004）は
+    /// 通常の失敗ログインとして引き続き記録し、本 ID は「バックオフが上限まで達した」ことを示す
+    /// 追加のセキュリティ事象として記録する。記録内容は送信元 IP・アカウントキー（アカウント正規化
+    /// ユーザー名 × loopback/remote の別）・現在の連続失敗回数 n・算出された待機時間。
+    /// </summary>
+    AdminAuthBackoffCapReached,
+
+    /// <summary>
+    /// 拒否・セキュリティ事象: IP レート制限またはグローバルトークンバケットによる拒否
+    /// （ADR-0011 決定 2・4・5.1・9。イベント ID 3007）。<c>Detail</c> で拒否理由の別
+    /// （IP レート制限/グローバルトークンバケット涸渇のいずれか。後者はプロセス全体の事象である旨も
+    /// 含める）を区別する——利用者応答では区別しない（決定 3）。記録内容は送信元 IP・拒否理由の別。
+    /// </summary>
+    AdminAuthRateLimited,
 }

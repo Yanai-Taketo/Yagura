@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -179,9 +180,65 @@ public static class AdminAuthenticationExtensions
     /// 指定した <see cref="ClaimsPrincipal"/> が Windows 統合認証で <c>BUILTIN\Administrators</c>
     /// として認証されているかどうか（ADR-0010 決定 5・検証 2 の SID クレーム判定）。
     /// </summary>
-    public static bool IsWindowsAdministrator(ClaimsPrincipal user) =>
-        string.Equals(user.Identity?.AuthenticationType, NegotiateDefaults.AuthenticationScheme, StringComparison.Ordinal) &&
-        (user.Identity?.IsAuthenticated ?? false) &&
+    /// <remarks>
+    /// <para>
+    /// <b>「Windows 統合認証で確立された identity か」は <see cref="WindowsIdentity"/> 型で判定する</b>
+    /// （認証スキーム/パッケージ名の文字列一致では判定しない）。SSPI が Kerberos を交渉した場合、生成される
+    /// <see cref="WindowsIdentity"/> の <c>AuthenticationType</c> は <c>"Kerberos"</c>（NTLM の場合は
+    /// <c>"NTLM"</c>）になり、認証スキーム名 <c>"Negotiate"</c>
+    /// （<see cref="NegotiateDefaults.AuthenticationScheme"/>）とは一致しない。スキーム名の文字列一致で
+    /// 判定すると Kerberos ログオンの管理者を取りこぼす（issue #235。Kerberos-only モードでは全 Windows 管理者が
+    /// 該当し、事実上ロックアウトされていた——実機診断で <c>AuthenticationType='Kerberos'</c> かつ 544 クレーム
+    /// 保持でも判定 false になることを確認）。<see cref="WindowsIdentity"/> 型そのものが「Windows 統合認証で
+    /// 確立された identity」の確実な指標であり（アプリ独自認証は <see cref="ClaimsIdentity"/> を用いる。
+    /// <see cref="IsAppAuthenticated"/> 参照）、Kerberos/NTLM/Negotiate のパッケージ名文字列に依存しない。
+    /// </para>
+    /// <para>
+    /// <b>不変条件</b>: 本判定は「<see cref="WindowsIdentity"/> を principal へ載せるのは Negotiate ハンドラのみ」
+    /// という前提に依る。将来別の認証スキームが <see cref="WindowsIdentity"/> を注入すると管理者認可が黙って
+    /// 広がるため、そのような拡張時は本判定の見直しを要する。型・クレームとも
+    /// <see cref="ClaimsPrincipal.Identities"/> 全体を走査して観点を揃える（primary identity のみを見る非対称を
+    /// 避ける——将来 identity を追加する改修での再発を防ぐ）。<c>IsAuthenticated</c> の併記は匿名/ゲストの
+    /// <see cref="WindowsIdentity"/>（<see cref="WindowsIdentity.GetAnonymous"/> 相当）を除外するため。
+    /// </para>
+    /// <para>
+    /// <b>射程の限界（issue #235）</b>: 本判定が通すのは「<c>S-1-5-32-544</c>（<c>BUILTIN\Administrators</c>）を
+    /// 保持する Windows 主体」に限る。AD グループマッピング（<c>security.md</c> §3・SEC-9 未実装）で「管理」役割を
+    /// 得たローカル Administrators 非所属の AD ユーザーや、階層管理で Domain Admins をローカル Administrators から
+    /// 外した構成では、正規の管理者でも本判定を通らない。「Kerberos ロックアウト解消」＝「Windows 管理者認可が
+    /// 一般に正しくなった」ではない。SEC-9 着手時に判定範囲（および S4U 要否）を再評価する。
+    /// </para>
+    /// </remarks>
+    public static bool IsWindowsAdministrator(ClaimsPrincipal user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        // 認可の SID モデルは Windows 固有（非 Windows では管理者と判定しない＝安全側。CA1416 ガードも兼ねる）。
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        // 型・クレームとも全 identity を走査して観点を揃える（primary identity のみを見る非対称を避ける）。
+        // 認証済み WindowsIdentity が 1 つでもあり、かつ 544 クレームを持てば管理者。
+        foreach (var identity in user.Identities)
+        {
+            if (identity is WindowsIdentity { IsAuthenticated: true })
+            {
+                return HasBuiltinAdministratorsSid(user);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// <paramref name="user"/> が <c>BUILTIN\Administrators</c>（<see cref="BuiltinAdministratorsSid"/>）の
+    /// グループ SID クレームを持つか（ADR-0010 決定 5・検証 2 の SID 判定）。型に依存しない純粋関数として
+    /// 切り出し、<see cref="ClaimsPrincipal"/> だけで（AD 実環境なしに）単体テスト可能にする（issue #235。
+    /// <see cref="WindowsIdentity"/> 型ゲートの正パスは実 Windows トークンを要するため lab 統合検証に委ねる）。
+    /// </summary>
+    internal static bool HasBuiltinAdministratorsSid(ClaimsPrincipal user) =>
         user.HasClaim(ClaimTypes.GroupSid, BuiltinAdministratorsSid);
 
     /// <summary>
@@ -228,15 +285,35 @@ public static class AdminAuthenticationExtensions
         }
 
         var runtimeOptions = httpContext.RequestServices.GetService<AdminAuthenticationRuntimeOptions>();
-        var adminListenerPort = httpContext.RequestServices.GetService<YaguraAdminListenerPort>();
-
-        if (runtimeOptions is null || adminListenerPort is null)
+        if (runtimeOptions is null)
         {
             return false;
         }
 
-        return !runtimeOptions.RequireAuthentication &&
-            httpContext.Connection.LocalPort == adminListenerPort.Port;
+        return !runtimeOptions.RequireAuthentication && IsLoopbackAdminConnection(httpContext);
+    }
+
+    /// <summary>
+    /// 現在の接続が管理リスナの<b>loopback 束縛ポート</b>（<c>Admin:HttpPort</c>）経由かどうかを
+    /// 判定する単一の判定点（ADR-0011 決定 4）。<see cref="IsUnauthenticatedLoopbackBypassAllowed"/>
+    /// （認可バイパスの判定）に加え、三層防御（IP レート制限・グローバルトークンバケット・
+    /// アカウント単位バックオフのキー分離）の loopback 判定も本メソッドを共有する——
+    /// 「loopback の定義が層ごとにずれない」ことを、判定ロジックの単一箇所化で保証する
+    /// （ADR-0011 委任事項 9・10）。<c>RequireAuthentication</c>（loopback 認証 opt-in）の考慮は
+    /// 含まない——それは「認証そのものの要否」であり、ここで扱う「失敗試行対策としての追加の
+    /// 遅延・拒否の要否」とは独立の軸（ADR-0011 決定 4）。
+    /// </summary>
+    public static bool IsLoopbackAdminConnection(HttpContext httpContext)
+    {
+        ArgumentNullException.ThrowIfNull(httpContext);
+
+        var adminListenerPort = httpContext.RequestServices.GetService<YaguraAdminListenerPort>();
+        if (adminListenerPort is null)
+        {
+            return false;
+        }
+
+        return httpContext.Connection.LocalPort == adminListenerPort.Port;
     }
 
     /// <summary>

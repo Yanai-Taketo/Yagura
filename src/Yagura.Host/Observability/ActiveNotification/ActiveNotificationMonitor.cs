@@ -68,6 +68,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly SpoolSelfTestTracker? _selfTestTracker;
     private readonly IAdminHttpsCertificateStatusProbe? _adminHttpsCertificateProbe;
     private readonly IAdminHttpsCertificateStatusProbe? _ingestionTlsCertificateProbe;
+    private readonly Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? _adminAuthFailureDefense;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
@@ -92,7 +93,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         ILogger<ActiveNotificationMonitor>? logger = null,
         SpoolSelfTestTracker? selfTestTracker = null,
         IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
-        IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null)
+        IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null,
+        Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -107,6 +109,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _selfTestTracker = selfTestTracker;
         _adminHttpsCertificateProbe = adminHttpsCertificateProbe;
         _ingestionTlsCertificateProbe = ingestionTlsCertificateProbe;
+        _adminAuthFailureDefense = adminAuthFailureDefense;
     }
 
     /// <summary>周期監視ループを開始する。</summary>
@@ -209,6 +212,97 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         await EvaluateSpoolSelfTestAsync(cancellationToken).ConfigureAwait(false);
         EvaluateAdminHttpsCertificate();
         EvaluateIngestionTlsCertificate();
+        EvaluateAdminAuthFailureDefense();
+    }
+
+    /// <summary>
+    /// アプリ独自認証の三層防御の能動通知への昇格（ADR-0011 決定 6）。<see cref="_adminAuthFailureDefense"/>
+    /// が未注入（アプリ独自認証が結線されていない構成）の間は何もしない。バックオフ・IP レート制限・
+    /// グローバルトークンバケットのいずれも、cap 到達/拒否状態が
+    /// <see cref="Yagura.Host.Administration.AdminAuthenticationDefaults.EscalationThreshold"/>
+    /// （仮値 15 分）以上継続した場合に通知する——通知本文には主因層・上位送信元 IP を含める
+    /// （決定 6 の本文要件）。抑制窓はトリガキー（アカウントキー/送信元 IP 単位）ごとに独立させる
+    /// （<see cref="EvaluateMonitoredVolumesFreeSpace"/> と同じパターン）。
+    /// </summary>
+    /// <remarks>
+    /// <b>IP レート制限のアイドルエントリ掃引（Issue #233。PR #236 レビュー指摘で条件を修正）</b>:
+    /// 評価の先頭で
+    /// <see cref="Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense.SweepIdleIpRateLimitEntries"/>
+    /// を毎周期（仮値 1 分）呼ぶ——送信元 IP をキーにした状態辞書は攻撃者が制御できる次元（IP
+    /// アドレス）に無制限に増加し得るため（非実在ユーザー名に状態を持たせない設計の「状態空間は
+    /// 運用者制御」という根拠が成立しない）、これを周期的に縮退させる。除去条件は「窓失効かつ
+    /// （拒否ストリークを持たない、または staleness-cap ≒ 2×エスカレーション閾値を超えて窓が凍結）」
+    /// ——①拒否ストリーク中（<c>DenyStreakStartAtUtc</c> 設定済み——下記ループのエスカレーション判定の
+    /// 起点）で毎窓アクセスが続くペース調整型攻撃のエントリは保持し（消すと能動通知が永久に発火
+    /// しなくなるため。それ自体が進行中の実攻撃でありエスカレーション対象）、②ストリークを立てて
+    /// 放置された撃ち逃げピン（窓が凍結）は約 2×閾値 経過後に除去してメモリ有界性を回復する
+    /// （放置ストリークも 15 分で 1 回はエスカレーションを出してから片付く）。<b>辞書サイズは
+    /// 「現に進行中で通知対象の攻撃者数」で有界</b>であり、攻撃者が任意に膨らませられる恒久ピン留めは
+    /// 残らない（詳細は <c>SweepIdleIpRateLimitEntries</c> の remarks 参照）。
+    /// </remarks>
+    private void EvaluateAdminAuthFailureDefense()
+    {
+        if (_adminAuthFailureDefense is null)
+        {
+            return;
+        }
+
+        _adminAuthFailureDefense.SweepIdleIpRateLimitEntries();
+
+        var now = _timeProvider.GetUtcNow();
+
+        foreach (var escalation in _adminAuthFailureDefense.GetBackoffEscalations())
+        {
+            var duration = now - escalation.CapReachedSinceUtc;
+            var listenerKind = escalation.IsLoopback ? "loopback" : "remote";
+
+            NotifyIfDue($"admin-auth-backoff-cap:{escalation.UsernameNormalized}:{listenerKind}", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated,
+                    "[admin-auth-backoff-cap-continuing] アプリ独自認証のアカウント {UsernameNormalized}" +
+                    "（{ListenerKind} 経由）でバックオフが上限（cap）に張り付いた状態が {Duration} 以上" +
+                    "継続しています（連続失敗回数 n={FailedAttemptCount}。主因層: バックオフ）。" +
+                    "持続的な総当たり試行が疑われます。直近の送信元 IP（上位）: {RecentSourceAddresses}。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    escalation.UsernameNormalized,
+                    listenerKind,
+                    duration,
+                    escalation.FailedAttemptCount,
+                    string.Join(", ", escalation.RecentSourceAddresses),
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+
+        foreach (var escalation in _adminAuthFailureDefense.GetIpRateLimitEscalations())
+        {
+            var duration = now - escalation.DenyStreakStartAtUtc;
+
+            NotifyIfDue($"admin-auth-ip-rate-limit:{escalation.RemoteAddress}", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated,
+                    "[admin-auth-ip-rate-limit-continuing] アプリ独自認証への送信元 IP {RemoteAddress} からの" +
+                    "試行が IP レート制限により {Duration} 以上継続して拒否されています" +
+                    "（主因層: IP レート制限）。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    escalation.RemoteAddress,
+                    duration,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+
+        var bucketEscalation = _adminAuthFailureDefense.GetGlobalBucketEscalation();
+        if (bucketEscalation is not null)
+        {
+            var duration = now - bucketEscalation.DenyStreakStartAtUtc;
+
+            NotifyIfDue("admin-auth-global-bucket", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated,
+                    "[admin-auth-global-bucket-continuing] アプリ独自認証のグローバルトークンバケットが" +
+                    "涸渇した状態が {Duration} 以上継続しています（主因層: グローバルトークンバケット。" +
+                    "プロセス全体の事象）。直近の拒否送信元 IP（上位）: {RecentSourceAddresses}。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    duration,
+                    string.Join(", ", bucketEscalation.RecentSourceAddresses),
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
     }
 
     /// <summary>

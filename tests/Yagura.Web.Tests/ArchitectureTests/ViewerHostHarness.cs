@@ -354,7 +354,8 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     private sealed class StubAppAdminAuthenticator : Yagura.Abstractions.Administration.IAppAdminAuthenticator
     {
         public Task<Yagura.Abstractions.Administration.AppAuthenticationOutcome> TryAuthenticateAsync(
-            string username, string password, CancellationToken cancellationToken = default)
+            string username, string password, Yagura.Abstractions.Administration.AdminAuthAttemptContext context,
+            CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
 }

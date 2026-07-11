@@ -152,17 +152,43 @@ public sealed class YaguraCircuitHandlerAuthenticationTests
     }
 
     [Fact]
-    public void IsWindowsAdministrator_RequiresNegotiateSchemeAndBuiltinAdministratorsGroupSid()
+    public void HasBuiltinAdministratorsSid_TrueOnlyWhenGroupSidClaimPresent()
     {
-        var adminUser = CreatePrincipal("Negotiate", "CONTOSO\\jdoe");
-        ((ClaimsIdentity)adminUser.Identity!).AddClaim(new Claim(ClaimTypes.GroupSid, AdminAuthenticationExtensions.BuiltinAdministratorsSid));
+        // 実質の認可判断（BUILTIN\Administrators=S-1-5-32-544 の保持）は型に依存しない純粋関数として
+        // 切り出してあり、AD 実環境なしに決定論的に単体テストできる（issue #235 のペルソナレビュー: リサ提案1）。
+        var withSid = CreatePrincipal("Kerberos", "CONTOSO\\jdoe");
+        ((ClaimsIdentity)withSid.Identity!).AddClaim(new Claim(ClaimTypes.GroupSid, AdminAuthenticationExtensions.BuiltinAdministratorsSid));
 
-        var nonAdminUser = CreatePrincipal("Negotiate", "CONTOSO\\bob");
+        var withoutSid = CreatePrincipal("Kerberos", "CONTOSO\\bob");
+
+        Assert.True(AdminAuthenticationExtensions.HasBuiltinAdministratorsSid(withSid));
+        Assert.False(AdminAuthenticationExtensions.HasBuiltinAdministratorsSid(withoutSid));
+    }
+
+    [Fact]
+    public void IsWindowsAdministrator_RequiresWindowsIdentity_NotSchemeStringOrGroupSidAlone()
+    {
+        // 型ゲート（WindowsIdentity）の負パスを固定する。plain な ClaimsIdentity は——たとえ
+        // AuthenticationType が "Kerberos"/"Negotiate" で 544 クレームを持っていても——WindowsIdentity では
+        // ないため管理者と判定しない。
+        //
+        // 旧実装は第 1 条件を AuthenticationType=="Negotiate" の文字列一致で判定していたため、authtype を
+        // "Negotiate" 固定にしたこの種のモックで「緑」になり、本番（実 WindowsIdentity は Kerberos ログオンで
+        // AuthenticationType=="Kerberos"）を取りこぼしていた（issue #235）。本テストはその非対称を正す。
+        //
+        // 正パス（実 WindowsIdentity + 544 → true）は、任意の 544 付き WindowsIdentity をポータブルに合成する
+        // 公開手段がないため単体では固定できず、#228 の AD/Kerberos lab による統合検証（Kerberos SSO で
+        // /admin/login/windows が 302 /admin、NTLM 経路でも管理者判定）に委ねる。
+        var kerberosLikeWithSid = CreatePrincipal("Kerberos", "CONTOSO\\jdoe");
+        ((ClaimsIdentity)kerberosLikeWithSid.Identity!).AddClaim(new Claim(ClaimTypes.GroupSid, AdminAuthenticationExtensions.BuiltinAdministratorsSid));
+
+        var negotiateLikeWithSid = CreatePrincipal("Negotiate", "CONTOSO\\jdoe");
+        ((ClaimsIdentity)negotiateLikeWithSid.Identity!).AddClaim(new Claim(ClaimTypes.GroupSid, AdminAuthenticationExtensions.BuiltinAdministratorsSid));
 
         var appAuthUser = CreatePrincipal("YaguraAppAuth", "admin1");
 
-        Assert.True(AdminAuthenticationExtensions.IsWindowsAdministrator(adminUser));
-        Assert.False(AdminAuthenticationExtensions.IsWindowsAdministrator(nonAdminUser));
+        Assert.False(AdminAuthenticationExtensions.IsWindowsAdministrator(kerberosLikeWithSid));
+        Assert.False(AdminAuthenticationExtensions.IsWindowsAdministrator(negotiateLikeWithSid));
         Assert.False(AdminAuthenticationExtensions.IsWindowsAdministrator(appAuthUser));
     }
 
