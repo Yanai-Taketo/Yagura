@@ -14,6 +14,13 @@ namespace Yagura.Host.Observability.Auditing;
 /// に従う。本クラスへ新しい ID を追加する場合は、必ず security.md §4.3 の ID 表へ同じ PR で
 /// 追記すること（意味の変更・転用は行わない）。
 /// </para>
+/// <para>
+/// <b>例外記録（v0.1 期の訂正。issue #237）</b>: 3003（<see cref="WindowsAuthenticationHandshakeFailed"/>）は
+/// 当初「握手失敗」と「認証成功だが管理者権限なし」の両方を含めていたが、issue #237 で後者を
+/// <see cref="AdminAuthorizationDenied"/>（3006）へ分離し、3003 を握手失敗のみへ narrow した
+/// （名実の乖離を早期に正す意図的な意味変更。v0.1 期・オーナー承認のうえの例外。security.md §4.3 参照）。
+/// v1.0 での ID 凍結以降は同種の意味変更を行わない。
+/// </para>
 /// </remarks>
 public static class AuditEventIds
 {
