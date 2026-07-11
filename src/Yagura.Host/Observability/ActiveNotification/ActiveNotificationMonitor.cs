@@ -225,14 +225,17 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// （<see cref="EvaluateMonitoredVolumesFreeSpace"/> と同じパターン）。
     /// </summary>
     /// <remarks>
-    /// <b>IP レート制限のアイドルエントリ掃引（Issue #233）</b>: 評価の先頭で
+    /// <b>IP レート制限のアイドルエントリ掃引（Issue #233。PR #236 レビュー指摘で条件を修正）</b>:
+    /// 評価の先頭で
     /// <see cref="Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense.SweepIdleIpRateLimitEntries"/>
     /// を毎周期（仮値 1 分）呼ぶ——送信元 IP をキーにした状態辞書は攻撃者が制御できる次元（IP
     /// アドレス）に無制限に増加し得るため（非実在ユーザー名に状態を持たせない設計の「状態空間は
-    /// 運用者制御」という根拠が成立しない）、アイドル化した（直近の窓内で試行が無い）エントリを
-    /// 周期的に縮退させる。エスカレーション判定（下記ループ）より先に行うことで、既に鎮静化した
-    /// 送信元の陳腐化した昇格状態（<c>DenyStreakStartAtUtc</c> が持ち越されたまま二度と解除されない
-    /// 状態）も同時に整理される副次効果を持つ。
+    /// 運用者制御」という根拠が成立しない）、アイドル化した（直近の窓内で試行が無い）<b>かつ</b>
+    /// 拒否ストリークを持たないエントリを周期的に縮退させる。拒否ストリーク中（<c>DenyStreakStartAtUtc</c>
+    /// が設定済み——下記ループのエスカレーション判定の起点）のエントリは窓が失効していても除去
+    /// しない——毎窓の先頭でバーストし残りをアイドルにするペース調整型の攻撃に対して、スイープが
+    /// ストリークごとエントリを消してしまうと能動通知（下記ループ）が永久に発火しなくなるため
+    /// （<c>SweepIdleIpRateLimitEntries</c> の remarks 参照）。
     /// </remarks>
     private void EvaluateAdminAuthFailureDefense()
     {
