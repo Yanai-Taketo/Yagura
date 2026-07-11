@@ -180,21 +180,41 @@ internal static class AdminAuthEndpoints
 
                     if (outcome.DenialLayer is AdminAuthDenialLayer.IpRateLimit or AdminAuthDenialLayer.GlobalBucket)
                     {
-                        // 決定 5.1: レート制限層は待たせず即座に拒否し、有限 Retry-After を返す
-                        // （バックオフ層と異なり、遅延は TryAuthenticateAsync 側で発生していない）。
+                        // 決定 5.1: レート制限層は待たせず即座に拒否し、有限 Retry-After を返す。
+                        // ①②は送信元 IP 単位・プロセス全体の状態のみで判定し、ユーザー名の実在有無に
+                        // 依存しない（決定 4）——非実在ユーザー名も実在アカウントも同一 IP からは同一の
+                        // 429 + カウントダウンを受ける。列挙シグナルにならないため、この層に限り
+                        // 待機表示（決定 6）を出す。
                         await WriteRateLimitedResponseAsync(context, outcome.WaitSeconds ?? 0).ConfigureAwait(false);
                         return;
                     }
 
-                    // バックオフ層: 遅延は TryAuthenticateAsync 内で既に適用済み——通常のリダイレクト
-                    // で統一の待機表示（決定 6）へ渡す。
-                    context.Response.Redirect($"/admin/login?error=1&wait={outcome.WaitSeconds ?? 0}");
+                    // バックオフ層（決定 3 の非開示要件・列挙耐性の核心）: **非実在ユーザー名と
+                    // バイト単位で同一の応答**（`?error=1`・wait パラメータなし・同一 UI 文言）に
+                    // 統一する。実在アカウントがバックオフ待機中であることを、応答種別・Location
+                    // ヘッダ・UI 文言のいずれからも観測できないようにする（curl の生ヘッダだけで
+                    // 判別できる「計測不要の直接的な告白」経路を塞ぐ——決定 3 が名指しで排除した経路）。
+                    //
+                    // バックオフの効果は TryAuthenticateAsync 内の Task.Delay による**サーバ側の
+                    // 応答遅延（レイテンシ）としてのみ**現れる。これは決定 3 が Phase 1 で明示的に
+                    // 受け入れたタイミング非対称（「実在名は account-keyed バックオフ遅延を、非実在名は
+                    // IP レート制限・グローバルバケット遅延のみを負う——遅延時間は完全には一致しない」）
+                    // の範囲であり、計測して初めて分かる推論に留まる。
+                    //
+                    // カウントダウン表示（決定 6）を出さない点は決定 6 の当初意図から外れるが、
+                    // 決定 3 は「決定 6 の文言は本決定 3 の非開示要件に従う」と明示的に決定 3 を優先
+                    // させている。アクセス集中（IP/グローバル層）のカウントダウンは上の 429 経路が
+                    // 引き続き提供する。監査記録（3004 reason=Backoff・cap 到達時 3006）は
+                    // RecordDenialAuditAsync が層の別をサーバ側にのみ残す。
+                    context.Response.Redirect("/admin/login?error=1");
                     return;
 
                 case AppAuthenticationResult.InvalidCredentials:
                 default:
                     // 失敗理由の種別は監査記録にのみ残し、利用者への応答では区別しない
-                    // （ユーザー列挙耐性——ADR-0010 決定 3・security.md §4.3）。
+                    // （ユーザー列挙耐性——ADR-0010 決定 3・security.md §4.3）。上のバックオフ層と
+                    // 完全に同一の Location（`/admin/login?error=1`）を返すことで、反復試行でも
+                    // 実在/非実在が応答形状から区別できないことを保証する。
                     await auditRecorder.RecordAsync(new AuditEvent(
                         OccurredAt: now,
                         Kind: AuditEventKind.AppAuthenticationLoginFailed,

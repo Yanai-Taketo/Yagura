@@ -30,12 +30,15 @@
 
 @if (_hasError)
 {
-    @* ADR-0011 決定 3・6: 実在アカウントのバックオフ待機・非実在ユーザー名・IP レート制限/
-       グローバルトークンバケット拒否のいずれでも同一の文言・体裁で表示する（原因を明かさない）。
-       wait クエリパラメータがあれば統一の待機文言 + カウントダウンを、なければ通常の汎用文言を表示する。 *@
-    <MudAlert Severity="Severity.Error" Class="mt-4">
-        @(_waitSeconds > 0 ? string.Format(UiText.AdminLoginWait, _waitSeconds) : UiText.AdminLoginError)
-    </MudAlert>
+    @* ADR-0011 決定 3（列挙耐性の核心）: ログイン失敗の応答は、実在アカウントのバックオフ
+       待機中・非実在ユーザー名・誤パスワードのいずれでも完全に同一（`?error=1`・原因を
+       明かさない単一の汎用文言）とする。バックオフ待機であることを UI 文言からも明かさない
+       （原因を暴く分岐文言・カウントダウンをこの画面には出さない——AdminAuthEndpoints の
+       バックオフ層の応答統一コメント参照）。アクセス集中（IP レート制限/グローバルバケット）の
+       カウントダウンは、そもそも本画面ではなく 429 応答（AdminAuthEndpoints の
+       WriteRateLimitedResponseAsync）が自己完結ページとして表示する（そちらは送信元 IP 単位で
+       実在/非実在に依存しないため列挙シグナルにならない）。 *@
+    <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.AdminLoginError</MudAlert>
 }
 
 @if (AuthOptions.WindowsAuthEnabled)
@@ -79,8 +82,6 @@
 
     private string? _antiforgeryToken;
     private bool _hasError;
-    private int _waitSeconds;
-    private System.Timers.Timer? _countdownTimer;
     private PersistingComponentStateSubscription _persistingSubscription;
 
     protected override void OnInitialized()
@@ -114,44 +115,11 @@
 
         var uri = new Uri(Navigation.Uri);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        // ADR-0011 決定 3: 失敗時の応答は原因（バックオフ/誤パスワード/非実在ユーザー名）に
+        // 依らず単一の `?error=1` に統一する。本画面はエラーの有無だけを見て単一の汎用文言を
+        // 出し、待機理由・カウントダウンを一切表示しない（列挙シグナルを画面に持ち込まない）。
         _hasError = query.ContainsKey("error");
-
-        // ADR-0011 決定 6: 統一待機表示のカウントダウン。原因（バックオフ/レート制限/
-        // トークンバケット）を明かさない単一の一般文言 + 秒数のみを表示する。
-        if (query.TryGetValue("wait", out var waitValues) &&
-            int.TryParse(waitValues.ToString(), out var parsedWait) &&
-            parsedWait > 0)
-        {
-            _waitSeconds = parsedWait;
-
-            // カウントダウンの実タイマーは対話的描画（circuit 確立後。HttpContext が null の
-            // 局面——本メソッド冒頭のコメント参照）でのみ開始する。prerender 段で開始すると、
-            // 静的 HTML 生成後にコンポーネントが破棄された後もコールバックが発火し得るため。
-            if (HttpContext is null)
-            {
-                _countdownTimer = new System.Timers.Timer(1000) { AutoReset = true };
-                _countdownTimer.Elapsed += (_, _) =>
-                {
-                    if (_waitSeconds > 0)
-                    {
-                        _waitSeconds--;
-                    }
-
-                    if (_waitSeconds <= 0)
-                    {
-                        _countdownTimer?.Stop();
-                    }
-
-                    _ = InvokeAsync(StateHasChanged);
-                };
-                _countdownTimer.Start();
-            }
-        }
     }
 
-    public void Dispose()
-    {
-        _persistingSubscription.Dispose();
-        _countdownTimer?.Dispose();
-    }
+    public void Dispose() => _persistingSubscription.Dispose();
 }

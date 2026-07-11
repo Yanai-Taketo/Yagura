@@ -98,8 +98,11 @@ public sealed class AdminAuthLoginEndpointTests
     }
 
     [Fact]
-    public async Task AppLogin_DeniedByBackoff_RedirectsWithUnifiedWaitParam_AndRecordsFailureAudit()
+    public async Task AppLogin_DeniedByBackoff_RedirectsWithGenericError_ByteIdenticalToInvalidCredentials()
     {
+        // ADR-0011 決定 3（列挙耐性の核心）: バックオフ待機中の失敗は、非実在ユーザー名・誤パスワードと
+        // バイト単位で同一の応答（error=1・wait パラメータなし）にする。wait= を Location に載せると
+        // curl の生ヘッダだけで実在アカウントの存在を判別できてしまう（決定 3 が名指しで排除した経路）。
         var audit = new RecordingAuditRecorder();
         var authenticator = new FakeAppAuthenticator(
             new AppAuthenticationOutcome(AppAuthenticationResult.Denied, "admin1", 4, AdminAuthDenialLayer.Backoff, BackoffCapReached: false));
@@ -112,11 +115,11 @@ public sealed class AdminAuthLoginEndpointTests
 
         var response = await PostLoginAsync(client, token, "admin1", "wrong-password");
 
-        // バックオフ層の拒否は通常の 302 リダイレクトに wait= を添えるのみ——429 は使わない
-        // （遅延は TryAuthenticateAsync 側で既に発生済みのため）。
+        // 429 は使わず（バックオフ遅延は TryAuthenticateAsync 側で既に発生済み）、wait= も付けない。
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal("/admin/login?error=1&wait=4", response.Headers.Location?.ToString());
+        Assert.Equal("/admin/login?error=1", response.Headers.Location?.ToString());
 
+        // 監査には層の別（reason=Backoff）が残る——利用者応答では区別しないが監査では区別する（決定 9）。
         var failed = Assert.Single(audit.Recorded, e => e.Kind == AuditEventKind.AppAuthenticationLoginFailed);
         Assert.Contains("username=admin1", failed.Detail);
         Assert.Contains("reason=Backoff", failed.Detail);
@@ -124,7 +127,7 @@ public sealed class AdminAuthLoginEndpointTests
     }
 
     [Fact]
-    public async Task AppLogin_DeniedByBackoffAtCap_RecordsBothFailureAndCapReachedAudit()
+    public async Task AppLogin_DeniedByBackoffAtCap_StillGenericError_ButRecordsBothFailureAndCapReachedAudit()
     {
         var audit = new RecordingAuditRecorder();
         var authenticator = new FakeAppAuthenticator(
@@ -138,12 +141,55 @@ public sealed class AdminAuthLoginEndpointTests
 
         var response = await PostLoginAsync(client, token, "admin1", "wrong-password");
 
-        Assert.Equal("/admin/login?error=1&wait=30", response.Headers.Location?.ToString());
+        // cap 到達でも利用者応答は誤パスワードと同一（列挙耐性）。cap 到達は監査 3006 にのみ残す。
+        Assert.Equal("/admin/login?error=1", response.Headers.Location?.ToString());
 
         Assert.Single(audit.Recorded, e => e.Kind == AuditEventKind.AppAuthenticationLoginFailed);
         var capReached = Assert.Single(audit.Recorded, e => e.Kind == AuditEventKind.AdminAuthBackoffCapReached);
         Assert.Contains("username=admin1", capReached.Detail);
         Assert.Contains("waitSeconds=30", capReached.Detail);
+    }
+
+    [Fact]
+    public async Task AppLogin_BackoffWaiting_And_NonexistentUser_ProduceByteIdenticalClientResponse_EnumerationResistance()
+    {
+        // ADR-0011 決定 3 の列挙耐性の直接の突合テスト（レビュー指摘で欠けていた検証）:
+        // 閾値超えの実在アカウント（バックオフ待機中。Denied+Backoff+cap 到達）と、非実在ユーザー名
+        // （InvalidCredentials）を同一の反復・同一のフォームで叩き、クライアントが観測する応答
+        // （ステータス・Location ヘッダ・本文）が完全に一致することを固定する。ここが不一致だと、
+        // 反復試行で実在/非実在を判別できる列挙オラクルになる。
+        var backoffAuth = new FakeAppAuthenticator(
+            new AppAuthenticationOutcome(AppAuthenticationResult.Denied, "realadmin", 30, AdminAuthDenialLayer.Backoff, BackoffCapReached: true));
+        var nonexistentAuth = new FakeAppAuthenticator(
+            new AppAuthenticationOutcome(AppAuthenticationResult.InvalidCredentials, "ghost", null, AdminAuthDenialLayer.None));
+
+        await using var backoffHarness = await ViewerHostHarness.StartAsync(
+            appAuthEnabled: true, appAuthenticator: backoffAuth, auditRecorder: new RecordingAuditRecorder());
+        await using var nonexistentHarness = await ViewerHostHarness.StartAsync(
+            appAuthEnabled: true, appAuthenticator: nonexistentAuth, auditRecorder: new RecordingAuditRecorder());
+
+        using var backoffClient = CreateClient(backoffHarness);
+        using var nonexistentClient = CreateClient(nonexistentHarness);
+
+        var (backoffToken, _) = await FetchLoginFormAsync(backoffClient);
+        var (nonexistentToken, _) = await FetchLoginFormAsync(nonexistentClient);
+
+        var backoffResponse = await PostLoginAsync(backoffClient, backoffToken, "realadmin", "wrong-password");
+        var nonexistentResponse = await PostLoginAsync(nonexistentClient, nonexistentToken, "ghost", "wrong-password");
+
+        // ステータスコード・Location ヘッダが完全に一致する（実在アカウントのバックオフ待機が
+        // クライアントから観測できない）。
+        Assert.Equal(nonexistentResponse.StatusCode, backoffResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, backoffResponse.StatusCode);
+        Assert.Equal(
+            nonexistentResponse.Headers.Location?.ToString(),
+            backoffResponse.Headers.Location?.ToString());
+        Assert.Equal("/admin/login?error=1", backoffResponse.Headers.Location?.ToString());
+
+        // 本文も一致（302 の本文は空——どちらも wait= を含む HTML 等を返さない）。
+        var backoffBody = await backoffResponse.Content.ReadAsStringAsync();
+        var nonexistentBody = await nonexistentResponse.Content.ReadAsStringAsync();
+        Assert.Equal(nonexistentBody, backoffBody);
     }
 
     [Theory]
@@ -164,8 +210,9 @@ public sealed class AdminAuthLoginEndpointTests
 
         var response = await PostLoginAsync(client, token, "admin1", "wrong-password");
 
-        // 決定 5.1: 待たせず即座に 429 + 有限 Retry-After。応答本文は原因を明かさない統一文言
-        // （決定 3・6）を含み、非実在ユーザー名・バックオフ待機と見た目上区別されない。
+        // 決定 5.1: 待たせず即座に 429 + 有限 Retry-After。①②層は送信元 IP 単位・プロセス全体の
+        // 状態のみで判定しユーザー名の実在有無に依存しない（決定 4）ため、同一送信元からの実在/
+        // 非実在の試行は同一の 429 + カウントダウンを受ける——この層に限り待機表示（決定 6）を出す。
         Assert.Equal((HttpStatusCode)429, response.StatusCode);
         Assert.Equal("12", Assert.Single(response.Headers.GetValues("Retry-After")));
 

@@ -106,7 +106,13 @@ public sealed class AppAdminAuthenticationServiceTests : IAsyncLifetime
     {
         // ADR-0011 決定 3 の核心: 非実在ユーザー名には個別のバックオフ状態を持たせない
         // （メモリ枯渇 DoS の回避）。loopback（IP レート制限・グローバルバケットの対象外）で
-        // 何度叩いても、常に同一の InvalidCredentials（待機なし）のままであること。
+        // 何度叩いても、サービス層では常に同一の InvalidCredentials（待機なし）のままであること。
+        //
+        // 注: 実在アカウントは閾値超過で Denied(Backoff) を返し、サービス層では非実在（InvalidCredentials）
+        // と結果種別が異なる——ただしこの差は監査記録（層の別。決定 9）のためのものであり、
+        // **クライアントが観測する HTTP 応答は AdminAuthEndpoints が両者を error=1 に統一する**
+        // （列挙耐性の実証は AdminAuthLoginEndpointTests
+        // .AppLogin_BackoffWaiting_And_NonexistentUser_ProduceByteIdenticalClientResponse_...）。
         for (var i = 0; i < 50; i++)
         {
             var outcome = await _service.TryAuthenticateAsync("no-such-user", "whatever", LoopbackContext);
