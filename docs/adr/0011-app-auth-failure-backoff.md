@@ -1,6 +1,6 @@
 # ADR-0011: アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定3 の supersession）
 
-- 状態: proposed
+- 状態: accepted（2026-07-11 マージ）
 - 日付: 2026-07-11
 - 決定者: YANAI Taketo
 - 関連: [ADR-0010](0010-admin-ui-authentication.md)（決定 3 のうち「ロックアウト」機構を本 ADR が supersede する。決定 1 の「loopback は認証手段が全滅しても無条件の最終復旧経路」という前提を、本 ADR ではレート制限側にも明示的に拡張する）/ [docs/adr/README.md](README.md)（amendment/supersession の判定基準）/ [docs/development/persona-review.md](../development/persona-review.md)（対話は PR 上に残す制度）/ [docs/design/security.md](../design/security.md) §2.4（管理 UI 認証の共存設計。本 ADR の反映対象）・§4.3（監査 ID 3005 の凍結対象）・§7 SEC-12（ロックアウト仮値。本 ADR の方式へ統合）/ Issue #172（管理 UI 認証追加の起案元 Issue）/ クローズ済み PR #227（本 ADR の出発点。5 ペルソナ〔田中・鈴木・クリス・佐藤・リサ〕の指摘とオーナーのクローズ判断を含む。以下「#227」と表記）/ `src/Yagura.Host/Administration/AdminAuthentication/AppAdminAuthenticationService.cs`・`AdminAuthenticationDefaults.cs`（現行のハードロックアウト実装）
