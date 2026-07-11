@@ -808,6 +808,15 @@ public static class UiText
     /// <summary>冪等トークン不一致（期限切れ・別セッション）。</summary>
     public const string WizardInvalidToken = "操作の有効期限が切れています。確認ステップからやり直してください。";
 
+    /// <summary>
+    /// 適用完了画面からの再編集開始ボタン（Issue #248——適用後の画面を行き止まりにしない。
+    /// 現在の設定値を種にウィザードを再開する）。
+    /// </summary>
+    public const string WizardBeginReconfiguration = "設定を変更する";
+
+    /// <summary>ウィザードの前ステップへ戻るボタン（表示の移動——確定の取り消しではない）。</summary>
+    public const string WizardBack = "戻る";
+
     /// <summary>反映方式の表示（configuration.md §3・ui.md §5.4）: 即時反映。</summary>
     public const string ApplyEffectImmediate = "変更はすぐに反映されます";
 

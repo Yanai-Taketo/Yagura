@@ -45,6 +45,24 @@ public interface ISetupWizardService : IYaguraWriteService
     Task<SetupWizardSnapshot> GoBackAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// 適用済みの設定の再編集を開始する（Issue #248——適用完了後の画面を行き止まりにしない）。
+    /// 現在の設定ファイル（yagura.json）の内容をウィザードの入力値へ写像し、3 つの入力ステップを
+    /// 確定済み扱いで再開する（次ステップは <see cref="SetupWizardStep.Review"/>——編集したい
+    /// ステップへは確定済みステップとして任意に移動できる）。適用ロック（適用済み状態）は解除され、
+    /// あらためて確認ステップの確定で発行される<b>新しい</b>冪等トークンでのみ適用できる
+    /// （configuration.md §7 の一回性——過去の適用に使ったトークンは再利用できない）。
+    /// </summary>
+    /// <remarks>
+    /// 再編集の開始自体は何も保存しない（監査記録の対象外）。設定の変更は引き続き適用時の
+    /// 監査記録（2000 番台 ID 2001。security.md §4.1）が記録する。
+    /// </remarks>
+    /// <exception cref="WizardValidationException">
+    /// まだ一度も適用されておらず、設定ファイルも存在しない場合（再編集する対象がない——
+    /// 通常のウィザード進行を最初から行えばよい）。
+    /// </exception>
+    Task<SetupWizardSnapshot> BeginReconfigurationAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 確定済みの全ステップの内容で設定ファイル（yagura.json）を生成・保存する
     /// （configuration.md §1「初期設定はセットアップウィザードが生成する」・§3 の
     /// 「読み込み → 変更 → 検証 → 保存」+ 楽観競合検出）。管理操作として監査記録

@@ -126,6 +126,18 @@ public sealed class SetupWizardService : ISetupWizardService
                     throw new WizardValidationException("未知のステップです。");
             }
 
+            // 入力ステップ（Reception/ViewerAccess/Retention）の再確定で値が変わり得るため、
+            // 確認ステップが確定済みならその確定と発行済みトークン・読み込み済みスナップショットを
+            // 破棄する（Issue #248）。古い確認内容・トークンのまま適用される事故を防ぐ——
+            // GoBackAsync の Review 破棄と同じ意味論（configuration.md §7 の一回性: トークンは
+            // 「確認した内容」と 1 対 1 に対応し、内容が変わったら確認をやり直す）。
+            if (step != SetupWizardStep.Review && _confirmedSteps.Contains(SetupWizardStep.Review))
+            {
+                _confirmedSteps.Remove(SetupWizardStep.Review);
+                _reviewSnapshot = null;
+                _applyToken = null;
+            }
+
             if (!_confirmedSteps.Contains(step))
             {
                 _confirmedSteps.Add(step);
@@ -162,6 +174,55 @@ public sealed class SetupWizardService : ISetupWizardService
                 _reviewSnapshot = null;
                 _applyToken = null;
             }
+
+            return Task.FromResult(BuildSnapshot());
+        }
+    }
+
+    /// <inheritdoc/>
+    public Task<SetupWizardSnapshot> BeginReconfigurationAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            // 現在の設定ファイルを読み込む（configuration.md §3「読み込み → 変更 → 検証 → 保存」の
+            // 「読み込み」に相当するが、ここでは入力値の種にするだけ——楽観競合検出の基準になる
+            // 読み込みは、あらためて確認ステップの確定時に行う）。
+            var current = YaguraConfigurationWriter.Read(_dataRoot);
+
+            // 再編集する対象がない（未適用・ファイル無し）場合は通常のウィザード進行で足りる。
+            if (_appliedResult is null && current.VersionToken.Equals(ConfigurationVersionToken.FileAbsent))
+            {
+                throw new WizardValidationException(
+                    "設定はまだ適用されていないため、最初からやり直す必要はありません。そのままウィザードを進めてください。");
+            }
+
+            // 現在の設定値をウィザードの入力値へ写像する。値が無いキーは初期セットアップの
+            // UI 既定値と同じ既定へフォールバックする（フォームを空にしない——再編集の起点は
+            // 常に「いまの実効に近い値」にする）。
+            var options = current.Options;
+            _values.Clear();
+            _values[SetupWizardValueKeys.UdpPort] = options.Ingestion?.Udp?.Port ?? "514";
+            _values[SetupWizardValueKeys.TcpPort] = options.Ingestion?.Tcp?.Port ?? "514";
+            _values[SetupWizardValueKeys.ViewerHttpPort] = options.Viewer?.HttpPort ?? "8514";
+            _values[SetupWizardValueKeys.ViewerPublicAccess] = options.Viewer?.PublicAccess ?? "Lan";
+            _values[SetupWizardValueKeys.AdminHttpPort] = options.Admin?.HttpPort ?? "8515";
+            _values[SetupWizardValueKeys.RetentionDays] = options.Retention?.Days ?? "30";
+
+            // 3 つの入力ステップを確定済み扱いにする（ステッパーで全ステップへ即移動できる）。
+            // 確認ステップは未確定のまま——適用にはあらためて確認の確定（新トークンの発行）を要する。
+            _confirmedSteps.Clear();
+            _confirmedSteps.Add(SetupWizardStep.Reception);
+            _confirmedSteps.Add(SetupWizardStep.ViewerAccess);
+            _confirmedSteps.Add(SetupWizardStep.Retention);
+
+            // 適用ロックを解除する（configuration.md §7 の一回性は「トークンごと」の保証であり、
+            // 過去の適用済みトークンを破棄しても、新しい適用には新しいトークンが必要なため
+            // 二重適用の抑止は崩れない）。再編集の開始は状態を保存しないため監査記録は行わない
+            // （設定の変更は適用時の 2001 が引き続き記録する）。
+            _reviewSnapshot = null;
+            _applyToken = null;
+            _appliedToken = null;
+            _appliedResult = null;
 
             return Task.FromResult(BuildSnapshot());
         }
