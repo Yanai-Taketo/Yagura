@@ -47,6 +47,8 @@ internal static class AuditEventDescriptions
         AuditEventKind.AdminLoginSucceeded => "管理 UI へサインイン",
         AuditEventKind.AdminHttpsCertificatePrivateKeyAccessGranted => "管理 UI HTTPS 証明書の秘密鍵アクセス権を付与",
         AuditEventKind.IngestionTlsCertificatePrivateKeyAccessGranted => "TLS 受信証明書の秘密鍵アクセス権を付与",
+        AuditEventKind.AdminAuthBackoffCapReached => "アプリ独自認証のバックオフが上限に到達",
+        AuditEventKind.AdminAuthRateLimited => "アプリ独自認証のログイン試行をレート制限で拒否",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

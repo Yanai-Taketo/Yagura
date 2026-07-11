@@ -68,6 +68,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly SpoolSelfTestTracker? _selfTestTracker;
     private readonly IAdminHttpsCertificateStatusProbe? _adminHttpsCertificateProbe;
     private readonly IAdminHttpsCertificateStatusProbe? _ingestionTlsCertificateProbe;
+    private readonly Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? _adminAuthFailureDefense;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
@@ -92,7 +93,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         ILogger<ActiveNotificationMonitor>? logger = null,
         SpoolSelfTestTracker? selfTestTracker = null,
         IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
-        IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null)
+        IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null,
+        Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -107,6 +109,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _selfTestTracker = selfTestTracker;
         _adminHttpsCertificateProbe = adminHttpsCertificateProbe;
         _ingestionTlsCertificateProbe = ingestionTlsCertificateProbe;
+        _adminAuthFailureDefense = adminAuthFailureDefense;
     }
 
     /// <summary>周期監視ループを開始する。</summary>
@@ -209,6 +212,79 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         await EvaluateSpoolSelfTestAsync(cancellationToken).ConfigureAwait(false);
         EvaluateAdminHttpsCertificate();
         EvaluateIngestionTlsCertificate();
+        EvaluateAdminAuthFailureDefense();
+    }
+
+    /// <summary>
+    /// アプリ独自認証の三層防御の能動通知への昇格（ADR-0011 決定 6）。<see cref="_adminAuthFailureDefense"/>
+    /// が未注入（アプリ独自認証が結線されていない構成）の間は何もしない。バックオフ・IP レート制限・
+    /// グローバルトークンバケットのいずれも、cap 到達/拒否状態が
+    /// <see cref="Yagura.Host.Administration.AdminAuthenticationDefaults.EscalationThreshold"/>
+    /// （仮値 15 分）以上継続した場合に通知する——通知本文には主因層・上位送信元 IP を含める
+    /// （決定 6 の本文要件）。抑制窓はトリガキー（アカウントキー/送信元 IP 単位）ごとに独立させる
+    /// （<see cref="EvaluateMonitoredVolumesFreeSpace"/> と同じパターン）。
+    /// </summary>
+    private void EvaluateAdminAuthFailureDefense()
+    {
+        if (_adminAuthFailureDefense is null)
+        {
+            return;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+
+        foreach (var escalation in _adminAuthFailureDefense.GetBackoffEscalations())
+        {
+            var duration = now - escalation.CapReachedSinceUtc;
+            var listenerKind = escalation.IsLoopback ? "loopback" : "remote";
+
+            NotifyIfDue($"admin-auth-backoff-cap:{escalation.UsernameNormalized}:{listenerKind}", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated,
+                    "[admin-auth-backoff-cap-continuing] アプリ独自認証のアカウント {UsernameNormalized}" +
+                    "（{ListenerKind} 経由）でバックオフが上限（cap）に張り付いた状態が {Duration} 以上" +
+                    "継続しています（連続失敗回数 n={FailedAttemptCount}。主因層: バックオフ）。" +
+                    "持続的な総当たり試行が疑われます。直近の送信元 IP（上位）: {RecentSourceAddresses}。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    escalation.UsernameNormalized,
+                    listenerKind,
+                    duration,
+                    escalation.FailedAttemptCount,
+                    string.Join(", ", escalation.RecentSourceAddresses),
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+
+        foreach (var escalation in _adminAuthFailureDefense.GetIpRateLimitEscalations())
+        {
+            var duration = now - escalation.DenyStreakStartAtUtc;
+
+            NotifyIfDue($"admin-auth-ip-rate-limit:{escalation.RemoteAddress}", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated,
+                    "[admin-auth-ip-rate-limit-continuing] アプリ独自認証への送信元 IP {RemoteAddress} からの" +
+                    "試行が IP レート制限により {Duration} 以上継続して拒否されています" +
+                    "（主因層: IP レート制限）。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    escalation.RemoteAddress,
+                    duration,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+
+        var bucketEscalation = _adminAuthFailureDefense.GetGlobalBucketEscalation();
+        if (bucketEscalation is not null)
+        {
+            var duration = now - bucketEscalation.DenyStreakStartAtUtc;
+
+            NotifyIfDue("admin-auth-global-bucket", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated,
+                    "[admin-auth-global-bucket-continuing] アプリ独自認証のグローバルトークンバケットが" +
+                    "涸渇した状態が {Duration} 以上継続しています（主因層: グローバルトークンバケット。" +
+                    "プロセス全体の事象）。直近の拒否送信元 IP（上位）: {RecentSourceAddresses}。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    duration,
+                    string.Join(", ", bucketEscalation.RecentSourceAddresses),
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
     }
 
     /// <summary>

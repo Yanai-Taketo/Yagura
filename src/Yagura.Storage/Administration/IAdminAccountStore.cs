@@ -23,10 +23,20 @@ namespace Yagura.Storage.Administration;
 /// 区別しない照合を行う（Windows のユーザー名慣行・入力ミス耐性のため）。表示用の元の大小文字は
 /// <see cref="AdminAccountRecord.Username"/> にそのまま保持される。
 /// </para>
+/// <para>
+/// <b>失敗試行対策は本契約の管轄外（ADR-0011 決定 8）</b>: ADR-0010 決定 3 のハードロックアウトが
+/// 使っていた <c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> の 2 列は ADR-0011（バックオフ +
+/// レート制限への supersession）で削除マイグレーションを適用した。失敗試行の判定はインメモリの
+/// バックオフ状態（<c>Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense</c>）に
+/// 一本化しており、本契約は「アカウントが存在するか」「資格情報は何か」「最終ログイン時刻」の
+/// 3 つのみを扱う——「書くが判定には使わない」中間状態は選ばない（二重の真実源を作らない。
+/// ADR-0011 決定 8）。
+/// </para>
 /// </remarks>
 public interface IAdminAccountStore
 {
-    /// <summary>スキーマを初期化する（冪等。<see cref="ILogStore.InitializeAsync"/> と同じ規約）。</summary>
+    /// <summary>スキーマを初期化する（冪等。<see cref="ILogStore.InitializeAsync"/> と同じ規約。
+    /// ADR-0011 決定 8 の削除マイグレーションを含む）。</summary>
     Task InitializeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>アプリ独自認証の管理者アカウントが 1 件でも存在するかどうか。</summary>
@@ -43,49 +53,19 @@ public interface IAdminAccountStore
 
     /// <summary>
     /// アカウントを作成、または既存アカウント（Phase 1 は単一アカウントのため常に同一ユーザー名）の
-    /// パスワードハッシュを更新する（アップサート）。失敗試行カウンタ・ロックアウトはリセットされる。
+    /// パスワードハッシュを更新する（アップサート）。
     /// </summary>
     Task UpsertAsync(string username, string passwordHash, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// ログイン成功を記録する（失敗試行カウンタ・ロックアウトのリセット、最終ログイン時刻の更新）。
-    /// </summary>
+    /// <summary>ログイン成功を記録する（最終ログイン時刻の更新）。</summary>
     Task RecordSuccessfulLoginAsync(string username, DateTimeOffset atUtc, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// ログイン失敗を記録し、失敗試行カウンタを増分する。増分後のカウンタが
-    /// <paramref name="lockoutThreshold"/> 以上になった場合、<paramref name="lockoutDuration"/> の
-    /// ロックアウトを設定する。戻り値は増分後の状態（呼び出し側が監査記録・応答の分岐に使う）。
-    /// </summary>
-    Task<AdminAccountLoginFailureResult> RecordFailedLoginAsync(
-        string username,
-        DateTimeOffset atUtc,
-        int lockoutThreshold,
-        TimeSpan lockoutDuration,
-        CancellationToken cancellationToken = default);
 }
 
 /// <summary>管理者アカウント 1 件分の永続化済み状態。</summary>
 /// <param name="Username">ユーザー名（元の大小文字のまま）。</param>
 /// <param name="PasswordHash"><c>PasswordHasher&lt;TUser&gt;</c> 形式のハッシュ文字列。</param>
-/// <param name="FailedAttemptCount">直近の連続失敗試行回数（成功ログインでリセット）。</param>
-/// <param name="LockoutUntilUtc">ロックアウト解除時刻（UTC）。ロックアウト中でなければ <see langword="null"/>。</param>
 /// <param name="LastLoginAtUtc">直近の成功ログイン時刻（UTC）。未ログインなら <see langword="null"/>。</param>
 public sealed record AdminAccountRecord(
     string Username,
     string PasswordHash,
-    int FailedAttemptCount,
-    DateTimeOffset? LockoutUntilUtc,
     DateTimeOffset? LastLoginAtUtc);
-
-/// <summary><see cref="IAdminAccountStore.RecordFailedLoginAsync"/> の結果。</summary>
-/// <param name="FailedAttemptCount">増分後の連続失敗試行回数。</param>
-/// <param name="LockedOutNow">
-/// 今回の増分でロックアウト閾値に達し、新規にロックアウトが設定されたかどうか
-/// （既にロックアウト中だった場合は <see langword="false"/>——重複監査記録を避けるための区別）。
-/// </param>
-/// <param name="LockoutUntilUtc">ロックアウト解除時刻（UTC）。ロックアウト中でなければ <see langword="null"/>。</param>
-public sealed record AdminAccountLoginFailureResult(
-    int FailedAttemptCount,
-    bool LockedOutNow,
-    DateTimeOffset? LockoutUntilUtc);

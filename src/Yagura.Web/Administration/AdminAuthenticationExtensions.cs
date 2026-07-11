@@ -228,15 +228,35 @@ public static class AdminAuthenticationExtensions
         }
 
         var runtimeOptions = httpContext.RequestServices.GetService<AdminAuthenticationRuntimeOptions>();
-        var adminListenerPort = httpContext.RequestServices.GetService<YaguraAdminListenerPort>();
-
-        if (runtimeOptions is null || adminListenerPort is null)
+        if (runtimeOptions is null)
         {
             return false;
         }
 
-        return !runtimeOptions.RequireAuthentication &&
-            httpContext.Connection.LocalPort == adminListenerPort.Port;
+        return !runtimeOptions.RequireAuthentication && IsLoopbackAdminConnection(httpContext);
+    }
+
+    /// <summary>
+    /// 現在の接続が管理リスナの<b>loopback 束縛ポート</b>（<c>Admin:HttpPort</c>）経由かどうかを
+    /// 判定する単一の判定点（ADR-0011 決定 4）。<see cref="IsUnauthenticatedLoopbackBypassAllowed"/>
+    /// （認可バイパスの判定）に加え、三層防御（IP レート制限・グローバルトークンバケット・
+    /// アカウント単位バックオフのキー分離）の loopback 判定も本メソッドを共有する——
+    /// 「loopback の定義が層ごとにずれない」ことを、判定ロジックの単一箇所化で保証する
+    /// （ADR-0011 委任事項 9・10）。<c>RequireAuthentication</c>（loopback 認証 opt-in）の考慮は
+    /// 含まない——それは「認証そのものの要否」であり、ここで扱う「失敗試行対策としての追加の
+    /// 遅延・拒否の要否」とは独立の軸（ADR-0011 決定 4）。
+    /// </summary>
+    public static bool IsLoopbackAdminConnection(HttpContext httpContext)
+    {
+        ArgumentNullException.ThrowIfNull(httpContext);
+
+        var adminListenerPort = httpContext.RequestServices.GetService<YaguraAdminListenerPort>();
+        if (adminListenerPort is null)
+        {
+            return false;
+        }
+
+        return httpContext.Connection.LocalPort == adminListenerPort.Port;
     }
 
     /// <summary>
