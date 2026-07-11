@@ -5,6 +5,7 @@
 ## 運用ルール
 
 - 決定が変わったら **supersession**（新 ADR を起こし、旧 ADR の status を superseded にして相互リンク）
+  - **部分 supersession（旧 ADR の一部の決定のみを supersede する場合）の記述作法**: 旧 ADR 全体を `superseded` にすると不正確になる（他の決定は有効なまま）。この場合、**旧 ADR の status は `accepted` のまま維持し、①一覧表・状態行に「決定 N は ADR-YYYY により superseded」の注記、②該当決定の冒頭（および波及する他決定の該当箇所）に新 ADR への参照注記を加える**。新 ADR 側は status を `proposed`→`accepted` と通常どおり進め、supersede した範囲を本文で明示する。実例: ADR-0011（ADR-0010 決定 3 のロックアウト機構のみを supersede。本プロジェクト初の部分 supersession）
 - 決定は同じで補足・状況変化だけなら **amendment**（該当 ADR に「改訂履歴」セクションを新設して追記。status は accepted のまま）
   - **判定の目安**: 採用した選択肢の適用条件を追加・限定するだけなら amendment。既存の無条件文を条件文に書き換える場合は変更の実質を吟味し、**既定（デフォルトの判断）を反転させるなら supersession、既定を保ったまま例外を足すだけなら amendment**（ADR-0008 改訂履歴 1 の自己吟味が実例）。疑わしければ supersession 側に倒す。なお「既定」の単位は起案者が恣意的に選べる余地があるため、疑わしい場合は**最小の単位で反転の有無を検証**する（大きな軸では「既定を保った」と言えても、より細かい軸では判断が反転していることがある）
   - amendment の日付は改訂履歴セクションに記載し、ヘッダーの日付は起案日のまま据える（ADR-0001 に倣う）
@@ -24,7 +25,8 @@
 | [0007](0007-reverse-dns-display.md) | 閲覧画面の送信元逆引き（PTR）ホスト名表示 | accepted |
 | [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | accepted |
 | [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用） | accepted |
-| [0010](0010-admin-ui-authentication.md) | 管理 UI への認証追加（opt-in）とリモート管理の解禁 | accepted |
+| [0010](0010-admin-ui-authentication.md) | 管理 UI への認証追加（opt-in）とリモート管理の解禁 | accepted（決定 3 のロックアウト機構は ADR-0011 により superseded） |
+| [0011](0011-app-auth-failure-backoff.md) | アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定 3 の supersession） | proposed |
 
 ## 起案予定
 
