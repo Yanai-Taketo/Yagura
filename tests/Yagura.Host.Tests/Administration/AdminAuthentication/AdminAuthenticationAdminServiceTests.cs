@@ -187,6 +187,56 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         Assert.Equal(Yagura.Abstractions.Administration.AppAuthenticationResult.Success, withNew.Result);
     }
 
+    [Fact]
+    public async Task ConfigureAsync_RemoteBindingEnabledAndDisablingAllAuth_ThrowsValidationException()
+    {
+        // 回帰テスト（L-2, Phase 2 fail-closed。ADR-0010 Phase 2 決定 1）: リモートバインドが
+        // 有効な既存構成で、認証方式を両方とも無効化する設定変更は UI 層で拒否する
+        // （requireForLoopback:false としているため Phase 1 判定は発火せず、Phase 2 分岐を隔離する）。
+        SeedRemoteBindingEnabled(true);
+
+        var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
+            _service.ConfigureAsync(
+                windowsAuthEnabled: false,
+                kerberosOnly: false,
+                appAuthEnabled: false,
+                requireForLoopback: false,
+                newAppUsername: null,
+                newAppPassword: null));
+
+        Assert.Contains("リモートバインド", exception.Message);
+        Assert.Contains("Admin:RemoteBinding", exception.Message);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_RemoteBindingDisabledAndDisablingAllAuth_DoesNotThrowForRemoteBinding()
+    {
+        // 相方テスト（L-2）: リモートバインドが無効なら、同じ「両認証無効・loopback opt-in なし」の
+        // 設定変更は Phase 2 判定では拒否しない（fail-closed 検証はリモート公開時のみに限る）。
+        SeedRemoteBindingEnabled(false);
+
+        var status = await _service.ConfigureAsync(
+            windowsAuthEnabled: false,
+            kerberosOnly: false,
+            appAuthEnabled: false,
+            requireForLoopback: false,
+            newAppUsername: null,
+            newAppPassword: null);
+
+        Assert.False(status.WindowsAuthEnabled);
+        Assert.False(status.AppAuthEnabled);
+    }
+
+    private void SeedRemoteBindingEnabled(bool enabled)
+    {
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        var options = snapshot.Options;
+        options.Admin ??= new YaguraConfigurationOptions.AdminOptions();
+        options.Admin.RemoteBinding ??= new YaguraConfigurationOptions.AdminOptions.RemoteBindingOptions();
+        options.Admin.RemoteBinding.Enabled = enabled.ToString();
+        YaguraConfigurationWriter.Save(_dataRoot, options, snapshot.VersionToken);
+    }
+
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {
         public List<AuditEvent> Recorded { get; } = [];
