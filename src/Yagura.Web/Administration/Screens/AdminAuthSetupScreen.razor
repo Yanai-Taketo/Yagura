@@ -67,6 +67,13 @@ else
     <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
     </MudButton>
+
+    @* 相互リンク（ADR-0012 決定 1）: リモートバインド有効化には認証必須という依存があり
+       行き来が必ず発生するため、リモートアクセス設定への導線を置く（逆方向の導線は
+       AdminRemoteAccessScreen 側にある）。 *@
+    <div class="mt-4">
+        <MudLink Href="/admin/remote-access">@UiText.AdminAuthSetupRemoteAccessLinkText</MudLink>
+    </div>
 }
 
 @code {

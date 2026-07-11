@@ -265,6 +265,11 @@ public sealed class ViewerEndpointAllowlistTests
         // ログイン/ログアウトの素の HTTP エンドポイント（AdminAuthEndpoints）も
         // 管理リスナ帰属であること（閲覧リスナへ露出しないこと）を確認する。
         Assert.Contains("/admin/auth-setup", adminEndpointRoutes);
+
+        // 管理リモート HTTPS の設定画面（ADR-0012 決定 1。B3）も管理リスナ帰属であること
+        // （閲覧リスナへ露出しないこと）を確認する。
+        Assert.Contains("/admin/remote-access", adminEndpointRoutes);
+
         Assert.Contains("/admin/login", adminEndpointRoutes);
         Assert.Contains("/admin/login/windows", adminEndpointRoutes);
         Assert.Contains("/admin/login/app", adminEndpointRoutes);

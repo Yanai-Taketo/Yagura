@@ -769,6 +769,169 @@ public static class UiText
     /// <summary>管理画面が認証を要求しているが未認証のときの表示（AdminScreenLayout のリダイレクト経路の直前表示）。</summary>
     public const string AdminScreenRequiresAuthentication = "サインインが必要です…";
 
+    // ---- 管理 UI のリモートアクセス（HTTPS）設定（ADR-0012。/admin/remote-access） ----
+
+    /// <summary>リモートアクセス設定画面への導線・見出し（ADR-0012 決定 1——認証設定とは分離した画面）。</summary>
+    public const string AdminRemoteAccessTitle = "管理 UI のリモートアクセス（HTTPS）";
+
+    /// <summary>画面の説明文（何をする画面か。対象キーはすべて反映 = サービス再起動——ADR-0012 決定 6）。</summary>
+    public const string AdminRemoteAccessIntro =
+        "管理画面をリモートの端末へ HTTPS で公開するための設定です。証明書はこのサーバの証明書ストアから選択でき、" +
+        "拇印の手入力は不要です。";
+
+    /// <summary>リモートバインド（Admin:RemoteBinding:Enabled）のスイッチ文言。</summary>
+    public const string AdminRemoteAccessRemoteBindingLabel = "リモートの端末から管理画面へのアクセスを許可する";
+
+    /// <summary>
+    /// リモートバインドの前提条件の説明（ADR-0010 決定 1 の fail-closed 不変条件を保存前に
+    /// 利用者の言葉で示す——ADR-0012 決定 4。認証設定への相互リンク（決定 1）とセットで表示する）。
+    /// </summary>
+    public const string AdminRemoteAccessRemoteBindingNote =
+        "有効化には、管理 UI の認証（Windows 統合認証またはアプリ独自認証）・HTTPS の有効化・証明書の選択が" +
+        "すべて必要です。欠けたままでは保存できません（認証や通信保護を欠いたリモート公開を防ぐためです）。";
+
+    /// <summary>認証設定画面への相互リンクの文言（ADR-0012 決定 1）。</summary>
+    public const string AdminRemoteAccessAuthLinkText = "認証設定へ";
+
+    /// <summary>認証設定画面側に置く、本画面への相互リンクの文言（ADR-0012 決定 1）。</summary>
+    public const string AdminAuthSetupRemoteAccessLinkText = "リモートアクセス（HTTPS）設定へ";
+
+    /// <summary>HTTPS 有効化（Admin:Https:Enabled）のスイッチ文言。</summary>
+    public const string AdminRemoteAccessHttpsLabel = "リモート管理の HTTPS 待ち受けを有効にする";
+
+    /// <summary>HTTPS ポート（Admin:Https:Port）の入力ラベル。</summary>
+    public const string AdminRemoteAccessHttpsPortLabel = "HTTPS ポート";
+
+    /// <summary>HTTPS ポートの補足（未設定時の既定値を明示する）。</summary>
+    public const string AdminRemoteAccessHttpsPortHelp = "未入力の場合は既定の 8516 を使います。";
+
+    /// <summary>現在の設定（保存済みの永続値）カードの見出し。</summary>
+    public const string AdminRemoteAccessStatusTitle = "現在の設定（保存済みの値）";
+
+    /// <summary>現在の設定: リモートアクセスの行ラベル。</summary>
+    public const string AdminRemoteAccessStatusRemoteBinding = "リモートの端末からの管理アクセス";
+
+    /// <summary>現在の設定: HTTPS の行ラベル。</summary>
+    public const string AdminRemoteAccessStatusHttps = "HTTPS 待ち受け";
+
+    /// <summary>現在の設定: 証明書拇印の行ラベル。</summary>
+    public const string AdminRemoteAccessStatusThumbprint = "証明書の拇印";
+
+    /// <summary>現在の設定: HTTPS ポートの行ラベル。</summary>
+    public const string AdminRemoteAccessStatusPort = "HTTPS ポート";
+
+    /// <summary>現在の設定: 有効。</summary>
+    public const string AdminRemoteAccessStatusEnabled = "有効";
+
+    /// <summary>現在の設定: 無効。</summary>
+    public const string AdminRemoteAccessStatusDisabled = "無効";
+
+    /// <summary>現在の設定: 未設定の値の表示。</summary>
+    public const string AdminRemoteAccessStatusNotSet = "（未設定）";
+
+    /// <summary>現在の設定: ポート未設定（既定値使用）の表示。</summary>
+    public const string AdminRemoteAccessStatusDefaultPort = "（未設定——既定の 8516 を使用）";
+
+    /// <summary>証明書選択カードの見出し（ADR-0012 決定 2 の本体）。</summary>
+    public const string AdminRemoteAccessCertificatesTitle = "証明書の選択";
+
+    /// <summary>
+    /// 証明書一覧の説明（列挙範囲の最小化——serverAuth EKU + 秘密鍵あり——を利用者の言葉で明示する。
+    /// ADR-0012 決定 2・受け入れ基準「拇印手貼りの撤廃」）。
+    /// </summary>
+    public const string AdminRemoteAccessCertificatesIntro =
+        @"このサーバの証明書ストア（ローカル コンピューター\個人）のうち、サーバー認証（serverAuth）の用途と" +
+        "秘密鍵を備えた証明書のみを表示しています。選択すると拇印が自動で設定されます（手入力は不要です）。";
+
+    /// <summary>証明書一覧の再取得ボタン（付与・取り込みの後に、その場で結果を確認できる導線）。</summary>
+    public const string AdminRemoteAccessRefreshButton = "再確認";
+
+    /// <summary>証明書行: 発行者のラベル。</summary>
+    public const string AdminRemoteAccessCertIssuerLabel = "発行者";
+
+    /// <summary>証明書行: 有効期間のラベル。</summary>
+    public const string AdminRemoteAccessCertValidityLabel = "有効期間";
+
+    /// <summary>証明書行: 拇印のラベル。</summary>
+    public const string AdminRemoteAccessCertThumbprintLabel = "拇印";
+
+    /// <summary>証明書の状態バッジ: 使用可能。</summary>
+    public const string AdminRemoteAccessCertOkBadge = "使用可能";
+
+    /// <summary>証明書の状態バッジ: 有効期間外（期限切れ／未来証明書）。</summary>
+    public const string AdminRemoteAccessCertExpiredBadge = "有効期間外";
+
+    /// <summary>証明書の状態バッジ: サービスアカウントが秘密鍵を読めない。</summary>
+    public const string AdminRemoteAccessCertKeyUnreadableBadge = "秘密鍵の読取権限なし";
+
+    /// <summary>
+    /// 有効期間外の証明書の警告（選択自体は可能だが保存時に拒否される旨——保存前検証
+    /// （<c>AdminRemoteAccessAdminService</c>）と同じ理由で説明する。ADR-0012 決定 4 = D-6）。
+    /// </summary>
+    public const string AdminRemoteAccessCertExpiredWarning =
+        "この証明書は有効期間外のため、保存時に拒否されます。起動時の証明書解決は有効期間外の証明書を" +
+        "受け付けず、リモート HTTPS の待ち受けが開かれない縮小継続になるためです。";
+
+    /// <summary>
+    /// 秘密鍵をサービスアカウントが読めない証明書の警告（ADR-0012 決定 3 = (b)。保存は可能だが
+    /// 付与しないまま再起動すると縮小継続になる旨を明示する）。
+    /// </summary>
+    public const string AdminRemoteAccessPrivateKeyUnreadableWarning =
+        @"サービスアカウント（NT SERVICE\Yagura）がこの証明書の秘密鍵を読み取れません（読取権限の付与が必要です）。" +
+        "このまま保存はできますが、権限を付与せずに再起動すると、リモート HTTPS の待ち受けが開かれない縮小継続になります。";
+
+    /// <summary>
+    /// 秘密鍵の読取権限の付与手順（certlm.msc の具体手順。configuration.md §6 CF-D2 と同一の手動経路——
+    /// ADR-0012 決定 3 = (b)。付与後に「再確認」でその場で結果を確認できる旨を含める）。
+    /// </summary>
+    public const string AdminRemoteAccessPrivateKeyGrantSteps =
+        @"付与手順: certlm.msc → 個人 → 証明書 → 対象の証明書を右クリック → すべてのタスク → 秘密キーの管理 → " +
+        @"「NT SERVICE\Yagura」に読み取りを付与（利用者向け設定リファレンス configuration.md §6 CF-D2 と同じ手順）。" +
+        "付与後に「再確認」を押すと、その場で結果を確認できます。";
+
+    /// <summary>
+    /// 現在設定されている拇印が一覧に見つからない場合の注記。{0} に拇印が入る
+    /// （証明書の削除・条件不適合への変化を隠さない——ui.md §5.3 と同じ向き）。
+    /// </summary>
+    public const string AdminRemoteAccessThumbprintNotInListFormat =
+        "現在設定されている拇印 {0} の証明書は一覧にありません（削除されたか、サーバー認証 + 秘密鍵の条件を" +
+        "満たさなくなった可能性があります）。";
+
+    /// <summary>候補 0 件の空状態の見出し（ADR-0012 受け入れ基準「空状態の案内」）。</summary>
+    public const string AdminRemoteAccessEmptyTitle = "選択できる証明書が見つかりません";
+
+    /// <summary>空状態の補足（どの条件で探したか）。</summary>
+    public const string AdminRemoteAccessEmptyDescription =
+        @"このサーバの証明書ストア（ローカル コンピューター\個人）に、サーバー認証（serverAuth）の用途と" +
+        "秘密鍵を備えた証明書がありません。";
+
+    /// <summary>空状態の次の行動（取り込み先と certlm.msc への言及——ADR-0012 決定 2）。</summary>
+    public const string AdminRemoteAccessEmptyNextAction =
+        "certlm.msc（ローカル コンピューターの証明書の管理）で「個人」ストアへ秘密鍵付きの証明書を取り込むと、" +
+        "この一覧に表示されます。取り込み後に「再確認」を押してください。";
+
+    /// <summary>証明書一覧の取得に失敗した場合の表示。{0} にエラーメッセージが入る（握り潰さない）。</summary>
+    public const string AdminRemoteAccessEnumerationFailedFormat = "証明書一覧の取得に失敗しました: {0}";
+
+    /// <summary>
+    /// 反映方式の常設注記（ADR-0012 決定 6——何が・どれくらい・どう戻るか。対象 4 キーは
+    /// すべて反映 = サービス再起動であり、複数の変更は 1 回の保存 + 1 回の再起動でまとめて反映できる）。
+    /// </summary>
+    public const string AdminRemoteAccessRestartNote =
+        "この画面の設定は、保存だけでは反映されません。反映は次回のサービス再起動時で、再起動中は syslog の受信と" +
+        "管理画面が停止します（停止中に送られたログは失われることがあります）。複数の項目を変更する場合は、" +
+        "まとめて保存してから 1 回の再起動で反映してください。";
+
+    /// <summary>
+    /// 保存成功の通知・要約。{0} に変更されたキーの一覧が入る（ADR-0012 決定 6 の受信断明示を含む）。
+    /// </summary>
+    public const string AdminRemoteAccessSavedFormat =
+        "リモートアクセス設定を保存しました（変更: {0}）。反映には次回サービス再起動が必要です" +
+        "（再起動中は syslog の受信と管理画面が停止します）。";
+
+    /// <summary>変更ゼロ（no-op）で保存されなかった場合の通知。</summary>
+    public const string AdminRemoteAccessSavedNoChanges = "現在の設定と同じ内容のため、保存は行われませんでした。";
+
     // ---- 初期セットアップウィザード（configuration.md §3〜§7。M8-4 骨格） ----
 
     /// <summary>ステップ: 受信設定。</summary>
