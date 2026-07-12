@@ -1,6 +1,6 @@
 # ADR-0013: 管理 UI 認証の共存セッションモデル — 認証成立後の単一 Cookie セッションと Windows 認可の失効反映
 
-- 状態: proposed
+- 状態: accepted（2026-07-12 マージ。5 ペルソナレビュー 2 巡 + オーナー承認——PR #253）
 - 日付: 2026-07-12
 - 決定者: YANAI Taketo
 - 関連: [ADR-0010](0010-admin-ui-authentication.md)（管理 UI 認証。本 ADR は**決定 3 の「セッション・トークンを方式間で共有しない」共存セッションモデルを部分 supersession** する〔ADR-0010 状態行・決定 3・委任事項 9・Phase 1 受け入れ条件 (iv) に注記済み〕。決定 2〔circuit 認証状態の汲み直し〕・決定 5〔認可〕・決定 6〔監査「誰が」欄〕・委任事項 6/9/11 の実装解釈を確定する）/ [ADR-0011](0011-app-auth-failure-backoff.md)（失敗試行対策の三層防御。本 ADR が「分離の実体」と呼ぶ独立性の一方の柱）/ [ADR-0012](0012-admin-https-cert-ui.md)（管理リモート HTTPS。本欠陥は Windows 認証 + リモートバインドにも波及するため、本 ADR の是正がリモート面の Windows 認証も回復させる）/ [ADR-0003](0003-ui-policy.md)（Blazor Interactive Server 単一モード）/ [ADR-0004](0004-security-model.md) 決定 2・3（信頼ネットワーク前提 + opt-in 強化）/ [docs/design/security.md](../design/security.md) §2.3（失効の即時反映）・§2.4（共存の実装）・§5（データルート ACL）/ Issue #252（起案元の P0）/ PR #253（5 ペルソナレビューをこの PR 上に保存）
