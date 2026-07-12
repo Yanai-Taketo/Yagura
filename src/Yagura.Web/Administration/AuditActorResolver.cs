@@ -16,23 +16,26 @@ namespace Yagura.Web.Administration;
 public static class AuditActorResolver
 {
     /// <summary>認証済み利用者の（方式識別子, 利用者名）を導出する。未認証は (null, null)。</summary>
+    /// <remarks>
+    /// 方式識別子は認証セッション Cookie に焼き込んだ <see cref="AdminAuthenticationExtensions.AuthMethodClaimType"/>
+    /// クレームから導出する（ADR-0013 決定 5）——Windows・アプリのいずれも認証成立後は同一の Cookie スキームで
+    /// 運ばれるため、スキーム名では区別できない。方式区別を単一のこの関数へ固定し、監査「誰が」欄で
+    /// <c>DOMAIN\user</c> とアプリ名の衝突を防ぐ。標識クレーム（<c>admin_session</c>）を欠く認証状態は
+    /// 未認証扱い（fail-closed——方式・利用者名を偽装/喪失させない）。
+    /// </remarks>
     public static (string? Scheme, string? Principal) Resolve(ClaimsPrincipal? user)
     {
-        if (user is null)
+        if (user is null || !AdminAuthenticationExtensions.IsAdminSessionAuthenticated(user))
         {
             return (null, null);
         }
 
-        if (AdminAuthenticationExtensions.IsWindowsAdministrator(user))
+        var method = user.FindFirst(AdminAuthenticationExtensions.AuthMethodClaimType)?.Value;
+        return method switch
         {
-            return ("windows", user.Identity?.Name);
-        }
-
-        if (AdminAuthenticationExtensions.IsAppAuthenticated(user))
-        {
-            return ("app", user.Identity?.Name);
-        }
-
-        return (null, null);
+            AdminAuthenticationExtensions.WindowsAuthMethod => ("windows", user.Identity?.Name),
+            AdminAuthenticationExtensions.AppAuthMethod => ("app", user.Identity?.Name),
+            _ => (null, null),
+        };
     }
 }

@@ -1,6 +1,9 @@
 @page "/admin/auth-setup"
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
+@using Microsoft.AspNetCore.Antiforgery
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Http
 @using Yagura.Abstractions.Administration
 @using Yagura.Web.Administration
 @using Yagura.Web.Circuits
@@ -8,6 +11,8 @@
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
+@inject IAntiforgery Antiforgery
+@inject PersistentComponentState ApplicationState
 
 @*
     管理 UI 認証の設定画面（ADR-0010 決定 1・3。Phase 1）。
@@ -68,6 +73,26 @@ else
         適用する
     </MudButton>
 
+    @* 認証セッションの緊急全失効（ADR-0013 決定 2）。退職者・漏洩疑い時、または Windows 権限剥奪を
+       即時反映したいときに、発行済みの全認証セッションを一括無効化する。世代番号バンプで実装され、
+       実行者自身もログアウトされる（app 認証・Windows 再ログインは引き続き可能）。プレーンな HTML
+       フォームで minimal API（antiforgery 検証）へ POST する（AdminLoginScreen と同じ作法）。 *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">認証セッションの緊急全失効</MudText>
+        <MudText Typo="Typo.caption" Class="mt-2">
+            発行済みの全ログインセッションを直ちに無効化します。退職者が出たとき・資格情報の漏洩が
+            疑われるとき・Windows 側で管理者権限を剥奪した反映を待てないときに使います。実行すると、
+            あなた自身を含む全員が次の操作でログイン画面へ戻されます。
+        </MudText>
+        @if (_antiforgeryToken is not null)
+        {
+            <form method="post" action="/admin/sessions/invalidate-all" class="mt-2">
+                <input type="hidden" name="__RequestVerificationToken" value="@_antiforgeryToken" />
+                <button type="submit">全セッションを今すぐ失効する</button>
+            </form>
+        }
+    </MudPaper>
+
     @* 相互リンク（ADR-0012 決定 1）: リモートバインド有効化には認証必須という依存があり
        行き来が必ず発生するため、リモートアクセス設定への導線を置く（逆方向の導線は
        AdminRemoteAccessScreen 側にある）。 *@
@@ -86,8 +111,33 @@ else
     private string _newPassword = string.Empty;
     private string? _errorMessage;
 
+    /// <summary>PersistentComponentState のキー（prerender → 対話的描画のトークン持ち越し用）。</summary>
+    private const string AntiforgeryTokenStateKey = "admin-auth-setup-antiforgery-token";
+
+    [CascadingParameter]
+    public HttpContext? HttpContext { get; set; }
+
+    private string? _antiforgeryToken;
+    private PersistingComponentStateSubscription _persistingSubscription;
+
     protected override async Task OnInitializedAsync()
     {
+        // 緊急全失効フォームの antiforgery トークン。静的 SSR/prerender の HttpContext からのみ発行でき、
+        // 対話的描画へは PersistentComponentState で持ち越す（AdminLoginScreen と同じ作法・理由）。
+        if (ApplicationState.TryTakeFromJson<string>(AntiforgeryTokenStateKey, out var restoredToken))
+        {
+            _antiforgeryToken = restoredToken;
+        }
+        else if (HttpContext is not null)
+        {
+            _antiforgeryToken = Antiforgery.GetAndStoreTokens(HttpContext).RequestToken;
+            _persistingSubscription = ApplicationState.RegisterOnPersisting(() =>
+            {
+                ApplicationState.PersistAsJson(AntiforgeryTokenStateKey, _antiforgeryToken);
+                return Task.CompletedTask;
+            });
+        }
+
         _status = await AuthAdminService.GetStatusAsync();
         ApplyStatusToFields(_status);
     }

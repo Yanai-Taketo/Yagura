@@ -131,6 +131,11 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator>(
             _ => appAuthenticator ?? new StubAppAdminAuthenticator());
 
+        // ADR-0013 決定 2: 認証セッションの世代番号ストア（緊急全失効の状態源）。実 HTTP ログインフロー
+        // テストは Cookie 発行時に現世代番号を焼き込み、OnValidatePrincipal が照合する——ハーネスでは
+        // インメモリ実装で満たす（永続化・非対称の実機挙動は Yagura.Host.Tests で別途検証）。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminSessionGenerationStore, InMemoryAdminSessionGenerationStore>();
+
         // ADR-0008 設計条件 9: フォワーダキット生成画面・ダウンロードエンドポイントが要求する
         // IForwarderMsiSource（Program.cs と同じくデータルート配下 forwarder を注入する結線だが、
         // 本ハーネスはルーティング表の機械列挙・実 HTTP 応答検証が目的のため既定は未検出扱いの
@@ -384,6 +389,13 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class InMemoryAdminSessionGenerationStore : Yagura.Abstractions.Administration.IAdminSessionGenerationStore
+    {
+        private int _current;
+        public int CurrentGeneration => _current;
+        public int Bump() => System.Threading.Interlocked.Increment(ref _current);
     }
 
     private sealed class StubAppAdminAuthenticator : Yagura.Abstractions.Administration.IAppAdminAuthenticator

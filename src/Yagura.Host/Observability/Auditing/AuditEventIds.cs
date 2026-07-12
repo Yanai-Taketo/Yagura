@@ -84,6 +84,12 @@ public static class AuditEventIds
     public static readonly EventId AdminHttpsCertificateConfigured =
         new(2012, "AdminHttpsCertificateConfigured");
 
+    /// <summary>
+    /// 認証セッションの緊急全失効（ADR-0013 決定 2。世代番号バンプで発行済み全 Cookie を無効化）。
+    /// レベルは情報。
+    /// </summary>
+    public static readonly EventId AdminSessionsInvalidated = new(2013, "AdminSessionsInvalidated");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

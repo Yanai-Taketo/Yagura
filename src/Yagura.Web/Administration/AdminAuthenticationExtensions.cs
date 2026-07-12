@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 
 namespace Yagura.Web.Administration;
@@ -65,8 +66,71 @@ namespace Yagura.Web.Administration;
 /// </remarks>
 public static class AdminAuthenticationExtensions
 {
-    /// <summary>アプリ独自 ID/パスワード認証の Cookie 認証スキーム名。</summary>
+    /// <summary>
+    /// 認証成立後の単一認証セッション Cookie のスキーム名（ADR-0013 決定 1）。
+    /// Windows 統合認証・アプリ独自認証のいずれで認証しても、成立後はこの単一 Cookie に統一する
+    /// （方式の区別は <see cref="AuthMethodClaimType"/> クレームで保持する——スキーム名は方式を含意しない）。
+    /// </summary>
+    /// <remarks>
+    /// スキーム名の文字列値は歴史的経緯から <c>"YaguraAppAuth"</c> のまま据え置く——値の変更は全既存
+    /// Cookie の再ログインを要し churn が大きいわりに内部識別子であり利用者に露出しない。中立名
+    /// （<c>YaguraAdminAuth</c> 等）への改称は ADR-0013 委任事項 1 の後続作業として先送りする
+    /// （監査の方式区別はスキーム名でなく <see cref="AuthMethodClaimType"/> クレームで担保するため、
+    /// 名称据え置きでも決定 5 の分離は成立する）。
+    /// </remarks>
     public const string AppAuthenticationScheme = "YaguraAppAuth";
+
+    /// <summary>
+    /// 認証セッションの認証方式（<c>"windows"</c>/<c>"app"</c>）を保持するクレーム型（ADR-0013 決定 5）。
+    /// 監査「誰が」欄の方式区別（decision 6）はこのクレームから導出し、Cookie スキーム名には依存しない。
+    /// </summary>
+    public const string AuthMethodClaimType = "yagura:auth_method";
+
+    /// <summary>
+    /// 「管理セッションである」ことを示す標識クレーム型（ADR-0013 決定 5）。認可（<see cref="AdminPolicyName"/>）は
+    /// このクレームの存在を正規の判定根拠にする——欠落時は fail-closed（管理者として認可しない）。
+    /// </summary>
+    public const string AdminSessionClaimType = "yagura:admin_session";
+
+    /// <summary>
+    /// セッション世代番号を保持するクレーム型（ADR-0013 決定 2）。緊急全失効は現世代番号のバンプで行い、
+    /// 各要求で現世代と fail-closed 照合する（旧世代 Cookie は無効）。
+    /// </summary>
+    public const string SessionGenerationClaimType = "yagura:session_gen";
+
+    /// <summary>認証方式クレーム値: Windows 統合認証（Negotiate）。</summary>
+    public const string WindowsAuthMethod = "windows";
+
+    /// <summary>認証方式クレーム値: アプリ独自 ID/パスワード認証。</summary>
+    public const string AppAuthMethod = "app";
+
+    /// <summary>
+    /// Windows 由来認証セッション Cookie の絶対寿命（ADR-0013 決定 2。仮値 1 時間・sliding 無効）。
+    /// 544 判定をログイン時に凍結する方式 B の失効遅延をこの寿命で有界化する。設定での短縮可否は
+    /// 実装 PR の後続（委任事項 2。SEC 番号確定）——本 Phase は仮値固定。
+    /// </summary>
+    public static readonly TimeSpan WindowsSessionAbsoluteLifetime = TimeSpan.FromHours(1);
+
+    /// <summary>アプリ独自認証セッション Cookie の絶対寿命（従来どおり 8 時間・sliding 有効）。</summary>
+    public static readonly TimeSpan AppSessionAbsoluteLifetime = TimeSpan.FromHours(8);
+
+    /// <summary>
+    /// 認証成立後の管理セッション <see cref="ClaimsPrincipal"/> を組み立てる（ADR-0013 決定 1・5）。
+    /// Windows・アプリのいずれの経路も、認証成立点でこの単一の Cookie principal を発行する。
+    /// </summary>
+    /// <param name="authMethod"><see cref="WindowsAuthMethod"/> または <see cref="AppAuthMethod"/>。</param>
+    /// <param name="principalName">主体名（Windows は <c>DOMAIN\user</c>、アプリはユーザー名）。</param>
+    /// <param name="generation">発行時点のセッション世代番号（<see cref="IAdminSessionGenerationStore.CurrentGeneration"/>）。</param>
+    public static ClaimsPrincipal CreateAdminSessionPrincipal(string authMethod, string principalName, int generation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(authMethod);
+        var identity = new ClaimsIdentity(AppAuthenticationScheme);
+        identity.AddClaim(new Claim(ClaimTypes.Name, principalName ?? string.Empty));
+        identity.AddClaim(new Claim(AuthMethodClaimType, authMethod));
+        identity.AddClaim(new Claim(AdminSessionClaimType, "1"));
+        identity.AddClaim(new Claim(SessionGenerationClaimType, generation.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return new ClaimsPrincipal(identity);
+    }
 
     /// <summary>管理 UI 到達に必要な認可ポリシー名（Windows 管理者 SID または AppAuth 認証済み）。</summary>
     public const string AdminPolicyName = "YaguraAdminAccess";
@@ -97,11 +161,16 @@ public static class AdminAuthenticationExtensions
 
         var authBuilder = services.AddAuthentication(options =>
         {
-            // 既定スキームは AppAuth（Cookie）——通常の要求は Cookie の有無で認証状態を判定する。
-            // Negotiate は個別エンドポイント（/admin/login/windows）で明示的にスキーム指定して
-            // チャレンジする（決定 3「選択式」の実装。委任事項 9）。
+            // 既定スキームは認証セッション Cookie——通常の要求はこの Cookie の有無で認証状態を判定する
+            // （ADR-0013 決定 1）。Negotiate は選択式ログインの Windows 経路（/admin/login/windows）
+            // でのみ明示スキーム指定でチャレンジし、他の管理画面へは波及させない（決定 3・委任事項 9）。
             options.DefaultAuthenticateScheme = AppAuthenticationScheme;
             options.DefaultSignInScheme = AppAuthenticationScheme;
+            // 既定チャレンジスキームも Cookie に固定する（ADR-0013 決定 1）——未認証の管理要求は
+            // 選択式ログイン画面（/admin/login）へ 302 誘導し、Negotiate の自動チャレンジに落とさない。
+            // これを明示しないと、Windows 認証のみの構成では唯一登録された Negotiate へフォールバックし、
+            // 全画面で資格情報ダイアログが出る（かつ #252 の 401 ループの一因になっていた）。
+            options.DefaultChallengeScheme = AppAuthenticationScheme;
         });
 
         if (windowsAuthEnabled)
@@ -143,7 +212,11 @@ public static class AdminAuthenticationExtensions
             });
         }
 
-        if (appAuthEnabled)
+        // 認証セッション Cookie スキームは、Windows 統合認証・アプリ独自認証のいずれか一方でも
+        // 有効なら登録する（ADR-0013 決定 1）。従来はアプリ独自認証有効時のみ登録しており、
+        // Windows 認証のみの構成で Cookie スキームが未登録 → 既定認証スキームが解決できず匿名 →
+        // 401 ループ、というのが #252 の直接原因だった。
+        if (windowsAuthEnabled || appAuthEnabled)
         {
             authBuilder.AddCookie(AppAuthenticationScheme, options =>
             {
@@ -159,21 +232,64 @@ public static class AdminAuthenticationExtensions
                 options.Cookie.SameSite = SameSiteMode.Strict;
                 options.Cookie.HttpOnly = true;
                 options.LoginPath = LoginPath;
+                // 既定（scheme レベル）の絶対寿命・sliding はアプリ独自認証セッション向け（8 時間）。
+                // Windows 由来セッションは発行時に AuthenticationProperties で短い絶対寿命・sliding 無効へ
+                // 上書きする（ADR-0013 決定 2。AdminAuthEndpoints の SignInAsync 参照）。
                 options.ExpireTimeSpan = TimeSpan.FromHours(8);
                 options.SlidingExpiration = true;
                 // API 的な POST エンドポイント（/admin/login/app）はリダイレクトではなく
                 // ステータスコードで応答したいため、既定のリダイレクト挙動を上書きしない
                 // （LoginPath への 302 のままでよい——通常のブラウザ遷移を想定）。
+
+                // セッション世代番号の fail-closed 照合（ADR-0013 決定 2 の緊急全失効）。
+                // Cookie に焼き込まれた世代番号が現世代と一致しなければ principal を破棄する
+                // （旧世代 Cookie は無効）。世代番号クレーム自体が欠落している Cookie も同様に拒否する。
+                options.Events.OnValidatePrincipal = context =>
+                {
+                    var store = context.HttpContext.RequestServices.GetService<IAdminSessionGenerationStore>();
+                    if (store is null)
+                    {
+                        // 世代ストア未配線は fail-closed（セッションを無効化）。
+                        context.RejectPrincipal();
+                        return Task.CompletedTask;
+                    }
+
+                    var genClaim = context.Principal?.FindFirst(SessionGenerationClaimType)?.Value;
+                    if (genClaim is null ||
+                        !int.TryParse(genClaim, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var cookieGen) ||
+                        cookieGen != store.CurrentGeneration)
+                    {
+                        context.RejectPrincipal();
+                    }
+
+                    return Task.CompletedTask;
+                };
             });
         }
 
+        // 認可の正規判定根拠は「管理セッションクレームを持つ認証セッション Cookie」（ADR-0013 決定 5）。
+        // Windows 由来セッションも認証成立後は Cookie（ClaimsIdentity）で運ばれ WindowsIdentity 型を
+        // 持たないため、Cookie 搬送要求の認可を IsWindowsAdministrator（型ゲート）に依存させない——
+        // IsWindowsAdministrator はログイン時の Cookie 発行判定（/admin/login/windows）でのみ使う。
+        // クレーム欠落時は fail-closed（IsAdminSessionAuthenticated が false を返す）。世代番号の照合は
+        // Cookie ハンドラの OnValidatePrincipal が先に行い、旧世代・世代欠落の Cookie はここへ到達しない。
         services.AddAuthorizationBuilder()
             .AddPolicy(AdminPolicyName, policy => policy.RequireAssertion(context =>
-                IsWindowsAdministrator(context.User) ||
-                IsAppAuthenticated(context.User) ||
+                IsAdminSessionAuthenticated(context.User) ||
                 IsUnauthenticatedLoopbackBypassAllowed(context)));
 
         return services;
+    }
+
+    /// <summary>
+    /// 認証成立後の管理セッション（<see cref="AdminSessionClaimType"/> クレームを持つ認証済み Cookie）かどうか
+    /// （ADR-0013 決定 5）。Windows・アプリのいずれで認証しても認証成立後はこの判定を通る。標識クレームの
+    /// 欠落時は false（fail-closed——クレーム喪失で管理者へ昇格させない）。
+    /// </summary>
+    public static bool IsAdminSessionAuthenticated(ClaimsPrincipal user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        return (user.Identity?.IsAuthenticated ?? false) && user.HasClaim(c => c.Type == AdminSessionClaimType);
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 ﻿using System.Runtime.Versioning;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Configuration;
@@ -650,6 +651,23 @@ public static class Program
             RequireAuthentication: resolvedConfiguration.AdminAuthRequireForLoopback,
             WindowsAuthEnabled: resolvedConfiguration.AdminWindowsAuthEnabled,
             AppAuthEnabled: resolvedConfiguration.AdminAppAuthEnabled));
+
+        // 認証セッションの世代番号ストア（ADR-0013 決定 2）。緊急全失効（世代バンプ）と各要求での
+        // fail-closed 照合の状態源。データルート配下に永続化し、定常再起動では同じ世代で復帰する
+        // （既発行セッション生存）。IAdminAuthenticationAdminService 等と同じ「dataRoot を渡して Host 実体を
+        // 結線する」形式。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminSessionGenerationStore>(
+            _ => new Yagura.Host.Administration.FileAdminSessionGenerationStore(dataRoot));
+
+        // 認証セッション Cookie の暗号鍵（Data Protection）をデータルート配下に永続化する（ADR-0013 決定 6）。
+        // 既定の DP キー格納先（サービスアカウントのプロファイル/レジストリ）はプロセス/アカウント環境に
+        // 依存し、揮発するとサービス再起動のたびに全 Cookie が無効化される（＝全利用者再ログイン）。
+        // データルート配下に固定することで、定常再起動をまたいで Cookie が生存する（世代番号——上記——の
+        // バンプによる緊急全失効とは独立）。格納先はデータルートの ACL（security.md §5——SYSTEM/
+        // Administrators/サービスアカウントのみ）を継承し、`Users`/`Authenticated Users` の ACE を持たない。
+        builder.Services.AddDataProtection()
+            .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataRoot, "dataprotection-keys")))
+            .SetApplicationName("Yagura.Admin");
 
         // フォワーダ配布キットの MSI オプトイン同梱（ADR-0008 設計条件 9・委任 #7）: 配置フォルダは
         // データルート配下 forwarder（%ProgramData%\Yagura\forwarder）。Web 層はデータルートの
