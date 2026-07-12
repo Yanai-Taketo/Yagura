@@ -136,7 +136,16 @@ public sealed class YaguraConfigurationOptionsClonerTests
                 continue;
             }
 
-            // YaguraConfigurationOptions のプロパティは string? かネストされた参照型
+            // SEC-9 のグループ一覧（List<string>。ADR-0010 Phase 4）はリーフとして扱い、一意な
+            // 2 要素リストを設定する（Clone が新規リストへ深いコピーすることを検証する）。
+            if (property.PropertyType == typeof(List<string>))
+            {
+                property.SetValue(instance, new List<string> { $"group-{leafCount}-a", $"group-{leafCount}-b" });
+                leafCount++;
+                continue;
+            }
+
+            // YaguraConfigurationOptions のプロパティは string? / List<string>? かネストされた参照型
             // （*Options）のみである前提。将来値型（int 等）が増えた場合は、このテストが
             // 想定外の型として例外で落ちるため、ウォーカーの更新漏れが検出できる。
             if (!property.PropertyType.IsClass)
@@ -179,6 +188,25 @@ public sealed class YaguraConfigurationOptionsClonerTests
                 Assert.True(
                     string.Equals((string?)expectedValue, (string?)actualValue, StringComparison.Ordinal),
                     $"{propertyPath}: 複製元の値 '{expectedValue}' が複製先では '{actualValue}' でした（プロパティの複製漏れの可能性）。");
+                continue;
+            }
+
+            if (property.PropertyType == typeof(List<string>))
+            {
+                var expectedList = (List<string>?)expectedValue;
+                var actualList = (List<string>?)actualValue;
+                if (expectedList is null)
+                {
+                    Assert.True(actualList is null, $"{propertyPath}: 複製元が null なのに複製先が非 null です。");
+                }
+                else
+                {
+                    Assert.True(actualList is not null, $"{propertyPath}: 複製元が非 null なのに複製先が null です（複製漏れ）。");
+                    // 深いコピー（別インスタンス）かつ内容一致であること。
+                    Assert.NotSame(expectedList, actualList);
+                    Assert.Equal(expectedList, actualList);
+                }
+
                 continue;
             }
 

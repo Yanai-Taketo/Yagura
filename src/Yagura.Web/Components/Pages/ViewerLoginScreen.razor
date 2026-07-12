@@ -1,0 +1,101 @@
+@page "/login"
+@namespace Yagura.Web.Components.Pages
+@implements IDisposable
+@using Microsoft.AspNetCore.Antiforgery
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Http
+@using Yagura.Web.Administration
+@inject ViewerAuthenticationRuntimeOptions ViewerAuthOptions
+@inject IAntiforgery Antiforgery
+@inject NavigationManager Navigation
+@inject PersistentComponentState ApplicationState
+
+@*
+    閲覧 UI ログイン画面（ADR-0010 Phase 4 決定 7・SEC-9）。
+
+    閲覧認証 opt-in が有効なときのみ到達する。未認証で到達できなければならない唯一の閲覧画面
+    ——MainLayout の circuit 層 viewer ガード・MapYaguraWebViewer の閲覧認可付与（ViewerPolicy）の
+    両方で認可要求から除外される（このページ自身が認可を要求すると、認証が要求される→ログイン画面へも
+    到達できない、という循環に陥る）。
+
+    フォーム送信先は circuit ではなく素の HTTP エンドポイント（ViewerAuthEndpoints）——circuit 上から
+    Set-Cookie を直接制御できないための分離（AdminLoginScreen と同型）。役割判定（閲覧/管理）は
+    サーバ側（ViewerAuthEndpoints）が AD グループ所属で行う。
+*@
+<PageTitle>@UiText.ViewerLoginTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.ViewerLoginTitle</MudText>
+<MudText Typo="Typo.body2" Class="mt-2">@UiText.ViewerLoginIntro</MudText>
+
+@if (_hasError)
+{
+    @* 列挙耐性（ADR-0011 決定 3）: 失敗の応答は原因（資格情報誤り/バックオフ待機/グループ非所属）に
+       依らず単一の汎用文言とする。 *@
+    <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.ViewerLoginError</MudAlert>
+}
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudButton Href="/login/windows" Variant="Variant.Filled" Color="Color.Primary">
+        @UiText.ViewerLoginWindowsButton
+    </MudButton>
+</MudPaper>
+
+@if (ViewerAuthOptions.AppAuthAvailable)
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        @* 素の HTML <form> による通常のブラウザ POST（circuit を要しない）。アプリ独自アカウントは
+           管理役割のみ（決定 5）だが、管理 ⊇ 閲覧でこの閲覧リスナでも閲覧に到達できる。 *@
+        <form method="post" action="/login/app">
+            <input type="hidden" name="__RequestVerificationToken" value="@_antiforgeryToken" />
+            <div class="mud-input-control mt-2">
+                <label for="viewer-login-username">@UiText.AdminLoginUsernameLabel</label>
+                <input id="viewer-login-username" type="text" name="username" class="mud-input-slot" autocomplete="username" />
+            </div>
+            <div class="mud-input-control mt-2">
+                <label for="viewer-login-password">@UiText.AdminLoginPasswordLabel</label>
+                <input id="viewer-login-password" type="password" name="password" class="mud-input-slot" autocomplete="current-password" />
+            </div>
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="mt-2">
+                @UiText.ViewerLoginAppButton
+            </MudButton>
+        </form>
+    </MudPaper>
+}
+
+@code {
+    /// <summary>PersistentComponentState のキー（prerender → 対話的描画のトークン持ち越し用）。</summary>
+    private const string AntiforgeryTokenStateKey = "viewer-login-antiforgery-token";
+
+    [CascadingParameter]
+    public HttpContext? HttpContext { get; set; }
+
+    private string? _antiforgeryToken;
+    private bool _hasError;
+    private PersistingComponentStateSubscription _persistingSubscription;
+
+    protected override void OnInitialized()
+    {
+        // アンチフォージェリトークンは prerender 段の HttpContext からのみ発行できる（AdminLoginScreen と同じ制約）。
+        if (ApplicationState.TryTakeFromJson<string>(AntiforgeryTokenStateKey, out var restoredToken))
+        {
+            _antiforgeryToken = restoredToken;
+        }
+        else if (HttpContext is not null)
+        {
+            var tokens = Antiforgery.GetAndStoreTokens(HttpContext);
+            _antiforgeryToken = tokens.RequestToken;
+
+            _persistingSubscription = ApplicationState.RegisterOnPersisting(() =>
+            {
+                ApplicationState.PersistAsJson(AntiforgeryTokenStateKey, _antiforgeryToken);
+                return Task.CompletedTask;
+            });
+        }
+
+        var uri = new Uri(Navigation.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        _hasError = query.ContainsKey("error");
+    }
+
+    public void Dispose() => _persistingSubscription.Dispose();
+}

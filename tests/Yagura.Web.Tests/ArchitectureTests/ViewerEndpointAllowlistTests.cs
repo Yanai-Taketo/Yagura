@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Yagura.Storage;
 using Yagura.Abstractions.Auditing;
+using Yagura.Web.Administration;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Web.Tests.ArchitectureTests;
@@ -80,6 +82,13 @@ public sealed class ViewerEndpointAllowlistTests
         new("/", new[] { "GET", "POST" }),
         new("/search", new[] { "GET", "POST" }),
         new("/status", new[] { "GET", "POST" }),
+
+        // 閲覧ログイン画面（ADR-0010 Phase 4 決定 7）。Razor Components の @page として常に登録される
+        // （管理ログイン /admin/login と同様——閲覧認証無効時は到達しても後続の /login/windows が 404 に
+        // なるだけの孤立ページ）。閲覧認証有効時は ViewerPolicy の付与から除外される（未認証で到達できる
+        // 唯一の閲覧画面——循環防止。ViewerAuthExemptRouteTypeNames）。閲覧ログインの副エンドポイント
+        // （/login/windows・/login/app・/logout）は閲覧認証有効時のみ登録される（下の enabled 変種テストが検証）。
+        new("/login", new[] { "GET", "POST" }),
 
         // 外形監視・LB 用の liveness エンドポイント（Issue #126。2026-07-09 オーナー決定）。
         // 認証なし・内部情報を一切持たない固定レスポンス（200 + 固定文字列）のみ——
@@ -166,6 +175,81 @@ public sealed class ViewerEndpointAllowlistTests
             .ToList();
 
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task ViewerAuthEnabled_AddsOnlyLoginRoutesToViewerSurface()
+    {
+        // 閲覧認証（ADR-0010 Phase 4 決定 7）有効時、閲覧リスナ面に増えるのはログイン系ルートのみ
+        // （L-5——認証で許可リストを緩めず、認証関連で増えるルートは許可リストの明示更新として現れる。
+        // 委任事項 16 ①）。appAuthEnabled: true で /login/app も登録される構成にする。
+        await using var harness = await ViewerHostHarness.StartAsync(viewerAuthEnabled: true, appAuthEnabled: true);
+
+        var actualRoutes = harness.GetViewerEndpoints()
+            .Where(e => !IsStaticAssetRoute(e))
+            .Select(e => e.RoutePattern.RawText ?? string.Empty)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var baseRoutes = ViewerAllowlist.Select(e => e.RoutePattern).ToHashSet(StringComparer.Ordinal);
+
+        // ベースの閲覧ルート（/, /search, /status, /health, /search/export.csv, /circuit-ended, _blazor 系）は
+        // 認証有効化で消えていない（認証は「誰が到達できるか」を絞る機構であり経路の存在は変えない——直交）。
+        Assert.All(baseRoutes, r => Assert.Contains(r, actualRoutes));
+
+        // 増えたのはログイン系 4 ルートのみ。
+        // /login（ログイン画面）はベース許可リストに常に含まれる（Razor @page として常時登録）。認証有効化で
+        // 増えるのは副エンドポイントのみ。
+        var extra = actualRoutes.Except(baseRoutes).OrderBy(r => r, StringComparer.Ordinal).ToArray();
+        var expectedExtra = new[] { "/login/app", "/login/windows", "/logout" };
+        Assert.Equal(expectedExtra, extra);
+    }
+
+    [Fact]
+    public async Task ViewerAuthEnabled_GatesViewerPagesWithViewerPolicy_ButNotLoginScreen()
+    {
+        // ViewerPolicy が閲覧ページ（Yagura.Web.Components 配下の @page）へ機械的に付与され、ログイン画面
+        // （/login）だけは除外される（未認証で到達できなければならない——循環防止）。委任事項 16。
+        await using var harness = await ViewerHostHarness.StartAsync(viewerAuthEnabled: true, appAuthEnabled: true);
+
+        var viewerEndpoints = harness.GetViewerEndpoints();
+
+        bool HasViewerPolicy(string route) =>
+            viewerEndpoints
+                .Where(e => e.RoutePattern.RawText == route)
+                .Any(e => e.Metadata.OfType<AuthorizeAttribute>()
+                    .Any(a => a.Policy == AdminAuthenticationExtensions.ViewerPolicyName));
+
+        // 閲覧ページ・CSV には ViewerPolicy が付く。
+        Assert.True(HasViewerPolicy("/"), "閲覧ダッシュボード / に ViewerPolicy が付与されていない。");
+        Assert.True(HasViewerPolicy("/search"), "/search に ViewerPolicy が付与されていない。");
+        Assert.True(HasViewerPolicy("/status"), "/status に ViewerPolicy が付与されていない。");
+        Assert.True(HasViewerPolicy("/search/export.csv"), "CSV エクスポートに ViewerPolicy が付与されていない（画面と同判定——決定 7）。");
+
+        // ログイン画面・監視用 /health は除外（未認証到達を維持）。
+        Assert.False(HasViewerPolicy("/login"), "ログイン画面 /login に ViewerPolicy が付いている（循環＝自己ロックアウト）。");
+        Assert.False(HasViewerPolicy("/health"), "/health に ViewerPolicy が付いている（監視は認証除外——決定 7 ②）。");
+    }
+
+    [Fact]
+    public async Task ViewerAuthDisabled_AddsNoViewerAuthRoutesOrPolicy()
+    {
+        // 既定（閲覧認証無効）: ログイン系ルートは 1 本も現れず、閲覧ページにも ViewerPolicy は付かない
+        // （既定は現状維持——体験は一切変わらない。ADR-0010 決定 7）。
+        await using var harness = await ViewerHostHarness.StartAsync();
+
+        var viewerEndpoints = harness.GetViewerEndpoints();
+        var routes = viewerEndpoints.Select(e => e.RoutePattern.RawText ?? string.Empty).ToList();
+
+        // /login（ログイン画面）は Razor @page として常に登録される（管理ログイン /admin/login と同様）が、
+        // 副エンドポイント（実際の認証処理）は閲覧認証無効時には 1 本も現れない。
+        Assert.DoesNotContain("/login/windows", routes);
+        Assert.DoesNotContain("/login/app", routes);
+        Assert.DoesNotContain("/logout", routes);
+
+        var anyViewerPolicy = viewerEndpoints
+            .Any(e => e.Metadata.OfType<AuthorizeAttribute>()
+                .Any(a => a.Policy == AdminAuthenticationExtensions.ViewerPolicyName));
+        Assert.False(anyViewerPolicy, "閲覧認証無効なのに ViewerPolicy が付与されている。");
     }
 
     [Fact]

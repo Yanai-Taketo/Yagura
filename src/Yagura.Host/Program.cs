@@ -640,17 +640,41 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
 
-        // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシーの登録（AdminAuthenticationExtensions
-        // 参照）。実効値は起動時に固定される（設定キーの反映方式は §3「サービス再起動」——
-        // ConfigurationKeyMetadata 参照）。
+        // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）。設定の生指定（名/SID）を
+        // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本
+        // エントリポイントは [SupportedOSPlatform("windows")]）。解決できない指定は警告してスキップされる
+        // （認可を付与しない安全側。WindowsSecurityGroupResolver の remarks 参照）。
+        var sec9Logger = bootstrapLoggerFactory.CreateLogger("Yagura.Host.Administration.WindowsGroupResolver");
+        var windowsGroupAuthorization = new Yagura.Web.Administration.WindowsGroupAuthorizationOptions(
+            AdminGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
+                resolvedConfiguration.AdminWindowsAdminGroups, "Admin:Authentication:Windows:AdminGroups", sec9Logger),
+            ViewerGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
+                resolvedConfiguration.ViewerWindowsViewerGroups, "Viewer:Authentication:Windows:ViewerGroups", sec9Logger),
+            ViewerAdminGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
+                resolvedConfiguration.ViewerWindowsAdminGroups, "Viewer:Authentication:Windows:AdminGroups", sec9Logger));
+        builder.Services.AddSingleton(windowsGroupAuthorization);
+
+        // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシー（管理 + 閲覧）の登録
+        // （AdminAuthenticationExtensions 参照）。スキームは管理・閲覧で共用の単一構成（ADR-0013 決定 1 の
+        // 単一 Cookie を閲覧へも展開——オーナー決定 2026-07-12）。実効値は起動時に固定される（反映方式は
+        // §3「サービス再起動」——ConfigurationKeyMetadata 参照）。
         builder.Services.AddYaguraAdminAuthentication(
             resolvedConfiguration.AdminWindowsAuthEnabled,
             resolvedConfiguration.AdminWindowsAuthKerberosOnly,
-            resolvedConfiguration.AdminAppAuthEnabled);
+            resolvedConfiguration.AdminAppAuthEnabled,
+            viewerWindowsAuthEnabled: resolvedConfiguration.ViewerWindowsAuthEnabled,
+            viewerKerberosOnly: resolvedConfiguration.ViewerWindowsAuthKerberosOnly);
         builder.Services.AddSingleton(new Yagura.Web.Administration.AdminAuthenticationRuntimeOptions(
             RequireAuthentication: resolvedConfiguration.AdminAuthRequireForLoopback,
             WindowsAuthEnabled: resolvedConfiguration.AdminWindowsAuthEnabled,
             AppAuthEnabled: resolvedConfiguration.AdminAppAuthEnabled));
+
+        // 閲覧 UI 認証（ADR-0010 Phase 4 決定 7）の実効値。閲覧ログイン画面・MainLayout の circuit 層 viewer
+        // ガードが参照する。AppAuthAvailable = アプリ独自認証の有効/無効（アプリアカウントは管理・閲覧で
+        // 共有の単一ストア——閲覧ログインでも Windows + アプリ両方を提示するオーナー決定 2026-07-12）。
+        builder.Services.AddSingleton(new Yagura.Web.Administration.ViewerAuthenticationRuntimeOptions(
+            Enabled: resolvedConfiguration.ViewerWindowsAuthEnabled,
+            AppAuthAvailable: resolvedConfiguration.AdminAppAuthEnabled));
 
         // 認証セッションの世代番号ストア（ADR-0013 決定 2）。緊急全失効（世代バンプ）と各要求での
         // fail-closed 照合の状態源。データルート配下に永続化し、定常再起動では同じ世代で復帰する
@@ -829,7 +853,9 @@ public static class Program
         // 管理 UI 認証（ADR-0010 Phase 1）。ポートガードの直後（管理系 404 の判定が認証
         // チャレンジより優先——閲覧リスナ経由の到達はそもそも認証を試みずに 404 で終わる）・
         // circuit 統治ガードの前（circuit 確立可否の判定より、確立要求の認証状態を先に確定させる）。
-        app.UseYaguraAdminAuthentication(resolvedConfiguration.AdminWindowsAuthKerberosOnly);
+        app.UseYaguraAdminAuthentication(
+            resolvedConfiguration.AdminWindowsAuthKerberosOnly,
+            resolvedConfiguration.ViewerWindowsAuthKerberosOnly);
 
         // circuit 統治のガード(M8-4。security.md §2.1 origin 検証・§2.2 上限。SEC-1/SEC-8 仮値)。
         // ポートガードの直後(管理系 404 の判定が先——存在を漏らさない応答が上限案内より優先)。
@@ -845,7 +871,12 @@ public static class Program
         // リスナに書き込み系を置かない」であり、管理リスナは loopback 限定のため閲覧系が
         // 同居しても安全側に働く——管理者がローカルで全部見られることはむしろ自然)。
         // Host 側で個別に MapGet 等を追加しない(各拡張メソッドのコメント参照)。
-        var razorComponents = app.MapYaguraWebViewer();
+        // 閲覧 UI 認証（ADR-0010 Phase 4 決定 7）: 閲覧認証有効時のみ閲覧ページ・CSV に ViewerPolicy を
+        // 付与し、閲覧ログインエンドポイント（/login/*）を登録する。既定（無効）は現状どおり認証なし。
+        var razorComponents = app.MapYaguraWebViewer(
+            staticAssetsManifestPath: null,
+            viewerAuthEnabled: resolvedConfiguration.ViewerWindowsAuthEnabled,
+            appAuthAvailable: resolvedConfiguration.AdminAppAuthEnabled);
         // 認可(AdminPolicyName)を管理系エンドポイントへ「付与するかどうか」の判定
         // (ADR-0010 Phase 1 決定 1 の RequireForLoopback だけでなく、Phase 2 のリモートバインドが
         // 有効な場合も付与が要る——リモート経由の管理操作は RequireForLoopback の値に関わらず
@@ -882,6 +913,45 @@ public static class Program
                     "管理 UI へログインする手段がありません。復旧するには設定ファイルで " +
                     "Admin:Authentication:RequireForLoopback を false に変更してから再起動してください。");
             }
+        }
+
+        // 閲覧認証の自己ロックアウト注意（ADR-0010 Phase 4・SEC-9）: 閲覧 Windows 認証を有効化したのに
+        // 閲覧/管理いずれのグループも解決できていない（未指定・全て解決失敗）と、Windows 経由では誰も
+        // 閲覧できない。ハード起動失敗にはしない——閲覧断は syslog 受信を止めず、管理者は :8515（管理
+        // リスナ）や設定ファイル編集で復旧できる。アプリ独自認証が有効なら app 管理者は閲覧に到達できる。
+        if (resolvedConfiguration.ViewerWindowsAuthEnabled &&
+            windowsGroupAuthorization.ViewerGroupSids.Count == 0 &&
+            windowsGroupAuthorization.ViewerAdminGroupSids.Count == 0)
+        {
+            var viewerLockoutLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.ViewerAuth");
+            viewerLockoutLogger.LogWarning(
+                "[viewer-auth-no-groups] 閲覧 UI の Windows 認証（Viewer:Authentication:Windows:Enabled=true）が" +
+                "有効ですが、閲覧・管理いずれの AD グループも解決できていません（Viewer:Authentication:Windows:" +
+                "ViewerGroups / AdminGroups が未指定、または全て解決に失敗）。この状態で Windows 経由で閲覧 UI に" +
+                "サインインできるのは、ローカル Administrators（BUILTIN\\Administrators。管理役割）に限られます" +
+                "——ドメインコントローラー上ではネットワークトークンに 544 が載らないため、その場合は誰もサインイン" +
+                "できません。閲覧者を許可するには ViewerGroups に、AD グループ経由の管理者を許可するには AdminGroups に、" +
+                "グループ名（DOMAIN\\Group）または SID を指定してください（アプリ独自認証が有効なら、その管理者" +
+                "アカウントは引き続き閲覧に到達できます）。");
+        }
+
+        // 平文露出の注意（ADR-0010 Phase 4・田中のセキュリティレビュー指摘）: 閲覧リスナ（8514）は既定で
+        // 平文 HTTP。Viewer:...:AdminGroups を指定すると、その所属者は閲覧リスナ上で「管理」役割の認証
+        // セッション Cookie（admin_session）を得る——Cookie は host スコープゆえ管理リスナ（8515/リモート
+        // 8516）へも届く。SecurePolicy=SameAsRequest（ADR-0013 決定 7）のため、平文 HTTP で発行された
+        // 管理等価 Cookie は Secure 属性なしで LAN を流れる。管理操作は管理リスナ（loopback またはリモート
+        // HTTPS）から行い、閲覧リスナでの管理役割付与は「閲覧のための管理⊇閲覧」に留める運用を推奨する。
+        if (resolvedConfiguration.ViewerWindowsAuthEnabled && windowsGroupAuthorization.ViewerAdminGroupSids.Count > 0)
+        {
+            var viewerAdminGroupsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.ViewerAuth");
+            viewerAdminGroupsLogger.LogWarning(
+                "[viewer-admingroups-plaintext] Viewer:Authentication:Windows:AdminGroups が指定されています。" +
+                "その所属者は閲覧リスナ（ポート {ViewerPort}）上で「管理」役割の認証セッション Cookie を得ます。" +
+                "閲覧リスナは既定で平文 HTTP のため、この管理等価 Cookie は Secure 属性なしで LAN を流れ、host " +
+                "スコープゆえ管理リスナへも届きます。機微環境では、管理役割の付与は管理リスナ（loopback または" +
+                "リモート HTTPS）側で行い、閲覧リスナ経由の管理ログインは避ける運用を検討してください" +
+                "（閲覧リスナ自体の HTTPS 化は今後の課題）。",
+                resolvedConfiguration.HttpPort);
         }
 
         // architecture.md §1.2 の起動順序（受信を最初に開く）は IngestionHostedService が

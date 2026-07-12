@@ -31,6 +31,20 @@
 /// 逆引き（PTR）ホスト名表示の有効/無効（既定オン。ADR-0007 決定 4）。不正値は縮小側
 /// （無効 = DNS クエリを発しない）へ適用済み。
 /// </param>
+/// <param name="ViewerWindowsAuthEnabled">
+/// 閲覧 UI の Windows 統合認証（Negotiate）の有効/無効（既定 <c>false</c>。ADR-0010 Phase 4 決定 7）。
+/// <c>true</c> のとき閲覧リスナ（8514）到達に認証を要する（既定は現状維持——認証なし・LAN 公開）。
+/// </param>
+/// <param name="ViewerWindowsAuthKerberosOnly">
+/// 閲覧 UI の Kerberos-only モード（NTLM 無効化 opt-in。既定 <c>false</c>。管理側と独立）。
+/// </param>
+/// <param name="ViewerWindowsViewerGroups">
+/// 「閲覧」役割にマップする AD グループの生指定（SEC-9。名 <c>DOMAIN\Group</c> または SID）。
+/// 名 → SID 解決は <see cref="Yagura.Host.Program"/> 起動時。空・未設定は空リスト。
+/// </param>
+/// <param name="ViewerWindowsAdminGroups">
+/// 閲覧リスナ経由のログインで「管理」役割にマップする AD グループの生指定（SEC-9）。
+/// </param>
 /// <param name="AdminHttpPort">
 /// 管理 HTTP リスナのポート（検証済み。M6-1）。bind 先は常に <c>127.0.0.1</c> / <c>::1</c>
 /// 固定（設定で変更不可——configuration.md §1 の不変条件）。
@@ -40,6 +54,12 @@
 /// </param>
 /// <param name="AdminWindowsAuthKerberosOnly">
 /// Kerberos-only モード（NTLM 無効化 opt-in。既定 <c>false</c>。ADR-0010 決定 2・委任事項 12）。
+/// </param>
+/// <param name="AdminWindowsAdminGroups">
+/// 「管理」役割にマップする AD グループの生指定（グループ名 <c>DOMAIN\Group</c> または SID。SEC-9・
+/// ADR-0010 決定 5・委任事項 8）。既定の <c>BUILTIN\Administrators</c>（544）判定に<b>加えて</b>認可する。
+/// 名 → SID の解決は Windows 専用のため <see cref="Yagura.Host.Program"/> 起動時に行う（本記録は生指定を保持）。
+/// 空・未設定は空リスト（544 判定のみ＝従来どおり）。
 /// </param>
 /// <param name="AdminAppAuthEnabled">
 /// アプリ独自 ID/パスワード認証の有効/無効（既定 <c>false</c>。ADR-0010 決定 3）。
@@ -107,9 +127,14 @@ public sealed record ResolvedYaguraConfiguration(
     int HttpPort,
     ViewerPublicAccess ViewerPublicAccess,
     bool ViewerReverseDnsEnabled,
+    bool ViewerWindowsAuthEnabled,
+    bool ViewerWindowsAuthKerberosOnly,
+    IReadOnlyList<string> ViewerWindowsViewerGroups,
+    IReadOnlyList<string> ViewerWindowsAdminGroups,
     int AdminHttpPort,
     bool AdminWindowsAuthEnabled,
     bool AdminWindowsAuthKerberosOnly,
+    IReadOnlyList<string> AdminWindowsAdminGroups,
     bool AdminAppAuthEnabled,
     bool AdminAuthRequireForLoopback,
     bool AdminRemoteBindingEnabled,

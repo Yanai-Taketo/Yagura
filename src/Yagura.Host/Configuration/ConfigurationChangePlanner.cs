@@ -62,6 +62,8 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Viewer:HttpPort", before.Viewer?.HttpPort, after.Viewer?.HttpPort);
         CompareKey(changedKeys, "Viewer:PublicAccess", before.Viewer?.PublicAccess, after.Viewer?.PublicAccess);
         CompareKey(changedKeys, "Viewer:ReverseDns:Enabled", before.Viewer?.ReverseDns?.Enabled, after.Viewer?.ReverseDns?.Enabled);
+        CompareKey(changedKeys, "Viewer:Authentication:Windows:Enabled", before.Viewer?.Authentication?.Windows?.Enabled, after.Viewer?.Authentication?.Windows?.Enabled);
+        CompareKey(changedKeys, "Viewer:Authentication:Windows:KerberosOnly", before.Viewer?.Authentication?.Windows?.KerberosOnly, after.Viewer?.Authentication?.Windows?.KerberosOnly);
         CompareKey(changedKeys, "Admin:HttpPort", before.Admin?.HttpPort, after.Admin?.HttpPort);
         CompareKey(changedKeys, "Admin:Authentication:Windows:Enabled", before.Admin?.Authentication?.Windows?.Enabled, after.Admin?.Authentication?.Windows?.Enabled);
         CompareKey(changedKeys, "Admin:Authentication:Windows:KerberosOnly", before.Admin?.Authentication?.Windows?.KerberosOnly, after.Admin?.Authentication?.Windows?.KerberosOnly);

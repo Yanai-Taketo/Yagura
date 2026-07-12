@@ -97,11 +97,12 @@ public sealed class KerberosOnlyFilterMiddlewareTests
     }
 
     [Fact]
-    public async Task ViewerPort_NtlmToken_PassesThrough_MiddlewareIsAdminListenerScoped()
+    public async Task ViewerPort_NtlmToken_PassesThrough_WhenViewerKerberosOnlyDisabled()
     {
-        // リスナ限定（PR #217 レビュー指摘への対応）: Kerberos-only opt-in は管理面の
-        // 保護水準の選択であり、閲覧リスナ（8514）へ誤って Negotiate ヘッダーが送られても
-        // 応答を変えない（ヘッダーは単に無視される——Negotiate を要求しないリスナの自然な挙動）。
+        // ポート別 opt-in（ADR-0010 Phase 4）: 管理側のみ Kerberos-only（既定の CreateMiddleware）で
+        // 閲覧側は無効な構成では、閲覧リスナ（8514）へ Negotiate ヘッダーが送られても応答を変えない
+        // （閲覧側の Kerberos-only が無効なため NTLM 検査自体を行わない——一方のリスナの opt-in が
+        // 他方の応答を変えない）。
         var audit = new RecordingAuditRecorder();
         var (middleware, nextCalled) = CreateMiddleware(audit);
 
@@ -129,8 +130,43 @@ public sealed class KerberosOnlyFilterMiddlewareTests
         Assert.Empty(audit.Recorded);
     }
 
+    [Fact]
+    public async Task ViewerPort_ViewerKerberosOnly_NtlmToken_IsRejectedWith403AndAudit()
+    {
+        // ポート別 opt-in（ADR-0010 Phase 4）: 閲覧側 Kerberos-only が有効なら、閲覧リスナ（8514）経由の
+        // NTLM も 403 + 監査 3003 で遮断される（管理側の設定に依らず閲覧側の設定で判定）。
+        var audit = new RecordingAuditRecorder();
+        var (middleware, nextCalled) = CreateMiddleware(audit, adminKerberosOnly: false, viewerKerberosOnly: true);
+
+        var context = CreateContext(ViewerPort, $"Negotiate {NtlmToken}");
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(nextCalled());
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        var recorded = Assert.Single(audit.Recorded);
+        Assert.Equal(AuditEventKind.WindowsAuthenticationHandshakeFailed, recorded.Kind);
+    }
+
+    [Fact]
+    public async Task AdminPort_NtlmToken_PassesThrough_WhenAdminKerberosOnlyDisabled()
+    {
+        // 管理側 Kerberos-only が無効なら、管理リスナ経由の NTLM も検査せず通過する（閲覧側だけ有効な構成で
+        // 管理面の応答が変わらないことの裏取り）。
+        var audit = new RecordingAuditRecorder();
+        var (middleware, nextCalled) = CreateMiddleware(audit, adminKerberosOnly: false, viewerKerberosOnly: true);
+
+        var context = CreateContext(AdminPort, $"Negotiate {NtlmToken}");
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(nextCalled());
+        Assert.Empty(audit.Recorded);
+    }
+
     private static (KerberosOnlyFilterMiddleware Middleware, Func<bool> NextCalled) CreateMiddleware(
-        RecordingAuditRecorder audit)
+        RecordingAuditRecorder audit, bool adminKerberosOnly = true, bool viewerKerberosOnly = false)
     {
         var nextCalled = false;
         var middleware = new KerberosOnlyFilterMiddleware(
@@ -139,6 +175,8 @@ public sealed class KerberosOnlyFilterMiddlewareTests
                 nextCalled = true;
                 return Task.CompletedTask;
             },
+            adminKerberosOnly,
+            viewerKerberosOnly,
             audit,
             TimeProvider.System,
             new YaguraAdminListenerPort(AdminPort),

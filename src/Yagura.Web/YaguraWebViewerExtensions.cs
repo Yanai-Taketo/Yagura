@@ -1,5 +1,8 @@
+using System.Linq;
 using System.Text;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components.Endpoints;
 using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -7,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MudBlazor.Services;
 using Yagura.Storage;
+using Yagura.Web.Administration;
 using Yagura.Web.Circuits;
 using Yagura.Web.Components;
 using Yagura.Web.Components.Common;
@@ -93,6 +97,11 @@ public static class YaguraWebViewerExtensions
         services.AddSingleton<Diagnostics.ReverseDnsMetrics>();
         services.AddSingleton<ReverseDns.IReverseDnsResolver, ReverseDns.ReverseDnsResolver>();
 
+        // 閲覧 UI 認証（ADR-0010 Phase 4 決定 7）の実効値。既定は無効（現状維持——認証なし・LAN 公開）。
+        // Host は解決済みの値を AddSingleton で後勝ちに上書きする（MainLayout の circuit 層 viewer ガード・
+        // ViewerLoginScreen がこの型を DI 要求するため、閲覧認証を有効化しない構成でも解決できるよう既定を置く）。
+        services.TryAddSingleton(Administration.ViewerAuthenticationRuntimeOptions.Disabled);
+
         return services;
     }
 
@@ -115,9 +124,37 @@ public static class YaguraWebViewerExtensions
     /// （<c>Yagura.Web.Administration.Screens</c> 配下の <c>@page</c> ルート）への
     /// Admin メタデータ付与（リスナ帰属の機械的導出）は MapYaguraAdmin が担う（M8-4）。
     /// </returns>
+    /// <summary>
+    /// 閲覧画面（<c>Yagura.Web.Components</c> 配下の <c>@page</c> ルート）の帰属判定に使う名前空間接頭辞。
+    /// 閲覧認証（ADR-0010 Phase 4）有効時、この名前空間のページに <see cref="AdminAuthenticationExtensions.ViewerPolicyName"/> を
+    /// 付与する（ログイン画面は除外）。管理画面（<c>Yagura.Web.Administration</c>）とは重ならない。
+    /// </summary>
+    private const string ViewerScreenNamespacePrefix = "Yagura.Web.Components";
+
+    /// <summary>
+    /// 閲覧認証を課さない閲覧ルート（ADR-0010 Phase 4）。未認証で到達できなければならないログイン画面自体に
+    /// <see cref="AdminAuthenticationExtensions.ViewerPolicyName"/> を課すと循環（自己ロックアウト）になるため除外する。
+    /// </summary>
+    private static readonly HashSet<string> ViewerAuthExemptRouteTypeNames = new(StringComparer.Ordinal)
+    {
+        "Yagura.Web.Components.Pages.ViewerLoginScreen",
+    };
+
+    /// <param name="viewerAuthEnabled">
+    /// 閲覧 UI 認証（<c>Viewer:Authentication:Windows:Enabled</c>。ADR-0010 Phase 4 決定 7）が有効か。
+    /// <see langword="true"/> のとき、閲覧ページ（ログイン画面を除く）と CSV エクスポートに
+    /// <see cref="AdminAuthenticationExtensions.ViewerPolicyName"/> を付与し、閲覧ログインエンドポイント
+    /// （<c>/login/*</c>）を登録する。既定 <see langword="false"/>＝現状維持（認証なし）。
+    /// </param>
+    /// <param name="appAuthAvailable">
+    /// 閲覧ログインでアプリ独自 ID/パスワードも受けるか（<c>Admin:Authentication:App:Enabled</c>。
+    /// オーナー決定 2026-07-12）。<c>/login/app</c> の登録可否を制御する。
+    /// </param>
     public static RazorComponentsEndpointConventionBuilder MapYaguraWebViewer(
         this IEndpointRouteBuilder endpoints,
-        string? staticAssetsManifestPath = null)
+        string? staticAssetsManifestPath = null,
+        bool viewerAuthEnabled = false,
+        bool appAuthAvailable = false)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
@@ -169,14 +206,45 @@ public static class YaguraWebViewerExtensions
 
         // ログ検索結果の CSV エクスポート（Issue #157）。読み取り専用の GET のみ——
         // 書き込みエンドポイントではない。L-5 許可リスト（ViewerEndpointAllowlistTests）に
-        // 登録済み。
-        MapLogSearchCsvExport(endpoints);
+        // 登録済み。閲覧認証有効時は閲覧画面と同じ認可判定（ViewerPolicy）を課す
+        // （「画面で読めるものはエクスポートでも読める、以上の緩和をしない」——ADR-0010 決定 7）。
+        MapLogSearchCsvExport(endpoints, viewerAuthEnabled);
+
+        // 閲覧ログイン/ログアウトの HTTP エンドポイント（ADR-0010 Phase 4）。閲覧認証有効時のみ登録する
+        // （無効なら閲覧はそもそも認証なしで到達でき、ログイン経路は不要——L-5 許可リストにも現れない）。
+        if (viewerAuthEnabled)
+        {
+            endpoints.MapViewerAuthEndpoints(windowsAuthEnabled: viewerAuthEnabled, appAuthAvailable: appAuthAvailable);
+        }
 
         // AddInteractiveServerRenderMode は Interactive Server の circuit エンドポイント
         // （SignalR。既定パス /_blazor）を有効化する。circuit 数の上限・origin 検証・無操作回収の
         // 統治は M8-4 で実装済み（CircuitGuardMiddleware・CircuitRegistry。security.md §2）。
-        return endpoints.MapRazorComponents<YaguraWebApp>()
+        var razorComponents = endpoints.MapRazorComponents<YaguraWebApp>()
             .AddInteractiveServerRenderMode();
+
+        // 閲覧認証有効時、閲覧ページ（Yagura.Web.Components 配下の @page。ログイン画面を除く）へ
+        // ViewerPolicy を機械的に付与する（MapYaguraAdmin の管理側規約と対称。ADR-0010 Phase 4 決定 7）。
+        // 管理画面（Yagura.Web.Administration）はこの名前空間の外にあり対象にならない。
+        if (viewerAuthEnabled)
+        {
+            razorComponents.Add(endpointBuilder =>
+            {
+                var componentType = endpointBuilder.Metadata
+                    .OfType<ComponentTypeMetadata>()
+                    .FirstOrDefault()?.Type;
+
+                if (componentType?.Namespace is string ns &&
+                    (ns == ViewerScreenNamespacePrefix ||
+                     ns.StartsWith(ViewerScreenNamespacePrefix + ".", StringComparison.Ordinal)) &&
+                    !ViewerAuthExemptRouteTypeNames.Contains(componentType.FullName ?? string.Empty))
+                {
+                    endpointBuilder.Metadata.Add(new AuthorizeAttribute(AdminAuthenticationExtensions.ViewerPolicyName));
+                }
+            });
+        }
+
+        return razorComponents;
     }
 
     /// <summary>
@@ -234,9 +302,9 @@ public static class YaguraWebViewerExtensions
     /// がレコード 1 件ごとに応答ストリームへ直接書き出す。
     /// </para>
     /// </remarks>
-    private static void MapLogSearchCsvExport(IEndpointRouteBuilder endpoints)
+    private static void MapLogSearchCsvExport(IEndpointRouteBuilder endpoints, bool viewerAuthEnabled)
     {
-        endpoints.MapGet("/search/export.csv", async (
+        var csvEndpoint = endpoints.MapGet("/search/export.csv", async (
             HttpContext context,
             string? from,
             string? to,
@@ -283,6 +351,12 @@ public static class YaguraWebViewerExtensions
             await LogRecordCsvWriter.WriteAsync(writer, results, context.RequestAborted).ConfigureAwait(false);
             await writer.FlushAsync(context.RequestAborted).ConfigureAwait(false);
         });
+
+        if (viewerAuthEnabled)
+        {
+            // 閲覧画面と同じ認可（ViewerPolicy）を課す（ADR-0010 決定 7——エクスポート緩和をしない）。
+            csvEndpoint.RequireAuthorization(AdminAuthenticationExtensions.ViewerPolicyName);
+        }
     }
 
     /// <summary>CSV ダウンロードのファイル名（生成時刻を UTC で埋め込み、上書き事故を避ける）。</summary>

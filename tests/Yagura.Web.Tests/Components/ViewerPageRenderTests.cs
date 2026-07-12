@@ -503,6 +503,10 @@ public sealed class ViewerPageRenderTests
                 services.AddSingleton<ILogStore>(store);
                 services.AddSingleton<IYaguraSystemStatusReader>(reader);
                 services.AddScoped(_ => adminContext);
+                // ADR-0010 Phase 4: MainLayout は閲覧認証の circuit 層ガードで ViewerAuthenticationRuntimeOptions と
+                // YaguraAdminListenerPort を読む（既定は無効＝ガード不活性で従来どおり描画）。
+                services.AddSingleton(Yagura.Web.Administration.ViewerAuthenticationRuntimeOptions.Disabled);
+                services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(8515));
             },
             includePopoverProvider: false);
 
@@ -543,6 +547,9 @@ public sealed class ViewerPageRenderTests
                 // 既定インスタンス（IsAdminListener 未設定＝閲覧相当）を注入する——管理リンクが
                 // 出ない側の描画になる（管理リスナ帰属の分岐は別テストで固定）。
                 services.AddScoped<Yagura.Web.Circuits.YaguraCircuitContext>();
+                // ADR-0010 Phase 4: 閲覧認証の circuit 層ガード用（既定は無効＝ガード不活性）。
+                services.AddSingleton(Yagura.Web.Administration.ViewerAuthenticationRuntimeOptions.Disabled);
+                services.AddSingleton(new Yagura.Web.Administration.YaguraAdminListenerPort(8515));
             },
             // MainLayout はプロバイダ群（MudPopoverProvider 等）を自身が内包するため、
             // ハーネス側のプロバイダ同居を外す（二重登録はエラー）。

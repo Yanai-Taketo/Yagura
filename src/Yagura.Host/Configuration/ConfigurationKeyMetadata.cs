@@ -98,6 +98,14 @@ public static class ConfigurationKeyMetadata
             // 管理 UI 認証（ADR-0010 Phase 1）: 認証スキーム構成（AddNegotiate/AddCookie/
             // AddAuthorization）は WebApplicationBuilder 構築時に固定され、実行中の付け替え
             // API を持たないため、Admin:HttpPort と同じくサービス再起動が現時点の実効。
+            // 閲覧 UI 認証（ADR-0010 Phase 4 決定 7）: 認証スキーム構成は WebApplicationBuilder 構築時に
+            // 固定されるため管理認証キーと同じくサービス再起動が現時点の実効。
+            ["Viewer:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Viewer:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
+            // 注: SEC-9 のグループ一覧（Admin/Viewer:Authentication:Windows:*Groups）は配列キー
+            // （KnownArrayKeys）であり、本表（スカラーキーの反映方式表・ChangePlanner の比較対象）とは
+            // 別系統で扱う——名 → SID 解決を含め反映は起動時（サービス再起動）に固定であり、ウィザードの
+            // 差分適用の対象ではない（手編集のみ。restart-required）。
             ["Admin:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:App:Enabled"] = ConfigurationReloadEffect.RestartRequired,

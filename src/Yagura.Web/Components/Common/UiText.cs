@@ -769,6 +769,30 @@ public static class UiText
     /// <summary>管理画面が認証を要求しているが未認証のときの表示（AdminScreenLayout のリダイレクト経路の直前表示）。</summary>
     public const string AdminScreenRequiresAuthentication = "サインインが必要です…";
 
+    // ---- 閲覧 UI 認証（ADR-0010 Phase 4 決定 7） ----
+
+    /// <summary>閲覧ログイン画面の見出し。</summary>
+    public const string ViewerLoginTitle = "閲覧 UI へのサインイン";
+
+    /// <summary>
+    /// 閲覧ログイン画面の説明（認証 opt-in 有効時のみ到達）。方式に依らず中立の文言にする——アプリ独自認証併用時
+    /// （ID/パスワード欄も表示される）に「Windows でのサインインが必要」と読める固定文言だと誤解を招くため
+    /// （佐藤のレビュー指摘）。具体的な方式は各サインインボタン/フォームのラベルが示す。
+    /// </summary>
+    public const string ViewerLoginIntro = "このログを閲覧するにはサインインが必要です。";
+
+    /// <summary>閲覧の Windows 統合認証サインインボタン文言。</summary>
+    public const string ViewerLoginWindowsButton = "Windows でサインイン";
+
+    /// <summary>閲覧のアプリ独自認証サインインボタン文言。</summary>
+    public const string ViewerLoginAppButton = "サインイン";
+
+    /// <summary>閲覧ログイン失敗時の汎用エラー文言（列挙耐性——管理ログインと同じ非開示方針）。</summary>
+    public const string ViewerLoginError = "ユーザー名またはパスワードが正しくないか、閲覧を許可されたグループに所属していません。";
+
+    /// <summary>閲覧画面が認証を要求しているが未認証のときの表示（MainLayout のリダイレクト経路の直前表示）。</summary>
+    public const string ViewerScreenRequiresAuthentication = "サインインが必要です…";
+
     // ---- 管理 UI のリモートアクセス（HTTPS）設定（ADR-0012。/admin/remote-access） ----
 
     /// <summary>リモートアクセス設定画面への導線・見出し（ADR-0012 決定 1——認証設定とは分離した画面）。</summary>

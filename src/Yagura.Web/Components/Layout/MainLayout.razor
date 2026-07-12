@@ -1,9 +1,14 @@
 @namespace Yagura.Web.Components.Layout
 @inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Http
+@using Yagura.Web.Administration
 @inject IJSRuntime JSRuntime
 @inject ILogStore LogStore
 @inject IYaguraSystemStatusReader StatusReader
 @inject Yagura.Web.Circuits.YaguraCircuitContext CircuitContext
+@inject ViewerAuthenticationRuntimeOptions ViewerAuthOptions
+@inject NavigationManager Navigation
 @implements IAsyncDisposable
 
 @*
@@ -94,7 +99,22 @@
                               LastReceivedAt="@_lastReceivedAt"
                               SourcesLinkHref="/#sources" />
         </div>
-        @Body
+        @*
+            閲覧認証（ADR-0010 Phase 4 決定 7）の circuit 層ガード。HTTP 層の ViewerPolicy が
+            「circuit 確立までの経路」を守るのに対し、確立済み circuit 上の対話的ナビゲーション
+            （HTTP 要求を発生させない——security.md §1 L-5 の覆域の限界）を本ガードで塞ぐ。ログ本体
+            （@Body の検索結果・メッセージ）は未認証では描画しない。状態帯（上）の集約健康・最終受信
+            時刻は @Body より機微度が低く、未認証で一瞬露出しても即リダイレクトで閉じる（HTTP 層の
+            ViewerPolicy が通常経路を既に遮断済み——本ガードは対話ナビの多層防御）。
+        *@
+        @if (_viewerAccessSatisfied)
+        {
+            @Body
+        }
+        else
+        {
+            <MudText>@UiText.ViewerScreenRequiresAuthentication</MudText>
+        }
     </MudMainContent>
 </MudLayout>
 
@@ -123,6 +143,23 @@
     private PeriodicTimer? _bandTimer;
     private Task? _bandLoop;
 
+    /// <summary>
+    /// 閲覧認証（ADR-0010 Phase 4）の充足。既定 true——閲覧認証無効時・管理リスナ帰属時・ログイン画面では
+    /// 常に @Body を描画する。閲覧認証有効かつ閲覧リスナ経由で未認証のときのみ false になる。
+    /// </summary>
+    private bool _viewerAccessSatisfied = true;
+
+    /// <summary>
+    /// HTTP 要求文脈（静的 SSR / prerender）でのみ供給されるカスケード値。対話的描画では null——
+    /// その場合は circuit の帰属・汲み直し済み認証状態で判定する（AdminScreenLayout と同型）。
+    /// </summary>
+    [CascadingParameter]
+    public HttpContext? HttpContext { get; set; }
+
+    /// <summary>circuit の現在の認証状態（ADR-0010 決定 2。AddCascadingAuthenticationState が供給）。</summary>
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
 
     protected override async Task OnInitializedAsync()
@@ -130,6 +167,70 @@
         // 初期表示（prerender を含む）で状態帯を組み立てる。以後は定期更新
         // （OnAfterRenderAsync で開始——prerender では動かない）。
         await RefreshStatusBandAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await EvaluateViewerAccessAsync();
+    }
+
+    /// <summary>
+    /// 閲覧認証（ADR-0010 Phase 4 決定 7）の充足判定。閲覧認証有効・閲覧リスナ帰属・非ログイン画面のときのみ
+    /// 管理 ⊇ 閲覧のセッション（<see cref="AdminAuthenticationExtensions.IsViewingAllowed"/>）を要求し、未充足なら
+    /// 閲覧ログインへフルページ遷移する（AdminScreenLayout の認証充足判定と同型）。
+    /// </summary>
+    private async Task EvaluateViewerAccessAsync()
+    {
+        if (!ViewerAuthOptions.Enabled)
+        {
+            _viewerAccessSatisfied = true;
+            return;
+        }
+
+        // ログイン画面自身は認可対象外（未認証で到達できなければならない——循環防止）。
+        var isLoginRoute = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/') ==
+            AdminAuthenticationExtensions.ViewerLoginPath.TrimEnd('/');
+        if (isLoginRoute)
+        {
+            _viewerAccessSatisfied = true;
+            return;
+        }
+
+        // 管理リスナの loopback 束縛面が「確実」なら本ガードの対象外（ローカル復旧/全アクセス経路——
+        // ViewerPolicy の HTTP 判定と同じ根拠に揃える。リモート管理 HTTPS 面は閲覧セッションを要求する——
+        // 田中・クリスのレビュー指摘）。帰属不明（null）は「確実な管理 loopback」ではないため gate 側へ倒す
+        // （fail-closed——未認証で閲覧本体を露出させない）。SSR/prerender は接続の実ローカルポート、
+        // 対話的描画は circuit 確立時の loopback 帰属で判定する（AdminScreenLayout の isLoopbackListener と同型）。
+        var definitelyAdminLoopback = HttpContext is not null
+            ? AdminAuthenticationExtensions.IsLoopbackAdminConnection(HttpContext)
+            : CircuitContext.IsLoopbackListener == true;
+        if (definitelyAdminLoopback)
+        {
+            _viewerAccessSatisfied = true;
+            return;
+        }
+
+        // ここから先はガード対象。判定が確定するまで fail-closed に倒す——下の await が yield した瞬間の
+        // 中間描画で @Body（ログ本体）を露出させない（circuit 再利用時の OnParametersSetAsync 再評価で、
+        // 前回の充足値が残ったまま await 待ちの間に @Body が一瞬描画される leak を防ぐ）。
+        _viewerAccessSatisfied = false;
+
+        // 認証状態の取得元を _access と同じ根拠に揃える（AdminScreenLayout と同型）: SSR/prerender は
+        // HttpContext.User を正とし、対話的描画は circuit の汲み直し済み認証状態を使う。
+        var user = HttpContext?.User
+            ?? (AuthenticationStateTask is null
+                ? new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity())
+                : (await AuthenticationStateTask).User);
+
+        _viewerAccessSatisfied = AdminAuthenticationExtensions.IsViewingAllowed(user);
+
+        if (!_viewerAccessSatisfied)
+        {
+            // fail-closed: 未認証のまま閲覧本体（@Body）は描画しない。閲覧ログインへフルページ遷移する
+            // （forceLoad: true——アンチフォージェリトークン/Cookie の対は HTTP 要求でのみ発行できるため。
+            // AdminScreenLayout のログイン誘導と同じ理由）。
+            Navigation.NavigateTo(AdminAuthenticationExtensions.ViewerLoginPath, forceLoad: true);
+        }
     }
 
     private async Task RunBandLoopAsync(PeriodicTimer timer)

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
@@ -93,6 +94,21 @@ public static class AdminAuthenticationExtensions
     public const string AdminSessionClaimType = "yagura:admin_session";
 
     /// <summary>
+    /// 「閲覧セッションである」ことを示す標識クレーム型（ADR-0010 Phase 4 決定 7）。閲覧認可
+    /// （<see cref="ViewerPolicyName"/>）は <see cref="AdminSessionClaimType"/>（管理 ⊇ 閲覧）
+    /// または本クレームの存在を正規の判定根拠にする——欠落時は fail-closed（閲覧者として認可しない）。
+    /// </summary>
+    /// <remarks>
+    /// <b>Cookie は管理と共用の単一スキーム</b>（オーナー決定 2026-07-12。ADR-0013 決定 1 の単一 Cookie
+    /// モデルを踏襲）: Windows ログインで「閲覧」役割にマップされた利用者は本クレームを持つ Cookie を得る。
+    /// Cookie は host スコープ（ポート非依存）ゆえ、管理 Cookie（<see cref="AdminSessionClaimType"/>）は
+    /// 閲覧リスナ（8514）でも閲覧できる＝管理 ⊇ 閲覧が自然に成立し、閲覧 Cookie は管理リスナ（8515）では
+    /// <see cref="AdminSessionClaimType"/> 欠落で拒否される（fail-closed）。役割の独立失効が必要になった
+    /// 場合は別 Cookie スキーム（ADR-0013 方式 (c)）を再評価する。
+    /// </remarks>
+    public const string ViewerSessionClaimType = "yagura:viewer_session";
+
+    /// <summary>
     /// セッション世代番号を保持するクレーム型（ADR-0013 決定 2）。緊急全失効は現世代番号のバンプで行い、
     /// 各要求で現世代と fail-closed 照合する（旧世代 Cookie は無効）。
     /// </summary>
@@ -132,8 +148,54 @@ public static class AdminAuthenticationExtensions
         return new ClaimsPrincipal(identity);
     }
 
+    /// <summary>
+    /// 認証成立後の<b>閲覧</b>セッション <see cref="ClaimsPrincipal"/> を組み立てる（ADR-0010 Phase 4 決定 7）。
+    /// <see cref="CreateAdminSessionPrincipal"/> と同一の単一 Cookie スキームで運ばれるが、標識クレームが
+    /// <see cref="ViewerSessionClaimType"/>（管理でなく閲覧）である点だけが異なる——閲覧グループにマップ
+    /// された Windows ログインでのみ発行する（管理グループ・544 は <see cref="CreateAdminSessionPrincipal"/> を使う。
+    /// 管理 ⊇ 閲覧のため管理セッションも閲覧できる）。
+    /// </summary>
+    /// <param name="authMethod">現状は <see cref="WindowsAuthMethod"/> のみ（閲覧の主経路。決定 7）。</param>
+    /// <param name="principalName">主体名（Windows は <c>DOMAIN\user</c>）。</param>
+    /// <param name="generation">発行時点のセッション世代番号（緊急全失効の照合基準。ADR-0013 決定 2）。</param>
+    public static ClaimsPrincipal CreateViewerSessionPrincipal(string authMethod, string principalName, int generation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(authMethod);
+        var identity = new ClaimsIdentity(AppAuthenticationScheme);
+        identity.AddClaim(new Claim(ClaimTypes.Name, principalName ?? string.Empty));
+        identity.AddClaim(new Claim(AuthMethodClaimType, authMethod));
+        identity.AddClaim(new Claim(ViewerSessionClaimType, "1"));
+        identity.AddClaim(new Claim(SessionGenerationClaimType, generation.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return new ClaimsPrincipal(identity);
+    }
+
+    /// <summary>
+    /// 認証成立後の Cookie サインインプロパティ（ADR-0013 決定 2 の絶対寿命・sliding 制御）。
+    /// Windows 由来は <paramref name="allowRefresh"/>=false（sliding 無効）で短い絶対寿命
+    /// （<see cref="WindowsSessionAbsoluteLifetime"/>）、アプリ由来は allowRefresh=true（scheme の
+    /// sliding 有効。<see cref="AppSessionAbsoluteLifetime"/>）。管理・閲覧の両ログイン経路が共有する。
+    /// </summary>
+    public static Microsoft.AspNetCore.Authentication.AuthenticationProperties BuildSessionSignInProperties(
+        DateTimeOffset now, TimeSpan absoluteLifetime, bool allowRefresh) => new()
+        {
+            IsPersistent = false,
+            AllowRefresh = allowRefresh,
+            IssuedUtc = now,
+            ExpiresUtc = now + absoluteLifetime,
+        };
+
     /// <summary>管理 UI 到達に必要な認可ポリシー名（Windows 管理者 SID または AppAuth 認証済み）。</summary>
     public const string AdminPolicyName = "YaguraAdminAccess";
+
+    /// <summary>
+    /// 閲覧 UI 到達に必要な認可ポリシー名（ADR-0010 Phase 4 決定 7）。閲覧リスナ（8514）経由・および
+    /// リモート管理 HTTPS ポート（ADR-0010 Phase 2）経由の要求に実効化し、閲覧セッション
+    /// （<see cref="ViewerSessionClaimType"/>）または管理セッション（<see cref="AdminSessionClaimType"/>。
+    /// 管理 ⊇ 閲覧）を要求する。<b>対象外は管理リスナの loopback 束縛ポート経由のみ</b>——そこはローカル復旧/
+    /// 全アクセス経路として管理面の規則に委ねる。リモート面まで含めて絞るのは、リモートバインド有効時に
+    /// 閲覧ログが無認証で読めるのを防ぐため（<see cref="IsViewerAccessAllowed"/> の remarks 参照）。
+    /// </summary>
+    public const string ViewerPolicyName = "YaguraViewerAccess";
 
     /// <summary><c>BUILTIN\Administrators</c> の well-known SID（ADR-0010 決定 5・検証 2）。</summary>
     public const string BuiltinAdministratorsSid = "S-1-5-32-544";
@@ -146,18 +208,50 @@ public static class AdminAuthenticationExtensions
     public const string LoginPath = "/admin/login";
 
     /// <summary>
+    /// 閲覧 UI ログイン画面のパス（ADR-0010 Phase 4）。閲覧リスナ経由で未認証のまま到達できなければ
+    /// ならない唯一の閲覧画面（<c>MainLayout</c> の circuit 層 viewer ガードの認可除外対象、
+    /// Cookie 認証の viewer 向け <c>OnRedirectToLogin</c> の誘導先、および閲覧認可を課さない
+    /// 例外ルートの 3 箇所で同じ値を参照する——単一の正とする）。管理ログイン（<see cref="LoginPath"/>=
+    /// <c>/admin/login</c>）とは別ルートであり、管理リスナ帰属を持たない（閲覧リスナで到達できる）。
+    /// </summary>
+    public const string ViewerLoginPath = "/login";
+
+    /// <summary>
     /// 認証スキーム・認可ポリシーを DI へ登録する。<paramref name="windowsAuthEnabled"/>/
     /// <paramref name="appAuthEnabled"/> がいずれも無効でも <c>AddAuthentication</c>/
     /// <c>AddAuthorization</c> 自体は常に呼ぶ（ミドルウェアの配線を一様にする——無効なスキームは
     /// 単に登録されないだけで、認証パイプライン自体が有害にはならない）。
     /// </summary>
+    /// <param name="viewerWindowsAuthEnabled">
+    /// 閲覧 UI の Windows 統合認証（<c>Viewer:Authentication:Windows:Enabled</c>。ADR-0010 Phase 4 決定 7）。
+    /// <see langword="true"/> の場合、認証スキーム（Negotiate・Cookie）を管理側と<b>共用</b>で登録する
+    /// （スキームは WebApplication 単位で 1 つ——管理・閲覧の両リスナが同じ Negotiate/Cookie を使う。
+    /// 役割の区別は Cookie のクレーム（<see cref="AdminSessionClaimType"/>/<see cref="ViewerSessionClaimType"/>）で行う）。
+    /// </param>
+    /// <param name="viewerKerberosOnly">
+    /// 閲覧 UI の Kerberos-only モード（<c>Viewer:Authentication:Windows:KerberosOnly</c>）。NTLM 資格情報の
+    /// 非永続化（多層防御）に反映する。実際の NTLM 遮断はポート別の <see cref="KerberosOnlyFilterMiddleware"/> が担う。
+    /// </param>
     public static IServiceCollection AddYaguraAdminAuthentication(
         this IServiceCollection services,
         bool windowsAuthEnabled,
         bool kerberosOnly,
-        bool appAuthEnabled)
+        bool appAuthEnabled,
+        bool viewerWindowsAuthEnabled = false,
+        bool viewerKerberosOnly = false)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // SEC-9 の解決済みグループ SID 集合（名 → SID 解決は Windows 専用ゆえ Host が解決して上書き登録する）。
+        // ここでは既定として空集合を登録し、ログインエンドポイント（WindowsGroupAuthorizationOptions を DI 要求する）が
+        // グループ未構成のテスト・ハーネスでも解決できるようにする（Host は AddSingleton で実値を後勝ちで上書きする）。
+        services.TryAddSingleton(WindowsGroupAuthorizationOptions.Empty);
+
+        // 認証スキームは WebApplication 単位で 1 つ。管理・閲覧のいずれかが Windows 統合認証を要求すれば
+        // Negotiate を、いずれかが何らかの認証を要求すれば認証セッション Cookie を登録する（ADR-0013 決定 1 の
+        // 単一 Cookie モデルを閲覧へも共用——オーナー決定 2026-07-12）。
+        var negotiateNeeded = windowsAuthEnabled || viewerWindowsAuthEnabled;
+        var cookieNeeded = windowsAuthEnabled || appAuthEnabled || viewerWindowsAuthEnabled;
 
         var authBuilder = services.AddAuthentication(options =>
         {
@@ -173,15 +267,18 @@ public static class AdminAuthenticationExtensions
             options.DefaultChallengeScheme = AppAuthenticationScheme;
         });
 
-        if (windowsAuthEnabled)
+        if (negotiateNeeded)
         {
             authBuilder.AddNegotiate(options =>
             {
+                // ハンドラ内部の NTLM 資格情報の非永続化は<b>管理側</b> Kerberos-only にのみ連動させる
+                // （SEC-9 レビュー指摘）。Negotiate ハンドラは WebApplication 単位で 1 つ（管理・閲覧で共用）
+                // であり、ここを閲覧側 Kerberos-only にも連動させると、管理側が NTLM を許容している構成で
+                // 管理 NTLM の接続内資格情報永続化が失われ、要求ごとに握手をやり直す劣化を招く。閲覧側の
+                // NTLM 遮断は KerberosOnlyFilterMiddleware がポート別にハンドラ手前で行うため、この設定に
+                // 依存しない（閲覧 NTLM はハンドラへ到達しない）。管理側は NTLM 遮断（middleware）に加えた多層防御。
                 if (kerberosOnly)
                 {
-                    // NTLM トークン自体は KerberosOnlyFilterMiddleware がハンドラへ渡す前に
-                    // 遮断するため、ハンドラ内部の資格情報永続化設定は NTLM 経路を実質使わない。
-                    // それでも「NTLM 資格情報を保持しない」を明示しておく（多層防御）。
                     options.PersistNtlmCredentials = false;
                 }
 
@@ -216,7 +313,7 @@ public static class AdminAuthenticationExtensions
         // 有効なら登録する（ADR-0013 決定 1）。従来はアプリ独自認証有効時のみ登録しており、
         // Windows 認証のみの構成で Cookie スキームが未登録 → 既定認証スキームが解決できず匿名 →
         // 401 ループ、というのが #252 の直接原因だった。
-        if (windowsAuthEnabled || appAuthEnabled)
+        if (cookieNeeded)
         {
             authBuilder.AddCookie(AppAuthenticationScheme, options =>
             {
@@ -264,6 +361,35 @@ public static class AdminAuthenticationExtensions
 
                     return Task.CompletedTask;
                 };
+
+                // 未認証で認可ポリシーに弾かれたときのログイン誘導先はリスナ帰属で分ける
+                // （ADR-0010 Phase 4）: 管理リスナ帰属ポート経由は既定（LoginPath=/admin/login）、
+                // 閲覧リスナ経由は閲覧ログイン（/login）——閲覧リスナでは /admin/login が
+                // ListenerPortGuard により 404 になるため、そこへ誘導すると行き止まりになる。
+                // 判定は接続の実ローカルポート（クライアントが偽装できない値）で行う。
+                options.Events.OnRedirectToLogin = context =>
+                {
+                    // 既定の Cookie ハンドラは AJAX/API 要求（<c>X-Requested-With: XMLHttpRequest</c>）には 302 でなく
+                    // 401 を返す。本上書きでもその挙動を保つ（302 リダイレクトを前提にしない非ブラウザ管理クライアント
+                    // 向けの互換——auth-wiring レビュー指摘）。ブラウザ遷移（#252/#255 の経路）はこのヘッダを持たない。
+                    if (string.Equals(
+                        context.Request.Headers[Microsoft.Net.Http.Headers.HeaderNames.XRequestedWith],
+                        "XMLHttpRequest",
+                        StringComparison.Ordinal))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        return Task.CompletedTask;
+                    }
+
+                    var adminPort = context.HttpContext.RequestServices.GetService<YaguraAdminListenerPort>();
+                    var onAdminListener = adminPort is not null && adminPort.Contains(context.HttpContext.Connection.LocalPort);
+
+                    // 管理リスナ帰属は既定の誘導先（context.RedirectUri = LoginPath + ReturnUrl）を維持する
+                    // （#252/#255 で確立した管理ログイン挙動を変えない）。閲覧リスナは /login へ誘導する
+                    // （ReturnUrl は付さない——閲覧ログイン成功後は "/" へ固定遷移する）。
+                    context.Response.Redirect(onAdminListener ? context.RedirectUri : ViewerLoginPath);
+                    return Task.CompletedTask;
+                };
             });
         }
 
@@ -276,9 +402,56 @@ public static class AdminAuthenticationExtensions
         services.AddAuthorizationBuilder()
             .AddPolicy(AdminPolicyName, policy => policy.RequireAssertion(context =>
                 IsAdminSessionAuthenticated(context.User) ||
-                IsUnauthenticatedLoopbackBypassAllowed(context)));
+                IsUnauthenticatedLoopbackBypassAllowed(context)))
+            // 閲覧認可（ADR-0010 Phase 4 決定 7）。閲覧リスナ帰属ポート経由の要求にのみ実効化し、
+            // 管理 ⊇ 閲覧で管理・閲覧いずれのセッションも通す。本ポリシーは閲覧認証有効時のみ
+            // 閲覧ルートへ付与される（MapYaguraWebViewer 参照）ため、assertion 自体は「有効か」を
+            // 再確認せず、リスナ帰属と閲覧可否のみで判定する。
+            .AddPolicy(ViewerPolicyName, policy => policy.RequireAssertion(IsViewerAccessAllowed));
 
         return services;
+    }
+
+    /// <summary>
+    /// 閲覧認可ポリシー（<see cref="ViewerPolicyName"/>）の判定（ADR-0010 Phase 4 決定 7）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>管理リスナの loopback 束縛ポート経由の閲覧画面のみ本ポリシーの対象外とする</b>: 閲覧ルート
+    /// （Razor Components ページ・CSV）は管理リスナからも到達できる（ui.md §4）。管理リスナの <b>loopback</b>
+    /// 面はローカルの復旧・全アクセス経路（<c>Admin:...:RequireForLoopback</c> 既定 false と整合）であり、
+    /// ここは無条件に通して管理面の規則に委ねる。
+    /// </para>
+    /// <para>
+    /// <b>リモート管理 HTTPS ポート（別ポート。ADR-0010 Phase 2）経由は閲覧セッションを要求する</b>
+    /// （田中・クリスのレビュー指摘）: <see cref="YaguraAdminListenerPort.Ports"/> にはリモート HTTPS ポートも
+    /// 含まれるため、「管理帰属ポートなら無条件 allow」だと <c>RemoteBinding</c> + 閲覧認証を同時に有効化した
+    /// 構成で、リモート面に到達した<b>未認証</b>クライアントが閲覧ルート（ログ本体・CSV 全文）を素通りで読める。
+    /// 閲覧認証を有効化してもこの面が閉じないのは false sense of security であり、閲覧認証有効時はリモート面にも
+    /// 閲覧セッションを要求する（判定は <see cref="IsLoopbackAdminConnection"/>——loopback 管理ポートのみ true）。
+    /// </para>
+    /// <para>
+    /// <b>閲覧リスナ経由も管理 ⊇ 閲覧のセッションを要求する</b>（<see cref="IsViewingAllowed"/>）。
+    /// <see cref="HttpContext"/> が取得できない場合は fail-closed（拒否）。
+    /// </para>
+    /// </remarks>
+    private static bool IsViewerAccessAllowed(AuthorizationHandlerContext context)
+    {
+        if (context.Resource is not HttpContext httpContext)
+        {
+            // Resource が HttpContext として取得できない場合は fail-closed（判定不能を許可側へ倒さない）。
+            return false;
+        }
+
+        if (IsLoopbackAdminConnection(httpContext))
+        {
+            // 管理リスナの loopback 束縛ポート経由の閲覧画面のみ本ポリシーの対象外（管理面の規則に従う）。
+            // リモート管理 HTTPS ポート経由は下の閲覧セッション判定へ落とす（未認証読み取りを塞ぐ）。
+            return true;
+        }
+
+        // 閲覧リスナ経由・リモート管理 HTTPS 経由 → 管理 ⊇ 閲覧のセッションを要求する。
+        return IsViewingAllowed(context.User);
     }
 
     /// <summary>
@@ -291,6 +464,24 @@ public static class AdminAuthenticationExtensions
         ArgumentNullException.ThrowIfNull(user);
         return (user.Identity?.IsAuthenticated ?? false) && user.HasClaim(c => c.Type == AdminSessionClaimType);
     }
+
+    /// <summary>
+    /// 認証成立後の<b>閲覧</b>セッション（<see cref="ViewerSessionClaimType"/> クレームを持つ認証済み Cookie）か
+    /// どうか（ADR-0010 Phase 4 決定 7）。標識クレーム欠落時は false（fail-closed）。
+    /// </summary>
+    public static bool IsViewerSessionAuthenticated(ClaimsPrincipal user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        return (user.Identity?.IsAuthenticated ?? false) && user.HasClaim(c => c.Type == ViewerSessionClaimType);
+    }
+
+    /// <summary>
+    /// 閲覧が許可されるセッションかどうか（ADR-0010 Phase 4 決定 7 の「管理 ⊇ 閲覧」）: 管理セッション
+    /// （<see cref="IsAdminSessionAuthenticated"/>）または閲覧セッション（<see cref="IsViewerSessionAuthenticated"/>）の
+    /// いずれか。閲覧認可ポリシー（<see cref="ViewerPolicyName"/>）・<c>MainLayout</c> の circuit 層ガードが使う。
+    /// </summary>
+    public static bool IsViewingAllowed(ClaimsPrincipal user) =>
+        IsAdminSessionAuthenticated(user) || IsViewerSessionAuthenticated(user);
 
     /// <summary>
     /// 指定した <see cref="ClaimsPrincipal"/> が Windows 統合認証で <c>BUILTIN\Administrators</c>
@@ -325,9 +516,20 @@ public static class AdminAuthenticationExtensions
     /// 一般に正しくなった」ではない。SEC-9 着手時に判定範囲（および S4U 要否）を再評価する。
     /// </para>
     /// </remarks>
-    public static bool IsWindowsAdministrator(ClaimsPrincipal user)
+    public static bool IsWindowsAdministrator(ClaimsPrincipal user) =>
+        IsWindowsAdministrator(user, EmptyGroupSids);
+
+    /// <summary>
+    /// <paramref name="user"/> が Windows 統合認証で「管理」役割に該当するか（ADR-0010 決定 5・検証 2 +
+    /// SEC-9・委任事項 8）。既定の <c>BUILTIN\Administrators</c>（544）判定に<b>加えて</b>、
+    /// <paramref name="additionalAdminGroupSids"/>（<c>Admin:Authentication:Windows:AdminGroups</c> の解決済み
+    /// SID 集合）との交差も管理者と認可する（544 判定を置き換えず追加する。射程の限界を論じた本メソッドの
+    /// 単一引数版の remarks も参照）。
+    /// </summary>
+    public static bool IsWindowsAdministrator(ClaimsPrincipal user, IReadOnlySet<string> additionalAdminGroupSids)
     {
         ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(additionalAdminGroupSids);
 
         // 認可の SID モデルは Windows 固有（非 Windows では管理者と判定しない＝安全側。CA1416 ガードも兼ねる）。
         if (!OperatingSystem.IsWindows())
@@ -335,18 +537,56 @@ public static class AdminAuthenticationExtensions
             return false;
         }
 
-        // 型・クレームとも全 identity を走査して観点を揃える（primary identity のみを見る非対称を避ける）。
-        // 認証済み WindowsIdentity が 1 つでもあり、かつ 544 クレームを持てば管理者。
+        // 「Windows 統合認証で確立された identity か」は WindowsIdentity 型で判定する（issue #235。
+        // スキーム名文字列一致では Kerberos ログオンの管理者を取りこぼす）。認証済み WindowsIdentity が
+        // 1 つでもあり、かつ 544 または設定された管理グループ SID を持てば管理者。
+        return HasAuthenticatedWindowsIdentity(user) &&
+            (HasBuiltinAdministratorsSid(user) || HasAnyGroupSid(user, additionalAdminGroupSids));
+    }
+
+    /// <summary>
+    /// <paramref name="user"/> が Windows 統合認証で「閲覧」役割に該当するか（ADR-0010 Phase 4 決定 7・SEC-9）:
+    /// 認証済み <see cref="WindowsIdentity"/> を持ち、かつ <paramref name="viewerGroupSids"/>
+    /// （<c>Viewer:Authentication:Windows:ViewerGroups</c> の解決済み SID 集合）と交差する。閲覧ログインの
+    /// 役割判定に使う——管理役割（544/管理グループ）は <see cref="IsWindowsAdministrator(ClaimsPrincipal, IReadOnlySet{string})"/>
+    /// で先に判定し、管理でなければ本判定へ落とす（管理 ⊇ 閲覧）。
+    /// </summary>
+    public static bool IsWindowsViewer(ClaimsPrincipal user, IReadOnlySet<string> viewerGroupSids)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(viewerGroupSids);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        return HasAuthenticatedWindowsIdentity(user) && HasAnyGroupSid(user, viewerGroupSids);
+    }
+
+    /// <summary>認証済みの <see cref="WindowsIdentity"/> を（全 identity 走査で）1 つでも持つか。</summary>
+    private static bool HasAuthenticatedWindowsIdentity(ClaimsPrincipal user)
+    {
+        // 非 Windows では WindowsIdentity は存在しない（CA1416 ガードも兼ねる——呼び出し側も
+        // 二重に OperatingSystem.IsWindows() を通すが、本メソッド単体で分析器を満たすため再掲する）。
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
         foreach (var identity in user.Identities)
         {
             if (identity is WindowsIdentity { IsAuthenticated: true })
             {
-                return HasBuiltinAdministratorsSid(user);
+                return true;
             }
         }
 
         return false;
     }
+
+    /// <summary>グループマッピング未構成時の空集合（<see cref="IsWindowsAdministrator(ClaimsPrincipal)"/> の既定）。</summary>
+    private static readonly IReadOnlySet<string> EmptyGroupSids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// <paramref name="user"/> が <c>BUILTIN\Administrators</c>（<see cref="BuiltinAdministratorsSid"/>）の
@@ -356,6 +596,40 @@ public static class AdminAuthenticationExtensions
     /// </summary>
     internal static bool HasBuiltinAdministratorsSid(ClaimsPrincipal user) =>
         user.HasClaim(ClaimTypes.GroupSid, BuiltinAdministratorsSid);
+
+    /// <summary>
+    /// <paramref name="user"/> のトークンのグループ SID クレーム（<see cref="ClaimTypes.GroupSid"/>——
+    /// <see cref="WindowsIdentity.Groups"/> がネスト展開済みで載せる推移的グループ）の集合が、
+    /// <paramref name="groupSids"/>（設定で指定された役割グループの解決済み SID 集合）と交差するか（SEC-9）。
+    /// 型に依存しない純粋関数として、<see cref="ClaimsPrincipal"/> だけで（AD 実環境なしに）単体テスト可能にする。
+    /// </summary>
+    /// <remarks>
+    /// 照合は SID 文字列で行う（名の表記ゆれ・別名解決の非決定性を認可判定から排除する——
+    /// <see cref="WindowsGroupAuthorizationOptions"/> の remarks）。<paramref name="groupSids"/> の比較は
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> を想定する（SID 文字列は大文字小文字を区別しない
+    /// 16 進・十進表記のため。解決段の <c>HashSet</c> も同じ比較器で構築する）。
+    /// </remarks>
+    public static bool HasAnyGroupSid(ClaimsPrincipal user, IReadOnlySet<string> groupSids)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(groupSids);
+
+        if (groupSids.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var claim in user.Claims)
+        {
+            if (string.Equals(claim.Type, ClaimTypes.GroupSid, StringComparison.Ordinal) &&
+                groupSids.Contains(claim.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// 指定した <see cref="ClaimsPrincipal"/> がアプリ独自認証で認証済みかどうか（決定 5:
@@ -436,14 +710,17 @@ public static class AdminAuthenticationExtensions
     /// 認証パイプラインをアプリケーションビルダーへ組み込む
     /// （<c>UseRouting</c> 後・エンドポイント実行前。<c>UseYaguraListenerPortGuard</c> と同じ順序制約）。
     /// </summary>
-    public static IApplicationBuilder UseYaguraAdminAuthentication(this IApplicationBuilder app, bool kerberosOnly)
+    public static IApplicationBuilder UseYaguraAdminAuthentication(
+        this IApplicationBuilder app, bool kerberosOnly, bool viewerKerberosOnly = false)
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        if (kerberosOnly)
+        if (kerberosOnly || viewerKerberosOnly)
         {
             // Negotiate ハンドラより前段で NTLM トークンを遮断する（クラスの remarks 参照）。
-            app.UseMiddleware<KerberosOnlyFilterMiddleware>();
+            // 管理・閲覧のどちらの Kerberos-only が有効でも配線し、実際にどのリスナで遮断するかは
+            // ミドルウェアが接続の実ローカルポート（管理帰属か否か）で判定する（ポート別 opt-in）。
+            app.UseMiddleware<KerberosOnlyFilterMiddleware>(kerberosOnly, viewerKerberosOnly);
         }
 
         app.UseAuthentication();

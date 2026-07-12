@@ -90,6 +90,12 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId AdminSessionsInvalidated = new(2013, "AdminSessionsInvalidated");
 
+    /// <summary>
+    /// 閲覧リスナ（8514）へのサインイン成功（ADR-0010 Phase 4 決定 7）。管理サインイン成功
+    /// （<see cref="AdminLoginSucceeded"/>=2008）と区別する。レベルは情報。
+    /// </summary>
+    public static readonly EventId ViewerLoginSucceeded = new(2014, "ViewerLoginSucceeded");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
@@ -130,4 +136,11 @@ public static class AuditEventIds
     /// プロトコル握手失敗（<see cref="WindowsAuthenticationHandshakeFailed"/>=3003）とは別事象として分離する。
     /// </summary>
     public static readonly EventId AdminAuthorizationDenied = new(3008, "AdminAuthorizationDenied");
+
+    /// <summary>
+    /// 閲覧リスナで Windows 認証は成功したが閲覧/管理いずれの AD グループにも非所属のためアクセス拒否
+    /// （ADR-0010 Phase 4 決定 7・SEC-9）。管理側の <see cref="AdminAuthorizationDenied"/>（3008）と対。
+    /// レベルは警告。
+    /// </summary>
+    public static readonly EventId ViewerAuthorizationDenied = new(3009, "ViewerAuthorizationDenied");
 }

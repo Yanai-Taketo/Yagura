@@ -67,6 +67,8 @@ public static class YaguraConfigurationLoader
         "Viewer:HttpPort",
         "Viewer:PublicAccess",
         "Viewer:ReverseDns:Enabled",
+        "Viewer:Authentication:Windows:Enabled",
+        "Viewer:Authentication:Windows:KerberosOnly",
         "Admin:HttpPort",
         "Admin:Authentication:Windows:Enabled",
         "Admin:Authentication:Windows:KerberosOnly",
@@ -84,6 +86,20 @@ public static class YaguraConfigurationLoader
         "Spool:QuotaBytes",
         "Retention:Days",
         "Retention:ExecutionTimeOfDay",
+    };
+
+    /// <summary>
+    /// 配列（JSON 配列）としてバインドされる既知キーの一覧（SEC-9 のグループ一覧。ADR-0010 決定 5・7）。
+    /// .NET 構成システムは配列を <c>&lt;key&gt;:0</c>・<c>&lt;key&gt;:1</c> … のインデックス付きリーフとして
+    /// 展開するため、これらは <see cref="KnownKeys"/>（スカラーのリーフキー集合）には現れない。
+    /// <see cref="DetectUnknownKeys"/> はインデックス付き子キーの親をこの集合と照合して既知判定する
+    /// （additive-only の起点——配列キーを追加した際は本集合と configuration.md §8 の両方を更新する）。
+    /// </summary>
+    internal static readonly HashSet<string> KnownArrayKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Admin:Authentication:Windows:AdminGroups",
+        "Viewer:Authentication:Windows:ViewerGroups",
+        "Viewer:Authentication:Windows:AdminGroups",
     };
 
     /// <summary>
@@ -160,6 +176,15 @@ public static class YaguraConfigurationLoader
         // --- UI: 逆引きホスト名表示の有効/無効（§1「縮小側で継続」。ADR-0007） ---
         var viewerReverseDnsEnabled = ResolveViewerReverseDnsEnabled(options, warnings);
 
+        // --- UI: 閲覧 UI 認証（ADR-0010 Phase 4 決定 7・SEC-9。opt-in。§1「縮小側で継続」——
+        //     不正値は無効側へ倒す。既定は現状維持＝認証なし・LAN 公開） ---
+        var viewerWindowsAuthEnabled = ResolveSecurityFlag(
+            options.Viewer?.Authentication?.Windows?.Enabled, "Viewer:Authentication:Windows:Enabled", warnings);
+        var viewerWindowsAuthKerberosOnly = ResolveSecurityFlag(
+            options.Viewer?.Authentication?.Windows?.KerberosOnly, "Viewer:Authentication:Windows:KerberosOnly", warnings);
+        var viewerWindowsViewerGroups = ResolveGroupSpecs(options.Viewer?.Authentication?.Windows?.ViewerGroups);
+        var viewerWindowsAdminGroups = ResolveGroupSpecs(options.Viewer?.Authentication?.Windows?.AdminGroups);
+
         // --- UI: 管理 HTTP ポート（§1「既定値で継続」。bind 先は常に loopback 固定。M6-1） ---
         var adminHttpPort = ResolveAdminHttpPort(options, warnings);
 
@@ -169,6 +194,9 @@ public static class YaguraConfigurationLoader
             options.Admin?.Authentication?.Windows?.Enabled, "Admin:Authentication:Windows:Enabled", warnings);
         var adminWindowsAuthKerberosOnly = ResolveSecurityFlag(
             options.Admin?.Authentication?.Windows?.KerberosOnly, "Admin:Authentication:Windows:KerberosOnly", warnings);
+        // SEC-9: 「管理」役割にマップする AD グループの生指定（名/SID）。名→SID 解決は Windows 専用の
+        //        ため Program 起動時に行う。ここでは形の正規化（空要素除去・重複排除）のみ。
+        var adminWindowsAdminGroups = ResolveGroupSpecs(options.Admin?.Authentication?.Windows?.AdminGroups);
         var adminAppAuthEnabled = ResolveSecurityFlag(
             options.Admin?.Authentication?.App?.Enabled, "Admin:Authentication:App:Enabled", warnings);
         var adminAuthRequireForLoopback = ResolveSecurityFlag(
@@ -276,9 +304,14 @@ public static class YaguraConfigurationLoader
             HttpPort: httpPort,
             ViewerPublicAccess: viewerPublicAccess,
             ViewerReverseDnsEnabled: viewerReverseDnsEnabled,
+            ViewerWindowsAuthEnabled: viewerWindowsAuthEnabled,
+            ViewerWindowsAuthKerberosOnly: viewerWindowsAuthKerberosOnly,
+            ViewerWindowsViewerGroups: viewerWindowsViewerGroups,
+            ViewerWindowsAdminGroups: viewerWindowsAdminGroups,
             AdminHttpPort: adminHttpPort,
             AdminWindowsAuthEnabled: adminWindowsAuthEnabled,
             AdminWindowsAuthKerberosOnly: adminWindowsAuthKerberosOnly,
+            AdminWindowsAdminGroups: adminWindowsAdminGroups,
             AdminAppAuthEnabled: adminAppAuthEnabled,
             AdminAuthRequireForLoopback: adminAuthRequireForLoopback,
             AdminRemoteBindingEnabled: adminRemoteBindingEnabled,
@@ -341,13 +374,40 @@ public static class YaguraConfigurationLoader
                 continue;
             }
 
-            if (!KnownKeys.Contains(entry.Key))
+            if (KnownKeys.Contains(entry.Key) || IsKnownArrayElement(entry.Key))
             {
-                unknown.Add(entry.Key);
+                continue;
             }
+
+            unknown.Add(entry.Key);
         }
 
         return unknown;
+    }
+
+    /// <summary>
+    /// <paramref name="key"/> が既知の配列キー（<see cref="KnownArrayKeys"/>）のインデックス付き要素
+    /// （<c>&lt;arrayKey&gt;:&lt;整数&gt;</c>）かどうか。SEC-9 のグループ一覧を未知キー扱いにしないための判定。
+    /// </summary>
+    private static bool IsKnownArrayElement(string key)
+    {
+        var lastSeparator = key.LastIndexOf(':');
+        if (lastSeparator <= 0 || lastSeparator == key.Length - 1)
+        {
+            return false;
+        }
+
+        var indexPart = key.AsSpan(lastSeparator + 1);
+        foreach (var c in indexPart)
+        {
+            if (!char.IsAsciiDigit(c))
+            {
+                return false;
+            }
+        }
+
+        var parentKey = key[..lastSeparator];
+        return KnownArrayKeys.Contains(parentKey);
     }
 
     /// <summary>
@@ -804,6 +864,40 @@ public static class YaguraConfigurationLoader
     /// （既定 false と一致するため通常運用では既定値継続と結果は同じだが、分類としては
     /// 縮小側であることを明示するため専用ヘルパーに切り出す）。
     /// </summary>
+    /// <summary>
+    /// AD グループ指定の生リスト（名 <c>DOMAIN\Group</c> または SID <c>S-1-...</c>）を正規化する
+    /// （SEC-9。ADR-0010 決定 5・7・委任事項 8）。空白のみの要素を除去し、順序保持のうえ大文字小文字
+    /// 無視で重複排除する。名 → SID の解決は Windows 専用 API（<c>NTAccount.Translate</c>）を要するため
+    /// 本メソッドでは行わず（ロード段を OS 非依存・テスト可能に保つ）、<see cref="Yagura.Host.Program"/>
+    /// 起動時に解決する。不正な指定（解決できない名等）は起動を止めず、解決段で警告してスキップする
+    /// （認可を付与しない安全側——security.md §1 の縮小側原則と同じ向き）。
+    /// </summary>
+    private static IReadOnlyList<string> ResolveGroupSpecs(List<string>? raw)
+    {
+        if (raw is null || raw.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>(raw.Count);
+        foreach (var entry in raw)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+            {
+                continue;
+            }
+
+            var trimmed = entry.Trim();
+            if (seen.Add(trimmed))
+            {
+                result.Add(trimmed);
+            }
+        }
+
+        return result.Count == 0 ? Array.Empty<string>() : result;
+    }
+
     private static bool ResolveSecurityFlag(string? raw, string key, List<ConfigurationWarning> warnings)
     {
         if (string.IsNullOrWhiteSpace(raw))
