@@ -101,13 +101,19 @@
         var isLoginRoute = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/') ==
             AdminAuthenticationExtensions.LoginPath.TrimEnd('/');
 
-        var user = AuthenticationStateTask is null
-            ? new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity())
-            : (await AuthenticationStateTask).User;
+        // 認証状態の取得元を _access（Decide）・isLoopbackListener と同じ根拠に揃える（issue #242 と同型）:
+        // SSR/prerender（HttpContext あり）では HttpContext.User を正とする——circuit 未確立の段階では
+        // YaguraCircuitAuthenticationStateProvider が匿名（初期値）を返すため、AuthenticationStateTask に
+        // 頼ると RequireForLoopback=true 時に認証済みでも弾かれる。対話的描画（HttpContext == null）では
+        // circuit の汲み直し済み認証状態（security.md §2.3・ADR-0010 決定 2）を使う。
+        var user = HttpContext?.User
+            ?? (AuthenticationStateTask is null
+                ? new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity())
+                : (await AuthenticationStateTask).User);
 
-        var isAuthorizedUser =
-            AdminAuthenticationExtensions.IsWindowsAdministrator(user) ||
-            AdminAuthenticationExtensions.IsAppAuthenticated(user);
+        // 認証成立後は方式に依らない単一の認証セッション Cookie（管理セッションクレーム）で判定する
+        // （ADR-0013 決定 5）。Windows 由来も circuit へは Cookie 経由で伝播し WindowsIdentity 型を持たない。
+        var isAuthorizedUser = AdminAuthenticationExtensions.IsAdminSessionAuthenticated(user);
 
         // loopback 帰属の判定は _access（Decide）と同じ根拠に揃える（issue #242 の回帰の修正）:
         // SSR/prerender（HttpContext あり）は circuit 未確立で CircuitContext.IsLoopbackListener が
