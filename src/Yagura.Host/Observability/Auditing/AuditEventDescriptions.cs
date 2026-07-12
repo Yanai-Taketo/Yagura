@@ -53,6 +53,8 @@ internal static class AuditEventDescriptions
         AuditEventKind.AdminRemoteBindingConfigured => "管理リスナのリモートバインド設定を変更",
         AuditEventKind.AdminHttpsCertificateConfigured => "管理 UI リモート HTTPS の証明書設定を変更",
         AuditEventKind.AdminSessionsInvalidated => "認証セッションを緊急全失効（世代番号バンプ）",
+        AuditEventKind.ViewerLoginSucceeded => "閲覧 UI へサインイン",
+        AuditEventKind.ViewerAuthorizationDenied => "Windows 認証成功後に閲覧/管理グループ非所属でアクセスを拒否",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

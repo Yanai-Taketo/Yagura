@@ -131,6 +131,13 @@ public sealed class YaguraConfigurationOptions
         /// <summary>逆引き（PTR）ホスト名表示の設定（ADR-0007）。</summary>
         public ReverseDnsOptions? ReverseDns { get; set; }
 
+        /// <summary>
+        /// 閲覧 UI 認証（ADR-0010 Phase 4。決定 7。opt-in。既定は現状維持——認証なし・LAN 公開）。
+        /// 有効化すると閲覧リスナ（8514）到達に Windows 統合認証 + AD グループ判定を要する
+        /// （<see cref="AuthenticationOptions"/>）。既定（未設定）では体験は一切変わらない。
+        /// </summary>
+        public AuthenticationOptions? Authentication { get; set; }
+
         public sealed class ReverseDnsOptions
         {
             /// <summary>
@@ -139,6 +146,46 @@ public sealed class YaguraConfigurationOptions
             /// 不正値では発生しない側（無効）へ倒す。
             /// </summary>
             public string? Enabled { get; set; }
+        }
+
+        public sealed class AuthenticationOptions
+        {
+            /// <summary>
+            /// 閲覧 UI の Windows 統合認証（Negotiate）+ AD グループマッピング（ADR-0010 決定 7・
+            /// SEC-9）。閲覧の主経路。アプリ独自 ID/パスワードは管理役割専用のため閲覧固有の設定は
+            /// 持たない（管理 ⊇ 閲覧で到達する。決定 5・7）。
+            /// </summary>
+            public WindowsOptions? Windows { get; set; }
+
+            public sealed class WindowsOptions
+            {
+                /// <summary>閲覧 UI の Windows 統合認証を有効化する（既定 <c>false</c>）。</summary>
+                public string? Enabled { get; set; }
+
+                /// <summary>
+                /// Kerberos-only モード（NTLM 無効化 opt-in。管理側と同型。ADR-0010 決定 2・委任事項 12。
+                /// 既定 <c>false</c>）。閲覧リスナ経由の Negotiate にのみ作用する（管理リスナの
+                /// <c>Admin:Authentication:Windows:KerberosOnly</c> とは独立）。
+                /// </summary>
+                public string? KerberosOnly { get; set; }
+
+                /// <summary>
+                /// 「閲覧」役割にマップする AD グループ（SEC-9。security.md §3）。各要素は
+                /// グループ名（<c>DOMAIN\Group</c>）または SID（<c>S-1-...</c>）——起動時に名を SID へ
+                /// 解決してキャッシュする。所属判定は <see cref="System.Security.Principal.WindowsIdentity"/> の
+                /// 推移的グループ SID（ネストは OS が展開済み——追加 LDAP 不要）と設定グループ SID 集合の
+                /// 照合で行う。
+                /// </summary>
+                public List<string>? ViewerGroups { get; set; }
+
+                /// <summary>
+                /// 閲覧リスナ経由のログインで「管理」役割にマップする AD グループ（SEC-9）。ここに所属する
+                /// 利用者は管理セッション（<c>admin_session</c>）を得るため管理 ⊇ 閲覧で閲覧できる
+                /// （かつ管理リスナ（8515）へも到達できる——Cookie は host スコープ）。閲覧リスナ（8514）の
+                /// 画面には管理機能を表示しない（左ナビの管理導線は管理リスナ帰属時のみ）。
+                /// </summary>
+                public List<string>? AdminGroups { get; set; }
+            }
         }
     }
 
@@ -230,6 +277,16 @@ public sealed class YaguraConfigurationOptions
                 /// Kerberos-only モード（NTLM 無効化 opt-in。ADR-0010 決定 2・委任事項 12。既定 <c>false</c>）。
                 /// </summary>
                 public string? KerberosOnly { get; set; }
+
+                /// <summary>
+                /// 「管理」役割にマップする AD グループ（SEC-9。ADR-0010 決定 5・委任事項 8。security.md §3）。
+                /// 既定の <c>BUILTIN\Administrators</c>（well-known SID <c>S-1-5-32-544</c>）判定に<b>加えて</b>、
+                /// ここに指定したグループの所属者も管理者として認可する（544 判定を置き換えず追加する）。
+                /// 各要素はグループ名（<c>DOMAIN\Group</c>）または SID（<c>S-1-...</c>）——起動時に名を SID へ
+                /// 解決してキャッシュする。ネストは <see cref="System.Security.Principal.WindowsIdentity"/> の
+                /// 推移的グループ SID（OS 展開済み——追加 LDAP 不要）で解決する。
+                /// </summary>
+                public List<string>? AdminGroups { get; set; }
             }
 
             public sealed class AppOptions

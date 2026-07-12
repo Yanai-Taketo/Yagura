@@ -53,6 +53,16 @@ internal static class YaguraConfigurationOptionsCloner
                 {
                     Enabled = source.Viewer.ReverseDns.Enabled,
                 },
+                Authentication = source.Viewer.Authentication is null ? null : new YaguraConfigurationOptions.ViewerOptions.AuthenticationOptions
+                {
+                    Windows = source.Viewer.Authentication.Windows is null ? null : new YaguraConfigurationOptions.ViewerOptions.AuthenticationOptions.WindowsOptions
+                    {
+                        Enabled = source.Viewer.Authentication.Windows.Enabled,
+                        KerberosOnly = source.Viewer.Authentication.Windows.KerberosOnly,
+                        ViewerGroups = source.Viewer.Authentication.Windows.ViewerGroups is null ? null : new List<string>(source.Viewer.Authentication.Windows.ViewerGroups),
+                        AdminGroups = source.Viewer.Authentication.Windows.AdminGroups is null ? null : new List<string>(source.Viewer.Authentication.Windows.AdminGroups),
+                    },
+                },
             },
             Admin = source.Admin is null ? null : new YaguraConfigurationOptions.AdminOptions
             {
@@ -64,6 +74,7 @@ internal static class YaguraConfigurationOptionsCloner
                     {
                         Enabled = source.Admin.Authentication.Windows.Enabled,
                         KerberosOnly = source.Admin.Authentication.Windows.KerberosOnly,
+                        AdminGroups = source.Admin.Authentication.Windows.AdminGroups is null ? null : new List<string>(source.Admin.Authentication.Windows.AdminGroups),
                     },
                     App = source.Admin.Authentication.App is null ? null : new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.AppOptions
                     {

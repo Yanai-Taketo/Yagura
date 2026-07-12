@@ -169,4 +169,21 @@ public enum AuditEventKind
     /// （＝無効化した母集団の識別）・実行者（<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c>）。
     /// </summary>
     AdminSessionsInvalidated,
+
+    /// <summary>
+    /// 閲覧リスナ（8514）へのサインイン成功（ADR-0010 Phase 4 決定 7。イベント ID 2014）。閲覧認証
+    /// opt-in 有効時、Windows 統合認証（AD グループ → 閲覧/管理役割）またはアプリ独自認証（管理役割）で
+    /// 閲覧リスナ経由にセッションが確立したことを、管理リスナのサインイン成功（<see cref="AdminLoginSucceeded"/>
+    /// = 2008）と区別して記録する。<c>Detail</c> に役割（<c>role=viewer</c>/<c>role=admin</c>）と方式を残す。
+    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を必ず伴う。
+    /// </summary>
+    ViewerLoginSucceeded,
+
+    /// <summary>
+    /// 拒否・セキュリティ事象: 閲覧リスナで Windows 統合認証は成功したが、設定された閲覧/管理いずれの
+    /// AD グループにも所属していないためアクセスを拒否（ADR-0010 Phase 4 決定 7・SEC-9。イベント ID 3009）。
+    /// 管理側の <see cref="AdminAuthorizationDenied"/>（3008。544/管理グループ非該当）と対をなす閲覧側事象。
+    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
+    /// </summary>
+    ViewerAuthorizationDenied,
 }

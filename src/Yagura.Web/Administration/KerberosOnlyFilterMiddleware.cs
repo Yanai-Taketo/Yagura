@@ -31,6 +31,8 @@ public sealed class KerberosOnlyFilterMiddleware
     private static readonly byte[] NtlmSignature = "NTLMSSP\0"u8.ToArray();
 
     private readonly RequestDelegate _next;
+    private readonly bool _adminKerberosOnly;
+    private readonly bool _viewerKerberosOnly;
     private readonly IAuditRecorder _auditRecorder;
     private readonly TimeProvider _timeProvider;
     private readonly YaguraAdminListenerPort _adminPort;
@@ -38,6 +40,8 @@ public sealed class KerberosOnlyFilterMiddleware
 
     public KerberosOnlyFilterMiddleware(
         RequestDelegate next,
+        bool adminKerberosOnly,
+        bool viewerKerberosOnly,
         IAuditRecorder auditRecorder,
         TimeProvider timeProvider,
         YaguraAdminListenerPort adminPort,
@@ -50,6 +54,8 @@ public sealed class KerberosOnlyFilterMiddleware
         ArgumentNullException.ThrowIfNull(logger);
 
         _next = next;
+        _adminKerberosOnly = adminKerberosOnly;
+        _viewerKerberosOnly = viewerKerberosOnly;
         _auditRecorder = auditRecorder;
         _timeProvider = timeProvider;
         _adminPort = adminPort;
@@ -58,13 +64,14 @@ public sealed class KerberosOnlyFilterMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // 検査対象は管理リスナ（Negotiate 認証を要求する唯一のリスナ）に限る（PR #217
-        // レビュー指摘への対応）: 閲覧リスナ（8514）は Negotiate を要求せず、誤って
-        // Negotiate ヘッダーを送ったクライアントに対してもヘッダーは単に無視されるのが
-        // 自然な挙動であり、本 opt-in（管理面の保護水準の選択）が閲覧面の応答を変える
-        // べきではない。判定は ListenerPortGuardMiddleware と同じく接続の実ローカルポート
-        // （クライアントが偽装できない値）で行う。
-        if (!_adminPort.Contains(context.Connection.LocalPort))
+        // Kerberos-only はリスナ別の opt-in（ADR-0010 Phase 4）: 接続の実ローカルポートが管理リスナ帰属
+        // なら管理側の設定（Admin:Authentication:Windows:KerberosOnly）を、そうでなければ閲覧側の設定
+        // （Viewer:Authentication:Windows:KerberosOnly）を適用する。判定は ListenerPortGuardMiddleware と
+        // 同じく接続の実ローカルポート（クライアントが偽装できない値）で行う。当該リスナで Kerberos-only が
+        // 無効なら NTLM 検査自体を行わずに通過させる——一方のリスナの opt-in が他方の応答を変えないため。
+        var onAdminListener = _adminPort.Contains(context.Connection.LocalPort);
+        var kerberosOnlyApplies = onAdminListener ? _adminKerberosOnly : _viewerKerberosOnly;
+        if (!kerberosOnlyApplies)
         {
             await _next(context).ConfigureAwait(false);
             return;

@@ -20,12 +20,16 @@ public static class AuditActorResolver
     /// 方式識別子は認証セッション Cookie に焼き込んだ <see cref="AdminAuthenticationExtensions.AuthMethodClaimType"/>
     /// クレームから導出する（ADR-0013 決定 5）——Windows・アプリのいずれも認証成立後は同一の Cookie スキームで
     /// 運ばれるため、スキーム名では区別できない。方式区別を単一のこの関数へ固定し、監査「誰が」欄で
-    /// <c>DOMAIN\user</c> とアプリ名の衝突を防ぐ。標識クレーム（<c>admin_session</c>）を欠く認証状態は
-    /// 未認証扱い（fail-closed——方式・利用者名を偽装/喪失させない）。
+    /// <c>DOMAIN\user</c> とアプリ名の衝突を防ぐ。管理セッション（<c>admin_session</c>）・閲覧セッション
+    /// （<c>viewer_session</c>。ADR-0010 Phase 4）のいずれの標識クレームも持たない認証状態は未認証扱い
+    /// （fail-closed——方式・利用者名を偽装/喪失させない）。閲覧経路の監査点（将来）でも「誰が」欄が空に
+    /// ならないよう、閲覧セッションも解決対象に含める（田中のセキュリティレビュー指摘）。
     /// </remarks>
     public static (string? Scheme, string? Principal) Resolve(ClaimsPrincipal? user)
     {
-        if (user is null || !AdminAuthenticationExtensions.IsAdminSessionAuthenticated(user))
+        if (user is null ||
+            !(AdminAuthenticationExtensions.IsAdminSessionAuthenticated(user) ||
+              AdminAuthenticationExtensions.IsViewerSessionAuthenticated(user)))
         {
             return (null, null);
         }

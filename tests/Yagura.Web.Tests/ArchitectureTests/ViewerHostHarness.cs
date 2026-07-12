@@ -69,13 +69,19 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     /// <c>/admin/login/windows</c> エンドポイントの登録可否を検証するテストが差し替える——
     /// <see cref="Yagura.Web.Administration.AdminAuthEndpoints.MapAdminAuthEndpoints"/> 参照）。
     /// </param>
+    /// <param name="viewerAuthEnabled">
+    /// 閲覧 UI 認証（ADR-0010 Phase 4 決定 7）を有効にした構成でホストを起動する（既定 false）。
+    /// <see langword="true"/> のとき MapYaguraWebViewer が閲覧ページ・CSV へ ViewerPolicy を付与し、
+    /// 閲覧ログインエンドポイント（<c>/login/*</c>）を登録する——L-5 許可リストの enabled 変種が検証する。
+    /// </param>
     public static async Task<ViewerHostHarness> StartAsync(
         Yagura.Web.ForwarderKit.IForwarderMsiSource? forwarderMsiSource = null,
         ILogStore? logStore = null,
         bool appAuthEnabled = false,
         Yagura.Abstractions.Administration.IAppAdminAuthenticator? appAuthenticator = null,
         IAuditRecorder? auditRecorder = null,
-        bool windowsAuthEnabled = false)
+        bool windowsAuthEnabled = false,
+        bool viewerAuthEnabled = false)
     {
         var builder = WebApplication.CreateBuilder();
 
@@ -124,9 +130,15 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         // appAuthEnabled: true はアプリ独自認証の実 HTTP フロー検証用の構成。
         // windowsAuthEnabled: true は /admin/login/windows の条件付き登録を検証する構成)。
         builder.Services.AddYaguraAdminAuthentication(
-            windowsAuthEnabled: windowsAuthEnabled, kerberosOnly: false, appAuthEnabled: appAuthEnabled);
+            windowsAuthEnabled: windowsAuthEnabled, kerberosOnly: false, appAuthEnabled: appAuthEnabled,
+            viewerWindowsAuthEnabled: viewerAuthEnabled, viewerKerberosOnly: false);
         builder.Services.AddSingleton(new Yagura.Web.Administration.AdminAuthenticationRuntimeOptions(
             RequireAuthentication: false, WindowsAuthEnabled: windowsAuthEnabled, AppAuthEnabled: appAuthEnabled));
+
+        // 閲覧 UI 認証（ADR-0010 Phase 4）の実効値。AddYaguraWebViewer は既定（Disabled）を TryAdd するため、
+        // enabled 変種の検証では実値を後勝ちで登録する（AppAuthAvailable は appAuthEnabled に揃える）。
+        builder.Services.AddSingleton(new Yagura.Web.Administration.ViewerAuthenticationRuntimeOptions(
+            Enabled: viewerAuthEnabled, AppAuthAvailable: appAuthEnabled));
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminAuthenticationAdminService, StubAdminAuthenticationAdminService>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator>(
             _ => appAuthenticator ?? new StubAppAdminAuthenticator());
@@ -162,7 +174,10 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         // テスト出力には Yagura.Web(RCL)単位のマニフェストが生成されることを実機確認済みの
         // ため、それを指定する(MudBlazor 等の参照パッケージのアセットを含む——
         // YaguraWebViewerExtensions.MapYaguraWebViewer の引数コメント参照)。
-        var razorComponents = app.MapYaguraWebViewer("Yagura.Web.staticwebassets.endpoints.json");
+        var razorComponents = app.MapYaguraWebViewer(
+            "Yagura.Web.staticwebassets.endpoints.json",
+            viewerAuthEnabled: viewerAuthEnabled,
+            appAuthAvailable: appAuthEnabled);
         app.MapYaguraAdmin(razorComponents, windowsAuthEnabled: windowsAuthEnabled);
 
         await app.StartAsync();
