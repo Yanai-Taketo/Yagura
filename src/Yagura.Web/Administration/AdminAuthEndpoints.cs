@@ -47,6 +47,58 @@ internal static class AdminAuthEndpoints
 
         MapAppLogin(endpoints);
         MapLogout(endpoints);
+        MapInvalidateAllSessions(endpoints);
+    }
+
+    /// <summary>
+    /// 認証セッションの緊急全失効（ADR-0013 決定 2）。セッション世代番号をバンプして発行済みの全 Cookie を
+    /// 即時無効化する（退職者・漏洩疑い時の全ログアウト、および Windows 権限剥奪の即時反映手段）。
+    /// </summary>
+    /// <remarks>
+    /// antiforgery 検証必須。<see cref="AdminAuthenticationExtensions.AdminPolicyName"/> の認可を課す——
+    /// loopback 無認証（既定）では loopback バイパスで管理者が実行でき、認証必須構成では認証済み管理者のみ。
+    /// バンプは DC 非依存のローカル操作。実行者自身の Cookie も旧世代になり次要求で無効化されるため
+    /// ログイン画面へ誘導する（ログイン経路自体は殺さない——app 認証・Windows 再ログイン・手編集は生存）。
+    /// </remarks>
+    private static void MapInvalidateAllSessions(IEndpointRouteBuilder endpoints)
+    {
+        var endpoint = endpoints.MapPost("/admin/sessions/invalidate-all", async (
+            HttpContext context,
+            IAntiforgery antiforgery,
+            IAdminSessionGenerationStore generationStore,
+            IAuditRecorder auditRecorder,
+            TimeProvider timeProvider) =>
+        {
+            try
+            {
+                await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
+            }
+            catch (AntiforgeryValidationException)
+            {
+                context.Response.Redirect("/admin/auth-setup?error=csrf");
+                return;
+            }
+
+            var newGeneration = generationStore.Bump();
+
+            var (scheme, principal) = AuditActorResolver.Resolve(context.User);
+            await auditRecorder.RecordAsync(new AuditEvent(
+                OccurredAt: timeProvider.GetUtcNow(),
+                Kind: AuditEventKind.AdminSessionsInvalidated,
+                RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
+                RemotePort: context.Connection.RemotePort,
+                ReachedListenerPort: context.Connection.LocalPort,
+                Detail: $"generation={newGeneration}",
+                AuthenticationScheme: scheme,
+                AuthenticatedPrincipal: principal),
+                CancellationToken.None).ConfigureAwait(false);
+
+            context.Response.Redirect("/admin/login");
+        });
+
+        endpoint
+            .WithMetadata(ListenerPortGuardEndpointMetadata.Admin)
+            .RequireAuthorization(AdminAuthenticationExtensions.AdminPolicyName);
     }
 
     /// <summary>

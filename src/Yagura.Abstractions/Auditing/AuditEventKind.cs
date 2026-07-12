@@ -162,4 +162,11 @@ public enum AuditEventKind
     /// であり秘密ではないため値を残す）。
     /// </summary>
     AdminHttpsCertificateConfigured,
+
+    /// <summary>
+    /// 管理操作: 認証セッションの緊急全失効（ADR-0013 決定 2。イベント ID 2013）。セッション世代番号を
+    /// バンプして発行済みの全認証セッション Cookie を即時無効化する。記録内容は無効化後の世代番号
+    /// （＝無効化した母集団の識別）・実行者（<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c>）。
+    /// </summary>
+    AdminSessionsInvalidated,
 }

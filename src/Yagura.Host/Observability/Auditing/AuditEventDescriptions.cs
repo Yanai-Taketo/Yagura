@@ -52,6 +52,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.AdminAuthRateLimited => "アプリ独自認証のログイン試行をレート制限で拒否",
         AuditEventKind.AdminRemoteBindingConfigured => "管理リスナのリモートバインド設定を変更",
         AuditEventKind.AdminHttpsCertificateConfigured => "管理 UI リモート HTTPS の証明書設定を変更",
+        AuditEventKind.AdminSessionsInvalidated => "認証セッションを緊急全失効（世代番号バンプ）",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }
