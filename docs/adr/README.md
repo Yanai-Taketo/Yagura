@@ -28,7 +28,7 @@
 | [0010](0010-admin-ui-authentication.md) | 管理 UI への認証追加（opt-in）とリモート管理の解禁 | accepted（決定 3 のロックアウト機構は ADR-0011、決定 3 の共存セッションモデルは ADR-0013 により superseded） |
 | [0011](0011-app-auth-failure-backoff.md) | アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定 3 の supersession） | accepted |
 | [0012](0012-admin-https-cert-ui.md) | 管理リモート HTTPS の証明書選択の UI 設定化 | accepted |
-| [0013](0013-admin-winauth-session.md) | 管理 UI 認証の共存セッションモデル — 認証成立後の単一 Cookie セッションと Windows 認可の失効反映（ADR-0010 決定 3 の共存セッション部分の supersession。Issue #252） | proposed |
+| [0013](0013-admin-winauth-session.md) | 管理 UI 認証の共存セッションモデル — 認証成立後の単一 Cookie セッションと Windows 認可の失効反映（ADR-0010 決定 3 の共存セッション部分の supersession。Issue #252） | accepted |
 
 ## 起案予定
 
