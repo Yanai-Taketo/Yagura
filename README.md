@@ -183,10 +183,10 @@ MSI インストーラのビルド手順（WiX Toolset 7 を使用。EULA の扱
 - **使い方の質問・不具合報告**: [Issues](https://github.com/Yanai-Taketo/Yagura/issues) へどうぞ（日本語・英語どちらでも構いません）
 - **議論・アイデアの共有**: [Discussions](https://github.com/Yanai-Taketo/Yagura/discussions)
 - **脆弱性の報告**: 公開 Issue には書かず、[SECURITY.md](SECURITY.md) の手順に従ってください
-- **開発に参加したい**: [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください
+- **開発に参加したい**: [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。貢献には[コントリビューターライセンス契約（CLA）](docs/legal/cla-individual.md)への署名が必要です（初回 PR で CLA ボットが案内します）
 
 ## ライセンス
 
 [Apache License 2.0](LICENSE)
 
-同梱する第三者ソフトウェアのライセンス表記は [NOTICE](NOTICE) を参照してください。
+同梱する第三者ソフトウェアのライセンス表記は [NOTICE](NOTICE) を参照してください。貢献の CLA については [CONTRIBUTING.md](CONTRIBUTING.md#コントリビューターライセンス契約cla) を参照してください。
