@@ -29,7 +29,7 @@
 | [0011](0011-app-auth-failure-backoff.md) | アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定 3 の supersession） | accepted |
 | [0012](0012-admin-https-cert-ui.md) | 管理リモート HTTPS の証明書選択の UI 設定化 | accepted |
 | [0013](0013-admin-winauth-session.md) | 管理 UI 認証の共存セッションモデル — 認証成立後の単一 Cookie セッションと Windows 認可の失効反映（ADR-0010 決定 3 の共存セッション部分の supersession。Issue #252） | accepted |
-| [0014](0014-code-signing.md) | リリース成果物のコード署名 — SignPath Foundation の証明書による Authenticode 署名（ADR-0006 基準 5 の実現手段・ADR-0009 委任事項 8 を閉じる） | proposed |
+| [0014](0014-code-signing.md) | リリース成果物のコード署名 — 証明書の調達方式の選択（ADR-0006 基準 5 の実現手段・ADR-0009 委任事項 8・Issue #264 を閉じる） | proposed（決定 1 は両論併記。オーナー裁定待ち） |
 
 ## 起案予定
 
