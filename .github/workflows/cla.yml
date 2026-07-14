@@ -1,0 +1,69 @@
+# CLA Assistant Lite（自己ホスト型。contributor-assistant/github-action）。
+#
+# 外部ホストサービス（cla-assistant.io）を使わず、署名を本リポジトリ内の台帳ファイル
+# （signatures/version1/cla.json）に記録する——プロジェクトの「外部サービス・供給網を
+# 徒に増やさない」方針（conventions.md・ADR-0001）に沿う。署名者 PII も自リポジトリ内に留まる。
+#
+# 署名文書は docs/legal/cla-individual.md（Individual CLA）。企業向け Corporate CLA
+# （docs/legal/cla-corporate.md）は帳票外手続きのため本自動ゲートの対象外。
+#
+# 前提:
+#   1. **[残作業・オーナー]** リポジトリ Secret `PERSONAL_ACCESS_TOKEN` を登録する（fine-grained PAT。
+#      対象リポジトリの Contents: Read and write / Pull requests: Read and write）。本 Action が署名台帳を
+#      コミットするために使う（既定の GITHUB_TOKEN では別ブランチへの書き込み・再チェックが安定しない
+#      ため専用 PAT を要求する仕様）。**未登録だと本 Action は失敗する。**
+#   2. [済] 署名台帳の保存先ブランチ `cla-signatures`（orphan）を作成済み（2026-07-14）——main への
+#      直接 push を避けるための専用ブランチ（conventions.md「main への直接 push 禁止」）。
+#   3. [済] docs/legal/ の CLA 文言はオーナーのレビューを経て確定済み（草案注記を削除済み）。
+#
+# バージョン固定（供給網統治）: contributor-assistant/github-action は可変タグではなく
+# コミット SHA で固定する。Vendored: contributor-assistant/github-action v2.6.1
+# (commit ca4a40a7d1004f18d9960b404b97e5f30a505a08, verified GitHub API = v2.6.1, 2026-07-14)
+
+name: CLA Assistant
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA Assistant
+        # 署名/再チェックのコメント、または PR イベントのときのみ実行する。
+        if: >-
+          (github.event.comment.body == 'recheck' ||
+           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') ||
+          github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # オーナーが登録する専用 PAT（前提 1）。未登録だと本 Action は失敗する。
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        with:
+          # 署名文書（Individual CLA）。コメントにこの文書へのリンクが提示される。
+          path-to-document: 'https://github.com/Yanai-Taketo/Yagura/blob/main/docs/legal/cla-individual.md'
+          # 署名台帳の保存先（前提 2 の専用ブランチ）。
+          path-to-signatures: 'signatures/version1/cla.json'
+          branch: 'cla-signatures'
+          # 署名を要求しない主体（オーナー本人・各種 bot）。AI 協働 PR はオーナー
+          # （Yanai-Taketo）が author のため allowlist で足りる。
+          allowlist: 'Yanai-Taketo,dependabot[bot],github-actions[bot]'
+          # 署名の定型文（既定値。cla-individual.md の記載と一致させる）。
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-notsigned-prcomment: >-
+            この Pull Request をマージするには、コントリビューターライセンス契約（CLA）への署名が必要です。
+            [CLA 文書](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/legal/cla-individual.md)を読み、
+            未署名の方は以下の定型文を**この PR にコメント**してください（企業に代わって貢献する場合は、
+            別途 Corporate CLA の手続きをオーナーとご確認ください）:
+          custom-allsigned-prcomment: >-
+            すべてのコントリビューターが CLA に署名済みです。ありがとうございます。
