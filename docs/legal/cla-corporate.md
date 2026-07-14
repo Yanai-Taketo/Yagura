@@ -1,9 +1,5 @@
 # Yagura 企業コントリビューターライセンス契約（Corporate CLA） / Corporate Contributor License Agreement
 
-> **⚠️ 草案（レビュー前） / Draft (pre-review)**: 本文書は広く使われている標準 CCLA テンプレートを Yagura 向けに調整した**草案**です。効力・文言・受領当事者の表記は、公開・運用の前にオーナーが確認し、必要に応じて専門家（弁護士）のレビューを受けてください。本文書を作成した AI エージェントは法律専門家ではありません。（この注記は正式版で削除します。）
->
-> This document is a **draft** adapting a widely-used standard CCLA template for Yagura. Its effect, wording, and the receiving party's name should be reviewed by the owner — and, if needed, by a legal professional — before publication. The AI agent that drafted it is not a legal professional. (Remove this note in the final version.)
-
 ## 準拠言語 / Governing language
 
 本契約は**日本語版を正本**とします。参考のため英語訳を併記しますが、日本語版と英語訳に齟齬がある場合は**日本語版が優先**します。準拠法・裁判管轄の条項は Individual CLA と同様に意図的に置いていません。
