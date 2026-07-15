@@ -10,4 +10,25 @@
     <WarningsAsErrors>$(WarningsAsErrors);NU1900;NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
   </PropertyGroup>
 
+  <!--
+    製品メタデータの一元化(ADR-0014 決定7)。バージョンの「単一の正」はこの YaguraVersion。
+    アセンブリ(Version 系)と MSI(installer/Package.wxs の Version="$(var.YaguraVersion)")が
+    ともにこれを参照するため、git タグ・MSI・アセンブリの三者は構造的に一致する(食い違えない)。
+    リリース時は chore(release) PR でこの YaguraVersion だけを更新する
+    (conventions.md「リリース」)。release.yml はタグと本値の一致を CI で検証する。
+
+    導入前は Product/Company/Version/Copyright が未設定で、アセンブリは SDK 既定値
+    (AssemblyCompany=アセンブリ名・FileVersion=1.0.0.0)を持っていた。署名(ADR-0014)で
+    「発行元は検証できるのに製品名・バージョンが不明」という不整合を避けるため設定する。
+    Company は MSI の Manufacturer、Copyright は NOTICE と一致させる。
+  -->
+  <PropertyGroup>
+    <YaguraVersion>0.4.0</YaguraVersion>
+    <Version>$(YaguraVersion)</Version>
+    <Product>Yagura</Product>
+    <Company>Yagura Project</Company>
+    <Authors>YANAI Taketo</Authors>
+    <Copyright>Copyright 2026 YANAI Taketo</Copyright>
+  </PropertyGroup>
+
 </Project>

@@ -80,23 +80,25 @@ jobs:
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
 
-          $wxsMatch = Select-String -Path installer/Package.wxs -Pattern 'Version="(\d+\.\d+\.\d+)"' | Select-Object -First 1
-          if ($null -eq $wxsMatch) {
-            throw 'installer/Package.wxs から Version を読み取れなかった'
+          # バージョンの単一の正は Directory.Build.props の <YaguraVersion>(ADR-0014 決定7)。
+          # installer/Package.wxs と各アセンブリはこれを参照するため三者は構造的に一致する。
+          $propsMatch = Select-String -Path Directory.Build.props -Pattern '<YaguraVersion>(\d+\.\d+\.\d+)</YaguraVersion>' | Select-Object -First 1
+          if ($null -eq $propsMatch) {
+            throw 'Directory.Build.props から <YaguraVersion> を読み取れなかった'
           }
-          $wxsVersion = $wxsMatch.Matches[0].Groups[1].Value
+          $srcVersion = $propsMatch.Matches[0].Groups[1].Value
 
           $tagVersion = $null
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $tagVersion = $env:GITHUB_REF -replace '^refs/tags/v', ''
           }
 
-          if ($null -ne $tagVersion -and $tagVersion -ne $wxsVersion) {
-            throw "タグのバージョン($tagVersion)と installer/Package.wxs の Version($wxsVersion)が一致しない。chore(release) PR で Package.wxs を先に更新すること。"
+          if ($null -ne $tagVersion -and $tagVersion -ne $srcVersion) {
+            throw "タグのバージョン($tagVersion)と Directory.Build.props の YaguraVersion($srcVersion)が一致しない。chore(release) PR で Directory.Build.props を先に更新すること。"
           }
 
-          $version = if ($null -ne $tagVersion) { $tagVersion } else { $wxsVersion }
-          Write-Host "resolved version = $version (source: $(if ($null -ne $tagVersion) { 'git tag' } else { 'Package.wxs (workflow_dispatch)' }))"
+          $version = if ($null -ne $tagVersion) { $tagVersion } else { $srcVersion }
+          Write-Host "resolved version = $version (source: $(if ($null -ne $tagVersion) { 'git tag' } else { 'Directory.Build.props (workflow_dispatch)' }))"
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       # ADR-0009 決定5: publish 出力に含まれるネイティブ依存にも脆弱性スキャン/監査を適用する。
