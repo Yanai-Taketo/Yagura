@@ -89,6 +89,15 @@ Yagura は受信・永続化・Web UI を **単一の Windows サービスプロ
 
 [Releases](https://github.com/Yanai-Taketo/Yagura/releases) から、お使いの環境に合う MSI（`Yagura-<版>-x64.msi` または `Yagura-<版>-arm64.msi`。約 45 MB）をダウンロードして実行します。改ざん確認用に `.sha256` チェックサムを添付しています。
 
+### 実行時の警告について（SmartScreen）
+
+**現時点の MSI は Authenticode コード署名を付与していません。** そのため実行すると Windows の SmartScreen が「Windows によって PC が保護されました」と表示し、発行元が「不明」と出ることがあります。次の手順で進めてください。
+
+1. ダウンロードした MSI のハッシュを、同じ Release に添付された `.sha256` と照合します（PowerShell で `Get-FileHash <ファイル> -Algorithm SHA256`）。値が一致すれば、配布物が改ざんされていないことを確認できます。
+2. 警告画面の「詳細情報」→「実行」で進めます。
+
+コード署名の導入を進めています（[ADR-0014](docs/adr/0014-code-signing.md)）。署名を付与したリリース以降は、発行元が検証可能になり、この節の案内も署名の検証手順に更新します。
+
 ### 対応アーキテクチャ
 
 | アーキ | 対応状況 | 対象環境 |
