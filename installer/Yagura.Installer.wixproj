@@ -40,7 +40,9 @@
     <!-- Yagura.Host の publish 出力(MSI に収める実体)。既定はアーキ別サブフォルダ
          (x64/arm64 の publish 出力を取り違えないため)。-p:YaguraPublishDir=... で差し替え可能。 -->
     <YaguraPublishDir Condition="'$(YaguraPublishDir)' == ''">$(MSBuildProjectDirectory)\publish\$(YaguraArch)</YaguraPublishDir>
-    <DefineConstants>$(DefineConstants);PublishDir=$(YaguraPublishDir)</DefineConstants>
+    <!-- YaguraVersion(Directory.Build.props の単一の正)を WiX 前処理変数として渡し、
+         Package.wxs の Version="$(var.YaguraVersion)" で参照する(ADR-0014 決定7)。 -->
+    <DefineConstants>$(DefineConstants);PublishDir=$(YaguraPublishDir);YaguraVersion=$(YaguraVersion)</DefineConstants>
 
     <!-- WiX v7 の Open Source Maintenance Fee (OSMF) EULA 承諾。公式ドキュメント
          (docs.firegiant.com/wix/osmf/、確認日 2026-07-06)の Direct Acceptance 方式。
