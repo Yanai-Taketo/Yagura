@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 
@@ -81,6 +82,14 @@ internal static class AdminAuthEndpoints
 
             var newGeneration = generationStore.Bump();
 
+            // 即時の全切断（security.md §2.3「漏洩対応」・Issue #267）: 世代バンプ（次要求で拒否）に
+            // 加え、生きている全 circuit へ協調切断を要求する——SEC-6 の閲覧猶予もバイパスする
+            // （猶予は通常運用の失効向けであり、明示の緊急全失効はそれより強い）。
+            var disconnected = await context.RequestServices
+                .GetRequiredService<Yagura.Web.Circuits.CircuitRegistry>()
+                .RequestDisconnectAllAsync(Yagura.Web.Circuits.CircuitTerminationReasons.AllSessionsInvalidated)
+                .ConfigureAwait(false);
+
             var (scheme, principal) = AuditActorResolver.Resolve(context.User);
             await auditRecorder.RecordAsync(new AuditEvent(
                 OccurredAt: timeProvider.GetUtcNow(),
@@ -88,7 +97,7 @@ internal static class AdminAuthEndpoints
                 RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
                 RemotePort: context.Connection.RemotePort,
                 ReachedListenerPort: context.Connection.LocalPort,
-                Detail: $"generation={newGeneration}",
+                Detail: $"generation={newGeneration} disconnectedCircuits={disconnected}",
                 AuthenticationScheme: scheme,
                 AuthenticatedPrincipal: principal),
                 CancellationToken.None).ConfigureAwait(false);

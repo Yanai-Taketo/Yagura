@@ -59,6 +59,8 @@ internal static class AuditEventDescriptions
         AuditEventKind.ConfigurationReloaded => "設定を再読み込み",
         AuditEventKind.InstallationRecordTranscribed => "インストール記録を転記",
         AuditEventKind.LogMigrationExecuted => "蓄積ログを移行",
+        AuditEventKind.CircuitRevocationGraceGranted => "失効後の閲覧継続を猶予として許容",
+        AuditEventKind.CircuitRevocationGraceEnded => "猶予中の circuit が終了",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

@@ -65,6 +65,26 @@ public sealed class CircuitRegistry
     }
 
     /// <summary>
+    /// 全 circuit の即時切断を要求する（security.md §2.3「漏洩対応の即時全切断」。
+    /// 緊急全失効——ADR-0013 決定 2・監査 2013——の一部として呼ばれ、**SEC-6 の閲覧猶予も
+    /// バイパスする**: 猶予中の circuit も含めて切断要求を発行する。Issue #267）。
+    /// </summary>
+    /// <returns>切断要求が受理された circuit 数（監査 Detail 用）。</returns>
+    public async Task<int> RequestDisconnectAllAsync(string reason)
+    {
+        var accepted = 0;
+        foreach (var record in _circuits.Values)
+        {
+            if (await record.Context.RequestTerminationAsync(reason).ConfigureAwait(false))
+            {
+                accepted++;
+            }
+        }
+
+        return accepted;
+    }
+
+    /// <summary>
     /// 無操作 circuit を回収する（SEC-8。security.md §2.2「一定時間操作のない circuit を切断して
     /// 枠を解放する」。閲覧は長め・管理は短めのタイムアウト——<see cref="CircuitGovernanceDefaults"/>）。
     /// </summary>
@@ -141,4 +161,10 @@ public static class CircuitTerminationReasons
 
     /// <summary>無操作回収（SEC-8）。</summary>
     public const string IdleReclaimed = "idle";
+
+    /// <summary>認証失効の閲覧猶予（SEC-6）の満了（security.md §2.3。Issue #267）。</summary>
+    public const string RevocationGraceExpired = "revocation-grace-expired";
+
+    /// <summary>緊急全失効に伴う即時全切断（ADR-0013 決定 2・security.md §2.3。Issue #267）。</summary>
+    public const string AllSessionsInvalidated = "all-sessions-invalidated";
 }

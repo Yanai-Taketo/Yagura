@@ -165,4 +165,13 @@ public static class AuditEventIds
     /// レベルは警告。
     /// </summary>
     public static readonly EventId ViewerAuthorizationDenied = new(3009, "ViewerAuthorizationDenied");
+
+    /// <summary>
+    /// 認証失効後の閲覧 circuit の継続を猶予として許容（SEC-6。security.md §2.3。Issue #267）。
+    /// レベルは警告。
+    /// </summary>
+    public static readonly EventId CircuitRevocationGraceGranted = new(3010, "CircuitRevocationGraceGranted");
+
+    /// <summary>猶予中だった circuit の終了（SEC-6。3010 と対）。レベルは警告。</summary>
+    public static readonly EventId CircuitRevocationGraceEnded = new(3011, "CircuitRevocationGraceEnded");
 }
