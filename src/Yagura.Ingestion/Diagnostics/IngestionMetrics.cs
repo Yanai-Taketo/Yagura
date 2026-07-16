@@ -36,8 +36,9 @@ namespace Yagura.Ingestion.Diagnostics;
 /// </para>
 /// <para>
 /// M2 で「内部バッファ破棄」、M4-1 で「TCP 接続拒否」、M4-3 で「スプール退避」「スプール書込
-/// 失敗」「スプール破棄」「永続化失敗」を追加した。M4-4 で「流量制御破棄」（挿入点のみ。
-/// <see cref="Yagura.Ingestion.FlowControl.NoopIngressGate"/> が発火させることはない）と、
+/// 失敗」「スプール破棄」「永続化失敗」を追加した。M4-4 で「流量制御破棄」（M4-4 時点は挿入点
+/// のみ。Issue #260 で <see cref="Yagura.Ingestion.FlowControl.TokenBucketIngressGate"/> による
+/// 判定・破棄が実装され、実値を刻む計器になった）と、
 /// OS 統計突合ゲージ（§4.2）を追加した。Issue #143・#140（syslog 実務者ペルソナの深掘り
 /// レビューで発見された、1 メッセージの逸脱による接続全損・アイドル接続の資源枯渇の 2 件）の
 /// 対応で「TCP 接続断」（当初計画の 12 種の一つ）・「TCP 接続アイドルタイムアウト」・
@@ -184,14 +185,14 @@ public sealed class IngestionMetrics : IDisposable
             unit: "{record}",
             description: "リトライ・スプール退避でも救えず失われた件数（スプールなし縮退中の喪失を含む）。");
 
-        // architecture.md §3.1・§4.1「流量制御破棄」（M4-4 で追加）: 流量制御（§3.3）が拒否した
-        // 件数。v0.1 は挿入点のみで判定・破棄は行わないため（NoopIngressGate）、この計器は
-        // 常に 0 のまま推移する——それでも「発火は必ず計測される」（§3.3）という約束のため
-        // 挿入点（IIngressGate.ShouldAdmit の呼び出し元）で計上する枠を今のうちに設ける。
+        // architecture.md §3.1・§4.1「流量制御破棄」（M4-4 で枠を追加、Issue #260 で実装）:
+        // 送信元単位の流量制御（§3.3。TokenBucketIngressGate）が拒否した件数。挿入点
+        // （IIngressGate.ShouldAdmit の呼び出し元 = 各リスナ）で計上する
+        // （「発火は必ず計測される」§3.3）。opt-out 構成（NoopIngressGate）では 0 のまま推移する。
         _flowControlDropped = _meter.CreateCounter<long>(
             "yagura.ingestion.flow_control.dropped",
             unit: "{datagram}",
-            description: "流量制御により破棄した件数（v0.1 の NoopIngressGate では常に 0）。");
+            description: "送信元単位の流量制御により破棄した件数（opt-out 構成では常に 0）。");
 
         // architecture.md §4.1「UDP 受信エラー」（Issue #142 で追加）: UDP 受信ソケットの
         // ReceiveAsync が SocketException で失敗した回数。個々の失敗が必ずしもデータグラム損失と
@@ -407,7 +408,8 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
-    /// 流量制御による破棄を 1 件計上する（§3.3・§4.1。v0.1 の NoopIngressGate では発火しない）。
+    /// 流量制御による破棄を 1 件計上する（§3.3・§4.1。TokenBucketIngressGate の拒否時に
+    /// 各リスナが呼ぶ。opt-out 構成の NoopIngressGate では発火しない）。
     /// </summary>
     public void RecordFlowControlDropped()
     {

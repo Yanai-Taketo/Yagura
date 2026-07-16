@@ -168,5 +168,8 @@ public sealed class ListenerBindPlanTests
             IngestionTlsEnabled: false,
             IngestionTlsBindAddress: "0.0.0.0",
             IngestionTlsPort: 6514,
-            IngestionTlsCertificateThumbprint: null);
+            IngestionTlsCertificateThumbprint: null,
+            FlowControlEnabled: true,
+            FlowControlMessagesPerSecond: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultMessagesPerSecond,
+            FlowControlBurstSize: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultBurstSize);
 }

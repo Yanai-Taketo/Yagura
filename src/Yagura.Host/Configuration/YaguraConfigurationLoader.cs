@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Tls;
 using Yagura.Ingestion.Udp;
@@ -64,6 +65,9 @@ public static class YaguraConfigurationLoader
         "Ingestion:Tls:Port",
         "Ingestion:Tls:CertificateThumbprint",
         "Ingestion:Rfc3164:DefaultTimeZone",
+        "Ingestion:FlowControl:Enabled",
+        "Ingestion:FlowControl:MessagesPerSecond",
+        "Ingestion:FlowControl:BurstSize",
         "Viewer:HttpPort",
         "Viewer:PublicAccess",
         "Viewer:ReverseDns:Enabled",
@@ -166,6 +170,11 @@ public static class YaguraConfigurationLoader
 
         // --- 受信: RFC 3164 TIMESTAMP の既定タイムゾーン（§1「既定値で継続」。Issue #134） ---
         var defaultRfc3164TimeZone = ResolveDefaultRfc3164TimeZone(options, warnings);
+
+        // --- 流量制御: 有効/無効・送信元別閾値（§1「既定値で継続」。ADR-0002 決定 2。Issue #260） ---
+        var flowControlEnabled = ResolveFlowControlEnabled(options, warnings);
+        var flowControlMessagesPerSecond = ResolveFlowControlMessagesPerSecond(options, warnings);
+        var flowControlBurstSize = ResolveFlowControlBurstSize(options, warnings);
 
         // --- UI: 閲覧 HTTP ポート（§1「既定値で継続」） ---
         var httpPort = ResolveHttpPort(options, warnings);
@@ -329,7 +338,10 @@ public static class YaguraConfigurationLoader
             IngestionTlsEnabled: ingestionTlsEnabled,
             IngestionTlsBindAddress: ingestionTlsBindAddress,
             IngestionTlsPort: ingestionTlsPort,
-            IngestionTlsCertificateThumbprint: ingestionTlsCertificateThumbprint)
+            IngestionTlsCertificateThumbprint: ingestionTlsCertificateThumbprint,
+            FlowControlEnabled: flowControlEnabled,
+            FlowControlMessagesPerSecond: flowControlMessagesPerSecond,
+            FlowControlBurstSize: flowControlBurstSize)
         {
             // bind アドレスの明示指定フラグ（PR #193 レビュー対応。IPv6 不可の環境での
             // 「既定は IPv4 縮小 / 明示は fail-fast」の分岐の入力——受信段へ引き渡す）。
@@ -1209,6 +1221,94 @@ public static class YaguraConfigurationLoader
     /// スプールの有効/無効を解決する（既定 <c>true</c>。opt-out。configuration.md §8
     /// 「スプール」区分。§1「既定値で継続」——受信の成立に不可欠なキーではない）。
     /// </summary>
+    /// <summary>
+    /// 送信元単位の流量制御の有効/無効を解決する（ADR-0002 決定 2「既定有効」。opt-out。
+    /// Issue #260。§1「既定値で継続」——真偽値として不正なら既定（有効）へフォールバックし
+    /// 警告する。<see cref="ResolveSpoolEnabled"/> と同じ扱い）。
+    /// </summary>
+    private static bool ResolveFlowControlEnabled(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        const bool defaultEnabled = true;
+
+        var raw = options.Ingestion?.FlowControl?.Enabled;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultEnabled;
+        }
+
+        if (bool.TryParse(raw, out var enabled))
+        {
+            return enabled;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Ingestion:FlowControl:Enabled",
+            InvalidValue: raw,
+            AppliedValue: defaultEnabled.ToString(CultureInfo.InvariantCulture),
+            Reason: "真偽値として不正なため既定値（有効）を適用"));
+
+        return defaultEnabled;
+    }
+
+    /// <summary>
+    /// 送信元 1 つあたりの持続速度（件/秒）を解決する（M-4 実測確定待ちの仮値が既定。
+    /// §1「既定値で継続」——閾値は受信の成立に不可欠なキーではない）。
+    /// </summary>
+    private static int ResolveFlowControlMessagesPerSecond(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        return ResolveFlowControlPositiveCount(
+            options.Ingestion?.FlowControl?.MessagesPerSecond,
+            "Ingestion:FlowControl:MessagesPerSecond",
+            TokenBucketIngressGate.DefaultMessagesPerSecond,
+            TokenBucketIngressGate.MinMessagesPerSecond,
+            TokenBucketIngressGate.MaxMessagesPerSecond,
+            warnings);
+    }
+
+    /// <summary>
+    /// 送信元 1 つあたりのバーストサイズ（件）を解決する（M-4 実測確定待ちの仮値が既定。
+    /// §1「既定値で継続」）。
+    /// </summary>
+    private static int ResolveFlowControlBurstSize(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        return ResolveFlowControlPositiveCount(
+            options.Ingestion?.FlowControl?.BurstSize,
+            "Ingestion:FlowControl:BurstSize",
+            TokenBucketIngressGate.DefaultBurstSize,
+            TokenBucketIngressGate.MinBurstSize,
+            TokenBucketIngressGate.MaxBurstSize,
+            warnings);
+    }
+
+    private static int ResolveFlowControlPositiveCount(
+        string? raw,
+        string key,
+        int defaultValue,
+        int min,
+        int max,
+        List<ConfigurationWarning> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultValue;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            && value >= min
+            && value <= max)
+        {
+            return value;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: key,
+            InvalidValue: raw,
+            AppliedValue: defaultValue.ToString(CultureInfo.InvariantCulture),
+            Reason: $"件数として不正、または許容範囲（{min}〜{max}）外のため既定値を適用"));
+
+        return defaultValue;
+    }
+
     private static bool ResolveSpoolEnabled(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
     {
         const bool defaultEnabled = true;

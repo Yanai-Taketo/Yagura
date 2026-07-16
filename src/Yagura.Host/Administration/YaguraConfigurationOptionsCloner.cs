@@ -44,6 +44,12 @@ internal static class YaguraConfigurationOptionsCloner
                 {
                     DefaultTimeZone = source.Ingestion.Rfc3164.DefaultTimeZone,
                 },
+                FlowControl = source.Ingestion.FlowControl is null ? null : new YaguraConfigurationOptions.IngestionOptions.FlowControlOptions
+                {
+                    Enabled = source.Ingestion.FlowControl.Enabled,
+                    MessagesPerSecond = source.Ingestion.FlowControl.MessagesPerSecond,
+                    BurstSize = source.Ingestion.FlowControl.BurstSize,
+                },
             },
             Viewer = source.Viewer is null ? null : new YaguraConfigurationOptions.ViewerOptions
             {

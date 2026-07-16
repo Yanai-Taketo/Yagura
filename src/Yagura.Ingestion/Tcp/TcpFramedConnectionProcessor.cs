@@ -211,6 +211,8 @@ internal sealed class TcpFramedConnectionProcessor
                 {
                     if (!_ingressGate.ShouldAdmit(remoteAddress ?? IPAddress.None, message))
                     {
+                        // 流量制御による破棄（TokenBucketIngressGate。Issue #260）。破棄は必ず計上する
+                        // （「発火は必ず計測される」architecture.md §3.3）。
                         _metrics.RecordFlowControlDropped();
                         continue;
                     }

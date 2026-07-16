@@ -67,6 +67,13 @@ public static class ConfigurationKeyMetadata
             // Retention:* と同じ「即時」を目標とする。現時点の実効は他の即時目標キーと同様、
             // ParsingStage の構築時（DI シングルトン）にのみ値が渡されるため再起動。
             ["Ingestion:Rfc3164:DefaultTimeZone"] = ConfigurationReloadEffect.Immediate,
+            // 流量制御(ADR-0002 決定 2。Issue #260)は §8 表「流量制御 | 即時」の目標どおり宣言する
+            // (ソケットの bind を要さず、ゲートの差し替え・閾値変更のみで反映できる設計のため)。
+            // 現時点の実効は他の即時目標キーと同様、ゲートの構築が起動時(Program の結線)にのみ
+            // 行われるためサービス再起動(ライブ再読込 §3 の配線時に目標へ揃える)。
+            ["Ingestion:FlowControl:Enabled"] = ConfigurationReloadEffect.Immediate,
+            ["Ingestion:FlowControl:MessagesPerSecond"] = ConfigurationReloadEffect.Immediate,
+            ["Ingestion:FlowControl:BurstSize"] = ConfigurationReloadEffect.Immediate,
             ["Viewer:HttpPort"] = ConfigurationReloadEffect.RestartRequired,
             // 公開範囲は bind 先の変更を伴うため、Viewer:HttpPort と同じ「リスナ再構成」区分
             // （§8 表「UI」区分の目標）に揃える。現時点の実効はポートと同じくサービス再起動

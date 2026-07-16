@@ -450,11 +450,21 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Retention.RetentionScheduler>(),
             sp.GetRequiredService<LogStoreWriteGate>()));
 
+        // 流量制御（architecture.md §3.3。ADR-0002 決定 2「送信元単位の流量制御（既定有効）」。
+        // Issue #260）: 既定は TokenBucketIngressGate、opt-out（Ingestion:FlowControl:Enabled =
+        // false）時のみ NoopIngressGate を結線する。破棄の計上は各リスナ（挿入点の呼び出し元）が
+        // 行う——「発火は必ず計測される」§3.3。
+        IIngressGate ingressGate = resolvedConfiguration.FlowControlEnabled
+            ? new TokenBucketIngressGate(
+                resolvedConfiguration.FlowControlMessagesPerSecond,
+                resolvedConfiguration.FlowControlBurstSize)
+            : new NoopIngressGate();
+
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
             sp.GetRequiredService<TcpSyslogListenerOptions>(),
             sp.GetRequiredService<ILogStore>(),
-            new NoopIngressGate(),
+            ingressGate,
             sp.GetRequiredService<ILoggerFactory>(),
             spool,
             sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>(),
