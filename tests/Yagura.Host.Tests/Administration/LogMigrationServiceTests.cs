@@ -167,6 +167,59 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Run_TargetWriteFails_RecordsFailureAudit_AndRethrows()
+    {
+        // レビュー指摘(fail-open): 移行の途中失敗も監査に残す——DB を変更した管理操作が
+        // 無記録にならないこと。移行先へ書けない store を使い、例外送出 + 失敗監査を固定する。
+        await SeedSourceAsync(10);
+        var failingTarget = new ThrowingLogStore();
+        var service = new LogMigrationService(
+            _dataRoot, _sourcePath, currentProviderIsSqlServer: true,
+            failingTarget, writeGate: null, _auditRecorder, new FakeLogger<LogMigrationService>());
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.RunAsync("127.0.0.1", "windows", @"CONTOSO\admin"));
+
+        var audit = Assert.Single(_auditRecorder.Recorded);
+        Assert.Equal(AuditEventKind.LogMigrationExecuted, audit.Kind);
+        Assert.Contains("途中失敗", audit.Detail);
+    }
+
+    /// <summary>
+    /// WriteBatchAsync が必ず失敗する store（移行の途中失敗の再現用）。移行が使うのは
+    /// WriteBatchAsync・WriteSystemEventAsync・CountAsync（IBulkLogReader）のみのため、
+    /// それ以外は最小のスタブでよい。
+    /// </summary>
+    private sealed class ThrowingLogStore : ILogStore, IBulkLogReader
+    {
+        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("移行先への書き込みに失敗(テスト)。");
+        public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<LogRecordSummary>>([]);
+        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(DateTimeOffset cutoff, CancellationToken cancellationToken = default)
+            => Task.FromResult(new DeleteOlderThanResult(0, cutoff));
+        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(new LogStoreStatistics(0, null));
+        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<LogRecord?>(null);
+        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SystemEvent>>([]);
+        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SourceActivity>>([]);
+        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SeverityCount>>([]);
+        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SourceActivity>>([]);
+        public IAsyncEnumerable<LogRecord> ReadAllAscendingAsync(BulkReadCursor? resumeAfter, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+        public Task<long> CountAsync(DateTimeOffset? toInclusive, CancellationToken cancellationToken = default)
+            => Task.FromResult(0L);
+    }
+
+    [Fact]
     public async Task Run_EmptySource_CompletesWithoutSystemEvent()
     {
         var service = CreateService();
