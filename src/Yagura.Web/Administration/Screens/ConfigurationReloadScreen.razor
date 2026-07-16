@@ -1,0 +1,112 @@
+@page "/admin/reload"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
+@using Yagura.Web.Circuits
+@inject IConfigurationReloadService ReloadService
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+@inject IYaguraNotifier Notifier
+
+@*
+    設定の再読み込み（configuration.md §3。CF-4 層1。Issue #262）。手編集された設定ファイルを
+    読み直し、差分のうち即時反映できるキーを適用する。反映に再起動が要るキーは「未反映のまま
+    残る項目」として本画面とイベントログ（1020）の両方に明示する（§3——気づかない中途状態を
+    作らない）。再読み込みは管理操作であり監査記録（2016）の対象。
+*@
+<PageTitle>@UiText.AdminReloadTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.AdminReloadTitle</MudText>
+<MudText Typo="Typo.body2" Class="mt-2">@UiText.AdminReloadDescription</MudText>
+
+<div class="mt-4">
+    <YaguraButton Role="YaguraButtonRole.Primary" OnClick="ReloadAsync" Disabled="@_running">
+        @UiText.AdminReloadExecute
+    </YaguraButton>
+</div>
+
+@if (_result is { } result)
+{
+    <div class="mt-4">
+        @if (result.Rejected)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-2">
+                @UiText.AdminReloadRejected @result.RejectionReason
+            </MudAlert>
+        }
+        else if (!result.HasChanges)
+        {
+            <MudAlert Severity="Severity.Info" Class="mb-2">@UiText.AdminReloadNoChanges</MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Success" Class="mb-2">
+                @string.Format(UiText.AdminReloadAppliedFormat, result.AppliedKeys.Count)
+            </MudAlert>
+            @if (result.AppliedKeys.Count > 0)
+            {
+                <MudText Typo="Typo.body2"><b>@UiText.AdminReloadAppliedKeys</b>: @string.Join(", ", result.AppliedKeys)</MudText>
+            }
+        }
+
+        @if (result.PendingRestartKeys.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @UiText.AdminReloadPendingRestart
+                <div>@string.Join(", ", result.PendingRestartKeys)</div>
+            </MudAlert>
+        }
+
+        @if (result.WarningMessages.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @UiText.AdminReloadWarnings
+                @foreach (var warning in result.WarningMessages)
+                {
+                    <div>@warning</div>
+                }
+            </MudAlert>
+        }
+
+        @if (result.UnknownKeys.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @UiText.AdminReloadUnknownKeys @string.Join(", ", result.UnknownKeys)
+            </MudAlert>
+        }
+    </div>
+}
+
+@code {
+    private ConfigurationReloadResult? _result;
+    private bool _running;
+
+    private async Task ReloadAsync()
+    {
+        _running = true;
+        try
+        {
+            // 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者を導出して監査へ渡す
+            // （CircuitManagementScreen と同じパターン）。
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+            _result = await ReloadService.ReloadAsync(
+                CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
+
+            if (_result.Rejected)
+            {
+                Notifier.NotifyError(UiText.AdminReloadRejectedNotification);
+            }
+            else
+            {
+                Notifier.NotifyOk(UiText.AdminReloadCompletedNotification);
+            }
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+}

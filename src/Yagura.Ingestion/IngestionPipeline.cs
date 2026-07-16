@@ -301,6 +301,14 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// DB 初期化（<see cref="ILogStore.InitializeAsync"/>）の完了後に呼び出す
     /// （architecture.md §1.2 手順 3・4「DB provider を初期化する…drain 開始」）。
     /// </summary>
+    /// <summary>
+    /// RFC 3164 TIMESTAMP の既定タイムゾーンを実行中に更新する（設定ライブ再読み込み。
+    /// CF-4 層1。Issue #262。<see cref="ParsingStage.UpdateDefaultRfc3164TimeZone"/> への
+    /// パススルー——解析段はパイプラインの内部部品のため、ホストにはこの口だけを見せる）。
+    /// </summary>
+    public void UpdateDefaultRfc3164TimeZone(TimeZoneInfo? timeZone) =>
+        _parsingStage.UpdateDefaultRfc3164TimeZone(timeZone);
+
     public void StartConsumers()
     {
         if (_consumerStoppingCts is not null)

@@ -12,6 +12,7 @@ using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Tls;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
+using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Storage.Sqlite;
 using Yagura.Storage.SqlServer;
@@ -93,6 +94,10 @@ public static class Program
 
         var resolvedConfiguration = configurationLoadResult.Configuration;
         var databasePath = Path.Combine(dataRoot, resolvedConfiguration.SqliteFileName);
+
+        // 設定ライブ再読み込み（CF-4 層1。Issue #262）の差分計算の初期基準——起動時点の
+        // ファイルの生 options を捕捉しておく（ConfigurationReloadService の doc コメント参照）。
+        var startupRawOptions = YaguraConfigurationWriter.Read(dataRoot).Options;
 
         // architecture.md §1.2 起動手順 1「スプール領域を開く（前回退避分の存在確認を含む）」。
         // 受信開始（IngestionHostedService.StartAsync）より先に行う必要があるため、DI 登録前の
@@ -350,6 +355,15 @@ public static class Program
             options.ServiceName = WindowsServiceName;
         });
 
+        // CF-5(2026-07-16 オーナー裁定。Issue #262): Windows サービスとして動いている場合のみ、
+        // 既定の WindowsServiceLifetime を SCM カスタム制御コード対応版へ置き換える
+        // (sc control Yagura 128 = 設定の再読み込み。YaguraWindowsServiceLifetime 参照)。
+        // AddWindowsService 自体が IsWindowsService 判定で登録するため、置き換えも同じ条件で行う。
+        if (OperatingSystem.IsWindows() && Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService())
+        {
+            builder.Services.AddSingleton<IHostLifetime, YaguraWindowsServiceLifetime>();
+        }
+
         // イベントログ警告経路（M3-2 #31。architecture.md §4.6 の「Windows イベントログへの
         // 警告書き出し」の受け皿）。実際の発火点（スプール退避・上限到達等）は M4 で追加する。
         //
@@ -453,12 +467,17 @@ public static class Program
         // 流量制御（architecture.md §3.3。ADR-0002 決定 2「送信元単位の流量制御（既定有効）」。
         // Issue #260）: 既定は TokenBucketIngressGate、opt-out（Ingestion:FlowControl:Enabled =
         // false）時のみ NoopIngressGate を結線する。破棄の計上は各リスナ（挿入点の呼び出し元）が
-        // 行う——「発火は必ず計測される」§3.3。
-        IIngressGate ingressGate = resolvedConfiguration.FlowControlEnabled
-            ? new TokenBucketIngressGate(
-                resolvedConfiguration.FlowControlMessagesPerSecond,
-                resolvedConfiguration.FlowControlBurstSize)
-            : new NoopIngressGate();
+        // 行う——「発火は必ず計測される」§3.3。SwappableIngressGate で 1 段包むのは設定ライブ
+        // 再読み込み（CF-4 層1。Issue #262）で実装を無瞬断に差し替えるため。
+        var ingressGate = new SwappableIngressGate(
+            CreateIngressGate(resolvedConfiguration));
+
+        static IIngressGate CreateIngressGate(ResolvedYaguraConfiguration configuration) =>
+            configuration.FlowControlEnabled
+                ? new TokenBucketIngressGate(
+                    configuration.FlowControlMessagesPerSecond,
+                    configuration.FlowControlBurstSize)
+                : new NoopIngressGate();
 
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
@@ -592,6 +611,52 @@ public static class Program
             timeProvider: null,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>());
+
+        // 設定ライブ再読み込み（configuration.md §3。CF-4 層1。Issue #262）。即時反映の口
+        // （ImmediateConfigurationApplier）はここ（合成ルート）で各コンポーネントの更新メソッドを
+        // 束ねる。ここに登録されていないキーの変更は「再起動待ち」として明示される（1020）。
+        builder.Services.AddSingleton<IConfigurationReloadService>(sp => new ConfigurationReloadService(
+            dataRoot,
+            startupRawOptions,
+            new[]
+            {
+                // 流量制御（Issue #260）: ゲート実装ごと差し替える（SwappableIngressGate）。
+                new ImmediateConfigurationApplier(
+                    ["Ingestion:FlowControl:Enabled", "Ingestion:FlowControl:MessagesPerSecond", "Ingestion:FlowControl:BurstSize"],
+                    newConfiguration => ingressGate.Swap(CreateIngressGate(newConfiguration))),
+                // ログ本体の保持期間（M5-1）。
+                new ImmediateConfigurationApplier(
+                    ["Retention:Days", "Retention:ExecutionTimeOfDay"],
+                    newConfiguration => sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>().UpdateOptions(
+                        new Yagura.Host.Retention.RetentionSchedulerOptions(
+                            newConfiguration.RetentionDays,
+                            newConfiguration.RetentionExecutionTimeOfDay))),
+                // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
+                new ImmediateConfigurationApplier(
+                    ["Audit:RetentionDays"],
+                    newConfiguration => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()
+                        .UpdateRetentionDays(newConfiguration.AuditRetentionDays)),
+                // 逆引きホスト名表示（ADR-0007）。読み取り契約（IReverseDnsResolver）に書き込み
+                // 操作を足さない（L-5 の参照分離を保つ）ため、実体への cast で更新の口を呼ぶ。
+                new ImmediateConfigurationApplier(
+                    ["Viewer:ReverseDns:Enabled"],
+                    newConfiguration => (sp.GetRequiredService<Yagura.Web.ReverseDns.IReverseDnsResolver>()
+                            as Yagura.Web.ReverseDns.ReverseDnsResolver)?
+                        .UpdateOptions(new Yagura.Web.ReverseDns.ReverseDnsDisplayOptions(newConfiguration.ViewerReverseDnsEnabled))),
+                // RFC 3164 既定タイムゾーン（Issue #134）: 解析段へパススルー。
+                new ImmediateConfigurationApplier(
+                    ["Ingestion:Rfc3164:DefaultTimeZone"],
+                    newConfiguration => sp.GetRequiredService<IngestionPipeline>()
+                        .UpdateDefaultRfc3164TimeZone(newConfiguration.DefaultRfc3164TimeZone)),
+                // スプール上限（M-12）: 開いているスプールがある場合のみ実反映（無効・縮退運転時は
+                // 対象が無く no-op——Spool:Enabled / Spool:Directory の変更は再起動待ちに落ちる）。
+                new ImmediateConfigurationApplier(
+                    ["Spool:QuotaBytes"],
+                    newConfiguration => spool?.UpdateQuotaBytes(newConfiguration.SpoolQuotaBytes)),
+            },
+            sp.GetRequiredService<IAuditRecorder>(),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<ConfigurationReloadService>()));
 
         // 監査の 2000 番台（管理操作）はレベル「情報」でイベントログへ併記する（security.md §4.3）。
         // EventLog プロバイダの既定フィルタは Warning 以上のため、監査カテゴリに限り Information

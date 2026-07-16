@@ -36,10 +36,24 @@ public sealed class DiskSpool : IDisposable
     private int _segmentSequence;
     private long _currentUsageBytes;
     private long _deletedSegmentsTotal;
+    private long _quotaBytes;
 
     private DiskSpool(DiskSpoolOptions options)
     {
         _options = options;
+        _quotaBytes = options.QuotaBytes;
+    }
+
+    /// <summary>
+    /// ディスク使用量の上限（バイト）を実行中に更新する（設定ライブ再読み込み。CF-4 層1。
+    /// Issue #262）。上限判定は追記ごとに本値を読むため、次の追記から新値が使われる。
+    /// 縮小方向の更新で既存使用量が新上限を超えた場合も、既存セグメントは破棄しない
+    /// （新規退避分が上限判定で破棄されるだけ——drain の消化で自然に新上限内へ収束する）。
+    /// </summary>
+    public void UpdateQuotaBytes(long quotaBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(quotaBytes, 0);
+        Volatile.Write(ref _quotaBytes, quotaBytes);
     }
 
     /// <summary>
@@ -193,7 +207,7 @@ public sealed class DiskSpool : IDisposable
     {
         lock (_gate)
         {
-            if (_currentUsageBytes + frame.Length > _options.QuotaBytes)
+            if (_currentUsageBytes + frame.Length > Volatile.Read(ref _quotaBytes))
             {
                 return false;
             }
@@ -291,7 +305,14 @@ public sealed class DiskSpool : IDisposable
     /// <summary>
     /// 自己検証用（§3.2.5）に現在の使用量比率（0.0〜1.0 超もあり得る）を返す。
     /// </summary>
-    public double UsageRatio => _options.QuotaBytes <= 0 ? 0 : (double)CurrentUsageBytes / _options.QuotaBytes;
+    public double UsageRatio
+    {
+        get
+        {
+            var quota = Volatile.Read(ref _quotaBytes);
+            return quota <= 0 ? 0 : (double)CurrentUsageBytes / quota;
+        }
+    }
 
     /// <summary>
     /// アクティブセグメントのファイルハンドルを解放する。プロセス終了時・テストでの

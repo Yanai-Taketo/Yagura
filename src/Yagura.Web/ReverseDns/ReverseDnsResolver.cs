@@ -27,7 +27,7 @@ namespace Yagura.Web.ReverseDns;
 /// </remarks>
 public sealed class ReverseDnsResolver : IReverseDnsResolver, IDisposable
 {
-    private readonly ReverseDnsDisplayOptions _options;
+    private ReverseDnsDisplayOptions _options;
     private readonly IReverseDnsLookup _lookup;
     private readonly ReverseDnsMetrics _metrics;
     private readonly TimeProvider _timeProvider;
@@ -57,6 +57,19 @@ public sealed class ReverseDnsResolver : IReverseDnsResolver, IDisposable
 
     /// <inheritdoc />
     public event Action? NamesUpdated;
+
+    /// <summary>
+    /// 有効/無効を実行中に更新する（設定ライブ再読み込み。CF-4 層1。Issue #262）。
+    /// 判定は呼び出しごとに <c>_options.Enabled</c> を読むため、参照の交換だけで
+    /// 次の表示・解決要求から反映される（無効化してもキャッシュは消さない——再有効化時に
+    /// 即座に表示が戻る。オフの間は表示・解決とも行わないため「オフ = 逆引き名は出ない」
+    /// （ADR-0007 決定 4）は維持される）。
+    /// </summary>
+    public void UpdateOptions(ReverseDnsDisplayOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        Volatile.Write(ref _options, options);
+    }
 
     /// <inheritdoc />
     public string? TryGetDisplayName(string sourceAddress)

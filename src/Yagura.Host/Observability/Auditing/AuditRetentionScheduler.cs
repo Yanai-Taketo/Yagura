@@ -55,7 +55,7 @@ public sealed class AuditRetentionScheduler : IHostedService, IAsyncDisposable
     internal const int DetailFileNameLimit = 20;
 
     private readonly string _auditDirectoryPath;
-    private readonly int? _retentionDays;
+    private int? _retentionDays;
     private readonly TimeOnly _executionTimeOfDay;
     private readonly IAuditRecorder _auditRecorder;
     private readonly TimeProvider _timeProvider;
@@ -131,6 +131,14 @@ public sealed class AuditRetentionScheduler : IHostedService, IAsyncDisposable
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync() => await StopAsync(CancellationToken.None).ConfigureAwait(false);
+
+    /// <summary>
+    /// 保持日数を実行中に更新する（設定ライブ再読み込み。CF-4 層1。Issue #262）。
+    /// 削除試行は毎回フィールドを参照するため、次の実行（定期実行）から新値が使われる。
+    /// 破れ読みの懸念は実害にならない——読み手は日次の判定 1 箇所のみで、旧値/新値のどちらで
+    /// 判定されても次の日次実行で追いつく。
+    /// </summary>
+    public void UpdateRetentionDays(int? retentionDays) => _retentionDays = retentionDays;
 
     private async Task RunAsync(CancellationToken stoppingToken)
     {
