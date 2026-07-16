@@ -590,6 +590,35 @@ public static class UiText
     /// <summary>カウンタ平易語: 永続化失敗。</summary>
     public const string CounterPersistenceFailed = "取りこぼし（保存の失敗）";
 
+    // ---- 蓄積ログの移行（database.md §6.2。DB-5。Issue #266） ----
+
+    /// <summary>システムイベント平易語: 蓄積ログ移行の完了記録。</summary>
+    public const string EventKindMigrationImport = "蓄積ログの移行（移行されたログの期間）";
+
+    /// <summary>移行セクションのタイトル。</summary>
+    public const string MigrationSectionTitle = "蓄積ログの移行（旧 SQLite → SQL Server）";
+
+    /// <summary>移行の説明。</summary>
+    public const string MigrationDescription =
+        "本番昇格前に SQLite へ保存されたログを、現在の SQL Server へ移送します。移行中も受信は継続します。" +
+        "移行しない場合、旧ログは閲覧できないまま、旧データベースの処分で失われます。";
+
+    /// <summary>移行の実行ボタン。</summary>
+    public const string MigrationExecute = "移行を実行";
+
+    /// <summary>移行の進捗書式（{0} = 移行済み件数・{1} = 総件数）。</summary>
+    public const string MigrationProgressFormat = "移行中: {0:N0} / {1:N0} 件";
+
+    /// <summary>移行の完了通知。</summary>
+    public const string MigrationCompletedNotification = "蓄積ログの移行が完了しました";
+
+    /// <summary>移行の検証不合格通知。</summary>
+    public const string MigrationFailedNotification = "移行の完全性検証に不合格です（再実行で追補できます）";
+
+    /// <summary>移行完了済みの表示。</summary>
+    public const string MigrationAlreadyCompleted =
+        "蓄積ログの移行は完了しています。旧データベースファイルの処分は処分手順に従ってください。";
+
     // ---- 設定の再読み込み（configuration.md §3。CF-4 層1。Issue #262） ----
 
     /// <summary>設定再読み込み画面のタイトル。</summary>

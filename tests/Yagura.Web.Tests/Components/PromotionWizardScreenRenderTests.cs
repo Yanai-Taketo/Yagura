@@ -120,8 +120,24 @@ public sealed class PromotionWizardScreenRenderTests
             configureServices: services =>
             {
                 services.AddSingleton<IPromotionWizardService>(new FakePromotionWizardService(snapshot));
+                services.AddSingleton<ILogMigrationService>(new FakeLogMigrationService());
                 services.AddSingleton(new YaguraCircuitContext());
             });
+
+    /// <summary>移行セクション（Issue #266）の初期描画（GetStatusAsync のみ）に応答するフェイク。</summary>
+    private sealed class FakeLogMigrationService : ILogMigrationService
+    {
+        public Task<LogMigrationStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(new LogMigrationStatus(LogMigrationAvailability.NotPromoted));
+
+        public Task<LogMigrationResult> RunAsync(
+            string? operatorAddress,
+            string? authenticationScheme,
+            string? authenticatedPrincipal,
+            IProgress<LogMigrationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
 
     /// <summary>初期描画（GetSnapshotAsync のみ）に応答する表示確認用のフェイク。</summary>
     private sealed class FakePromotionWizardService(PromotionWizardSnapshot snapshot) : IPromotionWizardService

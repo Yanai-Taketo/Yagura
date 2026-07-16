@@ -39,7 +39,7 @@ namespace Yagura.Storage.SqlServer;
 /// 発生を抑える）。
 /// </para>
 /// </remarks>
-public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
+public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（<see cref="Sqlite.SqliteLogStore.CurrentSchemaVersion"/> と同じ意味）。
@@ -914,6 +914,110 @@ public sealed class SqlServerLogStore : ILogStore, IAsyncDisposable
         {
             throw ex.ToLogStoreWriteException("詳細表示の個別取得");
         }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 一括読み出し（IBulkLogReader。database.md §1.2 予約 (a) の実体化。Issue #266）。
+    /// 昇順キーセット反復。述語は DB-11 と同じ書き換え形（先頭 conjunct が単独でシーク述語に
+    /// なる形）を昇順へ反転して使う。移行・エクスポートは対話検索と異なり深度依存の
+    /// レイテンシが問題にならないため FORCESEEK は付与しない。
+    /// </remarks>
+    public async IAsyncEnumerable<LogRecord> ReadAllAscendingAsync(
+        BulkReadCursor? resumeAfter,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        const int batchSize = 1000;
+        var cursor = resumeAfter;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var batch = new List<LogRecord>(batchSize);
+
+            await using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                await using var command = connection.CreateCommand();
+                var whereSql = cursor is null
+                    ? string.Empty
+                    : "WHERE (ReceivedAt >= @cursorReceivedAt AND (ReceivedAt > @cursorReceivedAt OR Id > @cursorId))";
+                command.CommandText =
+                    $"""
+                    SELECT TOP (@batchSize) Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
+                           DeviceTimestamp, Facility, Severity, Hostname, AppName, ProcId, MsgId,
+                           StructuredData, Message, Raw
+                    FROM dbo.LogRecords
+                    {whereSql}
+                    ORDER BY ReceivedAt ASC, Id ASC;
+                    """;
+                command.Parameters.Add("@batchSize", System.Data.SqlDbType.Int).Value = batchSize;
+                if (cursor is not null)
+                {
+                    command.Parameters.Add("@cursorReceivedAt", System.Data.SqlDbType.DateTime2).Value =
+                        cursor.ReceivedAt.UtcDateTime;
+                    command.Parameters.Add("@cursorId", System.Data.SqlDbType.BigInt).Value = cursor.Id;
+                }
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    batch.Add(new LogRecord(
+                        Id: reader.GetInt64(0),
+                        ReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
+                        SourceAddress: reader.GetString(2),
+                        SourcePort: reader.GetInt32(3),
+                        Protocol: (Protocol)reader.GetInt32(4),
+                        ParseStatus: (ParseStatus)reader.GetInt32(5),
+                        DeviceTimestamp: reader.IsDBNull(6) ? null : DateTime.SpecifyKind(reader.GetDateTime(6), DateTimeKind.Utc),
+                        Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                        Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                        Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
+                        ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
+                        MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
+                        StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
+                        Message: reader.IsDBNull(14) ? null : reader.GetString(14),
+                        Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15)));
+                }
+            }
+
+            foreach (var record in batch)
+            {
+                yield return record;
+            }
+
+            if (batch.Count < batchSize)
+            {
+                yield break;
+            }
+
+            var last = batch[^1];
+            cursor = new BulkReadCursor(last.ReceivedAt, last.Id!.Value);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<long> CountAsync(DateTimeOffset? toInclusive, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        if (toInclusive is { } to)
+        {
+            command.CommandText = "SELECT COUNT_BIG(*) FROM dbo.LogRecords WHERE ReceivedAt <= @to;";
+            command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = to.UtcDateTime;
+        }
+        else
+        {
+            command.CommandText = "SELECT COUNT_BIG(*) FROM dbo.LogRecords;";
+        }
+
+        var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return (long)result!;
     }
 
     /// <inheritdoc />

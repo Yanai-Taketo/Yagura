@@ -215,4 +215,11 @@ public enum AuditEventKind
     /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     InstallationRecordTranscribed,
+
+    /// <summary>
+    /// 管理操作: 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5。イベント ID 2018。
+    /// Issue #266）の実行。<c>Detail</c> に結果（検証の合否・移行元件数・累計移行件数・
+    /// 移行先範囲内件数）を記録する。
+    /// </summary>
+    LogMigrationExecuted,
 }

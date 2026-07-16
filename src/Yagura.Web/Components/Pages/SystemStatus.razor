@@ -194,6 +194,7 @@
     private static string EventKindLabel(string kind) => kind switch
     {
         SystemEventKinds.RetentionDelete => UiText.EventKindRetentionDelete,
+        SystemEventKinds.MigrationImport => UiText.EventKindMigrationImport,
         _ => string.Format(CultureInfo.InvariantCulture, UiText.EventKindUnknownFormat, kind),
     };
 

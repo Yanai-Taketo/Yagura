@@ -612,6 +612,18 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>());
 
+        // 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5。Issue #266）: 昇格後に
+        // 旧 SQLite の蓄積ログを現行 provider へ移送する管理操作。書き込みは他経路と同じ
+        // 書き込みゲートでバッチ単位に直列化する（移行中も受信を止めない——§6.2 要件①）。
+        builder.Services.AddSingleton<ILogMigrationService>(sp => new Yagura.Host.Administration.LogMigrationService(
+            dataRoot,
+            databasePath,
+            resolvedConfiguration.StorageProvider == Yagura.Host.Configuration.StorageProvider.SqlServer,
+            sp.GetRequiredService<ILogStore>(),
+            sp.GetRequiredService<LogStoreWriteGate>(),
+            sp.GetRequiredService<IAuditRecorder>(),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.LogMigrationService>()));
+
         // ファイアウォール規則の不一致検出 + インストール記録の転記（CF-2。configuration.md §4.3。
         // Issue #265）。起動時（app.Build() 後）とリスナ再構成の適用時に照合する。
         builder.Services.AddSingleton<Yagura.Host.Firewall.IFirewallRuleReader>(sp =>

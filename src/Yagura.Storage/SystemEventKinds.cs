@@ -36,6 +36,13 @@ public static class SystemEventKinds
     /// <summary>保持期間削除の実行記録（database.md §3。値の正は RetentionConstants）。</summary>
     public const string RetentionDelete = RetentionConstants.SystemEventKindRetentionDelete;
 
+    /// <summary>
+    /// 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。Issue #266）の完了記録。
+    /// StartAt〜EndAt = 移行されたレコードの ReceivedAt 範囲（移行由来の事後識別——§6.2 要件⑤。
+    /// この範囲のレコードは移行で投入されたことを後から機械可読に辿れる）。Details に件数。
+    /// </summary>
+    public const string MigrationImport = "migration.import";
+
     /// <summary>受信断系の Kind か（状態画面の履歴の仕分けに使う。M8-3）。</summary>
     public static bool IsDowntime(string kind) =>
         kind is DowntimeNormalStop or DowntimeCrashApproximate or DowntimeListenerReconfigure
