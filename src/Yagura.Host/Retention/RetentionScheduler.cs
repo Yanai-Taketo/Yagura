@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Yagura.Storage;
 
@@ -119,7 +119,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
     private static readonly TimeSpan CatchUpQueryTimeout = TimeSpan.FromSeconds(30);
 
     private readonly ILogStore _logStore;
-    private readonly RetentionSchedulerOptions _options;
+    private RetentionSchedulerOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<RetentionScheduler> _logger;
     private readonly LogStoreWriteGate? _writeGate;
@@ -144,6 +144,19 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<RetentionScheduler>.Instance;
         _writeGate = writeGate;
+    }
+
+    /// <summary>
+    /// 保持期間・実行時刻を実行中に更新する（設定ライブ再読み込み。CF-4 層1。Issue #262）。
+    /// 実行ループ・削除試行は毎回 <c>_options</c> を参照するため、参照の原子的交換だけで
+    /// 次回の判定から新値が使われる。<b>実行時刻（ExecutionTimeOfDay）の変更は、進行中の
+    /// 待機（前回計算した遅延）には割り込まない</b>——次の実行機会の計算から反映される
+    /// （日次実行の粒度では十分。即時反映が要る運用は保持日数側の変更が主であるため）。
+    /// </summary>
+    public void UpdateOptions(RetentionSchedulerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        Volatile.Write(ref _options, options);
     }
 
     /// <summary>

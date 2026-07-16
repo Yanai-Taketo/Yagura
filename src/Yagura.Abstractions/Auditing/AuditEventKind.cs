@@ -196,4 +196,14 @@ public enum AuditEventKind
     /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     AuditRetentionApplied,
+
+    /// <summary>
+    /// 管理操作: 設定ファイル（手編集）のライブ再読み込みの実行（configuration.md §3。CF-4 層1。
+    /// イベント ID 2016。Issue #262）。UI 経由・SCM カスタム制御コード経由（CF-5）の両方が
+    /// 本種別に合流する。<c>Detail</c> に変更キー・適用キー・再起動待ちキーの要約を記録する
+    /// （前後値は含めない——<see cref="ConfigurationSaved"/> と同じ「キー名 + 反映方式」の粒度。
+    /// 秘密情報キーの値の混入を構造的に避ける）。設定変更の保存（2001 = ウィザード経由の
+    /// ファイル書き込み）とは別事象——本種別は「実行中プロセスへの反映」を表す。
+    /// </summary>
+    ConfigurationReloaded,
 }

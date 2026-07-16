@@ -70,4 +70,25 @@ public static class ConfigurationEventIds
     /// </remarks>
     public static readonly EventId IngestionTlsCertificateUnavailableAtStartup =
         new(1016, "IngestionTlsCertificateUnavailableAtStartup");
+
+    /// <summary>
+    /// 設定の再読み込み（configuration.md §3。CF-4 層1。Issue #262）で、変更キーの一部が
+    /// 反映にサービス再起動（または層2 のリスナ再構成）を要し、**未反映のまま残っている**
+    /// 場合の警告。§3「変更に『サービス再起動』の項目が含まれる場合、未反映のまま残る項目を
+    /// 再読み込みの結果として UI とイベントログに明示する」の実装。レベルは警告——
+    /// 「設定した = 反映された」という前提が静かに崩れている状態を放置させないため。
+    /// 再読み込みの実行自体の証跡は監査事象 2016（情報）が担う（本 ID は未反映の残存のみ）。
+    /// </summary>
+    /// <remarks>採番の経緯: 1017〜1019 は ActiveNotificationEventIds 側が使用済みのため 1020。</remarks>
+    public static readonly EventId ConfigurationReloadPendingRestart =
+        new(1020, "ConfigurationReloadPendingRestart");
+
+    /// <summary>
+    /// 設定の再読み込みが検証失敗（configuration.md §1 の「起動失敗」分類の不正値）により
+    /// 拒否された場合の警告。**実行中の構成は旧設定のまま継続する**——起動時は fail-fast
+    /// （起動失敗）だが、稼働中は「受信を止めない」を優先して適用だけを拒否する非対称が仕様
+    /// （Issue #262 の設計判断）。レベルは警告。
+    /// </summary>
+    public static readonly EventId ConfigurationReloadRejected =
+        new(1021, "ConfigurationReloadRejected");
 }

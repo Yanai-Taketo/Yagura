@@ -27,7 +27,7 @@ public sealed class ParsingStage
     private readonly ChannelWriter<LogRecord> _q2Writer;
     private readonly DiskSpool? _spool;
     private readonly IngestionMetrics _metrics;
-    private readonly TimeZoneInfo? _defaultRfc3164TimeZone;
+    private TimeZoneInfo? _defaultRfc3164TimeZone;
     private readonly ILogger<ParsingStage> _logger;
 
     /// <param name="q1Reader">受信段からの生データグラム読み取り口。</param>
@@ -58,6 +58,15 @@ public sealed class ParsingStage
         _defaultRfc3164TimeZone = defaultRfc3164TimeZone;
         _logger = logger ?? NullLogger<ParsingStage>.Instance;
     }
+
+    /// <summary>
+    /// RFC 3164 TIMESTAMP の既定タイムゾーンを実行中に更新する（設定ライブ再読み込み。
+    /// CF-4 層1。Issue #262）。解析は 1 データグラムごとに本フィールドを読んで
+    /// <see cref="SyslogParser.Parse"/> へ渡すため、参照の交換だけで次のデータグラムから
+    /// 新しい解釈が使われる（解析途中のデータグラムは旧値で一貫して解釈される）。
+    /// </summary>
+    public void UpdateDefaultRfc3164TimeZone(TimeZoneInfo? timeZone) =>
+        Volatile.Write(ref _defaultRfc3164TimeZone, timeZone);
 
     /// <summary>
     /// Q1 の消費ループ。<paramref name="stoppingToken"/> がキャンセルされたら、以降は

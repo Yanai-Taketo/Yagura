@@ -590,6 +590,47 @@ public static class UiText
     /// <summary>カウンタ平易語: 永続化失敗。</summary>
     public const string CounterPersistenceFailed = "取りこぼし（保存の失敗）";
 
+    // ---- 設定の再読み込み（configuration.md §3。CF-4 層1。Issue #262） ----
+
+    /// <summary>設定再読み込み画面のタイトル。</summary>
+    public const string AdminReloadTitle = "設定の再読み込み";
+
+    /// <summary>設定再読み込み画面の説明。</summary>
+    public const string AdminReloadDescription =
+        "手編集された設定ファイル（yagura.json）を読み直し、変更のうち即時反映できる項目を適用します。" +
+        "反映にサービス再起動が必要な項目は、未反映のまま残る項目として下に表示されます。";
+
+    /// <summary>再読み込みの実行ボタン。</summary>
+    public const string AdminReloadExecute = "再読み込みを実行";
+
+    /// <summary>再読み込みが検証失敗で拒否されたときの前置き。</summary>
+    public const string AdminReloadRejected = "設定に不正があるため再読み込みを中止しました（実行中の構成は変更されていません）: ";
+
+    /// <summary>変更なしの結果表示。</summary>
+    public const string AdminReloadNoChanges = "設定ファイルに変更はありませんでした。";
+
+    /// <summary>適用件数の書式（{0} = 適用キー数）。</summary>
+    public const string AdminReloadAppliedFormat = "再読み込みを実行しました（即時反映: {0} 件）。";
+
+    /// <summary>適用キー一覧のラベル。</summary>
+    public const string AdminReloadAppliedKeys = "反映した項目";
+
+    /// <summary>再起動待ちキーの前置き。</summary>
+    public const string AdminReloadPendingRestart =
+        "次の項目は反映にサービス再起動が必要なため、未反映のまま残っています:";
+
+    /// <summary>検証警告の前置き。</summary>
+    public const string AdminReloadWarnings = "設定値の警告（不正な値は既定値・安全側で継続しています）:";
+
+    /// <summary>未知キーの前置き。</summary>
+    public const string AdminReloadUnknownKeys = "認識されない設定キー（誤記の可能性）: ";
+
+    /// <summary>再読み込み完了の通知。</summary>
+    public const string AdminReloadCompletedNotification = "設定を再読み込みしました";
+
+    /// <summary>再読み込み拒否の通知。</summary>
+    public const string AdminReloadRejectedNotification = "設定の再読み込みを中止しました（設定値を確認してください）";
+
     /// <summary>カウンタ平易語: 流量制御破棄（Issue #260 で判定・破棄が実装され実値を刻む）。</summary>
     public const string CounterFlowControlDropped = "取りこぼし（送信元ごとの受信量の制限）";
 

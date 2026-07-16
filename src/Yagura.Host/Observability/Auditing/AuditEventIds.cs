@@ -103,6 +103,12 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId AuditRetentionApplied = new(2015, "AuditRetentionApplied");
 
+    /// <summary>
+    /// 設定ファイルのライブ再読み込みの実行（configuration.md §3。CF-4 層1。Issue #262）。
+    /// レベルは情報。
+    /// </summary>
+    public static readonly EventId ConfigurationReloaded = new(2016, "ConfigurationReloaded");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
