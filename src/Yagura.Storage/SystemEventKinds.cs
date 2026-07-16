@@ -19,10 +19,17 @@ public static class SystemEventKinds
     /// <summary>クラッシュ由来の近似断点による受信断区間（architecture.md §4.4「クラッシュ」）。</summary>
     public const string DowntimeCrashApproximate = "downtime.crash-approximate";
 
+    /// <summary>
+    /// リスナ再構成（設定ライブ再読み込みによる bind の張り替え。CF-4 層2。Issue #262）に
+    /// 伴う受信断区間。プロセス跨ぎの 2 種と異なり稼働中に区間が確定するため、再構成の完了時に
+    /// 直接書き込まれる（起動時の区間変換を経ない）。通常は 1 秒未満の瞬断。
+    /// </summary>
+    public const string DowntimeListenerReconfigure = "downtime.listener-reconfigure";
+
     /// <summary>保持期間削除の実行記録（database.md §3。値の正は RetentionConstants）。</summary>
     public const string RetentionDelete = RetentionConstants.SystemEventKindRetentionDelete;
 
     /// <summary>受信断系の Kind か（状態画面の履歴の仕分けに使う。M8-3）。</summary>
     public static bool IsDowntime(string kind) =>
-        kind is DowntimeNormalStop or DowntimeCrashApproximate;
+        kind is DowntimeNormalStop or DowntimeCrashApproximate or DowntimeListenerReconfigure;
 }

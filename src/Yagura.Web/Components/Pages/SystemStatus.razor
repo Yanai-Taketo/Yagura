@@ -184,9 +184,11 @@
     };
 
     private static string OutageKindLabel(SystemEvent outage) =>
-        outage.Kind == SystemEventKinds.DowntimeCrashApproximate || outage.Approximate
-            ? UiText.OutageKindCrashApproximate
-            : UiText.OutageKindNormalStop;
+        outage.Kind == SystemEventKinds.DowntimeListenerReconfigure
+            ? UiText.OutageKindListenerReconfigure
+            : outage.Kind == SystemEventKinds.DowntimeCrashApproximate || outage.Approximate
+                ? UiText.OutageKindCrashApproximate
+                : UiText.OutageKindNormalStop;
 
     private static string EventKindLabel(string kind) => kind switch
     {
