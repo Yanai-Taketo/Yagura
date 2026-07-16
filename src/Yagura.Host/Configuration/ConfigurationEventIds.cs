@@ -91,4 +91,15 @@ public static class ConfigurationEventIds
     /// </summary>
     public static readonly EventId ConfigurationReloadRejected =
         new(1021, "ConfigurationReloadRejected");
+
+    /// <summary>
+    /// 起動時に受信リスナの一部（または全部）が環境要因（ポート競合・アドレス未確立等）で
+    /// bind できず、開けたリスナのみで縮小継続している場合の警告（configuration.md §4.1。
+    /// Issue #291——#141 原子的起動の反転。2026-07-16 オーナー裁定）。開けなかったリスナは
+    /// CF-6 の定期再試行（仮値 30 秒間隔）が受信再開を試み続け、成功すると受信断区間
+    /// （<c>downtime.listener-bind-retry</c>）が記録される。レベルは警告——受信面の一部が
+    /// 開いていない縮退状態を放置させないため。
+    /// </summary>
+    public static readonly EventId ListenerBindFailedDegradedStartup =
+        new(1022, "ListenerBindFailedDegradedStartup");
 }

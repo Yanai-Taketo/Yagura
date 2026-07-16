@@ -691,6 +691,9 @@ public static class UiText
     /// <summary>受信断履歴: リスナ再構成（設定の再読み込み）による瞬断の種別表示（Issue #262）。</summary>
     public const string OutageKindListenerReconfigure = "設定反映（リスナ再構成）による";
 
+    /// <summary>受信断履歴: bind 失敗から再試行での受信再開までの種別表示（Issue #291）。</summary>
+    public const string OutageKindListenerBindRetry = "ポートを開けなかった間（再試行で復旧）";
+
     /// <summary>履歴テーブル: 種別列。</summary>
     public const string HistoryColumnKind = "種別";
 

@@ -274,7 +274,7 @@ architecture.md §4.2 の M8 必須要求（「UI に表示する際は…常時
 | スプール末尾破損破棄（`yagura.ingestion.spool.corrupt_tail_discarded_bytes`） | 取りこぼし（一時保管ファイルの末尾破損。単位はバイト） |
 | 永続化失敗（`yagura.ingestion.persistence.failed`） | 取りこぼし（保存の失敗） |
 | 流量制御破棄（`yagura.ingestion.flow_control.dropped`） | 取りこぼし（送信元ごとの受信量の制限） |
-| システムイベント Kind: downtime.normal-stop / downtime.crash-approximate / downtime.listener-reconfigure | 受信できなかった時間帯（停止・再起動による / 正常に終了しなかったため境界はおおよそ / 設定反映（リスナ再構成）による——Issue #262） |
+| システムイベント Kind: downtime.normal-stop / downtime.crash-approximate / downtime.listener-reconfigure / downtime.listener-bind-retry | 受信できなかった時間帯（停止・再起動による / 正常に終了しなかったため境界はおおよそ / 設定反映（リスナ再構成）による——Issue #262 / ポートを開けなかった間（再試行で復旧）——Issue #291） |
 | システムイベント Kind: retention.delete | 古いログの自動削除を実行 |
 | Windows 統合認証（Integrated Security） | Windows 統合認証（サービスのアカウントで接続） |
 | SQL Server 認証（SQL 認証） | SQL Server 認証（ユーザー名とパスワードで接続） |

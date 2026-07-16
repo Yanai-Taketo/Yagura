@@ -224,13 +224,12 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Issue #141: TCP bind 失敗時に、起動済みの UDP リスナがロールバックされずに
-    /// 取り残される非原子的起動の回帰テスト。TCP ポートを事前に占有して bind を失敗させ、
-    /// (1) 例外が伝播すること (2) 既に起動していた UDP ソケットが確実に解放される
-    /// （＝同じポートへの再 bind が成功する）ことを確認する。
+    /// Issue #291（#141 原子的起動の反転。2026-07-16 オーナー裁定）: TCP の bind が環境要因
+    /// （ポート競合 = SocketException）で失敗しても、起動は失敗せず UDP のみで縮小継続する。
+    /// TCP は DegradedRetrying として報告され、UDP は受信を継続する。
     /// </summary>
     [Fact]
-    public async Task StartListenerAsync_WhenTcpBindFails_StopsAlreadyStartedUdpListener()
+    public async Task StartListenerAsync_WhenTcpBindFails_ContinuesDegradedWithUdp()
     {
         // TCP ポートを先に占有し、パイプライン側の TCP bind を確実に失敗させる。
         using var portReservation = new TcpListener(IPAddress.Loopback, 0);
@@ -242,48 +241,102 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
             new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
             _logStore);
 
-        await Assert.ThrowsAsync<SocketException>(() => pipeline.StartListenerAsync());
+        var result = await pipeline.StartListenerAsync();
+        pipeline.StartConsumers();
 
-        var udpPort = pipeline.BoundPort;
+        Assert.Equal(ListenerStartupStatus.Started, result.Udp.Status);
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, result.Tcp.Status);
+        Assert.NotNull(result.Tcp.Error);
+        Assert.True(result.IsDegraded);
 
-        // ロールバックにより UDP ソケットが解放されていれば、同じポートへの再 bind が
-        // 例外なく成功する（解放されていなければ AddressAlreadyInUse で失敗する）。
-        using var rebind = new UdpClient(new IPEndPoint(IPAddress.Loopback, udpPort));
+        // UDP は縮小継続中も受信 → 永続化が生きている。
+        using var sender = new UdpClient();
+        var message = $"degraded-start-test-{Guid.NewGuid():N}";
+        await sender.SendAsync(
+            Encoding.UTF8.GetBytes($"<34>{message}"), new IPEndPoint(IPAddress.Loopback, pipeline.BoundPort));
 
+        var found = await PollUntilAsync(
+            async () => (await _logStore.QueryLatestAsync(limit: 50, timeout: TimeSpan.FromSeconds(5)))
+                .FirstOrDefault(r => r.Message == message),
+            TimeSpan.FromSeconds(10));
+
+        await pipeline.StopAsync();
+        Assert.NotNull(found);
         portReservation.Stop();
     }
 
     /// <summary>
-    /// Issue #141 の裏側のケース: 先頭（UDP）の bind そのものが失敗する部分失敗。
-    /// このときロールバック対象は「まだ何も起動していない」ため、TCP リスナは一度も
-    /// 起動されないこと（BoundPort が既定値のまま）を確認する。
+    /// Issue #291: 占有が解消されると CF-6 の定期再試行が bind に成功し、受信を再開して
+    /// <see cref="IngestionPipeline.ListenerBindRecovered"/> が発火する（受信断区間の入力）。
     /// </summary>
     [Fact]
-    public async Task StartListenerAsync_WhenUdpBindFails_NeverStartsTcpListener()
+    public async Task StartListenerAsync_DegradedTcp_RecoversViaBindRetry_AndRaisesRecoveryEvent()
     {
-        // UDP ポートを先に占有し、パイプライン側の UDP bind を最初の一歩で失敗させる。
-        using var portReservation = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
-        var occupiedUdpPort = ((IPEndPoint)portReservation.Client.LocalEndPoint!).Port;
+        var portReservation = new TcpListener(IPAddress.Loopback, 0);
+        portReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)portReservation.LocalEndpoint).Port;
 
         await using var pipeline = new IngestionPipeline(
-            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedUdpPort },
-            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
             _logStore);
+        pipeline.BindRetryInterval = TimeSpan.FromMilliseconds(200);
 
-        await Assert.ThrowsAsync<SocketException>(() => pipeline.StartListenerAsync());
+        var recoveryTcs = new TaskCompletionSource<ListenerBindRecovery>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pipeline.ListenerBindRecovered += recovery => recoveryTcs.TrySetResult(recovery);
 
-        // TCP は一度も起動されていない（UDP が最初の一歩で失敗し、ロールバック対象すら無い）。
-        Assert.Equal(0, pipeline.TcpBoundPort);
+        var result = await pipeline.StartListenerAsync();
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, result.Tcp.Status);
+
+        // 占有を解消 → 再試行が成功して受信再開の通知が発火する。
+        portReservation.Stop();
+
+        var completed = await Task.WhenAny(recoveryTcs.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(recoveryTcs.Task, completed);
+
+        var recovery = await recoveryTcs.Task;
+        Assert.Equal("TCP", recovery.ProtocolLabel);
+        Assert.True(recovery.GapStartedAt <= recovery.RecoveredAt);
+        Assert.Equal(occupiedTcpPort, pipeline.TcpBoundPort);
+
+        await pipeline.StopAsync();
     }
 
     /// <summary>
-    /// Issue #141: 起動失敗→ロールバック時に、失敗の事実が Error レベルでログに記録される
-    /// ことの検証（レビュー指摘 2・4 への対応——ログ出力自体をテストで確認する）。
+    /// Issue #291: UDP・TCP の両方が開けない（全リスナ縮小）場合でも起動は継続する
+    /// （configuration.md §4.1「全リスナが開けない場合を含めて縮小継続」——管理 UI からの
+    /// 復旧動線を残すため、受信ゼロでもプロセスは立つ）。
     /// </summary>
     [Fact]
-    public async Task StartListenerAsync_WhenTcpBindFails_LogsRollbackAsError()
+    public async Task StartListenerAsync_WhenAllListenersFail_StillStartsDegraded()
     {
-        // TCP ポートを先に占有し、パイプライン側の TCP bind を確実に失敗させる。
+        using var udpReservation = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var occupiedUdpPort = ((IPEndPoint)udpReservation.Client.LocalEndPoint!).Port;
+        using var tcpReservation = new TcpListener(IPAddress.Loopback, 0);
+        tcpReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)tcpReservation.LocalEndpoint).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedUdpPort },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
+            _logStore);
+
+        var result = await pipeline.StartListenerAsync();
+
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, result.Udp.Status);
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, result.Tcp.Status);
+
+        await pipeline.StopAsync();
+        tcpReservation.Stop();
+    }
+
+    /// <summary>
+    /// Issue #291: 縮小継続時に警告レベルのログが出ること（#141 時代の「Error + 例外送出」から
+    /// 「Warning + 継続」への変更を固定する）。
+    /// </summary>
+    [Fact]
+    public async Task StartListenerAsync_WhenTcpBindFails_LogsDegradeAsWarning()
+    {
         using var portReservation = new TcpListener(IPAddress.Loopback, 0);
         portReservation.Start();
         var occupiedTcpPort = ((IPEndPoint)portReservation.LocalEndpoint).Port;
@@ -298,16 +351,16 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
             new NoopIngressGate(),
             loggerFactory);
 
-        await Assert.ThrowsAsync<SocketException>(() => pipeline.StartListenerAsync());
+        var result = await pipeline.StartListenerAsync();
 
-        // ロールバックの Error ログが 1 件だけ出て、起動済み件数（UDP の 1 件）と
-        // 元の bind 失敗例外がそのまま記録されていることを確認する。
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, result.Tcp.Status);
         var record = Assert.Single(
             collector.GetSnapshot(),
-            r => r.Category == typeof(IngestionPipeline).FullName && r.Level == LogLevel.Error);
-        Assert.Contains("起動済みのリスナ 1 件を停止", record.Message);
+            r => r.Category == typeof(IngestionPipeline).FullName && r.Level == LogLevel.Warning);
+        Assert.Contains("縮小継続", record.Message);
         Assert.IsAssignableFrom<SocketException>(record.Exception);
 
+        await pipeline.StopAsync();
         portReservation.Stop();
     }
 

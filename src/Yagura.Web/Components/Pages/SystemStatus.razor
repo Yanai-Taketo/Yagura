@@ -183,12 +183,13 @@
         _ => UiText.CounterUnknown,
     };
 
-    private static string OutageKindLabel(SystemEvent outage) =>
-        outage.Kind == SystemEventKinds.DowntimeListenerReconfigure
-            ? UiText.OutageKindListenerReconfigure
-            : outage.Kind == SystemEventKinds.DowntimeCrashApproximate || outage.Approximate
-                ? UiText.OutageKindCrashApproximate
-                : UiText.OutageKindNormalStop;
+    private static string OutageKindLabel(SystemEvent outage) => outage.Kind switch
+    {
+        SystemEventKinds.DowntimeListenerReconfigure => UiText.OutageKindListenerReconfigure,
+        SystemEventKinds.DowntimeListenerBindRetry => UiText.OutageKindListenerBindRetry,
+        SystemEventKinds.DowntimeCrashApproximate => UiText.OutageKindCrashApproximate,
+        _ => outage.Approximate ? UiText.OutageKindCrashApproximate : UiText.OutageKindNormalStop,
+    };
 
     private static string EventKindLabel(string kind) => kind switch
     {

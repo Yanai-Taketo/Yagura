@@ -847,6 +847,38 @@ public static class Program
 
         var app = builder.Build();
 
+        // bind 再試行（CF-6）による受信再開の記録（Issue #291）: 開けなかった区間を受信断の
+        // システムイベント（downtime.listener-bind-retry）として残す。書き込みは他経路と同じ
+        // 書き込みゲートで直列化する（Issue #151——再試行成功時は消費ループが既に動いている）。
+        {
+            var pipelineForRecovery = app.Services.GetRequiredService<IngestionPipeline>();
+            var recoveryLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Startup");
+            pipelineForRecovery.ListenerBindRecovered += recovery => _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var writeGate = app.Services.GetRequiredService<LogStoreWriteGate>();
+                    var logStore = app.Services.GetRequiredService<ILogStore>();
+                    using var gateHold = await writeGate.AcquireAsync(CancellationToken.None).ConfigureAwait(false);
+                    await logStore.WriteSystemEventAsync(
+                        new SystemEvent(
+                            Yagura.Storage.SystemEventKinds.DowntimeListenerBindRetry,
+                            recovery.GapStartedAt,
+                            recovery.RecoveredAt,
+                            Approximate: false),
+                        cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // 記録失敗は受信の再開自体を妨げない（ログのみ）。
+                    recoveryLogger.LogWarning(
+                        ex,
+                        "bind 再試行による受信再開（{Protocol}）の受信断区間の記録に失敗しました。",
+                        recovery.ProtocolLabel);
+                }
+            });
+        }
+
         if (spoolDegraded)
         {
             // §1.2「縮退はイベントログへの警告（§4.6）とメトリクスで強く可視化し、黙って
