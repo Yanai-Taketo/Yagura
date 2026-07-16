@@ -29,19 +29,33 @@ public sealed class IngestionPipeline : IAsyncDisposable
 {
     private readonly Channel<RawDatagram> _q1;
     private readonly Channel<LogRecord> _q2;
-    private readonly UdpSyslogListener _udpListener;
-    private readonly TcpSyslogListener _tcpListener;
+    private UdpSyslogListener _udpListener;
+    private TcpSyslogListener _tcpListener;
     private readonly TlsSyslogListener? _tlsListener;
     private readonly ParsingStage _parsingStage;
     private readonly PersistenceWriter _persistenceWriter;
     private readonly SpoolDrainCoordinator? _drainCoordinator;
     private readonly IngestionMetrics _metrics;
     private readonly ILogger<IngestionPipeline>? _logger;
+    private readonly ILoggerFactory? _loggerFactory;
+    private readonly IIngressGate _ingressGate;
+    private readonly SemaphoreSlim _reconfigureGate = new(1, 1);
+
+    private UdpSyslogListenerOptions _udpOptions;
+    private TcpSyslogListenerOptions _tcpOptions;
+    private CancellationTokenSource? _bindRetryCts;
+    private Task? _bindRetryTask;
 
     private CancellationTokenSource? _consumerStoppingCts;
     private Task? _parsingTask;
     private Task? _persistenceTask;
     private Task? _drainTask;
+
+    /// <summary>CF-6: bind 失敗後の定期再試行の間隔（仮値 30 秒。実測確定は CF-6）。</summary>
+    internal static readonly TimeSpan DefaultBindRetryInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>再試行間隔（テストが短縮するための observation point。既定は <see cref="DefaultBindRetryInterval"/>）。</summary>
+    internal TimeSpan BindRetryInterval { get; set; } = DefaultBindRetryInterval;
 
     public IngestionPipeline(UdpSyslogListenerOptions listenerOptions, ILogStore logStore)
         : this(listenerOptions, new TcpSyslogListenerOptions(), logStore, new NoopIngressGate())
@@ -135,6 +149,10 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
         _metrics = new IngestionMetrics();
         _logger = loggerFactory?.CreateLogger<IngestionPipeline>();
+        _loggerFactory = loggerFactory;
+        _ingressGate = ingressGate;
+        _udpOptions = udpListenerOptions;
+        _tcpOptions = tcpListenerOptions;
 
         // Q1・Q2 の容量は実測確定待ちの暫定値（PipelineConstants 参照。M-1）。
         // FullMode は既定の Wait のままにする: UDP 受信段（UdpSyslogListener）は TryWrite のみを
@@ -297,11 +315,6 @@ public sealed class IngestionPipeline : IAsyncDisposable
     }
 
     /// <summary>
-    /// 解析段・永続化段の消費ループと、スプールの drain ループを開始する。
-    /// DB 初期化（<see cref="ILogStore.InitializeAsync"/>）の完了後に呼び出す
-    /// （architecture.md §1.2 手順 3・4「DB provider を初期化する…drain 開始」）。
-    /// </summary>
-    /// <summary>
     /// RFC 3164 TIMESTAMP の既定タイムゾーンを実行中に更新する（設定ライブ再読み込み。
     /// CF-4 層1。Issue #262。<see cref="ParsingStage.UpdateDefaultRfc3164TimeZone"/> への
     /// パススルー——解析段はパイプラインの内部部品のため、ホストにはこの口だけを見せる）。
@@ -309,6 +322,259 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public void UpdateDefaultRfc3164TimeZone(TimeZoneInfo? timeZone) =>
         _parsingStage.UpdateDefaultRfc3164TimeZone(timeZone);
 
+    /// <summary>
+    /// UDP・TCP リスナを新しい構成で再構成する（CF-4 層2。Issue #262。configuration.md §3）。
+    /// options に変更のないリスナには一切触れない（差分適用——瞬断なし）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>手順（リスナごと）</b>: ①旧リスナを graceful に停止（TCP は進行中フレームを Q1 へ
+    /// 吐き切ってから返る——リスナ側 StopAsync の性質）②新 options でリスナを生成し起動
+    /// ③失敗時は<b>旧 options で復旧</b>（configuration.md §3「再構成の失敗時の縮退 = 旧構成の
+    /// 維持」。ポートは直前まで自分が使っていたため復旧は通常成功する）④復旧も失敗した場合、
+    /// リスナは停止のまま <b>CF-6 の定期再試行</b>（<see cref="BindRetryInterval"/> 間隔で
+    /// 新構成の bind を試み続ける）へ移行する。同一ポートの再構成（受信バッファ変更等）は
+    /// 旧を閉じてから新を開くため短い瞬断を伴う——瞬断区間は戻り値で報告し、呼び出し側
+    /// （ホスト）が受信断のシステムイベントとして記録する（記録の責務分離: 本クラスは
+    /// ILogStore・書き込みゲートを直接持たない）。
+    /// </para>
+    /// <para>
+    /// <b>継続するもの</b>: Q1・解析段・永続化段・スプール・計器・流量制御ゲートはすべて
+    /// 共有のまま継続する（受信段のインスタンスだけが入れ替わる）。Q1 に滞留中のデータグラムは
+    /// 再構成中も消費され続ける。
+    /// </para>
+    /// <para>
+    /// <b>並行性</b>: 再構成は直列化される（<see cref="_reconfigureGate"/>）。進行中の CF-6
+    /// 再試行は新しい再構成の開始で打ち切られる（望ましい構成が変わったため）。
+    /// </para>
+    /// </remarks>
+    public async Task<ListenerReconfigurationResult> ReconfigureListenersAsync(
+        UdpSyslogListenerOptions newUdpOptions,
+        TcpSyslogListenerOptions newTcpOptions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(newUdpOptions);
+        ArgumentNullException.ThrowIfNull(newTcpOptions);
+
+        await _reconfigureGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // 進行中の CF-6 再試行があれば打ち切る（望ましい構成が変わった）。
+            await CancelBindRetryAsync().ConfigureAwait(false);
+
+            var udpOutcome = UdpOptionsEqual(_udpOptions, newUdpOptions)
+                ? new ListenerReconfigurationOutcome(ListenerReconfigurationStatus.NotChanged)
+                : await ReconfigureUdpAsync(newUdpOptions, cancellationToken).ConfigureAwait(false);
+
+            var tcpOutcome = TcpOptionsEqual(_tcpOptions, newTcpOptions)
+                ? new ListenerReconfigurationOutcome(ListenerReconfigurationStatus.NotChanged)
+                : await ReconfigureTcpAsync(newTcpOptions, cancellationToken).ConfigureAwait(false);
+
+            return new ListenerReconfigurationResult(udpOutcome, tcpOutcome);
+        }
+        finally
+        {
+            _reconfigureGate.Release();
+        }
+    }
+
+    private static bool UdpOptionsEqual(UdpSyslogListenerOptions a, UdpSyslogListenerOptions b) =>
+        string.Equals(a.BindAddress, b.BindAddress, StringComparison.OrdinalIgnoreCase)
+        && a.Port == b.Port
+        && a.ReceiveBufferBytes == b.ReceiveBufferBytes
+        && a.BindAddressIsExplicit == b.BindAddressIsExplicit;
+
+    private static bool TcpOptionsEqual(TcpSyslogListenerOptions a, TcpSyslogListenerOptions b) =>
+        string.Equals(a.BindAddress, b.BindAddress, StringComparison.OrdinalIgnoreCase)
+        && a.Port == b.Port
+        && a.BindAddressIsExplicit == b.BindAddressIsExplicit;
+
+    private async Task<ListenerReconfigurationOutcome> ReconfigureUdpAsync(
+        UdpSyslogListenerOptions newOptions, CancellationToken cancellationToken)
+    {
+        var oldOptions = _udpOptions;
+        var gapStartedAt = DateTimeOffset.UtcNow;
+        await _udpListener.StopAsync().ConfigureAwait(false);
+
+        var newListener = CreateUdpListener(newOptions);
+        try
+        {
+            await newListener.StartAsync(cancellationToken).ConfigureAwait(false);
+            _udpListener = newListener;
+            _udpOptions = newOptions;
+            _logger?.LogInformation(
+                "UDP リスナを再構成しました（{Address}:{Port}）。", newOptions.BindAddress, newListener.BoundPort);
+            return new ListenerReconfigurationOutcome(
+                ListenerReconfigurationStatus.Reconfigured, gapStartedAt, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            return await RollBackOrRetryAsync(
+                "UDP",
+                ex,
+                gapStartedAt,
+                restartOld: async ct =>
+                {
+                    var rollback = CreateUdpListener(oldOptions);
+                    await rollback.StartAsync(ct).ConfigureAwait(false);
+                    _udpListener = rollback;
+                },
+                retryNew: async ct =>
+                {
+                    var retried = CreateUdpListener(newOptions);
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _udpListener = retried;
+                    _udpOptions = newOptions;
+                }).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<ListenerReconfigurationOutcome> ReconfigureTcpAsync(
+        TcpSyslogListenerOptions newOptions, CancellationToken cancellationToken)
+    {
+        var oldOptions = _tcpOptions;
+        var gapStartedAt = DateTimeOffset.UtcNow;
+        await _tcpListener.StopAsync().ConfigureAwait(false);
+
+        var newListener = CreateTcpListener(newOptions);
+        try
+        {
+            await newListener.StartAsync(cancellationToken).ConfigureAwait(false);
+            _tcpListener = newListener;
+            _tcpOptions = newOptions;
+            _logger?.LogInformation(
+                "TCP リスナを再構成しました（{Address}:{Port}）。", newOptions.BindAddress, newListener.BoundPort);
+            return new ListenerReconfigurationOutcome(
+                ListenerReconfigurationStatus.Reconfigured, gapStartedAt, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            return await RollBackOrRetryAsync(
+                "TCP",
+                ex,
+                gapStartedAt,
+                restartOld: async ct =>
+                {
+                    var rollback = CreateTcpListener(oldOptions);
+                    await rollback.StartAsync(ct).ConfigureAwait(false);
+                    _tcpListener = rollback;
+                },
+                retryNew: async ct =>
+                {
+                    var retried = CreateTcpListener(newOptions);
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _tcpListener = retried;
+                    _tcpOptions = newOptions;
+                }).ConfigureAwait(false);
+        }
+    }
+
+    private UdpSyslogListener CreateUdpListener(UdpSyslogListenerOptions options) => new(
+        options, _q1.Writer, _ingressGate, _metrics, _loggerFactory?.CreateLogger<UdpSyslogListener>());
+
+    private TcpSyslogListener CreateTcpListener(TcpSyslogListenerOptions options) => new(
+        options, _q1.Writer, _ingressGate, _metrics, _loggerFactory?.CreateLogger<TcpSyslogListener>());
+
+    /// <summary>
+    /// 新構成の bind 失敗後の共通処理: 旧構成での復旧を試み、それも失敗したら CF-6 の
+    /// 定期再試行（新構成を望ましい状態として試み続ける）へ移行する。
+    /// </summary>
+    private async Task<ListenerReconfigurationOutcome> RollBackOrRetryAsync(
+        string protocolLabel,
+        Exception newBindFailure,
+        DateTimeOffset gapStartedAt,
+        Func<CancellationToken, Task> restartOld,
+        Func<CancellationToken, Task> retryNew)
+    {
+        _logger?.LogWarning(
+            newBindFailure,
+            "{Protocol} リスナの新構成での bind に失敗したため、旧構成での復旧を試みます（旧構成の維持——configuration.md §3）。",
+            protocolLabel);
+
+        try
+        {
+            await restartOld(CancellationToken.None).ConfigureAwait(false);
+            return new ListenerReconfigurationOutcome(
+                ListenerReconfigurationStatus.RolledBack, gapStartedAt, DateTimeOffset.UtcNow, newBindFailure.Message);
+        }
+        catch (Exception rollbackEx)
+        {
+            _logger?.LogError(
+                rollbackEx,
+                "{Protocol} リスナの旧構成での復旧にも失敗しました。リスナは停止中です。新構成の bind を {Interval} 間隔で再試行します（CF-6）。",
+                protocolLabel,
+                BindRetryInterval);
+
+            StartBindRetryLoop(protocolLabel, retryNew);
+            return new ListenerReconfigurationOutcome(
+                ListenerReconfigurationStatus.DownRetrying, gapStartedAt, GapEndedAt: null, newBindFailure.Message);
+        }
+    }
+
+    /// <summary>
+    /// CF-6: bind 失敗後の定期再試行ループ（間隔は <see cref="BindRetryInterval"/> の仮値 30 秒。
+    /// configuration.md §4.1「bind 失敗後は定期的に再試行する」の再構成経路への適用）。
+    /// 成功またはパイプライン停止・次の再構成で終了する。
+    /// </summary>
+    private void StartBindRetryLoop(string protocolLabel, Func<CancellationToken, Task> retryNew)
+    {
+        _bindRetryCts ??= new CancellationTokenSource();
+        var token = _bindRetryCts.Token;
+
+        _bindRetryTask = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(BindRetryInterval, token).ConfigureAwait(false);
+                    await retryNew(token).ConfigureAwait(false);
+                    _logger?.LogInformation("{Protocol} リスナの bind 再試行に成功し、受信を再開しました（CF-6）。", protocolLabel);
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(
+                        ex, "{Protocol} リスナの bind 再試行に失敗しました。{Interval} 後に再試行します（CF-6）。",
+                        protocolLabel, BindRetryInterval);
+                }
+            }
+        }, CancellationToken.None);
+    }
+
+    private async Task CancelBindRetryAsync()
+    {
+        if (_bindRetryCts is null)
+        {
+            return;
+        }
+
+        await _bindRetryCts.CancelAsync().ConfigureAwait(false);
+        if (_bindRetryTask is not null)
+        {
+            try
+            {
+                await _bindRetryTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _bindRetryCts.Dispose();
+        _bindRetryCts = null;
+        _bindRetryTask = null;
+    }
+
+    /// <summary>
+    /// 解析段・永続化段の消費ループと、スプールの drain ループを開始する。
+    /// DB 初期化（<see cref="ILogStore.InitializeAsync"/>）の完了後に呼び出す
+    /// （architecture.md §1.2 手順 3・4「DB provider を初期化する…drain 開始」）。
+    /// </summary>
     public void StartConsumers()
     {
         if (_consumerStoppingCts is not null)
@@ -352,6 +618,9 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// </summary>
     public async Task StopListenersAsync()
     {
+        // CF-6 の再試行が走っていれば止める（停止後にリスナが勝手に復活しないように）。
+        await CancelBindRetryAsync().ConfigureAwait(false);
+
         var stopTasks = new List<Task>(3) { _udpListener.StopAsync(), _tcpListener.StopAsync() };
         if (_tlsListener is not null)
         {

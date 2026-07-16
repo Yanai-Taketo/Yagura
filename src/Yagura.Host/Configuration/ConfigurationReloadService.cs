@@ -82,7 +82,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         await _reloadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var result = ExecuteReload();
+            var result = await ExecuteReloadAsync().ConfigureAwait(false);
 
             if (!result.Rejected && result.HasChanges)
             {
@@ -108,7 +108,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         }
     }
 
-    private ConfigurationReloadResult ExecuteReload()
+    private async Task<ConfigurationReloadResult> ExecuteReloadAsync()
     {
         // ファイルの生 options（差分計算の after 側）。検証済みの実効値は Load が別途作る。
         var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
@@ -143,7 +143,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         {
             if (plan.ChangedKeys.Any(key => applier.Keys.Contains(key, StringComparer.OrdinalIgnoreCase)))
             {
-                applier.Apply(loadResult.Configuration);
+                await applier.ApplyAsync(loadResult.Configuration).ConfigureAwait(false);
                 appliedKeys.AddRange(plan.ChangedKeys.Where(
                     key => applier.Keys.Contains(key, StringComparer.OrdinalIgnoreCase)));
             }
@@ -195,7 +195,19 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
 /// 反映する処理の組。Program（合成ルート）が各コンポーネントの更新メソッドを束ねて登録する。
 /// </summary>
 /// <param name="Keys">担当する設定キー（JSON キーパス）。</param>
-/// <param name="Apply">検証済みの新設定を反映する処理（担当キーのいずれかが変更されたときのみ呼ばれる）。</param>
+/// <param name="ApplyAsync">
+/// 検証済みの新設定を反映する処理（担当キーのいずれかが変更されたときのみ呼ばれる）。
+/// 層2（リスナ再構成——瞬断の記録を含む非同期処理）に合わせて非同期契約とする。
+/// </param>
 public sealed record ImmediateConfigurationApplier(
     IReadOnlyCollection<string> Keys,
-    Action<ResolvedYaguraConfiguration> Apply);
+    Func<ResolvedYaguraConfiguration, Task> ApplyAsync)
+{
+    /// <summary>同期処理向けの補助コンストラクタ（層1 の単純な参照交換系 applier 用）。</summary>
+    public ImmediateConfigurationApplier(
+        IReadOnlyCollection<string> keys,
+        Action<ResolvedYaguraConfiguration> apply)
+        : this(keys, resolved => { apply(resolved); return Task.CompletedTask; })
+    {
+    }
+}

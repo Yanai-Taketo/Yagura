@@ -688,6 +688,9 @@ public static class UiText
     /// <summary>受信断履歴: クラッシュ近似断点の種別表示（近似である旨を含む。ui.md §5.3）。</summary>
     public const string OutageKindCrashApproximate = "正常に終了しなかったため境界はおおよそ";
 
+    /// <summary>受信断履歴: リスナ再構成（設定の再読み込み）による瞬断の種別表示（Issue #262）。</summary>
+    public const string OutageKindListenerReconfigure = "設定反映（リスナ再構成）による";
+
     /// <summary>履歴テーブル: 種別列。</summary>
     public const string HistoryColumnKind = "種別";
 

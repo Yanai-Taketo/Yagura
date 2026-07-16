@@ -653,6 +653,52 @@ public static class Program
                 new ImmediateConfigurationApplier(
                     ["Spool:QuotaBytes"],
                     newConfiguration => spool?.UpdateQuotaBytes(newConfiguration.SpoolQuotaBytes)),
+                // 受信リスナの無瞬断再構成（CF-4 層2。Issue #262）: UDP/TCP の bind を張り替える。
+                // 失敗時は旧構成で復旧（それも失敗なら CF-6 の定期再試行）。瞬断区間は
+                // 受信断のシステムイベント（downtime.listener-reconfigure）として記録する
+                // ——書き込みは他経路（永続化段・drain・保持期間削除）と同じ書き込みゲートで
+                // 直列化する（ILogStore の単一 writer 契約。Issue #151）。
+                // TLS 受信キー（Ingestion:Tls:*）は対象外——宣言どおり再起動（証明書ストア参照・
+                // 秘密鍵アクセス権付与を伴うため。ConfigurationKeyMetadata 参照）。
+                new ImmediateConfigurationApplier(
+                    ["Ingestion:Udp:BindAddress", "Ingestion:Udp:Port", "Ingestion:Udp:ReceiveBufferBytes",
+                     "Ingestion:Tcp:BindAddress", "Ingestion:Tcp:Port"],
+                    async newConfiguration =>
+                    {
+                        var pipeline = sp.GetRequiredService<IngestionPipeline>();
+                        var result = await pipeline.ReconfigureListenersAsync(
+                            new UdpSyslogListenerOptions
+                            {
+                                BindAddress = newConfiguration.UdpBindAddress,
+                                BindAddressIsExplicit = newConfiguration.UdpBindAddressIsExplicit,
+                                Port = newConfiguration.UdpPort,
+                                ReceiveBufferBytes = newConfiguration.UdpReceiveBufferBytes,
+                            },
+                            new TcpSyslogListenerOptions
+                            {
+                                BindAddress = newConfiguration.TcpBindAddress,
+                                BindAddressIsExplicit = newConfiguration.TcpBindAddressIsExplicit,
+                                Port = newConfiguration.TcpPort,
+                            }).ConfigureAwait(false);
+
+                        // 瞬断区間の記録（configuration.md §3——「瞬断の観測は §3 の区間記録で行う」）。
+                        var writeGate = sp.GetRequiredService<LogStoreWriteGate>();
+                        var logStore = sp.GetRequiredService<ILogStore>();
+                        foreach (var outcome in new[] { result.Udp, result.Tcp })
+                        {
+                            if (outcome is { GapStartedAt: { } gapStart, GapEndedAt: { } gapEnd })
+                            {
+                                using var gateHold = await writeGate.AcquireAsync(CancellationToken.None).ConfigureAwait(false);
+                                await logStore.WriteSystemEventAsync(
+                                    new SystemEvent(
+                                        Yagura.Storage.SystemEventKinds.DowntimeListenerReconfigure,
+                                        gapStart,
+                                        gapEnd,
+                                        Approximate: false),
+                                    cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                            }
+                        }
+                    }),
             },
             sp.GetRequiredService<IAuditRecorder>(),
             timeProvider: null,
