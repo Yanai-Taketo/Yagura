@@ -78,7 +78,36 @@ public sealed class IngestionHostedService : IHostedService
         // 手順 2（§1.2）: 受信ソケットを開き、受信を開始する。DB 初期化より先に行う。
         // UDP・TCP は同時に開始する（M4-1 依頼「起動順序: UDP と同時（受信先行の一部）」）。
         var receiveStartedAt = DateTimeOffset.UtcNow;
-        await _pipeline.StartListenerAsync(cancellationToken).ConfigureAwait(false);
+        var startupResult = await _pipeline.StartListenerAsync(cancellationToken).ConfigureAwait(false);
+
+        // 環境要因の bind 失敗は縮小継続 + CF-6 再試行（Issue #291。#141 の原子的起動は
+        // 環境要因以外に限定して維持——IngestionPipeline.StartListenerAsync の remarks 参照）。
+        // 縮小継続は警告（1022）で可視化する。受信再開は ListenerBindRecovered（Program 側で
+        // 購読）が受信断区間として記録する。
+        if (startupResult.IsDegraded)
+        {
+            var degraded = new List<string>(3);
+            if (startupResult.Udp.Status == ListenerStartupStatus.DegradedRetrying)
+            {
+                degraded.Add($"UDP({startupResult.Udp.Error})");
+            }
+
+            if (startupResult.Tcp.Status == ListenerStartupStatus.DegradedRetrying)
+            {
+                degraded.Add($"TCP({startupResult.Tcp.Error})");
+            }
+
+            if (startupResult.Tls?.Status == ListenerStartupStatus.DegradedRetrying)
+            {
+                degraded.Add($"TLS({startupResult.Tls.Error})");
+            }
+
+            _logger.LogWarning(
+                Yagura.Host.Configuration.ConfigurationEventIds.ListenerBindFailedDegradedStartup,
+                "[listener-bind-degraded] 受信リスナの一部が bind できず、開けたリスナのみで縮小継続しています: {Degraded}。" +
+                "開けなかったリスナは定期再試行（CF-6）が受信再開を試み続けます（configuration.md §4.1。Issue #291）。",
+                string.Join(", ", degraded));
+        }
 
         // 以下 2 行の英語文面は意図的に維持する（日本語化の対象外）。tools/Yagura.Bench の
         // BenchHostProcess と tests/Yagura.E2E.Tests 配下 5 ファイル（ZeroConfigFirstRunE2ETests・
@@ -90,8 +119,17 @@ public sealed class IngestionHostedService : IHostedService
         // （Program.cs のコメント参照）のため、ここだけ文面を分離することはコンソール出力側の
         // 契約を保ったまま行えない。将来分離したい場合は Console 向け・イベントログ向けを
         // 別々の Log 呼び出しにする設計変更が必要（本 PR のスコープ外）。
-        _logger.LogInformation("UDP syslog listener started on port {Port}.", _pipeline.BoundPort);
-        _logger.LogInformation("TCP syslog listener started on port {Port}.", _pipeline.TcpBoundPort);
+        // 起動マーカーは実際に開いたリスナのみ出力する（縮小継続中のリスナの「port 0」出力で
+        // E2E テスト・実機確認の起動待ちマーカーを偽装しない。Issue #291）。
+        if (startupResult.Udp.Status == ListenerStartupStatus.Started)
+        {
+            _logger.LogInformation("UDP syslog listener started on port {Port}.", _pipeline.BoundPort);
+        }
+
+        if (startupResult.Tcp.Status == ListenerStartupStatus.Started)
+        {
+            _logger.LogInformation("TCP syslog listener started on port {Port}.", _pipeline.TcpBoundPort);
+        }
 
         // TLS 受信（RFC 5425。opt-in。Issue #137）: 構成されている場合のみ出力する
         // （TlsBoundPort は TLS 受信が未構成——証明書未解決を含む——の間は null。

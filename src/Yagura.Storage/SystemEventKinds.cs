@@ -26,10 +26,18 @@ public static class SystemEventKinds
     /// </summary>
     public const string DowntimeListenerReconfigure = "downtime.listener-reconfigure";
 
+    /// <summary>
+    /// 起動時（または再構成失敗後）に bind できなかったリスナが、CF-6 の定期再試行で受信を
+    /// 再開するまでの受信断区間（Issue #291。#141 原子的起動の反転——2026-07-16 オーナー裁定。
+    /// 区間の開始 = bind を最初に試みて失敗した時刻、終了 = 再試行が成功して受信を再開した時刻）。
+    /// </summary>
+    public const string DowntimeListenerBindRetry = "downtime.listener-bind-retry";
+
     /// <summary>保持期間削除の実行記録（database.md §3。値の正は RetentionConstants）。</summary>
     public const string RetentionDelete = RetentionConstants.SystemEventKindRetentionDelete;
 
     /// <summary>受信断系の Kind か（状態画面の履歴の仕分けに使う。M8-3）。</summary>
     public static bool IsDowntime(string kind) =>
-        kind is DowntimeNormalStop or DowntimeCrashApproximate or DowntimeListenerReconfigure;
+        kind is DowntimeNormalStop or DowntimeCrashApproximate or DowntimeListenerReconfigure
+            or DowntimeListenerBindRetry;
 }

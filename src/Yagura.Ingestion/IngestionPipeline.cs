@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography.X509Certificates;
+﻿using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Yagura.Ingestion.Diagnostics;
@@ -31,7 +32,9 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private readonly Channel<LogRecord> _q2;
     private UdpSyslogListener _udpListener;
     private TcpSyslogListener _tcpListener;
-    private readonly TlsSyslogListener? _tlsListener;
+    private TlsSyslogListener? _tlsListener;
+    private readonly TlsSyslogListenerOptions? _tlsOptions;
+    private readonly Func<X509Certificate2?>? _tlsCertificateSelector;
     private readonly ParsingStage _parsingStage;
     private readonly PersistenceWriter _persistenceWriter;
     private readonly SpoolDrainCoordinator? _drainCoordinator;
@@ -44,7 +47,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private UdpSyslogListenerOptions _udpOptions;
     private TcpSyslogListenerOptions _tcpOptions;
     private CancellationTokenSource? _bindRetryCts;
-    private Task? _bindRetryTask;
+    private readonly List<Task> _bindRetryTasks = [];
 
     private CancellationTokenSource? _consumerStoppingCts;
     private Task? _parsingTask;
@@ -153,6 +156,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
         _ingressGate = ingressGate;
         _udpOptions = udpListenerOptions;
         _tcpOptions = tcpListenerOptions;
+        _tlsOptions = tlsListenerOptions;
+        _tlsCertificateSelector = tlsCertificateSelector;
 
         // Q1・Q2 の容量は実測確定待ちの暫定値（PipelineConstants 参照。M-1）。
         // FullMode は既定の Wait のままにする: UDP 受信段（UdpSyslogListener）は TryWrite のみを
@@ -259,39 +264,91 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// （依頼「起動順序: UDP と同時（受信先行の一部）」）。
     /// </summary>
     /// <remarks>
-    /// <b>原子的起動</b>（Issue #141）: 片方の bind に成功した後にもう片方が失敗すると、
-    /// 何もしなければ成功済みのリスナ（ソケット + 受信ループ）が起動したまま取り残される。
-    /// 本メソッドは起動済みのリスナを記録しておき、失敗時にそれらをすべて停止してから
-    /// 例外を再送出する——「両方成功」か「（ログを残した上で）全停止」のいずれかにする。
+    /// <para>
+    /// <b>環境要因の bind 失敗は縮小継続 + 定期再試行</b>（Issue #291。2026-07-16 オーナー裁定。
+    /// configuration.md §4.1）: ポート競合・アドレス未確立（NIC の確立前にサービスが起動する
+    /// 再起動時競合）等の <see cref="SocketException"/> は、当該リスナを開かないまま起動を継続し、
+    /// CF-6 の定期再試行（<see cref="BindRetryInterval"/>）で受信再開を試み続ける。全リスナが
+    /// 開けなくても起動は継続する（管理リスナは loopback ゆえ常に開け、UI からの復旧動線が残る）。
+    /// 戻り値がリスナごとの帰結を返し、縮小継続はホスト側が警告（EventId 1022）として可視化する。
+    /// </para>
+    /// <para>
+    /// <b>原子的起動（Issue #141）は環境要因以外に限定して維持</b>: 本メソッドは当初、あらゆる
+    /// bind 失敗で起動済みリスナを全停止して起動全体を失敗させていた（「気づかれない部分起動の
+    /// 固定化」の防止）。Issue #291 でこの判断を環境要因について反転した——反転の根拠は
+    /// ①可視化基盤（イベントログ警告・能動通知・状態画面・loopback 管理 UI）が #141 時点と
+    /// 異なり整っていること ②再起動 → NIC 競合 → サービス死亡 → ログ全損という実害が
+    /// 対象利用者に重いこと。<see cref="SocketException"/> **以外**の失敗（IPv6 明示指定の
+    /// fail-fast——PR #193——等、環境の回復で直らない構成事故）は従来どおり全停止 + 例外送出の
+    /// 原子的起動のままにする。
+    /// </para>
     /// </remarks>
-    public async Task StartListenerAsync(CancellationToken cancellationToken = default)
+    public async Task<ListenerStartupResult> StartListenerAsync(CancellationToken cancellationToken = default)
     {
         var startedListeners = new List<Func<Task>>(3);
         try
         {
-            await _udpListener.StartAsync(cancellationToken).ConfigureAwait(false);
-            startedListeners.Add(() => _udpListener.StopAsync());
+            var udpOutcome = await StartOrDegradeAsync(
+                "UDP",
+                ct => _udpListener.StartAsync(ct),
+                () => _udpListener.StopAsync(),
+                retryNew: async ct =>
+                {
+                    var retried = CreateUdpListener(_udpOptions);
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _udpListener = retried;
+                },
+                startedListeners,
+                cancellationToken).ConfigureAwait(false);
 
-            await _tcpListener.StartAsync(cancellationToken).ConfigureAwait(false);
-            startedListeners.Add(() => _tcpListener.StopAsync());
+            var tcpOutcome = await StartOrDegradeAsync(
+                "TCP",
+                ct => _tcpListener.StartAsync(ct),
+                () => _tcpListener.StopAsync(),
+                retryNew: async ct =>
+                {
+                    var retried = CreateTcpListener(_tcpOptions);
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _tcpListener = retried;
+                },
+                startedListeners,
+                cancellationToken).ConfigureAwait(false);
 
+            ListenerStartupOutcome? tlsOutcome = null;
             if (_tlsListener is not null)
             {
-                // TLS 受信（Issue #137）も同じ原子的起動の対象に含める——TLS の bind 失敗で
-                // UDP/TCP まで巻き添えでロールバックされる（「両方成功」か「全停止」のいずれか
-                // という本メソッドの不変条件を 3 リスナへ拡張する）。
-                await _tlsListener.StartAsync(cancellationToken).ConfigureAwait(false);
-                startedListeners.Add(() => _tlsListener.StopAsync());
+                tlsOutcome = await StartOrDegradeAsync(
+                    "TLS",
+                    ct => _tlsListener.StartAsync(ct),
+                    () => _tlsListener!.StopAsync(),
+                    retryNew: async ct =>
+                    {
+                        var retried = new TlsSyslogListener(
+                            _tlsOptions!,
+                            _q1.Writer,
+                            _ingressGate,
+                            _metrics,
+                            _tlsCertificateSelector!,
+                            _loggerFactory?.CreateLogger<TlsSyslogListener>());
+                        await retried.StartAsync(ct).ConfigureAwait(false);
+                        _tlsListener = retried;
+                    },
+                    startedListeners,
+                    cancellationToken).ConfigureAwait(false);
             }
+
+            return new ListenerStartupResult(udpOutcome, tcpOutcome, tlsOutcome);
         }
         catch (Exception ex)
         {
-            // この失敗は例外の再送出を通じてホスト起動全体の失敗（IHostedService.StartAsync の
-            // 中断）につながる致命的事象のため、Error で記録する。
+            // SocketException 以外（構成事故——環境の回復で直らない失敗）は #141 の原子的起動を
+            // 維持する: 起動済みリスナ・再試行ループをすべて止めてから例外を再送出する。
             _logger?.LogError(
                 ex,
-                "受信リスナの起動に失敗したため、起動済みのリスナ {StartedCount} 件を停止して起動全体を失敗として扱います。",
+                "受信リスナの起動に失敗したため、起動済みのリスナ {StartedCount} 件を停止して起動全体を失敗として扱います（環境要因以外の失敗——Issue #141 の原子的起動）。",
                 startedListeners.Count);
+
+            await CancelBindRetryAsync().ConfigureAwait(false);
 
             foreach (var stopStartedListener in startedListeners)
             {
@@ -311,6 +368,39 @@ public sealed class IngestionPipeline : IAsyncDisposable
             }
 
             throw;
+        }
+    }
+
+    /// <summary>
+    /// 1 リスナの起動を試みる。<see cref="SocketException"/>（環境要因）なら縮小継続 + CF-6 の
+    /// 定期再試行へ移行し、それ以外の失敗はそのまま伝播させる（呼び出し側の原子的起動が処理する）。
+    /// </summary>
+    private async Task<ListenerStartupOutcome> StartOrDegradeAsync(
+        string protocolLabel,
+        Func<CancellationToken, Task> start,
+        Func<Task> stop,
+        Func<CancellationToken, Task> retryNew,
+        List<Func<Task>> startedListeners,
+        CancellationToken cancellationToken)
+    {
+        var attemptedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            await start(cancellationToken).ConfigureAwait(false);
+            startedListeners.Add(stop);
+            return new ListenerStartupOutcome(ListenerStartupStatus.Started);
+        }
+        catch (SocketException ex)
+        {
+            _logger?.LogWarning(
+                ex,
+                "{Protocol} リスナの bind に失敗しました。開けたリスナのみで縮小継続し、{Interval} 間隔で再試行します" +
+                "（CF-6。configuration.md §4.1。Issue #291）。",
+                protocolLabel,
+                BindRetryInterval);
+
+            StartBindRetryLoop(protocolLabel, retryNew, attemptedAt);
+            return new ListenerStartupOutcome(ListenerStartupStatus.DegradedRetrying, ex.Message);
         }
     }
 
@@ -505,23 +595,31 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 protocolLabel,
                 BindRetryInterval);
 
-            StartBindRetryLoop(protocolLabel, retryNew);
+            StartBindRetryLoop(protocolLabel, retryNew, gapStartedAt);
             return new ListenerReconfigurationOutcome(
                 ListenerReconfigurationStatus.DownRetrying, gapStartedAt, GapEndedAt: null, newBindFailure.Message);
         }
     }
 
     /// <summary>
-    /// CF-6: bind 失敗後の定期再試行ループ（間隔は <see cref="BindRetryInterval"/> の仮値 30 秒。
-    /// configuration.md §4.1「bind 失敗後は定期的に再試行する」の再構成経路への適用）。
-    /// 成功またはパイプライン停止・次の再構成で終了する。
+    /// bind 再試行（CF-6）による受信再開の通知（Issue #291）。ホスト側が購読して受信断区間
+    /// （<c>downtime.listener-bind-retry</c>）のシステムイベント記録・復旧ログに使う。
+    /// 発火は再試行ループのバックグラウンドスレッドから行われる。
     /// </summary>
-    private void StartBindRetryLoop(string protocolLabel, Func<CancellationToken, Task> retryNew)
+    public event Action<ListenerBindRecovery>? ListenerBindRecovered;
+
+    /// <summary>
+    /// CF-6: bind 失敗後の定期再試行ループ（間隔は <see cref="BindRetryInterval"/> の仮値 30 秒。
+    /// configuration.md §4.1「bind 失敗後は定期的に再試行する」。起動時の縮小継続——Issue #291——と
+    /// 再構成失敗——Issue #262 層2——の両経路が使う）。成功またはパイプライン停止・次の再構成で
+    /// 終了する。複数リスナの再試行が同時に走り得る（UDP と TCP が同時に開けない再起動時競合等）。
+    /// </summary>
+    private void StartBindRetryLoop(string protocolLabel, Func<CancellationToken, Task> retryNew, DateTimeOffset gapStartedAt)
     {
         _bindRetryCts ??= new CancellationTokenSource();
         var token = _bindRetryCts.Token;
 
-        _bindRetryTask = Task.Run(async () =>
+        var retryTask = Task.Run(async () =>
         {
             while (!token.IsCancellationRequested)
             {
@@ -530,6 +628,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
                     await Task.Delay(BindRetryInterval, token).ConfigureAwait(false);
                     await retryNew(token).ConfigureAwait(false);
                     _logger?.LogInformation("{Protocol} リスナの bind 再試行に成功し、受信を再開しました（CF-6）。", protocolLabel);
+                    ListenerBindRecovered?.Invoke(new ListenerBindRecovery(protocolLabel, gapStartedAt, DateTimeOffset.UtcNow));
                     return;
                 }
                 catch (OperationCanceledException)
@@ -544,6 +643,11 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 }
             }
         }, CancellationToken.None);
+
+        lock (_bindRetryTasks)
+        {
+            _bindRetryTasks.Add(retryTask);
+        }
     }
 
     private async Task CancelBindRetryAsync()
@@ -554,20 +658,24 @@ public sealed class IngestionPipeline : IAsyncDisposable
         }
 
         await _bindRetryCts.CancelAsync().ConfigureAwait(false);
-        if (_bindRetryTask is not null)
+
+        Task[] pending;
+        lock (_bindRetryTasks)
         {
-            try
-            {
-                await _bindRetryTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
+            pending = _bindRetryTasks.ToArray();
+            _bindRetryTasks.Clear();
+        }
+
+        try
+        {
+            await Task.WhenAll(pending).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
         }
 
         _bindRetryCts.Dispose();
         _bindRetryCts = null;
-        _bindRetryTask = null;
     }
 
     /// <summary>
