@@ -49,30 +49,107 @@
 
 ---
 
-## フェーズ 1: GCP KMS のセットアップ（AI が手順を用意・オーナーが実行）
+## フェーズ 1: GCP KMS のセットアップ ✅ 完了（2026-07-15）
 
-アカウントと課金が整ったら、以下を実行する。`gcloud` コマンドはオーナーの手元または Cloud Shell で実行する（AI は手順の作成・レビューを担当）。
+以下の構成で作成済み（Cloud Shell で実行）。**この名前・パスは以降のフェーズ 2・3 で共通で使う**。
 
-1. **鍵リングと HSM 保護の署名鍵を作成**する
-   - 保護レベル: `hsm`（Cloud HSM = FIPS 140-2 Level 3）
-   - アルゴリズム: **RSA 4096（PKCS#1 v1.5・SHA256）**。理由: 署名を SignTool + Google Cloud KMS CNG provider で行う場合、**CNG provider は RSA のみ対応し EC 鍵は使えない**（jsign を使う場合は EC も可だが、両にらみのため RSA で統一する）
-2. **attestation バンドル（ZIP）を取得**する（KMS の鍵詳細 → 証明書を検証 → 証明書バンドルをダウンロード）
-3. **CSR を生成**する（OpenSSL + PKCS#11 で Cloud HSM の鍵にアクセス。Sectigo の公式手順に沿う）
-4. CSR + attestation を Sectigo の enrollment（配信方法 = Install on Existing HSM → HSM 種別 = Google Cloud KMS (Cloud HSM)）に提出する（委任 A の回答に従う）
+| 項目 | 値 |
+|---|---|
+| プロジェクト ID / 番号 | `code-signing-502513` / `275116585205` |
+| リージョン | `asia-northeast1`（東京。Cloud HSM 対応） |
+| 鍵リング | `codesign` |
+| 鍵 | `codesign-rsa4096`（RSA 4096・PKCS#1 v1.5・SHA256・**HSM 保護**・version 1 ENABLED） |
+| 鍵パス | `projects/code-signing-502513/locations/asia-northeast1/keyRings/codesign/cryptoKeys/codesign-rsa4096` |
 
-> 具体的な `gcloud` コマンド一式は、委任 A の回答（証明書の鍵仕様の指定を含む）を受けてから実装 PR で確定する。Sectigo が要求する鍵アルゴリズム・鍵長が RSA 4096 と異なる場合はそれに合わせる。
+CSR は Cloud Shell で `libengine-pkcs11-openssl` + Google の `libkmsp11`（PKCS#11 ライブラリ）+ `openssl req -engine pkcs11` で生成し、attestation バンドル（ZIP）は Console（鍵 version の ⋮ → Verify attestation → Download Attestation Bundle）から取得して Sectigo の enrollment（Install on Existing HSM → Google Cloud KMS (Cloud HSM)）に提出済み。**鍵名だけ**を `pkcs11:object=codesign-rsa4096` で指定する（フルパスは CKA_ID の文字数制限で不可）。
 
-## フェーズ 2: Workload Identity Federation の設定（AI が実装）
+> 鍵アルゴリズムは RSA を選んでいる。SignTool + Google Cloud KMS CNG provider は RSA のみ対応（EC 不可）で、jsign は RSA/EC いずれも可。両にらみのため RSA 4096 で統一した。
 
-GitHub Actions の OIDC トークンを GCP が信頼する設定。**長期の秘密鍵を GitHub Secrets に置かない**ための要。ADR-0014 委任事項 3 のとおり、**信頼条件を特定のリポジトリ・ref（タグ）・Environment に厳格に絞る**（fork や別 workflow からトークンを発行できないようにする）。あわせて:
+## フェーズ 2: WIF + リポジトリ別サービスアカウント + IAM + 監査ログ（証明書審査中に実行可）
 
-- 最小権限 IAM（`roles/cloudkms.signerVerifier` 相当に限定。ADR-0014 委任 5）
-- **Cloud KMS の Data Access 監査ログを明示的に有効化**する（既定は無効。ADR-0014 委任 4。これがないと署名記録が残らない）
-- 想定外の principal・タイミングからの署名操作へのアラート（ADR-0014 委任 13）
+GitHub Actions の OIDC トークンを GCP が信頼させる設定。**長期の秘密鍵を GitHub Secrets に置かない**ための要（ADR-0014 委任 3）。**証明書の発行を待たずに実行できる**（署名する対象の証明書が無くても、認証基盤は先に作れる）。Cloud Shell で上から順に実行する。
 
-## フェーズ 3: リリースワークフローへの署名工程の組み込み（AI が実装）
+```bash
+gcloud config set project code-signing-502513
+PROJECT_NUMBER=275116585205
 
-ADR-0014 決定 3 の構造（未署名で機能 E2E → GitHub Environment 承認ゲート → 署名 → 署名済みでフル E2E → 公開 → 公開後検証）を `release.yml` に実装する。署名済み MSI に対して SHA256 を算出し、署名アクション/ツールは SHA でピン留めする。詳細は ADR-0014 決定 3・委任事項を参照。
+# 2-1) Workload Identity Pool と GitHub OIDC プロバイダ
+gcloud iam workload-identity-pools create github-pool \
+  --location=global --display-name="GitHub Actions pool"
+
+# 信頼条件で「Yagura と Open DUMP Viewer の 2 リポジトリからのトークンだけ」に絞る(委任3)。
+# fork や無関係な workflow からトークンを受け付けない。
+gcloud iam workload-identity-pools providers create-oidc github-provider \
+  --location=global --workload-identity-pool=github-pool \
+  --display-name="GitHub OIDC" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.repository=='Yanai-Taketo/Yagura' || assertion.repository=='Open-DUMP-Viewer/Open-DUMP-Viewer'"
+
+# 2-2) リポジトリ別サービスアカウント(署名主体を分離。決定1 リスク3の緩和策)
+gcloud iam service-accounts create yagura-signer --display-name="Yagura release signer"
+gcloud iam service-accounts create odv-signer    --display-name="Open DUMP Viewer release signer"
+
+# 2-3) 最小権限 IAM: 各 SA に「この鍵での署名/検証」だけを鍵リソース単位で付与(委任5)。
+#      プロジェクト全体の権限は与えない。
+for SA in yagura-signer odv-signer; do
+  gcloud kms keys add-iam-policy-binding codesign-rsa4096 \
+    --location=asia-northeast1 --keyring=codesign \
+    --member="serviceAccount:${SA}@code-signing-502513.iam.gserviceaccount.com" \
+    --role="roles/cloudkms.signerVerifier"
+done
+
+# 2-4) WIF から各 SA を借用できる紐付け(リポジトリ単位に限定)。
+#      Yagura の CI は yagura-signer しか、ODV の CI は odv-signer しか借用できない。
+gcloud iam service-accounts add-iam-policy-binding \
+  yagura-signer@code-signing-502513.iam.gserviceaccount.com \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/Yanai-Taketo/Yagura"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  odv-signer@code-signing-502513.iam.gserviceaccount.com \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/Open-DUMP-Viewer/Open-DUMP-Viewer"
+```
+
+**監査ログの有効化（委任 4。既定は無効。これが無いと署名記録が残らず、決定 1 の「事後の検知・帰属」が成立しない）**: Console の方が確実。
+GCP コンソール → **IAM と管理 → 監査ログ** → 一覧から **「Cloud Key Management Service (KMS) API」** を選び、**「データ読み取り」「データ書き込み」にチェック → 保存**。以後、どの SA がいつ署名操作をしたかが Cloud Audit Logs に残る。
+
+**署名操作のアラート（委任 13。事後追跡を能動検知へ）**: Cloud Logging で、`protoPayload.methodName` が `AsymmetricSign` 系かつ想定外の principal/時間帯のログにログベースの指標 + アラートを設定する（証明書運用が定常化してから設定でよい。フェーズ 3 完了後の hardening 項目）。
+
+**この決定に紐づく GitHub 側の値**（フェーズ 3 で使う。Secrets ではなく公開してよい値なので、リポジトリ変数か workflow に直書きでよい）:
+- WIF プロバイダ: `projects/275116585205/locations/global/workloadIdentityPools/github-pool/providers/github-provider`
+- サービスアカウント（Yagura）: `yagura-signer@code-signing-502513.iam.gserviceaccount.com`
+
+## フェーズ 3: リリースワークフローへの署名工程の組み込み（証明書発行後に実装・検証）
+
+ADR-0014 決定 3 の構造を `release.yml` に実装する。**署名ステップは実際の証明書が無いと通し検証できない**ため、実装 PR は証明書受領後にマージする（現行の未署名リリース経路を壊さないよう、証明書が揃うまで main の署名は有効化しない）。以下は確定済みの設計。
+
+### ジョブ構造（決定 3）
+
+```
+build (x64 / arm64)  … 未署名 MSI を artifact 化
+  → 未署名 MSI に対して Full E2E（既存の smoke-x64 / smoke-arm64）
+  → sign（GitHub Environment "release-signing" の承認ゲート = 人間の承認）
+       · google-github-actions/auth で WIF から yagura-signer の短命トークンを取得
+       · Yagura.Host.exe と Yagura.*.dll を deep signing → 署名済み publish 出力から MSI を再ビルド → MSI を署名
+       · タイムスタンプは主+副 TSA でフォールバック（決定 9）
+  → 署名済み MSI に対して Full E2E を再実行 + 署名/Subject/タイムスタンプ検証
+  → 署名済み MSI の SHA256 を算出（未署名の値は使わない）
+  → create-release（署名済み MSI + .sha256 のみ公開。全アーキ揃わなければ非公開）
+  → 公開後検証（公開資産を取り直して署名・Subject・.sha256 を突合、証跡記録）
+```
+
+### 実装の要点
+
+- **署名ツールは jsign**（決定 9 の TSA フォールバック要件に素直に合う。`--tsaurl <主> <副>` で複数指定できる）。`--storetype GOOGLECLOUD`、`--keystore <鍵リングパス>`、`--alias codesign-rsa4096`、`--storepass <WIF アクセストークン>`、`--certfile <Sectigo 発行の証明書チェーン>`。SignTool + Cloud KMS CNG は代替（Windows ランナー・単一 TSA）
+- **認証**: `google-github-actions/auth`（**SHA ピン留め**: `@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093` = v3.0.0）で `token_format: access_token` を取り、jsign の `--storepass` に渡す。長期鍵 JSON は置かない
+- **deep signing（委任 2）**: MSI 内部の自前バイナリ（`Yagura.Host.exe`・`Yagura.*.dll`）を署名してから WiX で再パッケージし、最後に MSI を署名する。上流バイナリ（.NET ランタイム・MudBlazor）は署名しない。sign ジョブは署名済み publish 出力から `-p:SkipYaguraHostPublish=true -p:YaguraPublishDir=<署名済み出力>` で MSI を焼く
+- **承認ゲート**: GitHub Environment `release-signing`（required reviewers = オーナー）で人間の承認を挟む（決定 3。(A) SignPath の手動承認に相当する統制を (C2) で再現）。WIF の紐付けを将来この Environment に絞ると更に堅い（委任 3 の hardening）
+- **skip 条件**: WIF 設定が使えない実行（`pull_request`・fork）では sign ジョブを skip し、未署名ビルド + E2E の確認までで止める（Release は作らない）。決定 3
+- **証明書チェーン**: Sectigo 発行の証明書（+中間証明書）をどこから供給するか（リポジトリ同梱の公開証明書 or Secrets）は実装 PR で確定。公開証明書自体は秘密ではない
+- **全アクションを SHA ピン留め**（決定 3。`cla.yml` に前例）
+- **退避弁・復旧手順・公開後検証・全アーキ all-or-nothing** は決定 3・8・9・委任 11 のとおり実装する
 
 ---
 
