@@ -54,6 +54,9 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Ingestion:Udp:ReceiveBufferBytes", before.Ingestion?.Udp?.ReceiveBufferBytes, after.Ingestion?.Udp?.ReceiveBufferBytes);
         CompareKey(changedKeys, "Ingestion:Tcp:BindAddress", before.Ingestion?.Tcp?.BindAddress, after.Ingestion?.Tcp?.BindAddress);
         CompareKey(changedKeys, "Ingestion:Tcp:Port", before.Ingestion?.Tcp?.Port, after.Ingestion?.Tcp?.Port);
+        CompareKey(changedKeys, "Ingestion:FlowControl:Enabled", before.Ingestion?.FlowControl?.Enabled, after.Ingestion?.FlowControl?.Enabled);
+        CompareKey(changedKeys, "Ingestion:FlowControl:MessagesPerSecond", before.Ingestion?.FlowControl?.MessagesPerSecond, after.Ingestion?.FlowControl?.MessagesPerSecond);
+        CompareKey(changedKeys, "Ingestion:FlowControl:BurstSize", before.Ingestion?.FlowControl?.BurstSize, after.Ingestion?.FlowControl?.BurstSize);
         CompareKey(changedKeys, "Ingestion:Tls:Enabled", before.Ingestion?.Tls?.Enabled, after.Ingestion?.Tls?.Enabled);
         CompareKey(changedKeys, "Ingestion:Tls:BindAddress", before.Ingestion?.Tls?.BindAddress, after.Ingestion?.Tls?.BindAddress);
         CompareKey(changedKeys, "Ingestion:Tls:Port", before.Ingestion?.Tls?.Port, after.Ingestion?.Tls?.Port);

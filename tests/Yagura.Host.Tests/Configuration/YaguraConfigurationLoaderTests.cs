@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
+using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 
@@ -1054,5 +1055,101 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
 
         Assert.Empty(result.UnknownKeys);
         Assert.Equal("custom.db", result.Configuration.SqliteFileName);
+    }
+
+    // ------------------------------------------------------------------
+    // 流量制御（ADR-0002 決定 2。Issue #260。§1「既定値で継続」）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_FlowControlUnset_DefaultsToEnabledWithProvisionalThresholds()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        // ADR-0002 決定 2「送信元単位の流量制御（既定有効）」——未設定でも有効。
+        Assert.True(result.Configuration.FlowControlEnabled);
+        Assert.Equal(TokenBucketIngressGate.DefaultMessagesPerSecond, result.Configuration.FlowControlMessagesPerSecond);
+        Assert.Equal(TokenBucketIngressGate.DefaultBurstSize, result.Configuration.FlowControlBurstSize);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_FlowControlDisabled_OptOutIsHonored()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "FlowControl": { "Enabled": "false" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.False(result.Configuration.FlowControlEnabled);
+        Assert.Empty(result.Warnings);
+        Assert.Empty(result.UnknownKeys);
+    }
+
+    [Fact]
+    public void Load_FlowControlValidThresholds_UsesFileValues()
+    {
+        WriteConfigurationFile(
+            """{ "Ingestion": { "FlowControl": { "Enabled": "true", "MessagesPerSecond": "500", "BurstSize": "2000" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.True(result.Configuration.FlowControlEnabled);
+        Assert.Equal(500, result.Configuration.FlowControlMessagesPerSecond);
+        Assert.Equal(2000, result.Configuration.FlowControlBurstSize);
+        Assert.Empty(result.Warnings);
+        Assert.Empty(result.UnknownKeys);
+    }
+
+    [Fact]
+    public void Load_FlowControlEnabledInvalid_FallsBackToEnabledWithWarning()
+    {
+        WriteConfigurationFile("""{ "Ingestion": { "FlowControl": { "Enabled": "yes-please" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        // 不正値は既定（有効）へ——保護機能を不正値で黙って無効化しない（Spool:Enabled と同じ扱い）。
+        Assert.True(result.Configuration.FlowControlEnabled);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:FlowControl:Enabled", warning.Key);
+    }
+
+    [Theory]
+    [InlineData("0")]          // 下限未満（全破棄になる値は許容しない）
+    [InlineData("-1")]
+    [InlineData("abc")]
+    [InlineData("2147483648")] // int 範囲外
+    public void Load_FlowControlMessagesPerSecondInvalid_FallsBackToDefaultWithWarning(string invalidValue)
+    {
+        WriteConfigurationFile(
+            $$"""{ "Ingestion": { "FlowControl": { "MessagesPerSecond": "{{invalidValue}}" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(TokenBucketIngressGate.DefaultMessagesPerSecond, result.Configuration.FlowControlMessagesPerSecond);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:FlowControl:MessagesPerSecond", warning.Key);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("burst")]
+    public void Load_FlowControlBurstSizeInvalid_FallsBackToDefaultWithWarning(string invalidValue)
+    {
+        WriteConfigurationFile(
+            $$"""{ "Ingestion": { "FlowControl": { "BurstSize": "{{invalidValue}}" } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(TokenBucketIngressGate.DefaultBurstSize, result.Configuration.FlowControlBurstSize);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Ingestion:FlowControl:BurstSize", warning.Key);
     }
 }

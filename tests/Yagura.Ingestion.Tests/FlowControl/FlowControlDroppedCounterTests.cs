@@ -13,9 +13,10 @@ namespace Yagura.Ingestion.Tests.FlowControlTests;
 
 /// <summary>
 /// 流量制御破棄カウンタの計上枠（architecture.md §3.1・§4.1「流量制御破棄」。M4-4）。
-/// v0.1 の既定実装 <see cref="NoopIngressGate"/> は常に <c>true</c> を返すため発火しないが、
 /// 「発火は必ず計測される」（§3.3）という挿入点の契約を、拒否する <see cref="IIngressGate"/>
-/// フェイクで検証する（UDP・TCP の両受信段から到達できることを確認する）。
+/// フェイクで検証する（UDP・TCP の両受信段から到達できることを確認する）。判定ロジック自体の
+/// 検証は <see cref="Yagura.Ingestion.Tests.FlowControlTests.TokenBucketIngressGateTests"/>
+/// （Issue #260）が担う——本テストはゲートの実装によらない挿入点側の契約に限定する。
 /// </summary>
 public sealed class FlowControlDroppedCounterTests
 {

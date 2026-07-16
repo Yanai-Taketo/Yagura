@@ -7,9 +7,10 @@ namespace Yagura.Ingestion.FlowControl;
 /// （送信元の判別に解析は不要なため、解析より前に置いて解析コストを浪費させない）。
 /// </summary>
 /// <remarks>
-/// v0.1 は挿入点とカウンタの枠のみを設ける段階であり、判定・破棄は実装しない
-/// （<see cref="NoopIngressGate"/> が唯一の実装）。送信元単位の token bucket 等の
-/// 実装は実装設計時に確定する（architecture.md M-4）。
+/// 実装は 2 つ: 送信元単位の token bucket による判定・破棄を行う
+/// <see cref="TokenBucketIngressGate"/>（既定有効。ADR-0002 決定 2。Issue #260）と、
+/// 無条件で通す <see cref="NoopIngressGate"/>（<c>Ingestion:FlowControl:Enabled = false</c> の
+/// opt-out 構成用）。どちらを結線するかはホスト（<c>Yagura.Host.Program</c>）が設定から選ぶ。
 /// </remarks>
 public interface IIngressGate
 {
@@ -18,6 +19,6 @@ public interface IIngressGate
     /// </summary>
     /// <param name="sourceAddress">送信元アドレス。</param>
     /// <param name="payload">受信したバイト列。</param>
-    /// <returns><c>true</c> なら Q1 への投入を続行する。<c>false</c> なら破棄する（v0.1 では常に <c>true</c>）。</returns>
+    /// <returns><c>true</c> なら Q1 への投入を続行する。<c>false</c> なら破棄する（破棄の計上は呼び出し元の責務——「発火は必ず計測される」architecture.md §3.3）。</returns>
     bool ShouldAdmit(IPAddress sourceAddress, ReadOnlySpan<byte> payload);
 }

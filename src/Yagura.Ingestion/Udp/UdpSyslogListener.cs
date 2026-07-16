@@ -353,9 +353,8 @@ public sealed class UdpSyslogListener : IAsyncDisposable
 
             if (!_ingressGate.ShouldAdmit(remoteAddress, result.Buffer))
             {
-                // v0.1 の NoopIngressGate は常に true を返すため、この分岐は到達しない。
-                // 挿入点のみ（architecture.md §3.3）——判定・破棄の実装は後続マイルストーンで
-                // 追加するが、計上の枠は M4-4 で確定する（「発火は必ず計測される」§3.3）。
+                // 流量制御による破棄（TokenBucketIngressGate。Issue #260）。破棄は必ず計上する
+                // （「発火は必ず計測される」architecture.md §3.3）。
                 _metrics.RecordFlowControlDropped();
                 continue;
             }

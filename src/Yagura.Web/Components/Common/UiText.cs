@@ -590,8 +590,8 @@ public static class UiText
     /// <summary>カウンタ平易語: 永続化失敗。</summary>
     public const string CounterPersistenceFailed = "取りこぼし（保存の失敗）";
 
-    /// <summary>カウンタ平易語: 流量制御破棄。</summary>
-    public const string CounterFlowControlDropped = "取りこぼし（受信量の制限。現在この機能は無効です）";
+    /// <summary>カウンタ平易語: 流量制御破棄（Issue #260 で判定・破棄が実装され実値を刻む）。</summary>
+    public const string CounterFlowControlDropped = "取りこぼし（送信元ごとの受信量の制限）";
 
     /// <summary>
     /// カウンタ平易語: スプール末尾破損破棄（Issue #201）。他の取りこぼし系カウンタと異なり

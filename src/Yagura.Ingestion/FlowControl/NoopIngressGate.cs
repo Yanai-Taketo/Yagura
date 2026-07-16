@@ -3,11 +3,12 @@
 namespace Yagura.Ingestion.FlowControl;
 
 /// <summary>
-/// v0.1 の既定実装。全データグラムを無条件で通過させる（architecture.md §3.3）。
+/// 全データグラムを無条件で通過させる実装（architecture.md §3.3）。
 /// </summary>
 /// <remarks>
-/// 判定・破棄ロジックは持たない。流量制御の実装（token bucket 等）は実装設計時に
-/// 別クラスとして追加し、既定を opt-out（既定有効）にする方針は architecture.md §3.3 のとおり。
+/// 流量制御を opt-out（<c>Ingestion:FlowControl:Enabled = false</c>）した構成、および
+/// 流量制御を伴わないテスト・ベンチの既定として使う。既定有効の本実装は
+/// <see cref="TokenBucketIngressGate"/>（Issue #260）。
 /// </remarks>
 public sealed class NoopIngressGate : IIngressGate
 {

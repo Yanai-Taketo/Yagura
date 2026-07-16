@@ -116,6 +116,18 @@
 /// <see cref="IngestionTlsEnabled"/> が <c>true</c> でも本値が <c>null</c> の場合、TLS 受信の
 /// bind エントリは開かずに縮小継続する（Program 側の判断。configuration.md §4.1 と同型）。
 /// </param>
+/// <param name="FlowControlEnabled">
+/// 送信元単位の流量制御の有効/無効（既定 <c>true</c>。opt-out。ADR-0002 決定 2。Issue #260）。
+/// <c>false</c> のとき Program は <c>NoopIngressGate</c> を結線する。
+/// </param>
+/// <param name="FlowControlMessagesPerSecond">
+/// 送信元 1 つあたりの持続速度（件/秒。検証済み。既定は M-4 実測確定待ちの仮値——
+/// <c>TokenBucketIngressGate.DefaultMessagesPerSecond</c>）。
+/// </param>
+/// <param name="FlowControlBurstSize">
+/// 送信元 1 つあたりのバーストサイズ（token bucket の容量。件。検証済み。既定は M-4 実測
+/// 確定待ちの仮値——<c>TokenBucketIngressGate.DefaultBurstSize</c>）。
+/// </param>
 public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
@@ -152,7 +164,10 @@ public sealed record ResolvedYaguraConfiguration(
     bool IngestionTlsEnabled,
     string IngestionTlsBindAddress,
     int IngestionTlsPort,
-    string? IngestionTlsCertificateThumbprint)
+    string? IngestionTlsCertificateThumbprint,
+    bool FlowControlEnabled,
+    int FlowControlMessagesPerSecond,
+    int FlowControlBurstSize)
 {
     /// <summary>
     /// <see cref="UdpBindAddress"/> が設定ファイルで明示指定された値か（<c>false</c> = 既定値。

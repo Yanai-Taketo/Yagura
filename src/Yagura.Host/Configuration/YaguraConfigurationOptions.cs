@@ -3,9 +3,8 @@
 /// <summary>
 /// 設定ファイル（既定 <c>yagura.json</c>。<see cref="YaguraConfigurationLoader"/> 参照）の
 /// JSON 構造にそのままバインドする POCO。configuration.md §8 の設定スキーマ一覧のうち、
-/// 現時点で実在する項目（受信・UI・永続化の一部・スプール）のみをモデル化する
-/// （additive-only の起点。§8 の他区分——流量制御・保持期間・通知——は当該機能の
-/// 実装時に追加する）。
+/// 現時点で実在する項目（受信・流量制御・UI・永続化の一部・スプール・保持期間）のみを
+/// モデル化する（additive-only の起点。§8 の他区分——通知——は当該機能の実装時に追加する）。
 /// </summary>
 /// <remarks>
 /// 本クラスは「ファイルに書かれていた生の値」を保持する検証前の中間表現である。
@@ -51,6 +50,9 @@ public sealed class YaguraConfigurationOptions
 
         /// <summary>RFC 3164 TIMESTAMP 解釈の設定（Issue #134・#135）。</summary>
         public Rfc3164Options? Rfc3164 { get; set; }
+
+        /// <summary>§8「流量制御」区分（ADR-0002 決定 2。Issue #260）。</summary>
+        public FlowControlOptions? FlowControl { get; set; }
 
         public sealed class UdpOptions
         {
@@ -98,6 +100,31 @@ public sealed class YaguraConfigurationOptions
             /// と同型——参照方式を共有するが設定キーは独立させる。security.md §6）。
             /// </summary>
             public string? CertificateThumbprint { get; set; }
+        }
+
+        public sealed class FlowControlOptions
+        {
+            /// <summary>
+            /// 送信元単位の流量制御の有効/無効（既定 <c>true</c>。opt-out。ADR-0002 決定 2
+            /// 「送信元単位の流量制御（既定有効）」）。真偽値として不正な値は §1「既定値で継続」
+            /// ——既定（有効）へフォールバックし警告する（<c>Spool:Enabled</c> と同じ扱い）。
+            /// </summary>
+            public string? Enabled { get; set; }
+
+            /// <summary>
+            /// 送信元 1 つあたりの持続速度（件/秒）。既定は
+            /// <see cref="Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultMessagesPerSecond"/>
+            /// （M-4 実測確定待ちの仮値——「通常運用で発火しない安全側」architecture.md §3.3）。
+            /// 不正値は §1「既定値で継続」。
+            /// </summary>
+            public string? MessagesPerSecond { get; set; }
+
+            /// <summary>
+            /// 送信元 1 つあたりのバーストサイズ（token bucket の容量。件）。既定は
+            /// <see cref="Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultBurstSize"/>
+            /// （M-4 実測確定待ちの仮値）。不正値は §1「既定値で継続」。
+            /// </summary>
+            public string? BurstSize { get; set; }
         }
 
         public sealed class Rfc3164Options
