@@ -30,6 +30,7 @@
 | [0012](0012-admin-https-cert-ui.md) | 管理リモート HTTPS の証明書選択の UI 設定化 | accepted |
 | [0013](0013-admin-winauth-session.md) | 管理 UI 認証の共存セッションモデル — 認証成立後の単一 Cookie セッションと Windows 認可の失効反映（ADR-0010 決定 3 の共存セッション部分の supersession。Issue #252） | accepted |
 | [0014](0014-code-signing.md) | リリース成果物のコード署名 — Sectigo + Google Cloud KMS による Authenticode 署名（Yagura・ODV 共用。ADR-0006 基準 5・ADR-0009 委任事項 8・Issue #264 を閉じる） | proposed（決定 1 裁定済み。本文承認待ち） |
+| [0015](0015-gmsa-service-account.md) | AD 環境向け gMSA によるサービス実行（opt-in。ADR-0004 決定 4 の予告・ADR-0006 基準 1・Issue #263） | proposed |
 
 ## 起案予定
 
