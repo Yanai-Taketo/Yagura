@@ -57,6 +57,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.ViewerAuthorizationDenied => "Windows 認証成功後に閲覧/管理グループ非所属でアクセスを拒否",
         AuditEventKind.AuditRetentionApplied => "保持期間を超過した監査記録ファイルを削除",
         AuditEventKind.ConfigurationReloaded => "設定を再読み込み",
+        AuditEventKind.InstallationRecordTranscribed => "インストール記録を転記",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }
