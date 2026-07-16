@@ -290,14 +290,206 @@ jobs:
           path: e2e-results-x64/
           if-no-files-found: warn
 
+  # ADR-0014 決定3: 未署名で機能検証(build + smoke)を通した後、GitHub Environment の承認ゲートを
+  # 挟んで署名する。deep signing(自前アセンブリのみ)→ 署名済み publish 出力から MSI を再ビルド →
+  # MSI を署名し、Subject・タイムスタンプまで検証する(Invoke-YaguraSign.ps1)。
+  #
+  # 【重要】このジョブは vars.YAGURA_SIGNING == 'enabled' のときだけ動く。証明書チェーン
+  # (installer/sign/codesign-chain.pem)・WIF・リポジトリ変数・Environment が揃うまで未設定のままにし、
+  # 現行の未署名リリース経路を壊さない。有効化前の通し検証手順は installer/sign/README.md 参照。
+  # 署名は arch 非依存のため windows-latest で両アーキを署名する(arm64 MSI はクロス publish)。
+  sign:
+    needs: [build, smoke-arm64, smoke-x64]
+    if: |
+      vars.YAGURA_SIGNING == 'enabled' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true'))
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [x64, arm64]
+    runs-on: windows-latest
+    # 承認ゲート(決定3): required reviewers = オーナー を設定した Environment。
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write  # WIF の OIDC トークン発行に必要
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Setup Java (jsign 実行用)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # 供給網保護(決定3): jsign を版固定 + SHA256 照合してから使う。
+      - name: Download and verify jsign 7.5
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri 'https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar' -OutFile jsign.jar
+          $hash = (Get-FileHash jsign.jar -Algorithm SHA256).Hash.ToLower()
+          $expected = '602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c'
+          if ($hash -ne $expected) { throw "jsign SHA256 不一致: got=$hash expected=$expected" }
+          Write-Host 'jsign 7.5 SHA256 OK'
+
+      # WIF(決定1・委任3): 長期秘密を置かず、短命アクセストークンを取得する。auth アクションは
+      # SHA ピン(v3.0.0)。
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SIGNER_SA }}
+          token_format: access_token
+
+      - name: Publish Yagura.Host (${{ matrix.arch }})
+        run: dotnet publish src/Yagura.Host/Yagura.Host.csproj -c Release -r ${{ matrix.arch == 'x64' && 'win-x64' || 'win-arm64' }} --self-contained true -o ${{ github.workspace }}/publish/${{ matrix.arch }}
+
+      # deep signing(決定2): 自前の Yagura.Host.exe と Yagura.*.dll のみ署名する。
+      # 上流(.NET ランタイム・第三者 DLL)は署名しない。
+      - name: Sign own assemblies (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $pub = "${{ github.workspace }}/publish/${{ matrix.arch }}"
+          $files = @()
+          $files += (Get-ChildItem -LiteralPath $pub -Recurse -Filter 'Yagura.Host.exe').FullName
+          $files += (Get-ChildItem -LiteralPath $pub -Recurse -Filter 'Yagura.*.dll').FullName
+          ./installer/sign/Invoke-YaguraSign.ps1 -JsignJar jsign.jar `
+            -KeyRingResource '${{ vars.GCP_KEYRING }}' -KeyAlias '${{ vars.GCP_KEY_ALIAS }}' `
+            -CertFile installer/sign/codesign-chain.pem `
+            -AccessToken '${{ steps.auth.outputs.access_token }}' `
+            -ExpectedSubject '${{ vars.SIGNER_SUBJECT }}' -Files $files
+
+      # 署名済み publish 出力から MSI を焼く(SkipYaguraHostPublish で再 publish を抑止)。
+      - name: Build MSI from signed output (${{ matrix.arch }})
+        run: dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=${{ matrix.arch }} -p:SkipYaguraHostPublish=true -p:YaguraPublishDir=${{ github.workspace }}/publish/${{ matrix.arch }}
+
+      - name: Sign MSI + package (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ needs.build.outputs.version }}'
+          $arch = '${{ matrix.arch }}'
+          $srcMsi = "installer/bin/Release/ja-JP/Yagura-$arch.msi"
+          if (-not (Test-Path $srcMsi)) { throw "MSI not found: $srcMsi" }
+          ./installer/sign/Invoke-YaguraSign.ps1 -JsignJar jsign.jar `
+            -KeyRingResource '${{ vars.GCP_KEYRING }}' -KeyAlias '${{ vars.GCP_KEY_ALIAS }}' `
+            -CertFile installer/sign/codesign-chain.pem `
+            -AccessToken '${{ steps.auth.outputs.access_token }}' `
+            -ExpectedSubject '${{ vars.SIGNER_SUBJECT }}' -Files @($srcMsi)
+
+          $destDir = 'release-out'
+          New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+          $destName = "Yagura-$version-$arch.msi"
+          $destPath = Join-Path $destDir $destName
+          Copy-Item -Path $srcMsi -Destination $destPath
+          # SHA256 は必ず署名済み MSI に対して算出する(決定3)。
+          $hash = (Get-FileHash -Path $destPath -Algorithm SHA256).Hash
+          [System.IO.File]::WriteAllText("$destPath.sha256", "$hash  $destName`n", (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "signed artifact=$destName sha256=$hash"
+
+      - name: Upload signed artifact (${{ matrix.arch }})
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-msi-signed-${{ matrix.arch }}
+          path: release-out/
+          if-no-files-found: error
+
+  # ADR-0014 決定3: 署名済み MSI そのものに対して Full E2E を再実行する(「テストしたものと
+  # 出荷するものが違う」状態を作らない)。既存の smoke ジョブと同じスクリプト・同じランナー。
+  smoke-signed-x64:
+    needs: sign
+    if: vars.YAGURA_SIGNING == 'enabled'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download signed x64 MSI
+        uses: actions/download-artifact@v6
+        with:
+          name: release-msi-signed-x64
+          path: release-out
+      - name: Locate MSI
+        id: msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path release-out -Filter '*.msi' | Select-Object -First 1
+          if ($null -eq $msi) { throw 'signed x64 MSI not found' }
+          "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Run installer E2E (x64, signed MSI)
+        shell: pwsh
+        run: ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 -MsiPath '${{ steps.msi.outputs.path }}' -OutputDir 'e2e-signed-x64'
+      - name: Upload signed x64 E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-signed-x64-e2e-results
+          path: e2e-signed-x64/
+          if-no-files-found: warn
+
+  smoke-signed-arm64:
+    needs: sign
+    if: vars.YAGURA_SIGNING == 'enabled'
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download signed ARM64 MSI
+        uses: actions/download-artifact@v6
+        with:
+          name: release-msi-signed-arm64
+          path: release-out
+      - name: Locate MSI
+        id: msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path release-out -Filter '*.msi' | Select-Object -First 1
+          if ($null -eq $msi) { throw 'signed ARM64 MSI not found' }
+          "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Run installer E2E (ARM64, signed MSI)
+        shell: pwsh
+        run: ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 -MsiPath '${{ steps.msi.outputs.path }}' -OutputDir 'e2e-signed-arm64'
+      - name: Upload signed ARM64 E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-signed-arm64-e2e-results
+          path: e2e-signed-arm64/
+          if-no-files-found: warn
+
   # GitHub Release の作成。タグ push では常に公開する。workflow_dispatch では
   # publish_release=true の場合のみ(既定 false = ビルド・スモークの動作確認のみで実リリースは
   # 切らない)。
+  #
+  # ADR-0014 決定3: 署名有効時(vars.YAGURA_SIGNING == 'enabled')は署名済み artifact を公開し、
+  # 揃っていなければ fail-closed(未署名を公開しない)。署名無効時は従来どおり未署名を公開する。
+  # sign / smoke-signed-* が skip されても create-release は走るよう if で明示的に許容する。
   create-release:
-    needs: [build, smoke-arm64, smoke-x64]
+    needs: [build, smoke-arm64, smoke-x64, sign, smoke-signed-x64, smoke-signed-arm64]
     if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true')
+      always() &&
+      needs.build.result == 'success' &&
+      needs.smoke-arm64.result == 'success' &&
+      needs.smoke-x64.result == 'success' &&
+      (needs.sign.result == 'success' || needs.sign.result == 'skipped') &&
+      (needs.smoke-signed-x64.result == 'success' || needs.smoke-signed-x64.result == 'skipped') &&
+      (needs.smoke-signed-arm64.result == 'success' || needs.smoke-signed-arm64.result == 'skipped') &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true'))
     runs-on: windows-latest
     # GitHub Release の作成・資産アップロードに必要な書込権限は本ジョブのみに付与する
     # (build/smoke 系ジョブは read で足りる。最小権限の原則)。
@@ -308,16 +500,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download all release artifacts
+      # 署名有効時は署名済み(release-msi-signed-*)を、無効時は未署名(release-msi-*)を取得する。
+      # ※ release-msi-* は署名済みにも前方一致するため、有効時は必ず signed パターンに限定する。
+      - name: Download release artifacts
         uses: actions/download-artifact@v6
         with:
-          pattern: release-msi-*
+          pattern: ${{ vars.YAGURA_SIGNING == 'enabled' && 'release-msi-signed-*' || 'release-msi-*' }}
           path: release-out
           merge-multiple: true
 
       - name: List artifacts
         shell: pwsh
         run: Get-ChildItem -Path release-out -Recurse | Format-Table FullName, Length
+
+      # 決定3(fail-closed): 署名有効時は、署名済み MSI が全アーキ揃い、かつ公開直前に
+      # Authenticode 有効・署名者 Subject 一致であることを確認する。1 つでも欠ければ公開しない。
+      - name: Verify signed artifacts (fail-closed)
+        if: vars.YAGURA_SIGNING == 'enabled'
+        shell: pwsh
+        env:
+          SIGNER_SUBJECT: ${{ vars.SIGNER_SUBJECT }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $msis = @(Get-ChildItem -Path release-out -Filter '*.msi')
+          if ($msis.Count -lt 2) {
+            throw "署名済み MSI が全アーキ揃っていない($($msis.Count)/2)。未署名は公開しない(決定3)"
+          }
+          foreach ($m in $msis) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $m.FullName
+            if ($sig.Status -ne 'Valid') { throw "$($m.Name) の署名が Valid でない: $($sig.Status)" }
+            if ($sig.SignerCertificate.Subject -notlike "*$($env:SIGNER_SUBJECT)*") {
+              throw "$($m.Name) の署名者 Subject 不一致: $($sig.SignerCertificate.Subject)"
+            }
+            if ($null -eq $sig.TimeStamperCertificate) { throw "$($m.Name) にタイムスタンプが無い(決定9)" }
+          }
+          Write-Host "OK: 署名済み MSI $($msis.Count) 件の署名・Subject・タイムスタンプを確認"
 
       # ADR-0009 決定2・決定6 Phase1 完了条件③: Release Notes に検証水準の非対称性の定型文言
       # (x64=対応/ARM64=試験的の要約 + ADR-0009 へのリンク)を、最初の ARM64 MSI 公開より前に
@@ -326,8 +544,27 @@ jobs:
       - name: Compose release notes
         id: notes
         shell: pwsh
+        env:
+          YAGURA_SIGNING: ${{ vars.YAGURA_SIGNING }}
+          SIGNER_SUBJECT: ${{ vars.SIGNER_SUBJECT }}
         run: |
           $version = '${{ needs.build.outputs.version }}'
+          # 署名有効時: 署名の事実と検証手順(決定5)を定型で載せる。
+          $signingNote = ''
+          if ($env:YAGURA_SIGNING -eq 'enabled') {
+            $signingNote = @"
+
+          ## コード署名
+
+          この MSI は Authenticode コード署名(タイムスタンプ付き)されています。発行元(署名者)が
+          「$($env:SIGNER_SUBJECT)」であることを確認してから実行してください。
+
+          - GUI: MSI を右クリック → プロパティ → 「デジタル署名」タブ → 署名者を確認
+          - PowerShell: ``Get-AuthenticodeSignature <ファイル>`` の Status が ``Valid`` で、署名者に「$($env:SIGNER_SUBJECT)」が含まれること
+          - 署名の仕組み・ポリシーは [コード署名ポリシー](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/code-signing-policy.md) を参照
+
+          "@
+          }
           $notes = @"
           ## アーキテクチャ対応 (ADR-0009)
 
@@ -350,6 +587,7 @@ jobs:
           | ``Yagura-$version-arm64.msi`` | ARM64(試験的) |
 
           各 ``.msi.sha256`` はチェックサム検証用です。
+          $signingNote
           "@
           $notesPath = "$env:RUNNER_TEMP/release-notes.md"
           [System.IO.File]::WriteAllText($notesPath, $notes, (New-Object System.Text.UTF8Encoding($false)))
@@ -371,3 +609,37 @@ jobs:
           } else {
             gh release create $tag @files --title "Yagura $tag" --notes-file $notesPath
           }
+
+      # ADR-0014 決定3(公開後検証): SHA256 移設漏れ・公開事故を検知するため、公開された資産を
+      # 取り直して署名・Subject・.sha256 を突合し、証明書の thumbprint を証跡として記録する。
+      # 署名有効時のみ。失敗すれば公開直後に気づける(既に公開済みでもアラートになる)。
+      - name: Post-publish verification
+        if: vars.YAGURA_SIGNING == 'enabled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNER_SUBJECT: ${{ vars.SIGNER_SUBJECT }}
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $tag = "v${{ needs.build.outputs.version }}"
+          $dir = "verify-published"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          gh release download $tag --dir $dir --pattern '*.msi' --pattern '*.sha256' --clobber
+          $msis = @(Get-ChildItem -Path $dir -Filter '*.msi')
+          if ($msis.Count -lt 2) { throw "公開資産の MSI が揃っていない($($msis.Count)/2)" }
+          foreach ($m in $msis) {
+            # 署名検証
+            $sig = Get-AuthenticodeSignature -LiteralPath $m.FullName
+            if ($sig.Status -ne 'Valid') { throw "$($m.Name) 公開資産の署名が Valid でない: $($sig.Status)" }
+            if ($sig.SignerCertificate.Subject -notlike "*$($env:SIGNER_SUBJECT)*") { throw "$($m.Name) Subject 不一致" }
+            # .sha256 突合
+            $shaFile = "$($m.FullName).sha256"
+            if (-not (Test-Path $shaFile)) { throw "$($m.Name).sha256 が公開されていない" }
+            $expected = ((Get-Content $shaFile -Raw) -split '\s+')[0]
+            $actual = (Get-FileHash -Path $m.FullName -Algorithm SHA256).Hash
+            if ($actual -ne $expected) { throw "$($m.Name) の SHA256 不一致: 公開.sha256=$expected 実体=$actual" }
+            # 証跡: どのリリースがどの証明書で署名されたか(遡及失効時の影響範囲告知に要る。決定8)
+            Write-Host "OK $($m.Name): Subject='$($sig.SignerCertificate.Subject)' Thumbprint=$($sig.SignerCertificate.Thumbprint) NotAfter=$($sig.SignerCertificate.NotAfter)"
+          }
+          Write-Host "公開後検証 OK"
