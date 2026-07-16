@@ -1152,4 +1152,51 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         var warning = Assert.Single(result.Warnings);
         Assert.Equal("Ingestion:FlowControl:BurstSize", warning.Key);
     }
+
+    // ------------------------------------------------------------------
+    // 監査記録の保持期間（SEC-2。Issue #261。§1「既定値で継続」——不正値は「削除しない」へ）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_AuditRetentionDaysUnset_DefaultsTo365()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        // SEC-2 確定値（2026-07-05 オーナー決定）: 既定 365 日。
+        Assert.Equal(365, result.Configuration.AuditRetentionDays);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Load_AuditRetentionDaysValid_UsesFileValue()
+    {
+        WriteConfigurationFile("""{ "Audit": { "RetentionDays": "730" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal(730, result.Configuration.AuditRetentionDays);
+        Assert.Empty(result.Warnings);
+        Assert.Empty(result.UnknownKeys);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("one-year")]
+    public void Load_AuditRetentionDaysInvalid_FallsBackToNoDeletionWithWarning(string invalidValue)
+    {
+        // 不正値は既定 365 日へ読み替えず「削除しない」へ（意図せぬ自動削除で証跡を失う事故を
+        // 避ける安全側——Retention:Days と同じ判断）。
+        WriteConfigurationFile($$"""{ "Audit": { "RetentionDays": "{{invalidValue}}" } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Null(result.Configuration.AuditRetentionDays);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Audit:RetentionDays", warning.Key);
+    }
 }

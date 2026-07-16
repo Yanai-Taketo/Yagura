@@ -98,6 +98,10 @@ public static class ConfigurationKeyMetadata
             // ライブ再読込(§3)配線時に目標へ揃える)。
             ["Retention:Days"] = ConfigurationReloadEffect.Immediate,
             ["Retention:ExecutionTimeOfDay"] = ConfigurationReloadEffect.Immediate,
+            // 監査記録の保持期間(SEC-2。Issue #261)は Retention:Days と同じ「即時」を目標とする
+            // (ソケットの bind を要さず削除スケジューラの日数のみに影響)。現時点の実効は
+            // スケジューラが起動時にのみ設定を読むため再起動(ライブ再読込 §3 配線時に目標へ揃える)。
+            ["Audit:RetentionDays"] = ConfigurationReloadEffect.Immediate,
             // 逆引きホスト名表示(ADR-0007)は §8 表の宣言どおり「即時」を目標とする(解決サービスが
             // 呼び出しごとに参照する想定でリスナ再構成を要しない)。現時点の実効は他キー同様、
             // 設定読み込みが起動時のみのため再起動(ライブ再読込 §3 の配線時に目標へ揃える)。

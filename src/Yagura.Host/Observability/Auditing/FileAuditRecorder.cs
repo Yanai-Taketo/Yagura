@@ -29,6 +29,18 @@ namespace Yagura.Host.Observability.Auditing;
 /// （書き込み頻度がスプールより遥かに低く、パース性能上の制約が緩い）。
 /// </para>
 /// <para>
+/// <b>日次ローテーション（SEC-2/SEC-3。Issue #261）</b>: 追記先は事象発生日（UTC）ごとの
+/// ファイル <c>audit-yyyyMMdd.jsonl</c>（<see cref="GetFileNameFor"/>）。単一ファイル
+/// （<see cref="LegacyFileName"/>）への無制限追記をやめ、日付でファイルを分割することで、
+/// ①保持期間超過分の削除が「期限切れファイルの削除」だけで済む（既存内容の書き換え・切り詰めが
+/// 一切不要——SEC-3 の追記専用 ACE 構成と両立する。サイズローテーションの rename 方式は
+/// 既存ファイルへの DELETE 権限を要するため採らない）②削除の単位が日単位になり、保持期間
+/// （日数指定。SEC-2）の意味と一致する。ローテーション自体はファイル名の切り替えのみであり
+/// 事象として記録しない（削除は <see cref="AuditRetentionScheduler"/> が 2015 として記録する）。
+/// 旧来の単一ファイルが残る環境では、そのファイルは追記されなくなり、最終書き込みから保持期間が
+/// 経過した時点で削除対象になる（<see cref="AuditRetentionScheduler"/> の削除判定参照）。
+/// </para>
+/// <para>
 /// <b>多段の失敗処理（security.md §4.2 の最小実装）</b>: (1) アプリ記録ファイルへの追記を試みる。
 /// (2) 成功・失敗いずれの場合も Windows イベントログへ 3000 番台の警告として書き出す
 /// （<see cref="ILogger"/> → <c>EventLog</c> プロバイダの既存配線。<c>EventId</c> を明示指定する）。
@@ -48,12 +60,22 @@ public sealed class FileAuditRecorder : IAuditRecorder
     /// <summary>データルート配下の監査記録ディレクトリ名。</summary>
     public const string DirectoryName = "audit";
 
-    /// <summary>監査記録ファイル名。</summary>
-    public const string FileName = "audit.jsonl";
+    /// <summary>
+    /// 日次ローテーション導入（Issue #261）前の単一ファイル名。新規の追記先には使わない
+    /// （既存環境に残るファイルの識別・削除判定用に保持する。クラス remarks 参照）。
+    /// </summary>
+    public const string LegacyFileName = "audit.jsonl";
+
+    /// <summary>
+    /// 監査記録ファイルの列挙パターン（日次ファイル <c>audit-yyyyMMdd.jsonl</c> と
+    /// 旧単一ファイル <c>audit.jsonl</c> の両方に一致する。<see cref="AuditRetentionScheduler"/>
+    /// の削除対象の列挙に使う）。
+    /// </summary>
+    public const string AuditFileSearchPattern = "audit*.jsonl";
 
     private static readonly JsonSerializerOptions SerializerOptions = new();
 
-    private readonly string _filePath;
+    private readonly string _directoryPath;
     private readonly ILogger _logger;
     private readonly WebGuardMetrics _metrics;
     private readonly object _writeGate = new();
@@ -64,10 +86,18 @@ public sealed class FileAuditRecorder : IAuditRecorder
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(metrics);
 
-        _filePath = Path.Combine(dataRoot, DirectoryName, FileName);
+        _directoryPath = Path.Combine(dataRoot, DirectoryName);
         _logger = logger;
         _metrics = metrics;
     }
+
+    /// <summary>
+    /// 事象発生日（UTC）に対応する日次監査記録ファイル名を返す（<c>audit-yyyyMMdd.jsonl</c>）。
+    /// 日付の基準は事象自体の <see cref="AuditEvent.OccurredAt"/>（書き込み時点の時計ではない）——
+    /// 遅延書き込みでも事象は発生日のファイルへ入り、ファイル名と内容の日付が一致する。
+    /// </summary>
+    public static string GetFileNameFor(DateTimeOffset occurredAt) =>
+        $"audit-{occurredAt.UtcDateTime:yyyyMMdd}.jsonl";
 
     /// <inheritdoc/>
     public Task RecordAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
@@ -97,13 +127,11 @@ public sealed class FileAuditRecorder : IAuditRecorder
 
     private bool TryAppendToFile(AuditEvent auditEvent, EventId eventId)
     {
+        var filePath = Path.Combine(_directoryPath, GetFileNameFor(auditEvent.OccurredAt));
+
         try
         {
-            var directory = Path.GetDirectoryName(_filePath);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
+            Directory.CreateDirectory(_directoryPath);
 
             var line = new AuditFileLine
             {
@@ -128,7 +156,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
             lock (_writeGate)
             {
                 using var stream = new FileStream(
-                    _filePath,
+                    filePath,
                     FileMode.Append,
                     FileAccess.Write,
                     FileShare.Read);
@@ -144,7 +172,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
             _logger.LogWarning(
                 ex,
                 "[audit-file-write-failed] 監査記録ファイル {Path} への書き込みに失敗しました。",
-                _filePath);
+                filePath);
             return false;
         }
     }
@@ -215,6 +243,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.AdminSessionsInvalidated => AuditEventIds.AdminSessionsInvalidated,
         AuditEventKind.ViewerLoginSucceeded => AuditEventIds.ViewerLoginSucceeded,
         AuditEventKind.ViewerAuthorizationDenied => AuditEventIds.ViewerAuthorizationDenied,
+        AuditEventKind.AuditRetentionApplied => AuditEventIds.AuditRetentionApplied,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

@@ -37,6 +37,9 @@ public sealed class YaguraConfigurationOptions
     /// <summary>§8「保持期間」区分（M5-1。database.md §3）。</summary>
     public RetentionOptions? Retention { get; set; }
 
+    /// <summary>§8「監査」区分（SEC-2。security.md §4.2。Issue #261）。</summary>
+    public AuditOptions? Audit { get; set; }
+
     public sealed class IngestionOptions
     {
         /// <summary>UDP 受信リスナの設定。</summary>
@@ -368,6 +371,18 @@ public sealed class YaguraConfigurationOptions
         /// （M-12 実測確定待ちの暫定値）。
         /// </summary>
         public string? QuotaBytes { get; set; }
+    }
+
+    public sealed class AuditOptions
+    {
+        /// <summary>
+        /// 監査記録の保持期間（日数）。JSON キーは <c>Audit:RetentionDays</c>。未設定時の既定は
+        /// **365 日**（SEC-2 確定値。2026-07-05 オーナー決定——ログ本体の既定 30 日より長く、
+        /// 「証跡はログより長く問われる」を満たす）。**不正値のフォールバック先は「削除しない」**
+        /// （既定 365 日へは自動フォールバックしない——<c>Retention:Days</c> と同じ「意図せぬ
+        /// 自動削除で証跡を失う事故を避ける」安全側。configuration.md §8）。
+        /// </summary>
+        public string? RetentionDays { get; set; }
     }
 
     public sealed class RetentionOptions

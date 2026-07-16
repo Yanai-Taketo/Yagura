@@ -96,6 +96,13 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId ViewerLoginSucceeded = new(2014, "ViewerLoginSucceeded");
 
+    /// <summary>
+    /// 監査記録の保持期間削除の実行（security.md §4.2 SEC-2。Issue #261）。証跡の削除自体を
+    /// 証跡に残す——イベントログ併記により、監査ファイル側が消されても削除の事実が残る。
+    /// レベルは情報。
+    /// </summary>
+    public static readonly EventId AuditRetentionApplied = new(2015, "AuditRetentionApplied");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

@@ -128,6 +128,11 @@
 /// 送信元 1 つあたりのバーストサイズ（token bucket の容量。件。検証済み。既定は M-4 実測
 /// 確定待ちの仮値——<c>TokenBucketIngressGate.DefaultBurstSize</c>）。
 /// </param>
+/// <param name="AuditRetentionDays">
+/// 監査記録の保持期間（日数。SEC-2。security.md §4.2。Issue #261）。既定 365 日。
+/// <c>null</c> は「削除しない」（不正値時のフォールバック——<see cref="RetentionDays"/> と同じ
+/// 安全側）。
+/// </param>
 public sealed record ResolvedYaguraConfiguration(
     string DataRoot,
     string UdpBindAddress,
@@ -167,7 +172,8 @@ public sealed record ResolvedYaguraConfiguration(
     string? IngestionTlsCertificateThumbprint,
     bool FlowControlEnabled,
     int FlowControlMessagesPerSecond,
-    int FlowControlBurstSize)
+    int FlowControlBurstSize,
+    int? AuditRetentionDays)
 {
     /// <summary>
     /// <see cref="UdpBindAddress"/> が設定ファイルで明示指定された値か（<c>false</c> = 既定値。

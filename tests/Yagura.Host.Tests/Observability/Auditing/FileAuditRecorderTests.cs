@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging.Testing;
+﻿using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Observability.Auditing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Web.Diagnostics;
@@ -39,13 +39,19 @@ public sealed class FileAuditRecorderTests : IDisposable
         }
     }
 
+    private static readonly DateTimeOffset SampleOccurredAt = new(2026, 7, 5, 12, 0, 0, TimeSpan.Zero);
+
     private static AuditEvent CreateSampleEvent() => new(
-        OccurredAt: new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero),
+        OccurredAt: SampleOccurredAt,
         Kind: AuditEventKind.ViewerListenerAdminRequestRejected,
         RemoteAddress: "203.0.113.5",
         RemotePort: 54321,
         AttemptedPath: "/admin",
         ReachedListenerPort: 8514);
+
+    /// <summary>事象発生日の日次ファイル（Issue #261 の日次ローテーション）のフルパスを組み立てる。</summary>
+    private string AuditFilePathFor(DateTimeOffset occurredAt) =>
+        Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.GetFileNameFor(occurredAt));
 
     [Fact]
     public async Task RecordAsync_WritesLineToAuditFile()
@@ -56,7 +62,7 @@ public sealed class FileAuditRecorderTests : IDisposable
 
         await recorder.RecordAsync(CreateSampleEvent());
 
-        var filePath = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.FileName);
+        var filePath = AuditFilePathFor(SampleOccurredAt);
         Assert.True(File.Exists(filePath), $"監査記録ファイルが作成されていない: {filePath}");
 
         var lines = await File.ReadAllLinesAsync(filePath);
@@ -76,7 +82,7 @@ public sealed class FileAuditRecorderTests : IDisposable
         await recorder.RecordAsync(CreateSampleEvent());
         await recorder.RecordAsync(CreateSampleEvent() with { AttemptedPath = "/admin/users" });
 
-        var filePath = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.FileName);
+        var filePath = AuditFilePathFor(SampleOccurredAt);
         var lines = await File.ReadAllLinesAsync(filePath);
         Assert.Equal(2, lines.Length);
     }
@@ -142,7 +148,7 @@ public sealed class FileAuditRecorderTests : IDisposable
 
         await recorder.RecordAsync(CreateSampleEvent());
 
-        var filePath = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.FileName);
+        var filePath = AuditFilePathFor(SampleOccurredAt);
         var line = Assert.Single(await File.ReadAllLinesAsync(filePath));
         Assert.Contains("\"Kind\":\"ViewerListenerAdminRequestRejected\"", line);
     }
@@ -196,8 +202,9 @@ public sealed class FileAuditRecorderTests : IDisposable
         using var metrics = new WebGuardMetrics();
         var recorder = new FileAuditRecorder(_dataRoot, logger, metrics);
 
+        var occurredAt = new DateTimeOffset(2026, 7, 6, 12, 0, 0, TimeSpan.Zero);
         await recorder.RecordAsync(new AuditEvent(
-            OccurredAt: new DateTimeOffset(2026, 7, 6, 12, 0, 0, TimeSpan.Zero),
+            OccurredAt: occurredAt,
             Kind: AuditEventKind.ConfigurationSaved,
             RemoteAddress: "127.0.0.1",
             RemotePort: null,
@@ -208,10 +215,40 @@ public sealed class FileAuditRecorderTests : IDisposable
         Assert.Equal(AuditEventIds.ConfigurationSaved.Id, record.Id.Id);
         Assert.Contains("Retention:Days", record.Message);
 
-        var filePath = Path.Combine(_dataRoot, FileAuditRecorder.DirectoryName, FileAuditRecorder.FileName);
+        var filePath = AuditFilePathFor(occurredAt);
         var line = Assert.Single(await File.ReadAllLinesAsync(filePath));
         Assert.Contains("ConfigurationSaved", line);
         Assert.Contains("2001", line);
         Assert.Contains("Retention:Days", line);
+    }
+
+    [Fact]
+    public async Task RecordAsync_EventsOnDifferentUtcDays_WriteToSeparateDailyFiles()
+    {
+        // 日次ローテーション（Issue #261）: 事象発生日（UTC）が変わると追記先ファイルが切り替わる。
+        // ファイル名の日付は書き込み時点の時計ではなく事象の OccurredAt に基づく。
+        var logger = new FakeLogger();
+        using var metrics = new WebGuardMetrics();
+        var recorder = new FileAuditRecorder(_dataRoot, logger, metrics);
+
+        var day1 = new DateTimeOffset(2026, 7, 5, 23, 59, 0, TimeSpan.Zero);
+        var day2 = new DateTimeOffset(2026, 7, 6, 0, 1, 0, TimeSpan.Zero);
+        await recorder.RecordAsync(CreateSampleEvent() with { OccurredAt = day1 });
+        await recorder.RecordAsync(CreateSampleEvent() with { OccurredAt = day2 });
+
+        Assert.Equal("audit-20260705.jsonl", FileAuditRecorder.GetFileNameFor(day1));
+        Assert.Equal("audit-20260706.jsonl", FileAuditRecorder.GetFileNameFor(day2));
+        Assert.Single(await File.ReadAllLinesAsync(AuditFilePathFor(day1)));
+        Assert.Single(await File.ReadAllLinesAsync(AuditFilePathFor(day2)));
+    }
+
+    [Fact]
+    public void GetFileNameFor_LocalOffsetTimestamp_UsesUtcDate()
+    {
+        // ファイル名の日付は UTC 基準——ローカルオフセット付きの OccurredAt でも UTC 換算で決まる
+        // （JST 2026-07-06 08:00 = UTC 2026-07-05 23:00 → 07-05 のファイル）。
+        var jstMorning = new DateTimeOffset(2026, 7, 6, 8, 0, 0, TimeSpan.FromHours(9));
+
+        Assert.Equal("audit-20260705.jsonl", FileAuditRecorder.GetFileNameFor(jstMorning));
     }
 }

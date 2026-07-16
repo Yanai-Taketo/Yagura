@@ -118,6 +118,10 @@ internal static class YaguraConfigurationOptionsCloner
                 Days = source.Retention.Days,
                 ExecutionTimeOfDay = source.Retention.ExecutionTimeOfDay,
             },
+            Audit = source.Audit is null ? null : new YaguraConfigurationOptions.AuditOptions
+            {
+                RetentionDays = source.Audit.RetentionDays,
+            },
         };
     }
 }

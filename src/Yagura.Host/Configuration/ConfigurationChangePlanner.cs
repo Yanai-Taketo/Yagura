@@ -82,6 +82,7 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Spool:QuotaBytes", before.Spool?.QuotaBytes, after.Spool?.QuotaBytes);
         CompareKey(changedKeys, "Retention:Days", before.Retention?.Days, after.Retention?.Days);
         CompareKey(changedKeys, "Retention:ExecutionTimeOfDay", before.Retention?.ExecutionTimeOfDay, after.Retention?.ExecutionTimeOfDay);
+        CompareKey(changedKeys, "Audit:RetentionDays", before.Audit?.RetentionDays, after.Audit?.RetentionDays);
 
         var requiredEffect = ConfigurationReloadEffect.Immediate;
         foreach (var key in changedKeys)
