@@ -186,4 +186,14 @@ public enum AuditEventKind
     /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
     /// </summary>
     ViewerAuthorizationDenied,
+
+    /// <summary>
+    /// 監査記録の保持期間削除の実行（security.md §4.2 SEC-2。保持期間 365 日を超過した監査記録
+    /// ファイルの削除。イベント ID 2015。Issue #261）。<c>Detail</c> に削除ファイル数・保持日数・
+    /// cutoff（UTC）・削除したファイル名を記録する——**証跡の削除自体を証跡に残す**（イベントログ
+    /// 併記により、監査ファイル側の記録が消されてもイベントログに削除の事実が残る。ADR-0004
+    /// 決定 7「消去が痕跡を残す」と同じ向き）。システムが定時実行する自動操作のため
+    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// </summary>
+    AuditRetentionApplied,
 }

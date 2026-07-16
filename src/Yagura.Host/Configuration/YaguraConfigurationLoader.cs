@@ -90,6 +90,7 @@ public static class YaguraConfigurationLoader
         "Spool:QuotaBytes",
         "Retention:Days",
         "Retention:ExecutionTimeOfDay",
+        "Audit:RetentionDays",
     };
 
     /// <summary>
@@ -292,6 +293,9 @@ public static class YaguraConfigurationLoader
         var retentionDays = ResolveRetentionDays(options, warnings);
         var retentionExecutionTimeOfDay = ResolveRetentionExecutionTimeOfDay(options, warnings);
 
+        // --- 監査: 保持期間（SEC-2。security.md §4.2。Issue #261） ---
+        var auditRetentionDays = ResolveAuditRetentionDays(options, warnings);
+
         foreach (var warning in warnings)
         {
             logger.LogWarning(
@@ -341,7 +345,8 @@ public static class YaguraConfigurationLoader
             IngestionTlsCertificateThumbprint: ingestionTlsCertificateThumbprint,
             FlowControlEnabled: flowControlEnabled,
             FlowControlMessagesPerSecond: flowControlMessagesPerSecond,
-            FlowControlBurstSize: flowControlBurstSize)
+            FlowControlBurstSize: flowControlBurstSize,
+            AuditRetentionDays: auditRetentionDays)
         {
             // bind アドレスの明示指定フラグ（PR #193 レビュー対応。IPv6 不可の環境での
             // 「既定は IPv4 縮小 / 明示は fail-fast」の分岐の入力——受信段へ引き渡す）。
@@ -1436,6 +1441,38 @@ public static class YaguraConfigurationLoader
             AppliedValue: "(未設定 = 削除しない)",
             Reason: "正の整数（日数）として不正なため、意図しない自動削除の開始を避け「削除しない」を適用" +
                 "（既定 30 日への自動フォールバックはしない——本 Issue の設計判断。詳細は本メソッドの remarks 参照）"));
+
+        return null;
+    }
+
+    /// <summary>
+    /// 監査記録の保持期間（日数）を解決する（SEC-2。security.md §4.2。Issue #261）。
+    /// 未設定は既定 <b>365 日</b>（SEC-2 確定値）、不正値は <c>Retention:Days</c> と同じ
+    /// 「削除しない」へフォールバックし警告する（意図せぬ自動削除で証跡を失う事故を避ける安全側。
+    /// 監査記録は証跡であり、不正値を既定 365 日へ読み替えて削除を始めるより、削除を止めて
+    /// 警告するほうが失うものが小さい）。
+    /// </summary>
+    private static int? ResolveAuditRetentionDays(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        const int defaultRetentionDays = 365;
+
+        var raw = options.Audit?.RetentionDays;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultRetentionDays;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) && days > 0)
+        {
+            return days;
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Audit:RetentionDays",
+            InvalidValue: raw,
+            AppliedValue: "(未設定 = 削除しない)",
+            Reason: "正の整数（日数）として不正なため、意図しない自動削除の開始を避け「削除しない」を適用" +
+                "（既定 365 日への自動フォールバックはしない——Retention:Days と同じ安全側の判断）"));
 
         return null;
     }

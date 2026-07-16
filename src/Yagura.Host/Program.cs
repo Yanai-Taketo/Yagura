@@ -579,6 +579,20 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Observability.Auditing"),
             sp.GetRequiredService<WebGuardMetrics>()));
 
+        // 監査記録の保持期間削除（SEC-2 = 既定 365 日。security.md §4.2。Issue #261）:
+        // 起動時 1 回 + ログ本体の保持期間削除と同じ実行時刻（Retention:ExecutionTimeOfDay）で
+        // 日次実行する。独立した IHostedService として登録する——受信パイプラインと順序依存が
+        // なく（対象はホスト管轄のローカルファイルのみ。ILogStore・書き込みゲートに触れない）、
+        // IngestionHostedService の起動順序制約（受信先行 §1.2）に関与させない。
+        builder.Services.AddSingleton(sp => new Yagura.Host.Observability.Auditing.AuditRetentionScheduler(
+            dataRoot,
+            resolvedConfiguration.AuditRetentionDays,
+            resolvedConfiguration.RetentionExecutionTimeOfDay,
+            sp.GetRequiredService<IAuditRecorder>(),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()));
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>());
+
         // 監査の 2000 番台（管理操作）はレベル「情報」でイベントログへ併記する（security.md §4.3）。
         // EventLog プロバイダの既定フィルタは Warning 以上のため、監査カテゴリに限り Information
         // まで通す（「ソース Yagura の警告以上を通知」という最小監視構成は 1000/3000 番台の

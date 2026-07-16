@@ -118,11 +118,13 @@ public sealed class ListenerGuardAuditE2ETests : IDisposable
             Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         }
 
-        // security.md §4.1・§4.2: 拒否の監査記録がデータルート配下の audit/audit.jsonl に
-        // 1 行残ることを確認する。プロセス側の非同期書き込み完了を待つため、ファイルの
-        // 出現・内容確認は短時間のポーリングで行う（他 E2E テストの起動待ちと同じ判断）。
-        var auditFilePath = Path.Combine(_dataRoot, "audit", "audit.jsonl");
-        var lines = await PollForAuditLinesAsync(auditFilePath, expectedCount: 1, StartupTimeout);
+        // security.md §4.1・§4.2: 拒否の監査記録がデータルート配下の audit ディレクトリの
+        // 日次ファイル（audit-yyyyMMdd.jsonl。Issue #261 の日次ローテーション）に 1 行残ることを
+        // 確認する。テスト実行が UTC の日付境界をまたいでもよいよう、特定の日付ファイル名では
+        // なくディレクトリ内の全監査ファイルを対象にポーリングする。プロセス側の非同期書き込み
+        // 完了を待つため、ファイルの出現・内容確認は短時間のポーリングで行う。
+        var auditDirectory = Path.Combine(_dataRoot, "audit");
+        var lines = await PollForAuditLinesAsync(auditDirectory, expectedCount: 1, StartupTimeout);
 
         var line = Assert.Single(lines);
         // ロケール非依存の ASCII トークンで照合する(他 E2E テストと同じ理由——リダイレクトされた
@@ -174,19 +176,24 @@ public sealed class ListenerGuardAuditE2ETests : IDisposable
     /// 監査記録ファイルへの書き込みは要求処理完了後の非同期処理であるため、ファイルの出現・
     /// 行数到達をポーリングで待つ。
     /// </summary>
-    private static async Task<string[]> PollForAuditLinesAsync(string filePath, int expectedCount, TimeSpan timeout)
+    private static async Task<string[]> PollForAuditLinesAsync(string auditDirectory, int expectedCount, TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            if (File.Exists(filePath))
+            if (Directory.Exists(auditDirectory))
             {
                 try
                 {
-                    var lines = await File.ReadAllLinesAsync(filePath);
-                    if (lines.Length >= expectedCount)
+                    var lines = new List<string>();
+                    foreach (var filePath in Directory.EnumerateFiles(auditDirectory, "audit*.jsonl"))
                     {
-                        return lines;
+                        lines.AddRange(await File.ReadAllLinesAsync(filePath));
+                    }
+
+                    if (lines.Count >= expectedCount)
+                    {
+                        return lines.ToArray();
                     }
                 }
                 catch (IOException)
@@ -199,6 +206,6 @@ public sealed class ListenerGuardAuditE2ETests : IDisposable
         }
 
         throw new TimeoutException(
-            $"監査記録ファイル {filePath} に {expectedCount} 行到達するまでの待機がタイムアウトした（{timeout}）。");
+            $"監査記録ディレクトリ {auditDirectory} の監査ファイル群に {expectedCount} 行到達するまでの待機がタイムアウトした（{timeout}）。");
     }
 }

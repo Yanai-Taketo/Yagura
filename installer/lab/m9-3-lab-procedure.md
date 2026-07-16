@@ -362,7 +362,8 @@ try { Invoke-WebRequest -Uri http://localhost:8514/admin -UseBasicParsing } catc
 Start-Sleep -Seconds 3
 Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Yagura'; Id=3001} -MaxEvents 5 |
     Format-List TimeCreated,Id,LevelDisplayName,Message
-Get-Content C:\ProgramData\Yagura\audit\audit.jsonl -Tail 3
+# 監査記録は日次ファイル audit-yyyyMMdd.jsonl(Issue #261 の日次ローテーション)
+Get-Content (Get-ChildItem C:\ProgramData\Yagura\audit\audit*.jsonl | Sort-Object Name | Select-Object -Last 1).FullName -Tail 3
 ```
 
 - 期待結果:
@@ -371,7 +372,7 @@ Get-Content C:\ProgramData\Yagura\audit\audit.jsonl -Tail 3
     本文に `[audit] ViewerListenerAdminRequestRejected: …` と接続元・試行パスが含まれる
     (ソース登録が正しく効いていれば「ソース 'Yagura' からのイベント ID の説明が見つかりません」
     という縮退文言が**混ざらない**——メッセージファイル登録の検証を兼ねる)
-  - データルートの `audit\audit.jsonl` 末尾に同じ事象の JSON 行がある(併記の確認)
+  - データルートの `audit\audit-yyyyMMdd.jsonl`(当日の日次ファイル。Issue #261)末尾に同じ事象の JSON 行がある(併記の確認)
 - 採取してほしい出力: 上記 3 コマンドの出力全文
 
 ```text

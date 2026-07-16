@@ -171,5 +171,6 @@ public sealed class ListenerBindPlanTests
             IngestionTlsCertificateThumbprint: null,
             FlowControlEnabled: true,
             FlowControlMessagesPerSecond: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultMessagesPerSecond,
-            FlowControlBurstSize: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultBurstSize);
+            FlowControlBurstSize: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultBurstSize,
+            AuditRetentionDays: 365);
 }

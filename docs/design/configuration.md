@@ -139,6 +139,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | スプール | 有効/無効（opt-out）・置き場所・上限（M-12） | 即時（置き場所のみサービス再起動） |
 | 永続化 | provider 選択・接続情報（資格情報は暗号化表現 §2）・組み込み DB の置き場所 | provider 切替は database.md §6.1 の切替手順による（備考: ウィザード経由のみ）。置き場所はサービス再起動 |
 | 保持期間 | 日数（DB-1）・実行時間帯 | 即時 |
+| 監査 | 監査記録の保持期間（SEC-2。security.md §4.2。実行時間帯は「保持期間」区分と共有） | 即時 |
 | UI | 閲覧ポート・公開範囲（LAN / localhost）・管理ポート・HTTPS 証明書参照（opt-in。§6）・管理 UI 認証（opt-in。[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1）・管理リスナのリモートバインド + リモート HTTPS（opt-in。同 Phase 2） | リスナ再構成 |
 | 通知 | イベントログ警告の有効範囲（architecture.md §4.6） | 即時 |
 
@@ -178,7 +179,8 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Spool:Directory` | スプール | 再起動（§8 表「置き場所のみサービス再起動」の記載どおり。M4-3） | 既定値で継続（パスとして不正ならデータルート配下の既定へ） |
 | `Spool:QuotaBytes` | スプール | 再起動（同上。目標は即時） | 既定値で継続（正の整数として不正なら既定値 [architecture.md](architecture.md) M-12 の暫定値へ） |
 | `Retention:Days` | 保持期間 | 再起動（目標は即時 = 本表上段「保持期間」区分。M5-1） | 既定値で継続（**未設定時の既定は 30 日**——2026-07-05 オーナー決定。database.md DB-1 確定値。**正の整数として不正な値が指定された場合のフォールバック先は「削除しない」とし、既定 30 日へは自動フォールバックしない**——意図しない自動削除の開始を避ける安全側の判断） |
-| `Retention:ExecutionTimeOfDay` | 保持期間 | 再起動（同上） | 既定値で継続（HH:mm として不正なら既定 03:00 = 暫定値へ） |
+| `Retention:ExecutionTimeOfDay` | 保持期間 | 再起動（同上） | 既定値で継続（HH:mm として不正なら既定 03:00 = 暫定値へ）。**監査記録の保持期間削除（`Audit:RetentionDays`）の実行時刻としても共有される**（security.md §4.2——運用者から見て「保持期間削除の時間帯」を 1 つに保つ。Issue #261） |
+| `Audit:RetentionDays` | 監査 | 再起動（目標は即時 = 本表上段「監査」区分。削除スケジューラが起動時にのみ設定を読むため現時点の実効は再起動。Issue #261） | 既定値で継続（**未設定時の既定は 365 日**——SEC-2 確定値・2026-07-05 オーナー決定。security.md §4.2。**正の整数として不正な値のフォールバック先は「削除しない」とし、既定 365 日へは自動フォールバックしない**——`Retention:Days` と同じ「意図しない自動削除で証跡を失う事故を避ける」安全側の判断） |
 | `Viewer:Authentication:Windows:Enabled` | UI（閲覧 UI 認証。[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 4 決定 7） | 再起動（認証スキーム構成は `WebApplicationBuilder` 構築時に固定。管理認証キーと同じ） | 縮小側で継続（真偽値として不正なら**無効**へ。既定 `false`＝現状維持——認証なし・LAN 公開。`true` で閲覧リスナ（8514）到達に Windows 統合認証 + AD グループ判定を要する） |
 | `Viewer:Authentication:Windows:KerberosOnly` | UI（同上） | 再起動（同上） | 縮小側で継続（既定 `false`。不正値は無効へ）。閲覧リスナ経由の Negotiate にのみ作用（管理側 `Admin:Authentication:Windows:KerberosOnly` と独立——ポート別 opt-in） |
 | `Viewer:Authentication:Windows:ViewerGroups` | UI（「閲覧」役割にマップする AD グループ。SEC-9。Phase 4 決定 7） | 再起動（`Admin:...:AdminGroups` と同じ配列キー扱い） | 配列。各要素はグループ名（`DOMAIN\Group`）または SID。所属者に「閲覧」セッションを発行する。空・未設定＋`Enabled=true` は Windows 経由で誰も閲覧できない（起動時警告）。解決不能な指定は警告してスキップ |
