@@ -139,8 +139,12 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
         var navigation = _ctx.Services.GetRequiredService<NavigationManager>();
         navigation.NavigateTo(navigation.GetUriWithQueryParameter("source", "10.0.0.1"));
 
-        // 新検索のクエリが記録されるまで待つ（新検索の実行自体も非同期のため）。
-        cut.WaitForAssertion(() => Assert.Contains(_store.Queries, q => q.SourceAddress == "10.0.0.1"));
+        // 新検索のクエリが記録されるまで待つ（新検索の実行自体も非同期のため）。タイムアウトは
+        // bUnit 既定（1 秒）ではなく明示的に延長する——CI の遅いランナーで既定値超過による
+        // 偽陽性の失敗が反復したため（PR #296 の run 29538283065。ローカルでは常に 1 秒未満）。
+        cut.WaitForAssertion(
+            () => Assert.Contains(_store.Queries, q => q.SourceAddress == "10.0.0.1"),
+            TimeSpan.FromSeconds(30));
         var newSearchQuery = _store.Queries.Last(q => q.SourceAddress == "10.0.0.1");
         Assert.Null(newSearchQuery.Cursor);
     }
@@ -152,8 +156,11 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
     /// <c>LoadMoreAsync</c> の <c>finally</c> でのみ <c>false</c> に戻るため。
     /// </summary>
     private static void WaitForLoadMoreToSettle(IRenderedComponent<ProviderHost> cut) =>
-        cut.WaitForAssertion(() =>
-            Assert.DoesNotContain(UiText.SearchLoadingMoreButton, cut.Markup, StringComparison.Ordinal));
+        // タイムアウトを明示的に延長する（bUnit 既定 1 秒は CI の遅いランナーで不足し、
+        // 偽陽性の失敗が反復した——PR #296 の run 29538283065・2 回連続）。
+        cut.WaitForAssertion(
+            () => Assert.DoesNotContain(UiText.SearchLoadingMoreButton, cut.Markup, StringComparison.Ordinal),
+            TimeSpan.FromSeconds(30));
 
     /// <summary>
     /// <see cref="LogSearch"/> を <c>MudPopoverProvider</c> と同居させて描画する。非空の検索結果を
