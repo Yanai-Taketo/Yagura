@@ -612,6 +612,17 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>());
 
+        // ファイアウォール規則の不一致検出 + インストール記録の転記（CF-2。configuration.md §4.3。
+        // Issue #265）。起動時（app.Build() 後）とリスナ再構成の適用時に照合する。
+        builder.Services.AddSingleton<Yagura.Host.Firewall.IFirewallRuleReader>(sp =>
+            new Yagura.Host.Firewall.WindowsFirewallRuleReader(
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Firewall.WindowsFirewallRuleReader>()));
+        builder.Services.AddSingleton(sp => new Yagura.Host.Firewall.FirewallStartupInspector(
+            dataRoot,
+            sp.GetRequiredService<Yagura.Host.Firewall.IFirewallRuleReader>(),
+            sp.GetRequiredService<IAuditRecorder>(),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Firewall.FirewallStartupInspector>()));
+
         // 設定ライブ再読み込み（configuration.md §3。CF-4 層1。Issue #262）。即時反映の口
         // （ImmediateConfigurationApplier）はここ（合成ルート）で各コンポーネントの更新メソッドを
         // 束ねる。ここに登録されていないキーの変更は「再起動待ち」として明示される（1020）。
@@ -680,6 +691,11 @@ public static class Program
                                 BindAddressIsExplicit = newConfiguration.TcpBindAddressIsExplicit,
                                 Port = newConfiguration.TcpPort,
                             }).ConfigureAwait(false);
+
+                        // ポート変更の適用時の規則突合（CF-2。configuration.md §4.3「起動時と
+                        // ポート変更の適用時に検出して警告する」。Issue #265）。
+                        sp.GetRequiredService<Yagura.Host.Firewall.FirewallStartupInspector>()
+                            .CheckConsistency(newConfiguration);
 
                         // 瞬断区間の記録（configuration.md §3——「瞬断の観測は §3 の区間記録で行う」）。
                         var writeGate = sp.GetRequiredService<LogStoreWriteGate>();
@@ -846,6 +862,15 @@ public static class Program
         builder.Services.AddYaguraWebViewer();
 
         var app = builder.Build();
+
+        // CF-2（Issue #265）: 起動時のファイアウォール規則突合 + インストール記録の初回転記。
+        // いずれも失敗が起動を妨げない（Inspector 内で完結）。転記は非同期で開始し完了を待たない
+        // （監査レール——FileAuditRecorder——は例外を投げない契約）。
+        {
+            var firewallInspector = app.Services.GetRequiredService<Yagura.Host.Firewall.FirewallStartupInspector>();
+            firewallInspector.CheckConsistency(resolvedConfiguration);
+            _ = firewallInspector.TranscribeInstallationRecordOnceAsync(CancellationToken.None);
+        }
 
         // bind 再試行（CF-6）による受信再開の記録（Issue #291）: 開けなかった区間を受信断の
         // システムイベント（downtime.listener-bind-retry）として残す。書き込みは他経路と同じ

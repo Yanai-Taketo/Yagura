@@ -109,6 +109,12 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId ConfigurationReloaded = new(2016, "ConfigurationReloaded");
 
+    /// <summary>
+    /// インストール記録（firewall-rules.ini）の初回起動時のイベントログ転記
+    /// （configuration.md §4.3。Issue #265）。レベルは情報。
+    /// </summary>
+    public static readonly EventId InstallationRecordTranscribed = new(2017, "InstallationRecordTranscribed");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

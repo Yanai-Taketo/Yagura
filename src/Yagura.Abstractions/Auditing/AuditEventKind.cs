@@ -206,4 +206,13 @@ public enum AuditEventKind
     /// ファイル書き込み）とは別事象——本種別は「実行中プロセスへの反映」を表す。
     /// </summary>
     ConfigurationReloaded,
+
+    /// <summary>
+    /// 管理操作: インストール記録（ファイアウォール規則一覧・オプトアウト選択——
+    /// <c>firewall-rules.ini</c>）の初回起動時のイベントログ転記（configuration.md §4.3・
+    /// security.md §4.1「インストーラ由来の記録の転記」。イベント ID 2017。Issue #265）。
+    /// 「なぜこのサーバには規則がないのか」に証跡で答える。インストーラの実行記録の転記のため
+    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// </summary>
+    InstallationRecordTranscribed,
 }

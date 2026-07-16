@@ -102,4 +102,14 @@ public static class ConfigurationEventIds
     /// </summary>
     public static readonly EventId ListenerBindFailedDegradedStartup =
         new(1022, "ListenerBindFailedDegradedStartup");
+
+    /// <summary>
+    /// リスナの実ポートと Yagura 名前空間のファイアウォール規則の不一致（CF-2。
+    /// configuration.md §4.3。Issue #265）。起動時とリスナ再構成の適用時に検出する。
+    /// ファイアウォールでの drop はアプリのカウンタにも OS のソケット統計にも現れない
+    /// 観測の完全な死角であり、「ポートを変えたのに届かない」を無音で固定化させないための警告。
+    /// レベルは警告。
+    /// </summary>
+    public static readonly EventId FirewallRuleMismatch =
+        new(1023, "FirewallRuleMismatch");
 }
