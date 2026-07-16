@@ -58,6 +58,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.AuditRetentionApplied => "保持期間を超過した監査記録ファイルを削除",
         AuditEventKind.ConfigurationReloaded => "設定を再読み込み",
         AuditEventKind.InstallationRecordTranscribed => "インストール記録を転記",
+        AuditEventKind.LogMigrationExecuted => "蓄積ログを移行",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

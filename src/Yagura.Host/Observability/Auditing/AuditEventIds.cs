@@ -115,6 +115,9 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId InstallationRecordTranscribed = new(2017, "InstallationRecordTranscribed");
 
+    /// <summary>蓄積ログ移行の実行（database.md §6.2。Issue #266）。レベルは情報。</summary>
+    public static readonly EventId LogMigrationExecuted = new(2018, "LogMigrationExecuted");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

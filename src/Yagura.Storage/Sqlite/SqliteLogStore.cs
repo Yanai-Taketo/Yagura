@@ -28,7 +28,7 @@ namespace Yagura.Storage.Sqlite;
 /// 「読み書きが互いをブロックしない」性質が ADO.NET 層でも成立する。
 /// </para>
 /// </remarks>
-public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
+public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（database.md §1.2 契約 1「スキーマ管理」）。
@@ -585,6 +585,110 @@ public sealed class SqliteLogStore : ILogStore, IAsyncDisposable
         {
             throw ex.ToLogStoreWriteException("詳細表示の個別取得");
         }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 一括読み出し（IBulkLogReader。database.md §1.2 予約 (a) の実体化。Issue #266）。
+    /// 内部はカーソル（キーセット）の昇順バッチ反復——DB-11（QueryAsync の降順カーソル）と
+    /// 同じ複合キー（ReceivedAt, Id）を逆向きに辿る。上限・タイムアウトの必須化は予約 (a) の
+    /// 条件どおり適用しない（呼び出し経路は管理操作限定）。
+    /// </remarks>
+    public async IAsyncEnumerable<LogRecord> ReadAllAscendingAsync(
+        BulkReadCursor? resumeAfter,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        const int batchSize = 1000;
+        var cursor = resumeAfter;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var batch = new List<LogRecord>(batchSize);
+
+            await using (var connection = new SqliteConnection(_connectionString))
+            {
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                await using var command = connection.CreateCommand();
+                var whereSql = cursor is null
+                    ? string.Empty
+                    : "WHERE (ReceivedAt > $cursorReceivedAt OR (ReceivedAt = $cursorReceivedAt AND Id > $cursorId))";
+                command.CommandText =
+                    $"""
+                    SELECT Id, ReceivedAt, SourceAddress, SourcePort, Protocol, ParseStatus,
+                           DeviceTimestamp, Facility, Severity, Hostname, AppName, ProcId, MsgId,
+                           StructuredData, Message, Raw
+                    FROM LogRecords
+                    {whereSql}
+                    ORDER BY ReceivedAt ASC, Id ASC
+                    LIMIT {batchSize};
+                    """;
+                if (cursor is not null)
+                {
+                    command.Parameters.Add("$cursorReceivedAt", SqliteType.Text).Value =
+                        cursor.ReceivedAt.UtcDateTime.ToString("O");
+                    command.Parameters.Add("$cursorId", SqliteType.Integer).Value = cursor.Id;
+                }
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    batch.Add(new LogRecord(
+                        Id: reader.GetInt64(0),
+                        ReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
+                        SourceAddress: reader.GetString(2),
+                        SourcePort: reader.GetInt32(3),
+                        Protocol: (Protocol)reader.GetInt32(4),
+                        ParseStatus: (ParseStatus)reader.GetInt32(5),
+                        DeviceTimestamp: reader.IsDBNull(6) ? null : ParseUtcTimestamp(reader.GetString(6)),
+                        Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                        Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                        Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
+                        AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
+                        ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
+                        MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
+                        StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
+                        Message: reader.IsDBNull(14) ? null : reader.GetString(14),
+                        Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15)));
+                }
+            }
+
+            foreach (var record in batch)
+            {
+                yield return record;
+            }
+
+            if (batch.Count < batchSize)
+            {
+                yield break;
+            }
+
+            var last = batch[^1];
+            cursor = new BulkReadCursor(last.ReceivedAt, last.Id!.Value);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<long> CountAsync(DateTimeOffset? toInclusive, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        if (toInclusive is { } to)
+        {
+            command.CommandText = "SELECT COUNT(*) FROM LogRecords WHERE ReceivedAt <= $to;";
+            command.Parameters.Add("$to", SqliteType.Text).Value = to.UtcDateTime.ToString("O");
+        }
+        else
+        {
+            command.CommandText = "SELECT COUNT(*) FROM LogRecords;";
+        }
+
+        var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     /// <inheritdoc />

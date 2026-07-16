@@ -5,6 +5,7 @@
 @using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject IPromotionWizardService PromotionWizard
+@inject ILogMigrationService LogMigration
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 
@@ -199,6 +200,57 @@ else
     </MudPaper>
 }
 
+@* 蓄積ログの移行（database.md §6.2。DB-5。Issue #266）: 昇格 + 再起動の後にだけ現れる。
+   移行中も受信は継続する（書き込みゲートのバッチ単位直列化——LogMigrationService 参照）。 *@
+@if (_migrationStatus is { } migrationStatus && migrationStatus.Availability != LogMigrationAvailability.NotPromoted)
+{
+    <MudPaper Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.MigrationSectionTitle</MudText>
+
+        @if (migrationStatus.Availability == LogMigrationAvailability.Completed)
+        {
+            <MudAlert Severity="Severity.Success" Class="mt-2">@UiText.MigrationAlreadyCompleted</MudAlert>
+        }
+        else if (migrationStatus.Availability == LogMigrationAvailability.Ready)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.MigrationDescription</MudText>
+            <MudText Typo="Typo.body2" Class="mt-1">
+                対象: @($"{migrationStatus.SourceRecordCount:N0}") 件
+                @if (migrationStatus.MigratedCount > 0)
+                {
+                    <text>（うち @($"{migrationStatus.MigratedCount:N0}") 件は移行済み——中断からの再開になります）</text>
+                }
+            </MudText>
+
+            @if (_migrationRunning)
+            {
+                <MudProgressLinear Indeterminate="@(_migrationProgress is null)"
+                                   Value="@(_migrationProgress is { } p && p.SourceRecordCount > 0 ? (double)p.MigratedCount / p.SourceRecordCount * 100 : 0)"
+                                   Class="mt-2" />
+                @if (_migrationProgress is { } running)
+                {
+                    <MudText Typo="Typo.body2">@string.Format(UiText.MigrationProgressFormat, running.MigratedCount, running.SourceRecordCount)</MudText>
+                }
+            }
+            else
+            {
+                <div class="mt-2">
+                    <YaguraButton Role="YaguraButtonRole.Primary" OnClick="RunMigrationAsync">
+                        @UiText.MigrationExecute
+                    </YaguraButton>
+                </div>
+            }
+        }
+
+        @if (_migrationResult is { } migrationResult)
+        {
+            <MudAlert Severity="@(migrationResult.Succeeded ? Severity.Success : Severity.Warning)" Class="mt-2">
+                @migrationResult.Message
+            </MudAlert>
+        }
+    </MudPaper>
+}
+
 @code {
     private const string AuthModeWindowsValue = "windows";
     private const string AuthModeSqlValue = "sql";
@@ -240,6 +292,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         _snapshot = await PromotionWizard.GetSnapshotAsync();
+        _migrationStatus = await LogMigration.GetStatusAsync();
         if (_snapshot.Executed)
         {
             _resultMessage = UiText.WizardApplied;
@@ -387,4 +440,39 @@ else
     /// </summary>
     private async Task<(string? Scheme, string? Principal)> ResolveOperatorAsync() =>
         AuditActorResolver.Resolve((await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+    // ---- 蓄積ログの移行（database.md §6.2。DB-5。Issue #266）----
+
+    private LogMigrationStatus? _migrationStatus;
+    private LogMigrationProgress? _migrationProgress;
+    private LogMigrationResult? _migrationResult;
+    private bool _migrationRunning;
+
+    private async Task RunMigrationAsync()
+    {
+        _migrationRunning = true;
+        _migrationResult = null;
+        try
+        {
+            var (scheme, principal) = await ResolveOperatorAsync();
+            var progress = new Progress<LogMigrationProgress>(p =>
+            {
+                _migrationProgress = p;
+                _ = InvokeAsync(StateHasChanged);
+            });
+
+            _migrationResult = await LogMigration.RunAsync(
+                CircuitContext.RemoteAddress, scheme, principal, progress);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _migrationResult = new LogMigrationResult(false, 0, 0, 0, ex.Message);
+        }
+        finally
+        {
+            _migrationRunning = false;
+            _migrationProgress = null;
+            _migrationStatus = await LogMigration.GetStatusAsync();
+        }
+    }
 }
