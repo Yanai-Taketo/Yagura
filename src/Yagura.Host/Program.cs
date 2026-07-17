@@ -593,10 +593,23 @@ public static class Program
         // インスタンス共有ではなく Meter 名の一致で単一の計測空間に統合する。
         // WebGuardMetrics のコメント参照）。
         builder.Services.AddSingleton<WebGuardMetrics>();
-        builder.Services.AddSingleton<IAuditRecorder>(sp => new Yagura.Host.Observability.Auditing.FileAuditRecorder(
+        // 拒否試行の集約記録（SEC-4。security.md §4.4。Issue #268）: IAuditRecorder を
+        // AggregatingAuditRecorder（デコレータ）→ 内側 FileAuditRecorder の 2 段で登録する。
+        // 全呼び出し側は IAuditRecorder 型で解決するため、集約は透過的に効く。集約デコレータは
+        // 静穏経過のサマリ出力のため IHostedService としても登録する（同一インスタンス）。
+        builder.Services.AddSingleton(sp => new Yagura.Host.Observability.Auditing.FileAuditRecorder(
             dataRoot,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Observability.Auditing"),
             sp.GetRequiredService<WebGuardMetrics>()));
+        builder.Services.AddSingleton<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>(sp =>
+            new Yagura.Host.Observability.Auditing.AggregatingAuditRecorder(
+                sp.GetRequiredService<Yagura.Host.Observability.Auditing.FileAuditRecorder>(),
+                timeProvider: null,
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>()));
+        builder.Services.AddSingleton<IAuditRecorder>(sp =>
+            sp.GetRequiredService<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>());
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>());
 
         // 監査記録の保持期間削除（SEC-2 = 既定 365 日。security.md §4.2。Issue #261）:
         // 起動時 1 回 + ログ本体の保持期間削除と同じ実行時刻（Retention:ExecutionTimeOfDay）で

@@ -61,6 +61,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.LogMigrationExecuted => "蓄積ログを移行",
         AuditEventKind.CircuitRevocationGraceGranted => "失効後の閲覧継続を猶予として許容",
         AuditEventKind.CircuitRevocationGraceEnded => "猶予中の circuit が終了",
+        AuditEventKind.RejectionAggregated => "拒否試行を集約記録",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

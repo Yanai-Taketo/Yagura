@@ -174,4 +174,10 @@ public static class AuditEventIds
 
     /// <summary>猶予中だった circuit の終了（SEC-6。3010 と対）。レベルは警告。</summary>
     public static readonly EventId CircuitRevocationGraceEnded = new(3011, "CircuitRevocationGraceEnded");
+
+    /// <summary>
+    /// 拒否試行の集約記録（SEC-4。security.md §4.4。Issue #268）。レベルは警告。
+    /// 3010・3011 は Issue #267 が予約済みのため 3012 を採る（additive-only。番号は付け替えない）。
+    /// </summary>
+    public static readonly EventId RejectionAggregated = new(3012, "RejectionAggregated");
 }
