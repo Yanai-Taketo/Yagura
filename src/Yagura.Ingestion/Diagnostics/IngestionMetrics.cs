@@ -97,6 +97,8 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _tcpConnectionFramingTimeout;
     private readonly Counter<long> _spoolCorruptTailDiscarded;
     private readonly Counter<long> _tlsHandshakeFailure;
+    private readonly Counter<long> _parseFailedSaved;
+    private readonly Counter<long> _tcpIncompleteMessage;
 
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
@@ -258,6 +260,25 @@ public sealed class IngestionMetrics : IDisposable
             unit: "{connection}",
             description: "TLS 受信（RFC 5425）の TLS ハンドシェイク確立失敗数（送信元別。証明書期限切れ時の" +
                 "送信側拒否の検出に使う。security.md §6）。");
+
+        // architecture.md §4.1「解析失敗（保存済み）」（Issue #270）: RFC 3164 / RFC 5424 の解析に
+        // 失敗し、生データのまま解析失敗の印を付けて保存したレコード数（ParseStatus.ParseFailed）。
+        // 損失ではない——「不正形式の頻発はそれ自体が観測対象」（§2.1）。UDP 受信エラー・TLS
+        // ハンドシェイク失敗と同じ診断用カウンタとして、プロセス内累積のみ（再起動をまたぐ永続化
+        // ＝損失台帳の対象外——保存済みで失われていないため）。
+        _parseFailedSaved = _meter.CreateCounter<long>(
+            "yagura.ingestion.parse.failed_saved",
+            unit: "{record}",
+            description: "解析に失敗し生データのまま保存したレコード数（損失ではない。§4.1。診断用・プロセス内累積）。");
+
+        // architecture.md §4.1「TCP 不完全メッセージ」（Issue #270）: TCP 切断時に解析途中だった
+        // 不完全メッセージ数（ParseStatus.Incomplete）。生データのまま印を付けて保存する（損失では
+        // ない。database.md §2.1 の排他 3 値のうち不完全）。解析失敗（保存済み）と同じ診断用
+        // カウンタ扱い（プロセス内累積のみ）。
+        _tcpIncompleteMessage = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_message.incomplete",
+            unit: "{message}",
+            description: "TCP 切断時に解析途中だった不完全メッセージ数（生データのまま保存。§4.1。診断用・プロセス内累積）。");
 
         // architecture.md §4.2 OS レベル取りこぼしの観測（M4-4 で実機検証: Windows ARM64・
         // SDK 10.0.301 で IPGlobalProperties.GetUdpIPv4Statistics()/GetUdpIPv6Statistics() の
@@ -491,6 +512,26 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// 解析に失敗し生データのまま保存したレコードを 1 件計上する（§4.1「解析失敗（保存済み）」。
+    /// Issue #270）。損失ではない診断用カウンタのため、プロセス内累積のみ（再起動をまたぐ永続化の
+    /// 対象外）。
+    /// </summary>
+    public void RecordParseFailedSaved()
+    {
+        _parseFailedSaved.Add(1);
+    }
+
+    /// <summary>
+    /// TCP 切断時に解析途中だった不完全メッセージを 1 件計上する（§4.1「TCP 不完全メッセージ」。
+    /// Issue #270）。損失ではない診断用カウンタのため、プロセス内累積のみ（再起動をまたぐ永続化の
+    /// 対象外）。
+    /// </summary>
+    public void RecordTcpIncompleteMessage()
+    {
+        _tcpIncompleteMessage.Add(1);
+    }
+
+    /// <summary>
     /// 起動時、メタデータ領域（§4.3）から読み込んだ前回までの累積値を引き継ぐ
     /// （「前回までの累積 + 今回プロセス分」の合成。Counter&lt;T&gt; 自体は加算専用で
     /// 初期値を設定する API を持たないため、本クラス自身が保持する
@@ -588,6 +629,12 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>TLS ハンドシェイク失敗カウンタの計器そのもの（テスト用。Issue #137）。</summary>
     public Counter<long> TlsHandshakeFailureCounter => _tlsHandshakeFailure;
+
+    /// <summary>解析失敗（保存済み）カウンタの計器そのもの（テスト用。Issue #270）。</summary>
+    public Counter<long> ParseFailedSavedCounter => _parseFailedSaved;
+
+    /// <summary>TCP 不完全メッセージカウンタの計器そのもの（テスト用。Issue #270）。</summary>
+    public Counter<long> TcpIncompleteMessageCounter => _tcpIncompleteMessage;
 
     /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
     public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;
