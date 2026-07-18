@@ -578,7 +578,11 @@ public static class Program
                 [
                     new Yagura.Abstractions.Observability.YaguraListenerEndpoint("UDP", resolvedConfiguration.UdpPort),
                     new Yagura.Abstractions.Observability.YaguraListenerEndpoint("TCP", resolvedConfiguration.TcpPort),
-                ]));
+                ],
+                // 流量制限の発火上位送信元（Issue #288）: SwappableIngressGate を渡す——設定
+                // ライブ再読み込みでゲートが差し替わっても、読み取りは常に現在の実装へ届く
+                // （流量制御 opt-out 時は NoopIngressGate のため空になる）。
+                flowControlRejections: ingressGate));
 
         // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
         //

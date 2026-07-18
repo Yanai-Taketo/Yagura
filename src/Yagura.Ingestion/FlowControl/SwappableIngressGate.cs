@@ -14,7 +14,7 @@ namespace Yagura.Ingestion.FlowControl;
 /// 一貫して判定される（ロック不要。閾値変更時に旧ゲートのバケット状態は破棄される——
 /// 新ゲートは全送信元が満杯バケットから始まるため、切替が破棄を誘発することはない）。
 /// </remarks>
-public sealed class SwappableIngressGate : IIngressGate
+public sealed class SwappableIngressGate : IIngressGate, IFlowControlRejectionReader
 {
     private IIngressGate _inner;
 
@@ -37,4 +37,15 @@ public sealed class SwappableIngressGate : IIngressGate
     /// <inheritdoc />
     public bool ShouldAdmit(IPAddress sourceAddress, ReadOnlySpan<byte> payload) =>
         Volatile.Read(ref _inner).ShouldAdmit(sourceAddress, payload);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 現在の実装が読み取り口を持たない場合（<see cref="NoopIngressGate"/>——流量制御
+    /// opt-out 構成）は空を返す。差し替え（<see cref="Swap"/>）で旧ゲートのバケット状態が
+    /// 破棄されるのに伴い、拒否カウントもリセットされる（クラス remarks 参照）。
+    /// </remarks>
+    public IReadOnlyList<FlowControlRejectedSource> SnapshotRejectedSources(int maxCount) =>
+        Volatile.Read(ref _inner) is IFlowControlRejectionReader reader
+            ? reader.SnapshotRejectedSources(maxCount)
+            : [];
 }

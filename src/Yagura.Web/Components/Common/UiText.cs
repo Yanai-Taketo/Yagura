@@ -309,6 +309,27 @@ public static class UiText
     /// <summary>Top talkers にこの期間の受信がない場合の注記。</summary>
     public const string TopTalkersNoData = "この期間に受信した送信元はありません";
 
+    // ---- 流量制限の発火上位送信元（Issue #288。案 (a) カード型——2026-07-18 オーナー裁定） ----
+
+    /// <summary>流量制限の発火上位送信元カードの見出し。</summary>
+    public const string FlowControlRejectionsTitle = "流量制限の発火上位送信元";
+
+    /// <summary>
+    /// カードの説明（UI-4「送信元別の受信状況」・Top talkers との住み分けを明示する——
+    /// 受信量ではなく「制限に達した」という別の軸であること、および値の生存期間
+    /// （ゲートの有界バケットと同寿命——起動からの累計ではない）。
+    /// </summary>
+    public const string FlowControlRejectionsDescription =
+        "流量制御（送信元ごとの受信量の制限）によって破棄が発生した送信元を、破棄の多い順に表示します。" +
+        "受信量の一覧（受信量上位の送信元・送信元別の受信状況）とは別の軸——「多く受信した」ではなく「制限に達した」送信元です。" +
+        "数値は現在追跡中の値で、制限なく受信できる状態がしばらく続いた送信元は一覧から自然に消えます（破棄の総数は取りこぼしのカウンタが保持します）。";
+
+    /// <summary>流量制限による破棄が発生していない場合の注記。</summary>
+    public const string FlowControlRejectionsNoData = "流量制限による破棄は発生していません";
+
+    /// <summary>流量制限の発火上位送信元: 破棄件数列。</summary>
+    public const string FlowControlRejectionsColumnCount = "破棄件数";
+
     /// <summary>スプールが使えない（縮退・無効）場合の現在値カードの値表示。</summary>
     public const string StatSpoolUnavailable = "利用できません";
 

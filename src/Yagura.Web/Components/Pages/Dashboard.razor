@@ -161,6 +161,42 @@
     </MudGrid>
 </div>
 
+<div class="mb-4">
+    @* 流量制限の発火上位送信元（Issue #288。案 (a) カード型——2026-07-18 オーナー裁定）:
+       「取りこぼし（送信元ごとの受信量の制限）」の増加に気づいた運用者が「どの装置の暴走か」へ
+       進むための view。UI-4（送信元別の受信状況）・Top talkers との住み分け（受信量 vs 制限発火の
+       軸違い）と、値の生存期間（ゲートの有界バケットと同寿命）は説明文で明示する。
+       データは流量制御ゲートの in-memory スナップショット（DB 非アクセス）のため軽い更新側。 *@
+    <YaguraCard Title="@UiText.FlowControlRejectionsTitle">
+        <MudText Typo="Typo.caption" role="note">@UiText.FlowControlRejectionsDescription</MudText>
+        @if (_flowControlRejections.Count == 0)
+        {
+            <MudText Typo="Typo.body2" role="note" Class="mt-2">@UiText.FlowControlRejectionsNoData</MudText>
+        }
+        else
+        {
+            <YaguraTable TItem="YaguraFlowControlRejectionReading" Items="@_flowControlRejections" RowsPerPage="@FlowControlRejectionLimit">
+                <HeaderContent>
+                    <MudTh>@UiText.SourceColumnAddress</MudTh>
+                    <MudTh>@UiText.FlowControlRejectionsColumnCount</MudTh>
+                    <MudTh>@UiText.SourceColumnActions</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="rejection">
+                    <MudTd DataLabel="@UiText.SourceColumnAddress"><YaguraSourceAddress Address="@rejection.SourceAddress" /></MudTd>
+                    <MudTd DataLabel="@UiText.FlowControlRejectionsColumnCount">@FormatCount(rejection.RejectedCount)</MudTd>
+                    @* 発火送信元 → 当該送信元のログ調査への 1 クリック導線（Top talkers と同型）。 *@
+                    <MudTd DataLabel="@UiText.SourceColumnActions">
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Text"
+                                   StartIcon="@Icons.Material.Filled.Search"
+                                   Href="@SearchHrefFor(rejection.SourceAddress)">@UiText.SourceSearchLinkLabel</MudButton>
+                    </MudTd>
+                </RowTemplate>
+            </YaguraTable>
+        }
+    </YaguraCard>
+</div>
+
 <div id="sources" class="mb-4">
     <YaguraCard Title="@UiText.SourcesTitle">
         @if (_sources is null)
@@ -241,6 +277,9 @@
     // ILogStore.QuerySeverityDistributionAsync / QueryTopTalkersAsync の doc コメント参照）。
     private const int TopTalkersLimit = 10;
 
+    // 流量制限の発火上位送信元（Issue #288）の表示件数（Top talkers と同じ上位 10）。
+    private const int FlowControlRejectionLimit = 10;
+
     private YaguraStaleGuard? _staleGuard;
     private PeriodicTimer? _timer;
     private Task? _refreshLoop;
@@ -266,6 +305,7 @@
     private IReadOnlyList<SourceActivity>? _sources;
     private IReadOnlyList<SeverityCount>? _severityDistribution;
     private IReadOnlyList<SourceActivity>? _topTalkers;
+    private IReadOnlyList<YaguraFlowControlRejectionReading> _flowControlRejections = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -355,6 +395,10 @@
         // カウンタ一覧（ラベルに「単位はバイト」と明記済み）で行う。
         _lossTotal = status.Counters.Where(c => c.IsLoss).Sum(c => c.Value);
         _lossBaselineSinceOpen ??= _lossTotal;
+
+        // 流量制限の発火上位送信元（Issue #288）: ゲートの in-memory スナップショット
+        // （DB 非アクセス）のため毎周期の軽い更新に含める。
+        _flowControlRejections = StatusReader.ReadFlowControlRejections(FlowControlRejectionLimit);
     }
 
     /// <summary>重い更新（保存先への読み取り。初期表示 + 低頻度周期）。</summary>
