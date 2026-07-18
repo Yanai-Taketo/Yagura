@@ -91,3 +91,70 @@ gMSA（グループ管理サービスアカウント）は、パスワードを 
 - 切替スクリプトの同梱（決定 6 の却下案 B）: 利用者から切替自動化の具体的要望が挙がったとき
 - 一般ドメインアカウント対応（スコープ外）: gMSA を建てられない環境（KDS ルートキー未整備等）からの具体的要望が反復（3 件以上）したとき——その場合もパスワード管理の事故源の議論を必須とする
 - AD 側事後変化の能動通知化（帰結 3）: 「再起動して初めて 1069 で気づいた」という報告が実利用で挙がったとき
+
+## 改訂履歴
+
+### 1. 決定 2 が要求する実装最初期 lab スパイクの結果（2026-07-18）
+
+**分類**: amendment（決定は不変。条件付き決定の分岐確定と実装要件の追加）
+**実施環境**: `WIN-H31KVKTHCKU`（Windows Server 2025 10.0.26100 / yagura.test の DC 兼検証機）/ Yagura 0.4.0 / WixToolset.Sdk 7.0.0
+**位置づけ**: 決定 7 の E2E 受け入れ (a)〜(f) は実装完了後の話であり、本記録は決定 2 が要求する**実装最初期のスパイク**のみである。
+
+#### AD 側の前提条件（ガイドの素材。実施手順そのもの）
+
+```powershell
+Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))   # lab 用の即時有効化。本番は 10 時間待つ
+New-ADServiceAccount -Name gmsaYagura -DNSHostName gmsaYagura.yagura.test `
+  -PrincipalsAllowedToRetrieveManagedPassword "WIN-H31KVKTHCKU$"
+Install-ADServiceAccount -Identity gmsaYagura
+Test-ADServiceAccount -Identity gmsaYagura      # → True
+```
+
+採番された gMSA: `SamAccountName = gmsaYagura$` / `SID = S-1-5-21-1618155702-1212114865-3694278133-1111`（**ドメイン採番**であることに注意——下記 (iii)）。
+
+#### (i) `ServiceInstall/@Account` のプロパティ間接参照による gMSA 指定 → **第一候補が成立。フォールバック不要**
+
+`Package.wxs` を一時パッチし（`<Property Id="SERVICEACCOUNT" Value="NT SERVICE\Yagura" Secure="yes" />` + `Account="[SERVICEACCOUNT]"`）、`msiexec /i ... SERVICEACCOUNT=YAGURA\gmsaYagura$` で検証した。MSI ログに次のとおり記録され、**サービスは gMSA アカウントで登録された**:
+
+```
+Executing op: ServiceInstall(Name=Yagura,...,StartName=YAGURA\gmsaYagura$,Password=**********,...)
+```
+
+すなわち **`ServiceInstall/@Account` はプロパティ間接参照を受理し、SCM は `DOMAIN\gmsa$` 形式（パスワードなし）を受理する**。カスタムアクションによる `sc config` 後追いへのフォールバックは**不要**である（決定 2 の第一候補で確定）。
+
+#### (ii) `SeServiceLogonRight` の付与主体 → **誰も付与しない。明示的な付与が必須**
+
+権利を付与しない状態では、サービス登録自体は成功するが**起動に失敗**し、インストールが 1603 でロールバックする:
+
+```
+製品: Yagura -- エラー 1920。 サービス 'Yagura' (Yagura) を開始できませんでした。
+システム サービスを開始する特権を持っていることを確認してください。
+```
+
+**MSI の `ServiceInstall` も SCM も gMSA へ本権利を自動付与しない**ことを実測で確定した。`secedit` で gMSA へ `SeServiceLogonRight` を付与すると、同じ MSI でサービスプロセスの起動まで到達する（下記 (iii) の別要因で落ちるまで進む）。
+
+参考として、既定の仮想サービスアカウントで本問題が起きないのは、`SeServiceLogonRight` に `*S-1-5-80-0`（`NT SERVICE\ALL SERVICES`）が既定で含まれ仮想アカウントがこれに包含されるためである（実測: 既定値は `*S-1-5-80-0,*S-1-5-83-0,*S-1-5-90-0`）。gMSA はドメインアカウントでありこの包含に与らない。
+
+**実装要件**: gMSA 構成では `SeServiceLogonRight` の付与をガイドの前提条件（ローカルポリシー/GPO 手順）に含めるか、インストーラのカスタムアクションで付与する。付与しない限り**サービスは一度も起動できない**ため、これは任意の推奨ではなく必須手順である。
+
+#### (iii) ACL 付与方式 → **SDDL 静的埋め込みは適用不可を実証。後追い付与が必須**
+
+決定 2 の「現行の SDDL 静的埋め込み（`PermissionEx`）はドメイン採番 SID の gMSA に適用できない」を実機で確証した。gMSA でサービスを起動すると、プロセスは起動するがアプリが**データルートを開けずクラッシュ**する:
+
+```
+Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 14: 'unable to open database file'.
+```
+
+このときのデータルート ACL（`icacls` 実出力）——**ビルド時に埋め込まれた仮想アカウントの SID がそのまま残り、名前解決もされない**:
+
+```
+C:\ProgramData\Yagura NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                      BUILTIN\Administrators:(OI)(CI)(F)
+                      S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297:(OI)(CI)(M)
+```
+
+gMSA（`S-1-5-21-...-1111`）はこの ACE のいずれにも該当しないため、データルートへ一切アクセスできない。**したがって SID 解決カスタムアクション / `icacls` 後追いのいずれかが必須**である。当たりとしては、(i)(ii) の結果から**インストール時に実行アカウントが確定している**（`SERVICEACCOUNT` プロパティとして既知）ため、そのアカウント名を `icacls` 相当で後追い付与する方式が最も単純に成立する見込みである（SID の事前解決を要しない）。**対象は security.md §5 のデータルートに加え、フォワーダ配置フォルダ・監査記録領域の全 `PermissionEx` 適用先**である。
+
+#### 決定への影響
+
+決定 2 の条件付き決定は**第一候補（プロパティ間接参照）で確定**し、フォールバック（`sc config` 後追い）は発動しない。一方、決定 2 が「lab 検証で確定する」としていた 2 点に実装要件が確定した——**`SeServiceLogonRight` の明示付与**と **ACL の後追い付与**であり、いずれも「あると良い」ではなく**これ無しでは gMSA 構成が全く機能しない**必須要件である。実装 PR はこの 2 点を含めること。security.md §5 への ACE 記録は実装方式の確定後に行う。
