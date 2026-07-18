@@ -50,7 +50,9 @@ public static class BenchConfigurationFile
 
         var json = JsonSerializer.Serialize(new
         {
-            Spool = new { QuotaBytes = quotaBytes },
+            // 設定値は文字列で書く（YaguraConfigurationOptions.SpoolOptions.QuotaBytes は string?。
+            // 数値で書くと JsonSerializer が型不一致で落ち、ホストが起動できない）。
+            Spool = new { QuotaBytes = quotaBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) },
         }, new JsonSerializerOptions { WriteIndented = true });
 
         File.WriteAllText(Path.Combine(dataRoot, FileName), json);
