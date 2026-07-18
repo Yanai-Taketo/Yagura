@@ -6,7 +6,7 @@ using Yagura.Abstractions.Administration;
 namespace Yagura.Host.Administration.Https;
 
 /// <summary>
-/// <see cref="IAdminCertificateStoreReader"/> の Windows 実体（ADR-0012 決定 2）。
+/// <see cref="ICertificateStoreReader"/> の Windows 実体（ADR-0012 決定 2）。
 /// <c>LocalMachine\My</c> を <c>OpenFlags.ReadOnly</c> で開いて全件を走査し、serverAuth EKU +
 /// 秘密鍵ありの証明書を最小フィールドの DTO で返す。<see cref="AdminCertificateProvider"/> と同層。
 /// </summary>
@@ -19,18 +19,18 @@ namespace Yagura.Host.Administration.Https;
 /// （= サービスアカウント <c>NT SERVICE\Yagura</c>）の視点で行われる。
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public sealed class StoreAdminCertificateStoreReader : IAdminCertificateStoreReader
+public sealed class WindowsCertificateStoreReader : ICertificateStoreReader
 {
     /// <summary>サーバ認証の拡張キー使用法（Enhanced Key Usage）の OID。</summary>
     internal const string ServerAuthEkuOid = "1.3.6.1.5.5.7.3.1";
 
-    public IReadOnlyList<AdminCertificateCandidate> ListServerAuthCertificates()
+    public IReadOnlyList<CertificateCandidate> ListServerAuthCertificates()
     {
         using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
         store.Open(OpenFlags.ReadOnly);
 
         var now = DateTimeOffset.Now;
-        var candidates = new List<AdminCertificateCandidate>();
+        var candidates = new List<CertificateCandidate>();
 
         foreach (var certificate in store.Certificates)
         {
@@ -93,13 +93,13 @@ public sealed class StoreAdminCertificateStoreReader : IAdminCertificateStoreRea
     /// <summary>
     /// 証明書を表示用の最小メタ DTO へ写像する（期限・秘密鍵読取可否の判定を含む）。
     /// </summary>
-    internal static AdminCertificateCandidate ToCandidate(X509Certificate2 certificate, DateTimeOffset now)
+    internal static CertificateCandidate ToCandidate(X509Certificate2 certificate, DateTimeOffset now)
     {
         var notBefore = new DateTimeOffset(certificate.NotBefore);
         var notAfter = new DateTimeOffset(certificate.NotAfter);
         var isExpired = now < notBefore || now > notAfter;
 
-        return new AdminCertificateCandidate(
+        return new CertificateCandidate(
             Thumbprint: certificate.Thumbprint,
             SubjectCommonName: GetSubjectCommonName(certificate),
             Issuer: certificate.Issuer,

@@ -31,7 +31,7 @@ namespace Yagura.Host.Administration.Https;
 /// （<c>Program.cs</c> の <c>adminHttpsCertificateUnavailableReason</c> への分岐——TLS 受信の
 /// 「期限切れでも受け入れる」非対称とは異なる）ため、期限切れを警告付きで通すと「事前検証が緑なのに
 /// 再起動後に 1013 が起きる」乖離になる。加えて serverAuth EKU 不適合を拒否する（列挙 UI
-/// = <see cref="StoreAdminCertificateStoreReader"/> と同じ最小化。起動時検証は EKU を見ないため
+/// = <see cref="WindowsCertificateStoreReader"/> と同じ最小化。起動時検証は EKU を見ないため
 /// こちらが厳しい側であり、D-6「緑なら縮小継続が起きない」は保たれる）。
 /// </para>
 /// <para>
@@ -69,8 +69,8 @@ public sealed class AdminRemoteAccessAdminService : IAdminRemoteAccessAdminServi
             dataRoot,
             auditRecorder,
             AdminCertificateProvider.Load,
-            StoreAdminCertificateStoreReader.HasServerAuthEku,
-            StoreAdminCertificateStoreReader.IsPrivateKeyReadable,
+            WindowsCertificateStoreReader.HasServerAuthEku,
+            WindowsCertificateStoreReader.IsPrivateKeyReadable,
             timeProvider)
     {
     }
@@ -330,7 +330,7 @@ public sealed class AdminRemoteAccessAdminService : IAdminRemoteAccessAdminServi
             {
                 throw new WizardValidationException(
                     $"選択された証明書（拇印 {normalizedThumbprint}）はサーバー認証の拡張キー使用法" +
-                    $"（serverAuth EKU {StoreAdminCertificateStoreReader.ServerAuthEkuOid}）を持たないため、" +
+                    $"（serverAuth EKU {WindowsCertificateStoreReader.ServerAuthEkuOid}）を持たないため、" +
                     "管理リスナのリモート HTTPS には使用できません。サーバー認証用途の証明書を選択してください。");
             }
 

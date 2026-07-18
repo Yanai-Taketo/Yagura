@@ -6,18 +6,18 @@ using Yagura.Host.Administration.Https;
 namespace Yagura.Host.Tests.Administration.Https;
 
 /// <summary>
-/// <see cref="StoreAdminCertificateStoreReader"/> の純粋ロジック（serverAuth EKU 判定・DTO 写像）の
+/// <see cref="WindowsCertificateStoreReader"/> の純粋ロジック（serverAuth EKU 判定・DTO 写像）の
 /// 単体テスト（ADR-0012 決定 2・5）。実ストア（<c>LocalMachine\My</c>）への接触はプラットフォーム／
 /// 権限依存のため、ここではメモリ内生成証明書（<see cref="CertificateRequest"/>）で決定的に検証し、
 /// 実ストア列挙の疎通は統合／E2E に委ねる（ADR-0012 決定 5「実ストア接触は統合／E2E に限定」）。
 /// </summary>
 /// <remarks>
-/// EKU フィルタ（<see cref="StoreAdminCertificateStoreReader.HasServerAuthEku"/>）は既存コードに
+/// EKU フィルタ（<see cref="WindowsCertificateStoreReader.HasServerAuthEku"/>）は既存コードに
 /// 前例がなく本増分で新規に書いたロジックであり、用途違いの証明書を列挙に混ぜない受け入れ基準の
 /// 中核のため、重点的に固定する。
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public sealed class StoreAdminCertificateStoreReaderTests
+public sealed class WindowsCertificateStoreReaderTests
 {
     private const string ServerAuthOid = "1.3.6.1.5.5.7.3.1";
     private const string ClientAuthOid = "1.3.6.1.5.5.7.3.2";
@@ -27,7 +27,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
     {
         using var cert = CreateCertificate("CN=yagura-serverauth", ekuOids: [ServerAuthOid]);
 
-        Assert.True(StoreAdminCertificateStoreReader.HasServerAuthEku(cert));
+        Assert.True(WindowsCertificateStoreReader.HasServerAuthEku(cert));
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
     {
         using var cert = CreateCertificate("CN=yagura-multi", ekuOids: [ClientAuthOid, ServerAuthOid]);
 
-        Assert.True(StoreAdminCertificateStoreReader.HasServerAuthEku(cert));
+        Assert.True(WindowsCertificateStoreReader.HasServerAuthEku(cert));
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
         // 用途違い（クライアント認証専用）は列挙に混ぜない（ワンクリック誤選択の抑止）。
         using var cert = CreateCertificate("CN=yagura-clientauth", ekuOids: [ClientAuthOid]);
 
-        Assert.False(StoreAdminCertificateStoreReader.HasServerAuthEku(cert));
+        Assert.False(WindowsCertificateStoreReader.HasServerAuthEku(cert));
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
         // 証明書へ最小化するため対象外（用途が確認できないものを勧めない）。
         using var cert = CreateCertificate("CN=yagura-noeku", ekuOids: null);
 
-        Assert.False(StoreAdminCertificateStoreReader.HasServerAuthEku(cert));
+        Assert.False(WindowsCertificateStoreReader.HasServerAuthEku(cert));
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
         using var cert = CreateCertificate("CN=yagura.example.test", ekuOids: [ServerAuthOid]);
         var now = DateTimeOffset.Now;
 
-        var candidate = StoreAdminCertificateStoreReader.ToCandidate(cert, now);
+        var candidate = WindowsCertificateStoreReader.ToCandidate(cert, now);
 
         Assert.Equal(cert.Thumbprint, candidate.Thumbprint);
         Assert.Equal("yagura.example.test", candidate.SubjectCommonName);
@@ -83,7 +83,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
             notAfter: DateTimeOffset.Now.AddDays(-1));
         var now = DateTimeOffset.Now;
 
-        var candidate = StoreAdminCertificateStoreReader.ToCandidate(cert, now);
+        var candidate = WindowsCertificateStoreReader.ToCandidate(cert, now);
 
         // 期限切れは除外せず警告フラグで返す（「なぜ使えないか」を UI で説明する——受け入れ基準）。
         Assert.True(candidate.IsExpired);
@@ -99,7 +99,7 @@ public sealed class StoreAdminCertificateStoreReaderTests
             notAfter: DateTimeOffset.Now.AddDays(30));
         var now = DateTimeOffset.Now;
 
-        var candidate = StoreAdminCertificateStoreReader.ToCandidate(cert, now);
+        var candidate = WindowsCertificateStoreReader.ToCandidate(cert, now);
 
         // 有効期間の前（未来証明書）も期間外として扱う。
         Assert.True(candidate.IsExpired);

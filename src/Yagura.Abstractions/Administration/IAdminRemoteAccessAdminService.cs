@@ -14,7 +14,7 @@ namespace Yagura.Abstractions.Administration;
 /// <b>層配置</b>: 契約は <c>Yagura.Abstractions.Administration</c>・実体は <c>Yagura.Host</c>・
 /// 結線は <c>Program.cs</c>（<see cref="IAdminAuthenticationAdminService"/> と同一パターン。
 /// architecture.md §1.1「UI は Host アセンブリを参照できない」。ADR-0012 影響範囲）。
-/// 証明書ストアの読み出し（列挙）は別契約 <see cref="IAdminCertificateStoreReader"/>（副作用なし）が
+/// 証明書ストアの読み出し（列挙）は別契約 <see cref="ICertificateStoreReader"/>（副作用なし）が
 /// 担い、本契約は書き込み系（<see cref="IYaguraWriteService"/>）として保存・保存前検証のみを担う
 /// （ADR-0012 決定 3「read-only 列挙・読取検証と書き込みは別契約に分離する」）。
 /// </para>
@@ -83,7 +83,7 @@ public interface IAdminRemoteAccessAdminService : IYaguraWriteService
 /// <param name="HttpsEnabled">リモート HTTPS の有効/無効（<c>Admin:Https:Enabled</c>）。</param>
 /// <param name="CertificateThumbprint">
 /// 証明書拇印（<c>Admin:Https:CertificateThumbprint</c>）。形式が有効なら正規化済み
-/// （大文字・16 進 40 桁——<see cref="AdminCertificateCandidate.Thumbprint"/> とそのまま照合できる）、
+/// （大文字・16 進 40 桁——<see cref="CertificateCandidate.Thumbprint"/> とそのまま照合できる）、
 /// 不正な形式の永続値はそのまま返す（画面で「不正な値が設定されている」ことを示せるように）。
 /// 未設定は <see langword="null"/>。
 /// </param>

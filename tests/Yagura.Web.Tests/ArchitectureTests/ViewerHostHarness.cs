@@ -122,9 +122,10 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
 
         // ADR-0012（B3）: リモートアクセス設定画面（/admin/remote-access）が要求するサービス。
         // 実処理（証明書ストア列挙・保存前 fail-closed 検証）は Yagura.Host.Tests の
-        // StoreAdminCertificateStoreReaderTests / AdminRemoteAccessAdminServiceTests が検証する。
-        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminCertificateStoreReader, StubAdminCertificateStoreReader>();
+        // WindowsCertificateStoreReaderTests / AdminRemoteAccessAdminServiceTests が検証する。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.ICertificateStoreReader, StubCertificateStoreReader>();
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminRemoteAccessAdminService, StubAdminRemoteAccessAdminService>();
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IIngestionTlsAdminService, StubIngestionTlsAdminService>();
 
         // ADR-0010 Phase 1: 管理 UI 認証(既定は無効——ルーティング表の機械列挙用。
         // appAuthEnabled: true はアプリ独自認証の実 HTTP フロー検証用の構成。
@@ -385,9 +386,9 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
 
-    private sealed class StubAdminCertificateStoreReader : Yagura.Abstractions.Administration.IAdminCertificateStoreReader
+    private sealed class StubCertificateStoreReader : Yagura.Abstractions.Administration.ICertificateStoreReader
     {
-        public IReadOnlyList<Yagura.Abstractions.Administration.AdminCertificateCandidate> ListServerAuthCertificates()
+        public IReadOnlyList<Yagura.Abstractions.Administration.CertificateCandidate> ListServerAuthCertificates()
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }
 
@@ -401,6 +402,22 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             bool httpsEnabled,
             string? certificateThumbprint,
             string? httpsPort,
+            string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+    }
+
+    private sealed class StubIngestionTlsAdminService : Yagura.Abstractions.Administration.IIngestionTlsAdminService
+    {
+        public Task<Yagura.Abstractions.Administration.IngestionTlsStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
+
+        public Task<Yagura.Abstractions.Administration.IngestionTlsConfigureResult> ConfigureAsync(
+            bool enabled,
+            string? certificateThumbprint,
+            string? port,
             string? operatorAddress = null,
             string? operatorScheme = null,
             string? operatorPrincipal = null,

@@ -125,6 +125,13 @@ public static class AuditEventIds
     public static readonly EventId StartupConfigurationChangeDetected =
         new(2019, "StartupConfigurationChangeDetected");
 
+    /// <summary>
+    /// TLS 受信の証明書設定の変更（ADR-0019 決定 5。Issue #349）。レベルは情報。
+    /// 管理リモート HTTPS 版の <see cref="AdminHttpsCertificateConfigured"/>（2012）と対になる。
+    /// </summary>
+    public static readonly EventId IngestionTlsCertificateConfigured =
+        new(2020, "IngestionTlsCertificateConfigured");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
