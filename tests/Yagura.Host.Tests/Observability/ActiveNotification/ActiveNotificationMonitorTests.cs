@@ -132,7 +132,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         for (var i = 0; i < 5; i++)
         {
             timeProvider.Advance(ActiveNotificationConstants.PollInterval);
-            metrics.RecordSpoolEvacuated();
+            metrics.RecordSpoolEvacuated(SpoolEvacuationReason.Q2Overflow);
             await monitor.EvaluateOnceAsync();
         }
 
@@ -140,7 +140,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
 
         // 6 回目の継続増分でストリーク開始から 5 分を満たし発火する。
         timeProvider.Advance(ActiveNotificationConstants.PollInterval);
-        metrics.RecordSpoolEvacuated();
+        metrics.RecordSpoolEvacuated(SpoolEvacuationReason.Q2Overflow);
         await monitor.EvaluateOnceAsync();
 
         var record = Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1004);
@@ -161,7 +161,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         for (var i = 0; i < 4; i++)
         {
             timeProvider.Advance(ActiveNotificationConstants.PollInterval);
-            metrics.RecordSpoolEvacuated();
+            metrics.RecordSpoolEvacuated(SpoolEvacuationReason.Q2Overflow);
             await monitor.EvaluateOnceAsync();
         }
 
@@ -173,7 +173,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         for (var i = 0; i < 4; i++)
         {
             timeProvider.Advance(ActiveNotificationConstants.PollInterval);
-            metrics.RecordSpoolEvacuated();
+            metrics.RecordSpoolEvacuated(SpoolEvacuationReason.Q2Overflow);
             await monitor.EvaluateOnceAsync();
         }
 

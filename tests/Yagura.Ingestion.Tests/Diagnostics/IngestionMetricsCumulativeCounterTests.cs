@@ -75,7 +75,8 @@ public sealed class IngestionMetricsCumulativeCounterTests
         using var metrics = new IngestionMetrics();
         metrics.SeedCumulativeCounters(IngestionCounterSnapshot.Zero);
 
-        metrics.RecordSpoolEvacuated();
+        // 累積総数は退避契機によらず単一の総和（reason タグは実行時計器の次元展開のみ。Issue #271）。
+        metrics.RecordSpoolEvacuated(SpoolEvacuationReason.Q2Overflow);
 
         var snapshot = metrics.SnapshotCumulativeCounters();
         Assert.Equal(1, snapshot.SpoolEvacuated);

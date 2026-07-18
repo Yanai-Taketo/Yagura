@@ -104,8 +104,8 @@ public sealed class ParsingStage
             if (stoppingToken.IsCancellationRequested)
             {
                 // 停止要求後は Q2 の状態（相手側も停止処理中）に依らず、直接スプールへ
-                // 退避する（§1.3 手順 2）。
-                await EvacuateToSpoolAsync(record).ConfigureAwait(false);
+                // 退避する（§1.3 手順 2）。契機は停止時ドレイン。
+                await EvacuateToSpoolAsync(record, SpoolEvacuationReason.Shutdown).ConfigureAwait(false);
                 continue;
             }
 
@@ -114,8 +114,8 @@ public sealed class ParsingStage
                 continue;
             }
 
-            // Q2 が満杯——新規投入分をスプールへ退避する（§3.1・§3.2.1）。
-            await EvacuateToSpoolAsync(record).ConfigureAwait(false);
+            // Q2 が満杯——新規投入分をスプールへ退避する（§3.1・§3.2.1）。契機は容量（Q2 溢れ）。
+            await EvacuateToSpoolAsync(record, SpoolEvacuationReason.Q2Overflow).ConfigureAwait(false);
         }
     }
 
@@ -129,7 +129,7 @@ public sealed class ParsingStage
         while (_q1Reader.TryRead(out var datagram))
         {
             var record = ParseAndCount(datagram);
-            await EvacuateToSpoolAsync(record).ConfigureAwait(false);
+            await EvacuateToSpoolAsync(record, SpoolEvacuationReason.Shutdown).ConfigureAwait(false);
         }
     }
 
@@ -164,7 +164,7 @@ public sealed class ParsingStage
     /// 退避処理の途中で強制終了しても、それまでに処理済みの分の計上は失われない
     /// （§1.3「退避中に発生した破棄は逐次カウンタへ反映する」）。
     /// </summary>
-    private async Task EvacuateToSpoolAsync(LogRecord record)
+    private async Task EvacuateToSpoolAsync(LogRecord record, SpoolEvacuationReason reason)
     {
         if (_spool is null)
         {
@@ -177,7 +177,7 @@ public sealed class ParsingStage
         switch (result)
         {
             case SpoolAppendResult.Appended:
-                _metrics.RecordSpoolEvacuated();
+                _metrics.RecordSpoolEvacuated(reason);
                 break;
             case SpoolAppendResult.QuotaExceeded:
                 _metrics.RecordSpoolDiscarded();
