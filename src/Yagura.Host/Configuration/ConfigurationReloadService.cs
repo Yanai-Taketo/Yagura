@@ -194,6 +194,15 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         // 追跡し続けるため、差分の再検出には依存しない）。
         _lastAppliedOptions = snapshot.Options;
 
+        // 良好構成の写しを更新する（configuration.md §1）。更新契機を起動時だけにすると、
+        // 再読み込みで適用済みの変更が写しに入らず、復元したときに黙って巻き戻る——
+        // 「意図しない設定で動く」事故を、復旧手段自体が起こすことになる。
+        LastKnownGoodConfiguration.Save(
+            _dataRoot,
+            onFailure: failure => _logger.LogWarning(
+                failure,
+                "良好構成の写しを更新できませんでした（再読み込み自体は成功しています）。設定ファイルが読めなくなった際の復旧元が古いままになります。"));
+
         // 前回適用スナップショットの永続化（Issue #329——保存契機③「再読み込み反映」。
         // 起動時の設定差分照合の基準を更新する）。失敗は再読み込み自体を妨げない（Try 系）。
         LastAppliedConfigurationSnapshotStore.TrySave(_dataRoot, snapshot.Options, _logger);

@@ -196,6 +196,51 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
         Assert.True(applierCalled);
     }
 
+    /// <summary>
+    /// 再読み込みに成功したら良好構成の写しも更新する（configuration.md §1）。
+    /// </summary>
+    /// <remarks>
+    /// 更新契機を起動時だけにすると、再読み込みで適用済みの変更が写しに入らず、
+    /// 復元したときに黙って巻き戻る——「意図しない設定で動く」事故を、復旧手段自体が
+    /// 起こすことになる（PR #310 の 2 巡目レビューで 4 ペルソナが独立に指摘）。
+    /// </remarks>
+    [Fact]
+    public async Task Reload_Success_UpdatesLastKnownGoodCopy()
+    {
+        WriteConfigurationFile("""{ "Retention": { "Days": "30" } }""");
+        var service = CreateService(new ImmediateConfigurationApplier(["Retention:Days"], _ => { }));
+
+        // 再読み込みで変更を適用する（再起動は挟まない）。
+        WriteConfigurationFile("""{ "Retention": { "Days": "90" } }""");
+        var result = await service.ReloadAsync(null, null, null);
+        Assert.False(result.Rejected);
+
+        // 写しに再読み込み後の内容が入っていること = 復元しても 90 が失われない。
+        var copy = LastKnownGoodConfiguration.GetPath(_dataRoot);
+        Assert.True(File.Exists(copy), "再読み込みの成功時に写しが作られること。");
+        Assert.Contains("90", File.ReadAllText(copy));
+    }
+
+    /// <summary>
+    /// 拒否された再読み込みでは写しを更新しない（壊れたファイルを復旧元にしない）。
+    /// </summary>
+    [Fact]
+    public async Task Reload_Rejected_DoesNotUpdateLastKnownGoodCopy()
+    {
+        WriteConfigurationFile("""{ "Retention": { "Days": "30" } }""");
+        var service = CreateService(new ImmediateConfigurationApplier(["Retention:Days"], _ => { }));
+        await service.ReloadAsync(null, null, null);
+
+        var copy = LastKnownGoodConfiguration.GetPath(_dataRoot);
+        var before = File.ReadAllText(copy);
+
+        WriteConfigurationFile("""{ "Retention": { "Days": "90" """); // 構文エラー
+        var result = await service.ReloadAsync(null, null, null);
+
+        Assert.True(result.Rejected);
+        Assert.Equal(before, File.ReadAllText(copy));
+    }
+
     [Fact]
     public async Task Reload_InvalidImmediateValue_AppliesFallbackAndReportsWarning()
     {
