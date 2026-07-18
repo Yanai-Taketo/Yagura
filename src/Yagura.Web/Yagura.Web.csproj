@@ -9,7 +9,6 @@
     <PackageReference Include="MudBlazor" />
     <!-- 管理 UI 認証（ADR-0010 Phase 1。版のライブ検証記録は Directory.Packages.props）。 -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Negotiate" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" VersionOverride="10.0.10" />
   </ItemGroup>
 
   <ItemGroup>
