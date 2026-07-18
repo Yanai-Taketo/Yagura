@@ -146,6 +146,13 @@ public sealed class SetupWizardServiceTests : IDisposable
         // configuration.md §1）。
         var configPath = Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
         Assert.True(File.Exists(configPath));
+
+        // 保存契機②「ウィザード保存」（Issue #329）: 起動時の設定差分照合の基準も保存内容へ
+        // 更新される（次回起動で今回の保存を「停止中の手編集」と誤検出しない）。
+        var lastApplied = LastAppliedConfigurationSnapshotStore.TryRead(_dataRoot);
+        Assert.NotNull(lastApplied);
+        Assert.False(ConfigurationChangePlanner.Compare(
+            lastApplied, YaguraConfigurationWriter.Read(_dataRoot).Options).HasChanges);
         using var document = JsonDocument.Parse(File.ReadAllBytes(configPath));
         Assert.Equal("514", document.RootElement.GetProperty("Ingestion").GetProperty("Udp").GetProperty("Port").GetString());
         Assert.Equal("30", document.RootElement.GetProperty("Retention").GetProperty("Days").GetString());

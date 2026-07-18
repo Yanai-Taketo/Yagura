@@ -118,6 +118,13 @@ public static class AuditEventIds
     /// <summary>蓄積ログ移行の実行（database.md §6.2。Issue #266）。レベルは情報。</summary>
     public static readonly EventId LogMigrationExecuted = new(2018, "LogMigrationExecuted");
 
+    /// <summary>
+    /// 前回稼働時から設定ファイルが変更された状態で起動した（起動時の設定差分照合。
+    /// security.md §4.1・configuration.md §3。Issue #329）。レベルは情報。
+    /// </summary>
+    public static readonly EventId StartupConfigurationChangeDetected =
+        new(2019, "StartupConfigurationChangeDetected");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
