@@ -7,6 +7,12 @@
   <ItemGroup>
     <!-- 対話的検証（URL クエリと OnParametersSetAsync の往復）専用。版のライブ検証記録は Directory.Packages.props（Issue #148）。 -->
     <PackageReference Include="bunit" />
+    <!--
+      bunit が推移的に引く AngleSharp を脆弱性修正版へ明示 pin するための直接参照
+      （GHSA-pgww-w46g-26qg。NU1902。版と経緯は Directory.Packages.props）。
+      SQLitePCLRaw を Yagura.Storage で直接参照して pin するのと同じ対処パターン。
+    -->
+    <PackageReference Include="AngleSharp" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <!-- SEC-6 猶予タイマー（Issue #267）の満了を FakeTimeProvider で決定的に検証する。 -->

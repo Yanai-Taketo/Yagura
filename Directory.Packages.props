@@ -92,6 +92,19 @@
     -->
     <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.3" />
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
+
+    <!--
+      bunit 2.7.2 が推移的に引く AngleSharp の最小版 1.4.0 には既知の中深刻度の脆弱性
+      CVE (GHSA-pgww-w46g-26qg。MathML annotation-xml の HTML エンコード属性の直列化を介した
+      mutation XSS) があり、NuGetAuditMode=all + NU1902 の warning-as-error 化で全ビルドが
+      ブロックされるため、修正版へ明示 pin する（SQLitePCLRaw と同じ対処パターン）。
+      当日ライブ検証: advisory (github.com/advisories/GHSA-pgww-w46g-26qg) で「影響 < 1.5.0 /
+      初回修正 1.5.0」、nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/anglesharp/index.json) で最新安定版 1.5.2 を確認
+      （1.5.3-beta.* はプレリリースのため除外。検証日 2026-07-18）。実 pin は
+      tests/Yagura.Web.Tests の直接参照で効かせる（bunit の唯一の利用箇所）。
+    -->
+    <PackageVersion Include="AngleSharp" Version="1.5.2" />
   </ItemGroup>
 
 </Project>
