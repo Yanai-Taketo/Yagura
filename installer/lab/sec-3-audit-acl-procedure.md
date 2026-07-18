@@ -1,5 +1,12 @@
 # SEC-3 実機検証手順 — 監査記録領域の追記専用 ACE と削除権限の分離
 
+> **実施済み（2026-07-18。Windows Server 2025 10.0.26100 / Yagura 0.4.0）**。結果は
+> [security.md §5](../../docs/design/security.md)「監査記録領域の ACE（SEC-3 実機検証の結果）」および §7 SEC-3 行に確定として記録済み。
+> 要点: **仮説 1（追記専用 ACE）は不成立・仮説 2（削除権限の分離）は成立**。
+> 本手順書は再実施用に残すが、下記 2 点は実施時に判明した誤りを訂正済みである——
+> ①手順 2 の `icacls /inheritance:r` は**使ってはならない**（DACL が空になり Administrators を含む全員が締め出され、`takeown` での復旧が必要になる。正しくは `/inheritance:d`）
+> ②制限 ACE には **`S`（SYNCHRONIZE）が必須**（欠くとディレクトリ列挙の時点で `UnauthorizedAccessException` になる）
+
 security.md §4.2・§5 / SEC-3（確定待ち一覧）/ Issue #261 の lab 検証手順。
 **実施環境**: Yagura サービスがインストール済みの lab（仮想サービスアカウント `NT SERVICE\Yagura` が存在すること。開発機の単体では仮想サービスアカウントの指定形式を検証できない）。
 
@@ -21,17 +28,23 @@ icacls "$env:ProgramData\Yagura\audit"
 ### 2. 追記専用 ACE の適用
 
 ```powershell
-# 継承を切り、明示 ACE のみにする（/inheritance:r）
-icacls "$env:ProgramData\Yagura\audit" /inheritance:r
+# 継承 ACE を「明示 ACE へ変換」する（/inheritance:d）。
+# 【重要】/inheritance:r を使ってはならない——DACL が空になり Administrators を含む全員が
+# 締め出され、以降の /grant すら Access is denied になる（takeown での復旧が必要。2026-07-18 実測）。
+icacls "$env:ProgramData\Yagura\audit" /inheritance:d
 
-# 管理者・SYSTEM はフルコントロール（ACL 管理・削除の運用主体）
-icacls "$env:ProgramData\Yagura\audit" /grant "BUILTIN\Administrators:(OI)(CI)F"
-icacls "$env:ProgramData\Yagura\audit" /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F"
+# サービスアカウントの既定 ACE（Modify）を落としてから制限 ACE を与える
+icacls "$env:ProgramData\Yagura\audit" /remove:g "NT SERVICE\Yagura"
 
 # サービスアカウントには「読み取り + ファイル作成 + 追記」のみ
 # RD=ディレクトリ列挙 / X=走査 / RA/REA=属性読取 / WD=ファイル作成(ディレクトリに対する
-# FILE_ADD_FILE) / AD=追記(ファイルに継承されると FILE_APPEND_DATA)
-icacls "$env:ProgramData\Yagura\audit" /grant "NT SERVICE\Yagura:(OI)(CI)(RD,RA,REA,X,WD,AD,RC)"
+# FILE_ADD_FILE) / AD=追記(ファイルに継承されると FILE_APPEND_DATA) / S=SYNCHRONIZE
+# 【重要】S を必ず含める——欠くと Win32 CreateFile がハンドルを開けず、書き込み以前に
+# ディレクトリ列挙が [audit-retention-enumerate-failed] で失敗する（2026-07-18 実測）。
+icacls "$env:ProgramData\Yagura\audit" /grant "NT SERVICE\Yagura:(OI)(CI)(RD,RA,REA,X,WD,AD,RC,S)"
+
+# 既存ファイルへ伝播させる（親の ACE 変更は既存の子へ自動反映されない場合がある）
+icacls "$env:ProgramData\Yagura\audit\*" /reset
 ```
 
 > **検証ポイント（仮説 1 の核心）**: `WD`（FILE_WRITE_DATA）はディレクトリでは「ファイル作成」、ファイルへ継承されると「既存データの上書き」を意味する二重性がある。`FileMode.Append` は FILE_APPEND_DATA のみで成立するはずだが、.NET の `FileStream` が要求するアクセス右の実挙動（GENERIC_WRITE を要求しないか）は**実機で確認するまで確定しない**。追記が失敗する場合は、ディレクトリ用 ACE（ファイル作成）とファイル継承用 ACE（追記のみ）を `(CI)` / `(OI)(IO)` で分離する第 2 案を試す:
