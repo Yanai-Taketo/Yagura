@@ -1,6 +1,6 @@
 # ADR-0019: TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用）
 
-- 状態: proposed
+- 状態: accepted（2026-07-18。PR #341 マージ）
 - 日付: 2026-07-18
 - 決定者: YANAI Taketo
 - 関連: [ADR-0012](0012-admin-https-cert-ui.md)（管理リモート HTTPS の証明書選択 UI——本 ADR の再利用元）/ [security.md](../design/security.md) §6（TLS 受信）/ [configuration.md](../design/configuration.md) §8（`Ingestion:Tls:*`）/ CF-4（Issue #262。リスナ再構成）/ Issue #276 / PR #341

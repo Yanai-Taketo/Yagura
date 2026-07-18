@@ -1,6 +1,6 @@
 # ADR-0017: 能動通知のメール送信チャネル（SMTP。opt-in）
 
-- 状態: proposed
+- 状態: accepted（2026-07-18。PR #337 マージ）
 - 日付: 2026-07-18
 - 決定者: YANAI Taketo
 - 関連: [architecture.md](../design/architecture.md) §4.6（能動通知）/ [ADR-0001](0001-project-founding.md)（スコープ制御）/ [ADR-0004](0004-security-model.md) 決定 5（資格情報の保管）・決定 7（監査）/ [security.md](../design/security.md) §1.1（外向き通信台帳）・§4.3（イベント ID 採番）/ [configuration.md](../design/configuration.md) §1・§2・§3・§8 / Issue #273 / PR #337
