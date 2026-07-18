@@ -194,6 +194,15 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         // 追跡し続けるため、差分の再検出には依存しない）。
         _lastAppliedOptions = snapshot.Options;
 
+        // 良好構成の写しを更新する（configuration.md §1）。更新契機を起動時だけにすると、
+        // 再読み込みで適用済みの変更が写しに入らず、復元したときに黙って巻き戻る——
+        // 「意図しない設定で動く」事故を、復旧手段自体が起こすことになる。
+        LastKnownGoodConfiguration.Save(
+            _dataRoot,
+            onFailure: failure => _logger.LogWarning(
+                failure,
+                "良好構成の写しを更新できませんでした（再読み込み自体は成功しています）。設定ファイルが読めなくなった際の復旧元が古いままになります。"));
+
         var pending = PendingRestartKeySnapshot();
         var warnings = loadResult.Warnings
             .Select(w => $"{w.Key}: {w.Reason}（適用値: {w.AppliedValue}）")

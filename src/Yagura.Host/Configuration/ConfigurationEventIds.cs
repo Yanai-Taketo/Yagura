@@ -112,4 +112,28 @@ public static class ConfigurationEventIds
     /// </summary>
     public static readonly EventId FirewallRuleMismatch =
         new(1023, "FirewallRuleMismatch");
+
+    /// <summary>
+    /// 設定ファイルをファイル全体として解釈できず（構文エラー・文字化け・重複キー）、起動に失敗した
+    /// （configuration.md §1。security.md §4.3）。レベルはエラー——機能停止を伴うため。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>なぜ起動失敗なのか</b>: キー単位の縮退に分解できないため「何が既定へ落ちたか」を提示できず、
+    /// 「可視化された縮退」（architecture.md §1.2）の系に載せられないためである。可視化できる縮退
+    /// （単一キーの不正値・接続文字列不備による SQLite 縮小など）は従来どおり継続する。
+    /// </para>
+    /// <para>
+    /// <b>本イベントが唯一の通知経路になる</b>: 起動に失敗すると閲覧 UI も上がらないため、Yagura 自身で
+    /// この状態を検知することは構造的にできない（イベントログ以外のログを集めるための製品であるため）。
+    /// 加えてサービスの失敗時ポリシーは再起動 3 回で打ち切られ、以後は停止したままとなる。利用者には
+    /// サービス死活の外形監視を案内する（configuration.md §10 CF-D8）。
+    /// </para>
+    /// <para>
+    /// 採番の経緯: 1019 は 1018 と 1020 の間の空き番号である（additive-only 規約——一度公開した ID の
+    /// 意味は変えない。PR #310 のペルソナレビューで採番漏れとして指摘され確定した）。
+    /// </para>
+    /// </remarks>
+    public static readonly EventId ConfigurationFileUnreadableStartupFailed =
+        new(1019, "ConfigurationFileUnreadableStartupFailed");
 }

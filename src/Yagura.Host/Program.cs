@@ -1,4 +1,5 @@
 ﻿using System.Runtime.Versioning;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
@@ -72,6 +73,14 @@ public static class Program
         {
             configurationLoadResult = YaguraConfigurationLoader.Load(dataRoot, configurationLogger);
         }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            // configuration.md §1「読み取り・解析の失敗」（構文エラー・文字化け・重複キー）。
+            // キー単位の縮退に分解できず「何が既定へ落ちたか」を提示できないため、
+            // 「可視化された縮退」（architecture.md §1.2）の系に載せられない——よって起動を止める。
+            LogConfigurationFileUnreadable(configurationLogger, dataRoot, ex);
+            throw;
+        }
         catch (ConfigurationValidationException ex)
         {
             // §1「起動失敗」分類: 受信の成立に不可欠なキーが不正な場合はホスト起動を失敗させる。
@@ -97,7 +106,26 @@ public static class Program
 
         // 設定ライブ再読み込み（CF-4 層1。Issue #262）の差分計算の初期基準——起動時点の
         // ファイルの生 options を捕捉しておく（ConfigurationReloadService の doc コメント参照）。
-        var startupRawOptions = YaguraConfigurationWriter.Read(dataRoot).Options;
+        // 受理範囲は Load と一致しているため（§1 の不変条件）ここで新たに失敗することは想定しないが、
+        // 念のため同じ扱い（1019 + 起動失敗）へ寄せる——片方だけが落ちる状態を再び作らない。
+        YaguraConfigurationOptions startupRawOptions;
+        try
+        {
+            startupRawOptions = YaguraConfigurationWriter.Read(dataRoot).Options;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            LogConfigurationFileUnreadable(configurationLogger, dataRoot, ex);
+            throw;
+        }
+
+        // ここまでで読み取りと検証を通ったので、良好構成の写しを更新する（§1）。
+        // 復旧元として使うだけで自動適用はしない（写しの内容は現在の意図より開放側でありうる）。
+        LastKnownGoodConfiguration.Save(
+            dataRoot,
+            onFailure: failure => configurationLogger.LogWarning(
+                failure,
+                "良好構成の写しを保存できませんでした（起動は継続します）。設定ファイルが読めなくなった際の復旧元が古いままになります。"));
 
         // architecture.md §1.2 起動手順 1「スプール領域を開く（前回退避分の存在確認を含む）」。
         // 受信開始（IngestionHostedService.StartAsync）より先に行う必要があるため、DI 登録前の
@@ -1208,5 +1236,52 @@ public static class Program
             // （IngestionPipeline は借用しているだけで dispose しない）。
             spool?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// 設定ファイルをファイル全体として解釈できなかったことを記録する（イベント ID 1019。
+    /// configuration.md §1・security.md §4.3）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>記録するのは「どのファイルの、どこで」までに留める</b>。該当行の内容や周辺の抜粋は含めない——
+    /// 設定ファイルには DPAPI 暗号文や（手編集された場合は）平文の資格情報が含まれうるためである
+    /// （§2「パスワード値そのものは記録しない」を読み取り失敗の文脈へ延長する）。対象ファイルの
+    /// パス自体は資格情報ではないため含める（データルートを既定から変更した環境で、どのファイルを
+    /// 直せばよいか分かるようにする）。
+    /// </para>
+    /// <para>
+    /// <b>行番号は 1 始まりへ変換する</b>。<see cref="JsonException.LineNumber"/> は 0 始まりであり、
+    /// そのまま出すとエディタの行番号と 1 ずれる。<see cref="JsonException.BytePositionInLine"/> は
+    /// 「桁」ではなくバイト位置であり、日本語を含む行では桁として読めないため補助情報として添える。
+    /// </para>
+    /// </remarks>
+    private static void LogConfigurationFileUnreadable(ILogger logger, string dataRoot, Exception failure)
+    {
+        var path = Path.Combine(dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
+
+        // 位置情報を持つ例外は入れ子の奥にある。構成システム（AddJsonFile）の場合、実測では
+        // InvalidDataException → FormatException → JsonReaderException（JsonException の派生）の
+        // 3 段になる（2026-07-18 確認）。段数を決め打ちせず、連鎖を辿って最初の JsonException を拾う。
+        JsonException? jsonFailure = null;
+        for (var current = failure; current is not null; current = current.InnerException)
+        {
+            if (current is JsonException found)
+            {
+                jsonFailure = found;
+                break;
+            }
+        }
+
+        var location = jsonFailure?.LineNumber is { } lineNumber
+            ? $"{lineNumber + 1} 行目（バイト位置 {jsonFailure.BytePositionInLine?.ToString() ?? "不明"}）"
+            : "位置不明";
+
+        logger.LogCritical(
+            ConfigurationEventIds.ConfigurationFileUnreadableStartupFailed,
+            "設定ファイル {ConfigurationFile} を解釈できなかったため起動を中止します（{Location}）。{Recovery}",
+            path,
+            location,
+            LastKnownGoodConfiguration.BuildRecoveryGuidance(dataRoot));
     }
 }
