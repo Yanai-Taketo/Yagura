@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
+using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.Host.Administration;
 using Yagura.Host.Configuration;
 
 namespace Yagura.Host.Tests.Configuration;
@@ -158,6 +160,54 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
         Assert.False(result.Rejected);
         Assert.Null(appliedDays);
         Assert.Contains(result.WarningMessages, w => w.Contains("Retention:Days"));
+    }
+
+    [Fact]
+    public async Task WizardApply_ThenReload_AppliesImmediateKeysAndRecordsTwoAuditEvents()
+    {
+        // Issue #287: ウィザード保存後の自動反映は、保存（SetupWizardService.ApplyAsync = 2001）の
+        // 直後に本サービス（設定の再読み込みと同じ適用経路 = 2016）を呼ぶ合成（画面が行う）。
+        // 監査は 2 件それぞれ記録される——統合しない（2026-07-18 オーナー裁定: 実際に 2 つの
+        // 事象が起きており、統合すると反映失敗時の切り分けができなくなる）。
+        WriteConfigurationFile("""{ "Retention": { "Days": "30" } }""");
+        int? appliedDays = null;
+        var reloadService = CreateService(new ImmediateConfigurationApplier(
+            ["Retention:Days"], resolved => appliedDays = resolved.RetentionDays));
+
+        var wizard = new SetupWizardService(_dataRoot, _auditRecorder);
+        await wizard.ConfirmStepAsync(SetupWizardStep.Reception, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.UdpPort] = "514",
+            [SetupWizardValueKeys.TcpPort] = "514",
+        });
+        await wizard.ConfirmStepAsync(SetupWizardStep.ViewerAccess, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.ViewerHttpPort] = "8514",
+            [SetupWizardValueKeys.ViewerPublicAccess] = "Lan",
+            [SetupWizardValueKeys.AdminHttpPort] = "8515",
+        });
+        await wizard.ConfirmStepAsync(SetupWizardStep.Retention, new Dictionary<string, string>
+        {
+            [SetupWizardValueKeys.RetentionDays] = "90",
+        });
+        var review = await wizard.ConfirmStepAsync(SetupWizardStep.Review, new Dictionary<string, string>());
+
+        var applyResult = await wizard.ApplyAsync(
+            review.ApplyIdempotencyToken!, "127.0.0.1", "app", "admin");
+        Assert.Equal(WizardApplyOutcome.Applied, applyResult.Outcome);
+
+        var reload = await reloadService.ReloadAsync("127.0.0.1", "app", "admin");
+
+        // 即時キー（Retention:Days）はライブ反映され、適用の口がないキーは再起動待ちに載る。
+        Assert.False(reload.Rejected);
+        Assert.Contains("Retention:Days", reload.AppliedKeys);
+        Assert.Equal(90, appliedDays);
+        Assert.Contains("Viewer:HttpPort", reload.PendingRestartKeys);
+
+        // 監査は 2001（保存）→ 2016（反映）の 2 件・この順。
+        Assert.Equal(
+            new[] { AuditEventKind.ConfigurationSaved, AuditEventKind.ConfigurationReloaded },
+            _auditRecorder.Recorded.Select(e => e.Kind));
     }
 
     [Fact]
