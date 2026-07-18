@@ -99,7 +99,7 @@ public sealed class ParsingStage
                 return;
             }
 
-            var record = SyslogParser.Parse(datagram, _defaultRfc3164TimeZone);
+            var record = ParseAndCount(datagram);
 
             if (stoppingToken.IsCancellationRequested)
             {
@@ -128,9 +128,33 @@ public sealed class ParsingStage
     {
         while (_q1Reader.TryRead(out var datagram))
         {
-            var record = SyslogParser.Parse(datagram, _defaultRfc3164TimeZone);
+            var record = ParseAndCount(datagram);
             await EvacuateToSpoolAsync(record).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// 1 データグラムを解析し、解析結果の異常（解析失敗・不完全）を計器へ計上する
+    /// （architecture.md §4.1「解析失敗（保存済み）」「TCP 不完全メッセージ」。Issue #270）。
+    /// どちらも生データのまま保存され損失ではないが、「破棄・異常は必ず計上する」原則に従い
+    /// 発生を計測可能にする。計上は解析直後の単一点で行い、後段（Q2 投入・スプール退避）の
+    /// 経路によらず二重計上・計上漏れが起きないようにする。
+    /// </summary>
+    private LogRecord ParseAndCount(RawDatagram datagram)
+    {
+        var record = SyslogParser.Parse(datagram, _defaultRfc3164TimeZone);
+
+        switch (record.ParseStatus)
+        {
+            case ParseStatus.ParseFailed:
+                _metrics.RecordParseFailedSaved();
+                break;
+            case ParseStatus.Incomplete:
+                _metrics.RecordTcpIncompleteMessage();
+                break;
+        }
+
+        return record;
     }
 
     /// <summary>
