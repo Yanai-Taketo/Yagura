@@ -3,7 +3,7 @@
 - 状態: proposed
 - 日付: 2026-07-18
 - 決定者: YANAI Taketo
-- 関連: [ADR-0008](0008-forwarder-kit-generation.md) 委任事項 4 / [ADR-0016](0016-os-drop-gauge-mechanism.md)（無音化検出への一本化）/ [architecture.md](../design/architecture.md) §4.6（能動通知）/ [ui.md](../design/ui.md) §4（送信元別受信状況・UI-4）/ [database.md](../design/database.md) §1.2（`QuerySourceActivityAsync`）/ ADR-0017（メール通知——proposed・並行起案）/ Issue #275 / PR #338
+- 関連: [ADR-0008](0008-forwarder-kit-generation.md) 委任事項 4 / [ADR-0016](0016-os-drop-gauge-mechanism.md)（無音化検出への一本化）/ [architecture.md](../design/architecture.md) §4.6（能動通知）/ [ui.md](../design/ui.md) §4（送信元別受信状況・UI-4）/ [database.md](../design/database.md) §1.2（`QuerySourceActivityAsync`）/ ADR-0017（メール通知——proposed・並行起案）/ Issue #275 / PR #339
 
 ## 文脈と課題
 
