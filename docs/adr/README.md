@@ -34,10 +34,10 @@
 | [0016](0016-os-drop-gauge-mechanism.md) | OS レベル取りこぼし観測の実現手段の撤回 — 標準 API ゲージから引き算導出 + 無音化検出へ（ADR-0002 決定 2 の OS ゲージ観測部分の部分 supersession。Issue #272） | accepted |
 | [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | proposed |
 | [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | proposed |
+| [0019](0019-ingestion-tls-cert-ui.md) | TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用。Issue #276） | proposed |
 
 ## 起案予定
 
 （新しい委任・決定事項が生じたらここに登録してから起案する）
 
-- **TLS 受信（`Ingestion:Tls:*`）の証明書選択 UI**: [ADR-0012](0012-admin-https-cert-ui.md) のスコープから分離済み（オーナー裁定 2026-07-11・論点 4。Issue #276）。主論点: ADR-0012 で確立した設計（ストア列挙・秘密鍵アクセス権付与・失敗時の縮退）の再利用範囲。反映に受信断を伴う点は CF-4（Issue #262）と接続するため、実装は CF-4 の後が自然
 
