@@ -180,4 +180,10 @@ public static class AuditEventIds
     /// 3010・3011 は Issue #267 が予約済みのため 3012 を採る（additive-only。番号は付け替えない）。
     /// </summary>
     public static readonly EventId RejectionAggregated = new(3012, "RejectionAggregated");
+
+    /// <summary>
+    /// 監査チャネルの復旧・障害中事象の書き戻し完了（SEC-10。security.md §4.2。Issue #269）。
+    /// レベルは警告（監査の欠落可能性を既定の監視で拾えるようにする）。
+    /// </summary>
+    public static readonly EventId AuditChannelRecovered = new(3013, "AuditChannelRecovered");
 }

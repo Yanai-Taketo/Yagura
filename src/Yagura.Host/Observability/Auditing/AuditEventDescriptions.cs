@@ -62,6 +62,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.CircuitRevocationGraceGranted => "失効後の閲覧継続を猶予として許容",
         AuditEventKind.CircuitRevocationGraceEnded => "猶予中の circuit が終了",
         AuditEventKind.RejectionAggregated => "拒否試行を集約記録",
+        AuditEventKind.AuditChannelRecovered => "監査チャネル復旧・障害中事象を書き戻し",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

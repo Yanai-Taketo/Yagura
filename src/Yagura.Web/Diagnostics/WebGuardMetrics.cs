@@ -26,6 +26,9 @@ namespace Yagura.Web.Diagnostics;
 /// <item><c>yagura.web.audit.write_failed</c>: 監査記録の書き込み失敗件数（アプリ記録ファイル・
 /// イベントログの両方が失敗した場合。security.md §4.2 の多段の最終段——「それも失敗したら
 /// 黙って握りつぶさずカウンタで観測可能にする」）。</item>
+/// <item><c>yagura.web.audit.buffer_dropped</c>: 監査チャネル障害中のメモリ内保持が上限に達し、
+/// 縮退で破棄した事象の件数（SEC-10。security.md §4.2。Issue #269）。復旧サマリ（3013）が
+/// 書けないままプロセスが落ちても件数が観測に残るよう、ライブの計器としても計上する。</item>
 /// </list>
 /// </para>
 /// </remarks>
@@ -43,6 +46,7 @@ public sealed class WebGuardMetrics : IDisposable
     private readonly Meter _meter;
     private readonly Counter<long> _listenerGuardRejected;
     private readonly Counter<long> _auditWriteFailed;
+    private readonly Counter<long> _auditBufferDropped;
     private readonly Counter<long> _circuitOriginRejected;
     private readonly Counter<long> _circuitLimitRejected;
     private readonly Counter<long> _circuitIdleReclaimed;
@@ -60,6 +64,11 @@ public sealed class WebGuardMetrics : IDisposable
             "yagura.web.audit.write_failed",
             unit: "{event}",
             description: "監査記録の書き込み失敗件数（アプリ記録ファイル・イベントログの両方が失敗。security.md §4.2）。");
+
+        _auditBufferDropped = _meter.CreateCounter<long>(
+            "yagura.web.audit.buffer_dropped",
+            unit: "{event}",
+            description: "監査チャネル障害中の保持上限超過で縮退破棄した事象の件数（SEC-10。security.md §4.2）。");
 
         _circuitOriginRejected = _meter.CreateCounter<long>(
             "yagura.web.circuit.origin_rejected",
@@ -89,6 +98,17 @@ public sealed class WebGuardMetrics : IDisposable
     public void RecordAuditWriteFailed() => _auditWriteFailed.Add(1);
 
     /// <summary>
+    /// 監査チャネル障害中の保持上限超過で縮退破棄した事象を計上する（SEC-10。security.md §4.2）。
+    /// </summary>
+    public void RecordAuditBufferDropped(long count = 1)
+    {
+        if (count > 0)
+        {
+            _auditBufferDropped.Add(count);
+        }
+    }
+
+    /// <summary>
     /// 同一サイト以外からの circuit 確立試行の拒否を 1 件計上する（security.md §2.1
     /// 「拒否は計測する」）。
     /// </summary>
@@ -114,6 +134,9 @@ public sealed class WebGuardMetrics : IDisposable
 
     /// <summary>監査記録書き込み失敗カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> AuditWriteFailedCounter => _auditWriteFailed;
+
+    /// <summary>監査チャネル障害中の縮退破棄カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> AuditBufferDroppedCounter => _auditBufferDropped;
 
     public void Dispose() => _meter.Dispose();
 }

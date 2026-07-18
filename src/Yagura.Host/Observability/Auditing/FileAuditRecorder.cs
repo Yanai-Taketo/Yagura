@@ -51,8 +51,11 @@ namespace Yagura.Host.Observability.Auditing;
 /// 書き込み不能は要求処理を妨げない」）。
 /// </para>
 /// <para>
-/// <b>スコープ外（Issue #52 に明記済み）</b>: 記録失敗中の事象のメモリ内保持・チャネル復旧後の
-/// 書き戻し（SEC-10）は本クラスの責務に含めない。
+/// <b>スコープの分界（Issue #52・#269）</b>: 記録失敗中の事象のメモリ内保持・チャネル復旧後の
+/// 書き戻し（SEC-10）は本クラスの責務に含めない——本クラスは「1 事象を 2 チャネルへ 1 回書く」
+/// 単責務に留め、失敗中の保持・書き戻しは <see cref="ResilientAuditRecorder"/>（デコレータ）が
+/// 担う。そのために本クラスは書き込みの成否を <see cref="TryRecord"/> で呼び出し元へ返す
+/// （<see cref="RecordAsync"/> は <see cref="IAuditRecorder"/> 契約どおり成否を隠して例外も投げない）。
 /// </para>
 /// </remarks>
 public sealed class FileAuditRecorder : IAuditRecorder
@@ -99,8 +102,27 @@ public sealed class FileAuditRecorder : IAuditRecorder
     public static string GetFileNameFor(DateTimeOffset occurredAt) =>
         $"audit-{occurredAt.UtcDateTime:yyyyMMdd}.jsonl";
 
+    /// <summary>
+    /// <see cref="TryRecord"/> の結果——アプリ記録ファイル・イベントログそれぞれの書き込み成否。
+    /// SEC-10 のデコレータ（<see cref="ResilientAuditRecorder"/>）が「アプリ記録ファイルへ確実に
+    /// 残ったか」を判定し、失敗中の保持・復旧後の書き戻しを制御するために用いる。
+    /// </summary>
+    internal readonly record struct AuditWriteOutcome(bool FileSucceeded, bool EventLogSucceeded);
+
     /// <inheritdoc/>
     public Task RecordAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
+    {
+        TryRecord(auditEvent);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 1 事象をアプリ記録ファイル + イベントログの 2 チャネルへ書き、それぞれの成否を返す
+    /// （<see cref="RecordAsync"/> と同じ多段の失敗処理。ただし成否を隠さず呼び出し元へ返す点が
+    /// 異なる）。<see cref="RecordAsync"/> 同様、いずれの段が失敗しても例外は投げない
+    /// （ADR-0004 決定 7）。SEC-10 のデコレータが書き戻し判定に使う。
+    /// </summary>
+    internal AuditWriteOutcome TryRecord(AuditEvent auditEvent)
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
 
@@ -122,7 +144,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
             _metrics.RecordAuditWriteFailed();
         }
 
-        return Task.CompletedTask;
+        return new AuditWriteOutcome(fileWriteSucceeded, eventLogWriteSucceeded);
     }
 
     private bool TryAppendToFile(AuditEvent auditEvent, EventId eventId)
@@ -250,6 +272,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.CircuitRevocationGraceGranted => AuditEventIds.CircuitRevocationGraceGranted,
         AuditEventKind.CircuitRevocationGraceEnded => AuditEventIds.CircuitRevocationGraceEnded,
         AuditEventKind.RejectionAggregated => AuditEventIds.RejectionAggregated,
+        AuditEventKind.AuditChannelRecovered => AuditEventIds.AuditChannelRecovered,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 
