@@ -407,10 +407,11 @@ public sealed class ViewerPageRenderTests
         Assert.Contains("yagura.ingestion.internal_buffer.dropped", html, StringComparison.Ordinal);
         Assert.Contains(UiText.CounterSpoolEvacuated, html, StringComparison.Ordinal);
 
-        // OS 受信破棄ゲージ: 値は表示せず、常時可視の説明を掲示する（M8-3 の設計判断。
-        // architecture.md §4.2・D-6——値 0 = 取りこぼしゼロの誤解を生まない側に倒す）
-        Assert.Contains(UiText.OsUdpGaugeExplanation, html, StringComparison.Ordinal);
-        Assert.Contains(UiText.OsUdpGaugeExplanationSupplement, html, StringComparison.Ordinal);
+        // OS 受信破棄: 値は表示せず、常時可視の説明を掲示する（M8-3 の設計判断。
+        // architecture.md §4.2・D-6——値 0 = 取りこぼしゼロの誤解を生まない側に倒す。
+        // 計器自体も ADR-0016 決定 3 で撤去済み）
+        Assert.Contains(UiText.OsUdpDiscardExplanation, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.OsUdpDiscardExplanationSupplement, html, StringComparison.Ordinal);
         Assert.DoesNotContain("yagura.os.udp", html, StringComparison.Ordinal);
     }
 

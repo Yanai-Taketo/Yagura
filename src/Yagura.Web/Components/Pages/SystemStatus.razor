@@ -54,11 +54,11 @@
                 <MudTd DataLabel="@UiText.CounterColumnValue">@counter.Value.ToString("N0", CultureInfo.InvariantCulture)</MudTd>
             </RowTemplate>
         </YaguraTable>
-        @* OS 受信破棄ゲージの常時可視の説明（値の非表示 + 説明——本 PR の設計判断。ui.md §5.5） *@
+        @* OS 受信破棄の常時可視の説明（値の非表示 + 説明。計器自体も ADR-0016 決定 3 で撤去済み。ui.md §5.5） *@
         <div class="mt-2">
             <YaguraSystemNotice Severity="YaguraNoticeSeverity.Info"
-                                Message="@UiText.OsUdpGaugeExplanation"
-                                Supplement="@UiText.OsUdpGaugeExplanationSupplement" />
+                                Message="@UiText.OsUdpDiscardExplanation"
+                                Supplement="@UiText.OsUdpDiscardExplanationSupplement" />
         </div>
     </YaguraCard>
 </div>
