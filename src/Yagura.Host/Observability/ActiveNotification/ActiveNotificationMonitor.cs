@@ -74,6 +74,9 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     private readonly Dictionary<string, DateTimeOffset> _lastNotifiedAt = new(StringComparer.Ordinal);
 
+    /// <summary>現在保持している通知抑制エントリ数（テスト・可観測性用。#314 の掃引検証）。</summary>
+    internal int SuppressionEntryCount => _lastNotifiedAt.Count;
+
     private long? _lastSpoolEvacuatedTotal;
     private DateTimeOffset? _evacuationStreakStartAt;
     private DateTimeOffset? _lastSelfTestInjectedAt;
@@ -213,6 +216,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateAdminHttpsCertificate();
         EvaluateIngestionTlsCertificate();
         EvaluateAdminAuthFailureDefense();
+        PruneStaleNotificationSuppression();
     }
 
     /// <summary>
@@ -780,6 +784,39 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         _lastNotifiedAt[triggerKey] = now;
         emit();
+    }
+
+    /// <summary>
+    /// 抑制窓を十分に超過した <see cref="_lastNotifiedAt"/> エントリを間引く（<see cref="EvaluateOnceAsync"/>
+    /// の末尾から毎周期呼ぶ）。トリガキーには送信元 IP（<c>admin-auth-ip-rate-limit:{RemoteAddress}</c> 等、
+    /// 攻撃者が制御できる次元）を含むものがあり、<see cref="NotifyIfDue"/> は挿入のみで除去しないため、
+    /// 放置すると辞書が単調増加する（<c>AdminAuthFailureDefense.SweepIdleIpRateLimitEntries</c> #233 と
+    /// 同種の掃引）。抑制窓を超えたエントリはもう抑制に寄与しない（<see cref="NotifyIfDue"/> の判定が必ず
+    /// 通り、通れば <c>now</c> で上書きされる）ため安全に除去できる。単一スレッド前提（クラス remarks）の
+    /// ため素の <see cref="Dictionary{TKey,TValue}"/> をロックなしで操作してよい。
+    /// </summary>
+    private void PruneStaleNotificationSuppression()
+    {
+        var cutoff = _timeProvider.GetUtcNow() - (ActiveNotificationConstants.SuppressionWindow * 2);
+
+        List<string>? stale = null;
+        foreach (var (key, lastAt) in _lastNotifiedAt)
+        {
+            if (lastAt <= cutoff)
+            {
+                (stale ??= new()).Add(key);
+            }
+        }
+
+        if (stale is null)
+        {
+            return;
+        }
+
+        foreach (var key in stale)
+        {
+            _lastNotifiedAt.Remove(key);
+        }
     }
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
