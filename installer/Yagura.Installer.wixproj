@@ -52,6 +52,37 @@
          非営利 OSS でありこの条件に該当しないが、EULA の承諾自体は v7 のビルドに必須
          (未承諾は WIX7015 エラー)。 -->
     <AcceptEula>wix7</AcceptEula>
+
+    <!--
+      ICE60 の抑止(Issue #347)。
+
+      対象は publish 出力に含まれる SQLite のネイティブライブラリ e_sqlite3.dll
+      (SQLitePCLRaw.lib.e_sqlite3)ただ 1 件。このバイナリは VS_FIXEDFILEINFO に
+      バージョン(3.53.3.0)を持つ一方、翻訳エントリ(VarFileInfo\Translation)を持たないため、
+      WiX は File テーブルの Version 列だけを埋めて Language 列を空のままにする。これが
+      ICE60「バージョンを持つがフォントでもコンパニオンファイルでもないファイルは
+      Language 列を持つべき」に抵触してビルドが失敗する。
+
+      「1 件のみ」は推測ではなく、生成済み MSI の File テーブルを直接照会して確認した
+      (Version が非空かつ Language が空の行は e_sqlite3.dll の 1 行。他 398 ファイルは
+      Language を持つ。2026-07-18 実機確認)。
+
+      個別対処を採らない理由: WiX v3 の File 要素にあった Language 属性は v4 以降で廃止され、
+      WiX v7 では指定すると WIX0004「File 要素に予期しない属性 'Language'」でコンパイル
+      エラーになる(2026-07-18 実ビルドで確認)。ハーベスト対象の 1 ファイルにだけ Language を
+      与える手段がプロジェクト側に存在しないため、抑止以外の選択肢がない。
+
+      残存リスク: ICE60 が本来警告している事象は「修復(msiexec /f)時に当該ファイルが
+      不必要に再インストールされうる」ことに留まり、インストールの正否には影響しない。
+      抑止の範囲がパッケージ全体である点は許容する(publish 出力は上記のとおり 1 件を除き
+      Language を持ち、新たに該当ファイルが増えた場合も同じ性質の無害な事象になる)。
+
+      経緯: Dependabot #328 が 3.50.3 → 3.53.3 へ更新した際に上流バイナリから翻訳エントリが
+      失われて顕在化した。installer-e2e は installer/** の変更でしか走らないため依存更新だけの
+      PR では検出できず main へ入った——再発防止として installer-e2e.yml のトリガに
+      依存バージョンの集中管理ファイルを追加してある。
+    -->
+    <SuppressIces>ICE60</SuppressIces>
   </PropertyGroup>
 
   <ItemGroup>
