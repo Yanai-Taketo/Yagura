@@ -173,7 +173,15 @@ NT AUTHORITY\SYSTEM:(F)
 
 **⑤ 監査 2009 は記録されない**。2009 は付与に**成功した**場合のみ発火するため、既定の ACL 構成では出力されない。「付与は監査対象」（決定 4）が実際に働くのは、サービスアカウントが鍵の ACL を書き換えられる構成に限られる。
 
-**⑥ AD CS 発行証明書での確認は未実施**（本 lab に AD CS 未導入。SEC-13 ③ は引き続き未消化）。
+**⑥ AD CS 発行証明書でも結論は同一（SEC-13 ③。2026-07-18 に AD CS を導入して実施）**。lab の DC へエンタープライズ ルート CA（`CN=yagura-test-CA`）を構成し、`WebServer` テンプレート + `Microsoft Software Key Storage Provider`（CNG）で証明書を発行して検証した。
+
+- 発行証明書: `Subject = CN=WIN-H31KVKTHCKU.yagura.test` / `Issuer = CN=yagura-test-CA, DC=yagura, DC=test` / 鍵は **CNG（`RSACng`）**
+- **鍵ファイルの既定 ACL は自己署名の場合と同一**（`CREATOR OWNER:(F) / NT AUTHORITY\SYSTEM:(F) / BUILTIN\Administrators:(F)`。サービスアカウントの ACE は無い）
+- **③ と同じ未処理例外でサービスが起動しない**（`CngKey.Open` の `CryptographicException: キー セットがありません`）
+- 読み取り権限を別途付与すると起動し、**TLS はチェーン検証込みで成立する**（`curl` を `-k` なしで `http=302` / `ssl_verify_result=0`——CA がドメインで信頼されているため）
+- **自動付与は同じく失敗**（`[admin-https-private-key-grant-failed]` / `Attempted to perform an unauthorized operation.`）、**監査 2009 も同じく記録されない**
+
+すなわち**本節の①〜⑤の結論は証明書の発行元に依存しない**——自己署名か AD CS 発行かは無関係で、決定要因は「鍵ファイルの既定 ACL にサービスアカウントの ACE が無いこと」である。AD CS を導入すれば解決する類の問題ではない。
 
 - **最低 TLS バージョン**: TLS 1.2 以上を最低要件とし、TLS 1.3 を優先する。Kestrel の `HttpsConnectionAdapterOptions.SslProtocols` に `Tls12 | Tls13` を明示固定する（OS 既定の schannel ポリシーに暗黙に委ねない）
 - **暗号スイートの個別制約は行わない**（委任事項 7 の結論）: .NET の `System.Net.Security.CipherSuitesPolicy` クラスは `[UnsupportedOSPlatform("windows")]`（Microsoft Learn API リファレンス、確認日 2026-07-10）——**Windows では利用できない**（Linux/OpenSSL 環境向けの API）。Yagura は Windows ネイティブ製品であり、Windows 上での暗号スイートの選定は OS（Schannel）のポリシー・グループポリシーに委ねる以外の手段が .NET から提供されていない。これは推測ではなく確認済みの API 制約であり、「実装しなかった」のではなく「.NET が Windows 向けに提供していない」ため対応不可能という限界を明示する（暗号スイートの統制が必要な環境は、OS レベルの TLS ポリシー（`Enable-TlsCipherSuite`/`Disable-TlsCipherSuite` 等の PowerShell コマンドレット・グループポリシー）で行う——利用者向けドキュメントへの申し送り。§8 SEC-D7）
@@ -437,7 +445,7 @@ architecture.md §9 と同じ運用。番号は SEC-x。
 | SEC-10 | 記録失敗中の監査事象のメモリ内保持の上限・超過時の縮退。**機構は実装済み**（Issue #269。`ResilientAuditRecorder` = `FileAuditRecorder` をラップするデコレータ。保持上限＝仮値 1000 件・復旧スキャン間隔＝仮値 30 秒は `AuditResilienceDefaults`。縮退は古い側を残し新しい到来を破棄・破棄件数は復旧サマリ 3013 とライブ計器 `audit.buffer_dropped` に計上。確定まで設定キーは設けない）。確定は引き続き本項 | 実装設計で確定（＝上限・縮退方針は実装済み。上限値の妥当性は実運用の障害時挙動で確認） | §4.2 |
 | SEC-11 | ✅ 部分確定（2026-07-11 実機検証。Issue #137） → **openssl s_client（標準的な X.509 検証を行う代表実装として使用）で確認**: ①期限内証明書に対する TLS ハンドシェイク + octet-counting フレーミング送信 → Yagura 側で正常受信・解析・保存されることを確認（`/search/export.csv` で到達確認）。②**既に期限切れの証明書を Yagura 側に構成しても TLS 受信リスナは起動・接続受理を継続する**（「止めない」設計の実機確認）。③期限切れ証明書に対し `openssl s_client -verify_return_error` で厳格検証を行うと、クライアント側は `certificate has expired` でハンドシェイクを拒否し、**Yagura 側はこれを TLS ハンドシェイク失敗として記録する**（フレーミング失敗とは別経路であることをログで確認——`Yagura.Ingestion.Tls.TlsSyslogListener` の警告ログ「ハンドシェイクに失敗しました」+ 内部例外「受信した証明書の期限が切れています」）。④能動通知の周期監視（`ActiveNotificationMonitor`）が実プロセスで実際に動作し、有効期限接近（30 日以内の証明書。EventId 1017）・既に期限切れ（EventId 1018）の両方を正しい文言で発火することを確認。**Fluent Bit（`out_syslog`。本製品の推奨フォワーダ）は本検証の対象外とせざるを得なかった**——TLS ハンドシェイク自体は成立するが、`out_syslog` が RFC 6587 octet-counting フレーミングを実装しない（TLS 有効時も）ため、そもそも通常のメッセージ配送が成立せず、期限切れ時の挙動差分を観測する前提が満たせなかった（詳細は §6.1・ADR-0008 改訂履歴 3）。**rsyslog・syslog-ng・NXLog は未検証**——Linux 環境（rsyslog・syslog-ng）または追加の Windows 実行環境構築（NXLog）を要し、本 PR の実行環境（Windows 単体）では実施できなかった。正直に申し送る——検証の再開時は、これら 3 実装のいずれかが実際に octet-counting を送出し、期限切れ証明書に対して検証拒否する（または継続受理する）挙動を実機で確認すること | 残る 3 実装（rsyslog/syslog-ng/NXLog）の実機検証は Linux/追加環境を用意できるタイミングで実施 | §6 |
 | SEC-12 | アプリ独自認証のバックオフ・レート制限仮値（[ADR-0011](../adr/0011-app-auth-failure-backoff.md) 決定 10 で、旧「ロックアウト閾値・期間」から三層防御の仮値表へ全面差替え）。**`AdminAuthenticationDefaults` に仮値のまま実装済み**: バックオフ猶予閾値 k=3 回・基数 base=1 秒・上限 cap=30 秒・n のアイドル減衰窓=30 分／IP レート制限窓=60 秒・上限=10 回（loopback 除外）／グローバルトークンバケット 定常 1 トークン/秒・バースト 20（loopback 除外）／レート制限層の `Retry-After` 上限=30 秒／能動通知への昇格閾値=15 分／パスワード最小長=12 文字（確定値）——確定は引き続き本項。**NAT/VPN 出口配下の複数オペレータでの IP レート制限仮値の実測は未実施**（ADR-0011 決定 10 が実装 PR での一度の実測を求めた項目。開発機単体では複数オペレータ・複数拠点の同時アクセスを再現できないため、実運用フィードバックでの確定に申し送る） | 仮値で実装し、実利用（誤入力の反復頻度・NAT 配下からの正規ログイン試行が 429 に抵触した報告等）を踏まえ確定する | §2.4.1 |
-| SEC-13 | 管理リスナのリモート HTTPS 証明書の秘密鍵権限付与（ADR-0010 Phase 2 決定 4）の実機確認 | **①②実施済み・③未実施（lab 実機検証 2026-07-18。Windows Server 2025 / Yagura 0.4.0 / インストーラ登録の `NT SERVICE\Yagura`）**。詳細は §2.5「秘密鍵権限付与の実機検証結果」。要点: **自動付与は失敗する**（サービスアカウントは鍵ファイルの ACL を書き換える権限を持たないため）。**権限が全く無い状態では `CngKey.Open` が未処理例外となりサービスが起動しない**（不具合。要修正）。**読み取り権限を別途付与すれば TLS は成立する**。**監査 2009 は記録されない**（付与成功時のみ発火するため）。③AD CS 発行証明書は**本 lab に AD CS 未導入のため未実施** | §2.5 |
+| SEC-13 | 管理リスナのリモート HTTPS 証明書の秘密鍵権限付与（ADR-0010 Phase 2 決定 4）の実機確認 | **確定（①②③すべて実施。lab 実機検証 2026-07-18。Windows Server 2025 / Yagura 0.4.0 / インストーラ登録の `NT SERVICE\Yagura`）**。詳細は §2.5「秘密鍵権限付与の実機検証結果」。要点: **自動付与は失敗する**（サービスアカウントは鍵ファイルの ACL を書き換える権限を持たないため）。**権限が全く無い状態では `CngKey.Open` が未処理例外となりサービスが起動しない**（不具合。Issue #345）。**読み取り権限を別途付与すれば TLS は成立する**（③では AD CS の信頼チェーン検証込みで成立）。**監査 2009 は記録されない**（付与成功時のみ発火するため）。**③ AD CS 発行証明書（エンタープライズ ルート CA + `WebServer` テンプレート + CNG KSP）でも①②と完全に同一の結果**——本項の結論は**証明書の発行元に依存せず**、決定要因は鍵ファイルの既定 ACL にサービスアカウントの ACE が無いことである | §2.5 |
 
 ## 8. 利用者向けドキュメントへの申し送り
 
