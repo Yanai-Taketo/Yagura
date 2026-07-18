@@ -1,108 +1,112 @@
-﻿<Project>
+<Project>
 
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
 
+  <!--
+    このファイルのコメント規約（docs/development/conventions.md「依存バージョンのコメント規約」）:
+    採用理由・採用時の検証手順・ライセンス・除外方針を書き、現在のバージョン番号は書かない
+    （番号は下の Version 属性が唯一の正。コメントに複製すると Dependabot の更新で片方だけ腐る）。
+    例外は「その版でなければならない理由」を表す不変の制約——CVE の影響範囲と初回修正版など。
+  -->
   <ItemGroup>
     <!--
       bUnit（Issue #148。ログ検索の URL クエリ双方向反映——SupplyParameterFromQuery による
       「NavigateTo 後に OnParametersSetAsync が再実行される」という対話的な状態遷移は、
       既存の HtmlRenderer 直描画ハーネス（CommonComponentRenderHarness）では検証できない
       （Router を介さないため。同ハーネスの doc コメント「クリック後の状態遷移など対話的検証が
-      必要になった時点で bUnit の採用を再検討する」に該当）。当日ライブ検証:
+      必要になった時点で bUnit の採用を再検討する」に該当）。採用時のライブ検証:
       nuget.org の flat container index (api.nuget.org/v3-flatcontainer/bunit/index.json) で
-      最新安定版 2.7.2 を確認（2.8.1-preview / 2.8.4-preview はプレリリースのため除外）。
-      nuspec の依存グループで net10.0 対応（Microsoft.AspNetCore.Components 系 10.0.0）を確認済み。
-      ライセンス MIT（検証日 2026-07-09）。
+      最新安定版を確認（プレリリースは除外）。nuspec の依存グループで net10.0 対応を確認済み。
+      ライセンス MIT（採用日 2026-07-09）。
     -->
     <PackageVersion Include="bunit" Version="2.7.2" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <!--
-      SQL Server provider（M5-3。Issue #47）。当日ライブ検証: nuget.org の flat container index
-      (api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/index.json) で確認した最新安定版
-      7.0.2（7.1.0-preview1.26124.5 はプレリリースのため除外。検証日 2026-07-05）。
+      SQL Server provider（M5-3。Issue #47）。採用時のライブ検証: nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/index.json) で最新安定版を確認
+      （プレリリースは除外。採用日 2026-07-05）。
     -->
     <!--
-      Windows 統合認証（Negotiate: Kerberos/NTLM。ADR-0010 決定 2・委任事項 1）。当日ライブ検証:
-      nuget.org の flat container index
+      Windows 統合認証（Negotiate: Kerberos/NTLM。ADR-0010 決定 2・委任事項 1）。
+      採用時のライブ検証: nuget.org の flat container index
       (api.nuget.org/v3-flatcontainer/microsoft.aspnetcore.authentication.negotiate/index.json) で
-      最新安定版 10.0.9 を確認（11.0.0-preview.* はプレリリースのため除外。既存の
-      Microsoft.* 10.0.9 系列と同一。検証日 2026-07-10）。
+      最新安定版を確認（プレリリースは除外。他の Microsoft.* と同一系列に揃える方針。
+      採用日 2026-07-10）。
     -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.7.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.8.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <!--
       能動通知の背景監視コンポーネント（Issue #149。architecture.md §4.6）のテストで
-      周期・抑制窓を FakeTimeProvider により決定的に検証するために追加。当日ライブ検証:
+      周期・抑制窓を FakeTimeProvider により決定的に検証するために追加。採用時のライブ検証:
       nuget.org の flat container index
       (api.nuget.org/v3-flatcontainer/microsoft.extensions.timeprovider.testing/index.json) で
-      確認した最新安定版 10.7.0（既存の Microsoft.Extensions.Diagnostics.Testing 10.7.0 と
-      同一系列。検証日 2026-07-09）。
+      最新安定版を確認（Microsoft.Extensions.Diagnostics.Testing と同一系列に揃える方針。
+      採用日 2026-07-09）。
     -->
-    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.7.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <!--
       UI コンポーネントライブラリ（M8-1。Issue #68。採用判断は ADR-0003 決定 3）。
-      当日ライブ検証: nuget.org の flat container index
+      採用時のライブ検証: nuget.org の flat container index
       (api.nuget.org/v3-flatcontainer/mudblazor/index.json) と Search API
       (azuresearch-usnc.nuget.org/query?q=packageid:MudBlazor&prerelease=false) の両方で
-      最新安定版 9.6.0 を確認（検証日 2026-07-06）。ライセンス MIT（NOTICE 記載は導入 PR で実施）。
+      最新安定版を確認。ライセンス MIT（NOTICE 記載は導入 PR で実施。採用日 2026-07-06）。
     -->
-    <PackageVersion Include="MudBlazor" Version="9.6.0" />
+    <PackageVersion Include="MudBlazor" Version="9.7.0" />
     <!--
       SQL Server 接続文字列の DPAPI 暗号化（ADR-0004 決定 5「v0.1: DPAPI 完動」。
-      configuration.md §2）。当日ライブ検証: nuget.org の flat container index
+      configuration.md §2）。採用時のライブ検証: nuget.org の flat container index
       (api.nuget.org/v3-flatcontainer/system.security.cryptography.protecteddata/index.json) で
-      確認した最新安定版 10.0.9（11.0.0-preview.5.26302.115 はプレリリースのため除外。
-      本リポジトリの他の Microsoft.* 10.0.9 系列と同一。検証日 2026-07-06）。
+      最新安定版を確認（プレリリースは除外。他の Microsoft.* と同一系列に揃える方針。
+      採用日 2026-07-06）。
     -->
-    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <!--
-      SQL Server 適合テストの動的スキップ（M5-3。Issue #47）。当日ライブ検証:
-      nuget.org registration（api.nuget.org/v3/registration5-semver1/xunit.skippablefact/1.5.61.json）で
-      2025-12-27 公開の最新安定版であることを確認、ソース（AArnott/Xunit.SkippableFact の
-      Sdk/SkippableFactTestCase.cs）を直接確認し、SkipException が IAsyncLifetime.InitializeAsync
-      から送出されても RunAsync 全体（コンストラクタ・InitializeAsync・テスト本体を包含）を
-      SkippableTestMessageBus でラップして Skipped へ変換することを確認済み（検証日 2026-07-05）。
+      SQL Server 適合テストの動的スキップ（M5-3。Issue #47）。採用時のライブ検証:
+      nuget.org registration (api.nuget.org/v3/registration5-semver1/xunit.skippablefact/) で
+      最新安定版を確認、ソース（AArnott/Xunit.SkippableFact の Sdk/SkippableFactTestCase.cs）を
+      直接確認し、SkipException が IAsyncLifetime.InitializeAsync から送出されても RunAsync 全体
+      （コンストラクタ・InitializeAsync・テスト本体を包含）を SkippableTestMessageBus でラップして
+      Skipped へ変換することを確認済み（採用日 2026-07-05）。
     -->
     <PackageVersion Include="Xunit.SkippableFact" Version="1.5.61" />
 
     <!--
       WiX 拡張(M9-1。Issue #74。installer/Yagura.Installer.wixproj のみが参照)。
-      当日ライブ検証: `dotnet package search <id>` を exact-match オプション付きで実行し
-      3 点とも最新安定版 7.0.0 を確認(検証日 2026-07-06)。WixToolset.Sdk 7.0.0 自体は
-      wixproj の Sdk 属性でバージョン指定する(SDK 参照は中央管理の対象外)。
+      採用時のライブ検証: `dotnet package search <id>` を exact-match オプション付きで実行し
+      3 点とも最新安定版を確認(採用日 2026-07-06)。WixToolset.Sdk 自体は wixproj の Sdk 属性で
+      バージョン指定する(SDK 参照は中央管理の対象外)。3 点は同一版で揃える。
     -->
     <PackageVersion Include="WixToolset.Firewall.wixext" Version="7.0.0" />
     <PackageVersion Include="WixToolset.UI.wixext" Version="7.0.0" />
     <PackageVersion Include="WixToolset.Util.wixext" Version="7.0.0" />
 
     <!--
-      Microsoft.Data.Sqlite 10.0.9 の最小要求 2.1.11 には既知の脆弱性
-      CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) があり NU1903 でブロックされるため、
-      修正版 3.50.3 / 3.0.3 へ明示 pin する (検証日 2026-07-05)。
+      Microsoft.Data.Sqlite が要求する SQLitePCLRaw.core の最小版 2.1.11 には既知の高深刻度の
+      脆弱性 CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) があり NU1903 でブロックされるため、修正版へ
+      明示 pin する。**下限の制約**: 2.1.11 系は影響を受けるため、この 2 点を 2.x 系へ
+      下げてはならない（採用日 2026-07-05）。
     -->
     <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.3" />
-    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
 
     <!--
-      bunit 2.7.2 が推移的に引く AngleSharp の最小版 1.4.0 には既知の中深刻度の脆弱性
+      bunit が推移的に引く AngleSharp の最小版には既知の中深刻度の脆弱性
       CVE (GHSA-pgww-w46g-26qg。MathML annotation-xml の HTML エンコード属性の直列化を介した
       mutation XSS) があり、NuGetAuditMode=all + NU1902 の warning-as-error 化で全ビルドが
       ブロックされるため、修正版へ明示 pin する（SQLitePCLRaw と同じ対処パターン）。
-      当日ライブ検証: advisory (github.com/advisories/GHSA-pgww-w46g-26qg) で「影響 < 1.5.0 /
-      初回修正 1.5.0」、nuget.org の flat container index
-      (api.nuget.org/v3-flatcontainer/anglesharp/index.json) で最新安定版 1.5.2 を確認
-      （1.5.3-beta.* はプレリリースのため除外。検証日 2026-07-18）。実 pin は
-      tests/Yagura.Web.Tests の直接参照で効かせる（bunit の唯一の利用箇所）。
+      **下限の制約**: advisory (github.com/advisories/GHSA-pgww-w46g-26qg) が「影響 < 1.5.0 /
+      初回修正 1.5.0」としているため、1.5.0 未満へ下げてはならない。実 pin は
+      tests/Yagura.Web.Tests の直接参照で効かせる（bunit の唯一の利用箇所。採用日 2026-07-18）。
     -->
     <PackageVersion Include="AngleSharp" Version="1.5.2" />
   </ItemGroup>

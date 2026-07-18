@@ -99,6 +99,23 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reload_Success_PersistsLastAppliedSnapshot()
+    {
+        WriteConfigurationFile("""{ "Retention": { "Days": "30" } }""");
+        var service = CreateService();
+
+        WriteConfigurationFile("""{ "Retention": { "Days": "90" } }""");
+        await service.ReloadAsync(null, null, null);
+
+        // 保存契機③「再読み込み反映」（Issue #329）: 起動時の設定差分照合の基準が
+        // 反映後の内容へ更新される（次回起動で今回の変更を重複報告しない）。
+        var snapshot = LastAppliedConfigurationSnapshotStore.TryRead(_dataRoot);
+        Assert.NotNull(snapshot);
+        Assert.False(ConfigurationChangePlanner.Compare(
+            snapshot, YaguraConfigurationWriter.Read(_dataRoot).Options).HasChanges);
+    }
+
+    [Fact]
     public async Task Reload_RestartRequiredKeyChanged_ReportsPendingAndAccumulatesAcrossReloads()
     {
         WriteConfigurationFile("""{ }""");

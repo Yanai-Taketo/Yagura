@@ -130,10 +130,14 @@ public static class ConfigurationEventIds
     /// サービス死活の外形監視を案内する（configuration.md §10 CF-D8）。
     /// </para>
     /// <para>
-    /// 採番の経緯: 1019 は 1018 と 1020 の間の空き番号である（additive-only 規約——一度公開した ID の
-    /// 意味は変えない。PR #310 のペルソナレビューで採番漏れとして指摘され確定した）。
+    /// 採番の経緯: 当初は #310 の設計時に「1018 と 1020 の間の空き」として 1019 を予約したが、
+    /// **1019 は <see cref="Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated"/>
+    /// （ADR-0011 決定 6）が実装済みで使用中**であり、予約側（security.md §4.3 の表）が古かった
+    /// （本クラス冒頭の「1017〜1019 は ActiveNotificationEventIds 側が使用済み」の注記どおり。
+    /// PR #333 レビューで衝突を検出）。additive-only 規約——実装済み ID の意味は変えない——に従い、
+    /// 本イベントは 1000 番台の次の空き番号 **1024** を採る（1020〜1023 は使用済み）。
     /// </para>
     /// </remarks>
     public static readonly EventId ConfigurationFileUnreadableStartupFailed =
-        new(1019, "ConfigurationFileUnreadableStartupFailed");
+        new(1024, "ConfigurationFileUnreadableStartupFailed");
 }

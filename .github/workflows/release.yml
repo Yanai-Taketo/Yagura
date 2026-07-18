@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -167,12 +167,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
       - name: Download ARM64 MSI artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: release-msi-arm64
           path: release-out
@@ -262,7 +262,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download x64 MSI artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: release-msi-x64
           path: release-out
@@ -319,12 +319,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
       - name: Setup Java (jsign 実行用)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -418,7 +418,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Download signed x64 MSI
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: release-msi-signed-x64
           path: release-out
@@ -449,7 +449,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Download signed ARM64 MSI
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: release-msi-signed-arm64
           path: release-out
@@ -503,7 +503,7 @@ jobs:
       # 署名有効時は署名済み(release-msi-signed-*)を、無効時は未署名(release-msi-*)を取得する。
       # ※ release-msi-* は署名済みにも前方一致するため、有効時は必ず signed パターンに限定する。
       - name: Download release artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: ${{ vars.YAGURA_SIGNING == 'enabled' && 'release-msi-signed-*' || 'release-msi-*' }}
           path: release-out

@@ -107,7 +107,7 @@ public static class Program
         // 設定ライブ再読み込み（CF-4 層1。Issue #262）の差分計算の初期基準——起動時点の
         // ファイルの生 options を捕捉しておく（ConfigurationReloadService の doc コメント参照）。
         // 受理範囲は Load と一致しているため（§1 の不変条件）ここで新たに失敗することは想定しないが、
-        // 念のため同じ扱い（1019 + 起動失敗）へ寄せる——片方だけが落ちる状態を再び作らない。
+        // 念のため同じ扱い（1024 + 起動失敗）へ寄せる——片方だけが落ちる状態を再び作らない。
         YaguraConfigurationOptions startupRawOptions;
         try
         {
@@ -789,6 +789,15 @@ public static class Program
             timeProvider: null,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<ConfigurationReloadService>()));
 
+        // 起動時の設定差分照合（Issue #329）: 前回適用スナップショットと起動時設定の差分を
+        // 監査 2019 へ記録する（手編集 + 再起動で反映された変更の軽量補完。security.md §4.1）。
+        // 起動時（app.Build() 後）に照合し、契機①としてスナップショットを取り直す。
+        builder.Services.AddSingleton(sp => new StartupConfigurationInspector(
+            dataRoot,
+            sp.GetRequiredService<IAuditRecorder>(),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<StartupConfigurationInspector>()));
+
         // 監査の 2000 番台（管理操作）はレベル「情報」でイベントログへ併記する（security.md §4.3）。
         // EventLog プロバイダの既定フィルタは Warning 以上のため、監査カテゴリに限り Information
         // まで通す（「ソース Yagura の警告以上を通知」という最小監視構成は 1000/3000 番台の
@@ -807,7 +816,9 @@ public static class Program
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISetupWizardService>(sp =>
             new Yagura.Host.Administration.SetupWizardService(
                 dataRoot,
-                sp.GetRequiredService<IAuditRecorder>()));
+                sp.GetRequiredService<IAuditRecorder>(),
+                timeProvider: null,
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.SetupWizardService>()));
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IPromotionWizardService>(sp =>
             new Yagura.Host.Administration.PromotionWizardService(
                 dataRoot,
@@ -939,6 +950,14 @@ public static class Program
             var firewallInspector = app.Services.GetRequiredService<Yagura.Host.Firewall.FirewallStartupInspector>();
             firewallInspector.CheckConsistency(resolvedConfiguration);
             _ = firewallInspector.TranscribeInstallationRecordOnceAsync(CancellationToken.None);
+        }
+
+        // 起動時の設定差分照合 + 前回適用スナップショットの取り直し（Issue #329）。失敗は起動を
+        // 妨げない（Inspector 内で完結）。非同期で開始し完了を待たない（CF-2 の転記と同型——
+        // 監査レールは例外を投げない契約）。
+        {
+            var startupConfigurationInspector = app.Services.GetRequiredService<StartupConfigurationInspector>();
+            _ = startupConfigurationInspector.InspectAndRefreshSnapshotAsync(startupRawOptions, CancellationToken.None);
         }
 
         // bind 再試行（CF-6）による受信再開の記録（Issue #291）: 開けなかった区間を受信断の
@@ -1239,7 +1258,7 @@ public static class Program
     }
 
     /// <summary>
-    /// 設定ファイルをファイル全体として解釈できなかったことを記録する（イベント ID 1019。
+    /// 設定ファイルをファイル全体として解釈できなかったことを記録する（イベント ID 1024。
     /// configuration.md §1・security.md §4.3）。
     /// </summary>
     /// <remarks>
