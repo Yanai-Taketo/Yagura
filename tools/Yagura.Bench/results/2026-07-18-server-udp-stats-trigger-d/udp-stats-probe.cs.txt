@@ -1,0 +1,94 @@
+// ADR-0016 re-evaluation trigger (d): OS UDP statistics API on Windows Server, under .NET 10
+// (the product runtime). Reads the ACTUAL UdpStatistics property surface.
+using System.Diagnostics;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+
+const int Port = 51999;
+const string TargetIp = "10.0.0.191";
+
+static (long recv, long disc, long err) Snap()
+{
+    var v4 = IPGlobalProperties.GetIPGlobalProperties().GetUdpIPv4Statistics();
+    return (v4.DatagramsReceived, v4.IncomingDatagramsDiscarded, v4.IncomingDatagramsWithErrors);
+}
+
+static void Netstat(string label)
+{
+    Console.WriteLine($"--- netstat -s -p udp ({label}) ---");
+    var psi = new ProcessStartInfo("netstat", "-s -p udp") { RedirectStandardOutput = true };
+    using var proc = Process.Start(psi)!;
+    Console.Write(proc.StandardOutput.ReadToEnd());
+    proc.WaitForExit();
+}
+
+Console.WriteLine("=== environment ===");
+Console.WriteLine($"host    : {Environment.MachineName}");
+Console.WriteLine($"os      : {Environment.OSVersion}");
+Console.WriteLine($"runtime : {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+Console.WriteLine($"target  : {TargetIp}:{Port} (self-addressed, single host)");
+Console.WriteLine();
+
+Console.WriteLine("=== UdpStatistics public property surface (.NET 10) ===");
+var stats = IPGlobalProperties.GetIPGlobalProperties().GetUdpIPv4Statistics();
+foreach (var p in stats.GetType().GetProperties())
+    Console.WriteLine($"  {p.Name,-32} {p.PropertyType.Name,-8} = {p.GetValue(stats)}");
+Console.WriteLine($"  GetProperty(\"IncomingDatagrams\") -> {(stats.GetType().GetProperty("IncomingDatagrams") is null ? "NULL (does not exist)" : "exists")}");
+Console.WriteLine();
+
+using var tx = new UdpClient();
+var payload = new byte[100];
+
+// ---------- TEST A: receiver actively reading ----------
+Console.WriteLine("=== TEST A: active receive (8 MiB rcvbuf, 5000 datagrams) ===");
+Netstat("before");
+var a0 = Snap();
+Console.WriteLine($"api before: received={a0.recv} discarded={a0.disc} errors={a0.err}");
+
+using (var rx = new UdpClient(new IPEndPoint(IPAddress.Any, Port)))
+{
+    rx.Client.ReceiveBufferSize = 8 * 1024 * 1024;
+    rx.Client.ReceiveTimeout = 500;
+    int sent = 0;
+    for (int i = 0; i < 5000; i++) { tx.Send(payload, payload.Length, TargetIp, Port); sent++; }
+    Thread.Sleep(500);
+    int got = 0;
+    while (true)
+    {
+        try { var ep = new IPEndPoint(IPAddress.Any, 0); rx.Receive(ref ep); got++; }
+        catch (SocketException) { break; }
+    }
+    var a1 = Snap();
+    Netstat("after");
+    Console.WriteLine($"api after : received={a1.recv} discarded={a1.disc} errors={a1.err}");
+    Console.WriteLine($"TEST A RESULT: sent={sent} app_received={got} | dReceived={a1.recv - a0.recv} dDiscarded={a1.disc - a0.disc} dErrors={a1.err - a0.err}");
+}
+Console.WriteLine();
+
+// ---------- TEST B: receiver NOT reading -> socket buffer overflow ----------
+Console.WriteLine("=== TEST B: induce overflow (1 KiB rcvbuf, 50000 x 200B, not reading) ===");
+Netstat("before");
+var b0 = Snap();
+Console.WriteLine($"api before: received={b0.recv} discarded={b0.disc} errors={b0.err}");
+
+var payload2 = new byte[200];
+using (var rx2 = new UdpClient(new IPEndPoint(IPAddress.Any, Port)))
+{
+    rx2.Client.ReceiveBufferSize = 1024;
+    rx2.Client.ReceiveTimeout = 200;
+    Console.WriteLine($"effective ReceiveBufferSize = {rx2.Client.ReceiveBufferSize}");
+    int sent = 0;
+    for (int i = 0; i < 50000; i++) { tx.Send(payload2, payload2.Length, TargetIp, Port); sent++; }
+    Thread.Sleep(500);
+    int got = 0;
+    while (true)
+    {
+        try { var ep = new IPEndPoint(IPAddress.Any, 0); rx2.Receive(ref ep); got++; }
+        catch (SocketException) { break; }
+    }
+    var b1 = Snap();
+    Netstat("after");
+    Console.WriteLine($"api after : received={b1.recv} discarded={b1.disc} errors={b1.err}");
+    Console.WriteLine($"TEST B RESULT: sent={sent} app_received={got} overflow_lost={sent - got} | dReceived={b1.recv - b0.recv} dDiscarded={b1.disc - b0.disc} dErrors={b1.err - b0.err}");
+}
