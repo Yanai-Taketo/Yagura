@@ -1,5 +1,6 @@
-using Microsoft.AspNetCore.Components.Server.Circuits;
+﻿using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
+using Yagura.Abstractions.Auditing;
 using Yagura.Web.Administration;
 
 namespace Yagura.Web.Circuits;
@@ -40,6 +41,13 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     private readonly YaguraAdminListenerPort _adminPort;
     private readonly YaguraCircuitAuthenticationStateProvider _authenticationStateProvider;
     private readonly TimeProvider _timeProvider;
+    private readonly IAuditRecorder? _auditRecorder;
+
+    private string? _circuitId;
+    private DateTimeOffset _openedAt;
+    private ITimer? _graceTimer;
+    private string? _gracePrincipalLabel;
+    private bool _graceEnded;
 
     public YaguraCircuitHandler(
         CircuitRegistry registry,
@@ -47,7 +55,8 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         IHttpContextAccessor httpContextAccessor,
         YaguraAdminListenerPort adminPort,
         YaguraCircuitAuthenticationStateProvider authenticationStateProvider,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IAuditRecorder? auditRecorder = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(context);
@@ -61,6 +70,7 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         _adminPort = adminPort;
         _authenticationStateProvider = authenticationStateProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _auditRecorder = auditRecorder;
     }
 
     public override Task OnCircuitOpenedAsync(Circuit circuit, CancellationToken cancellationToken)
@@ -70,10 +80,12 @@ public sealed class YaguraCircuitHandler : CircuitHandler
         RefreshListenerAttribution(httpContext);
         _context.RemoteAddress = httpContext?.Connection.RemoteIpAddress?.ToString();
 
+        _circuitId = circuit.Id;
+        _openedAt = _timeProvider.GetUtcNow();
         _registry.Register(new CircuitRecord(
             circuit.Id,
             _context.RemoteAddress,
-            _timeProvider.GetUtcNow(),
+            _openedAt,
             _context));
 
         if (httpContext?.User is { } user)
@@ -102,7 +114,7 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     /// 崩れる。帰属も認証状態と同様「接続確立時のスナップショットに頼らない」対象とし、
     /// 再接続のたびに現在の接続の実ローカルポートから再導出する。
     /// </remarks>
-    public override Task OnConnectionUpAsync(Circuit circuit, CancellationToken cancellationToken)
+    public override async Task OnConnectionUpAsync(Circuit circuit, CancellationToken cancellationToken)
     {
         var httpContext = _httpContextAccessor.HttpContext;
 
@@ -110,10 +122,147 @@ public sealed class YaguraCircuitHandler : CircuitHandler
 
         if (httpContext?.User is { } user)
         {
+            // SEC-6（security.md §2.3。Issue #267）: 閲覧リスナ帰属の circuit で「認証あり →
+            // 認証なし」への遷移（= 失効の検知点）を捉えた場合、読み取り専用の掲示表示を失効の
+            // 瞬間に切らず、猶予（CircuitGovernanceDefaults.RevocationGracePeriod = SEC-6 確定値
+            // 15 分）の間だけ表示を維持する。
+            //
+            // <b>権限昇格の防止（多層防御。オーナー指示 2026-07-17）</b>: 本猶予が管理権限の失効を
+            // 遅延させて「権限なく管理画面へ到達できる」穴にならないよう、次の三重で守る:
+            //  ①管理セッション（AdminSessionClaimType を持つ principal）には猶予を与えず即時反映
+            //    する——SEC-6 は掲示用途（閲覧専用）のための機構であり、管理者の失効は遅延させない
+            //  ②猶予中に維持する状態は SanitizeForGrace で管理標識（AdminSessionClaimType）と
+            //    グループ SID（544 等）を除去した無害化 principal にする——万一 ① を素通りしても
+            //    管理権限判定（IsAdminSessionAuthenticated / IsWindowsAdministrator）は構造的に不成立
+            //  ③そもそも猶予対象は閲覧リスナ帰属（IsAdminListener == false）のみで、その circuit は
+            //    AdminScreenAccessPolicy.Decide が管理画面の描画自体を拒否する（既存の防御）
+            var previous = (await _authenticationStateProvider.GetAuthenticationStateAsync().ConfigureAwait(false)).User;
+            var wasAuthenticated = previous.Identity?.IsAuthenticated == true;
+            var isAuthenticated = user.Identity?.IsAuthenticated == true;
+
+            if (wasAuthenticated && !isAuthenticated && _context.IsAdminListener == false
+                && !AdminAuthenticationExtensions.IsAdminSessionAuthenticated(previous))
+            {
+                if (_graceTimer is null)
+                {
+                    // 維持するのは元 principal ではなく無害化コピー（防御 ②）。
+                    _authenticationStateProvider.SetAuthenticationState(SanitizeForGrace(previous));
+                    await StartRevocationGraceAsync(previous).ConfigureAwait(false);
+                }
+
+                // 猶予中の以降の無認証再接続では、無害化済みの状態を維持する（再設定しない）。
+                return;
+            }
+
+            if (isAuthenticated && _graceTimer is not null)
+            {
+                // 再認証で猶予を解除する（通常状態へ復帰。終了記録は「再認証」として残す）。
+                await EndRevocationGraceAsync("再認証").ConfigureAwait(false);
+            }
+
             _authenticationStateProvider.SetAuthenticationState(user);
         }
+    }
 
-        return Task.CompletedTask;
+    /// <summary>
+    /// 猶予中に維持する「無害化された」認証状態を作る（オーナー指示 2026-07-17。多層防御 ②）。
+    /// 認証済み（<c>IsAuthenticated = true</c>）は維持して閲覧の掲示表示を継続させるが、
+    /// <b>管理権限に繋がるクレームをすべて除去する</b>: 管理セッション標識
+    /// （<see cref="AdminAuthenticationExtensions.AdminSessionClaimType"/>）と全グループ SID
+    /// （<see cref="System.Security.Claims.ClaimTypes.GroupSid"/>——544 = BUILTIN\Administrators を含む）。
+    /// これにより <c>IsAdminSessionAuthenticated</c>（管理画面の認可）も
+    /// <c>IsWindowsAdministrator</c>（HTTP 側の管理者判定）も構造的に不成立になる。
+    /// 閲覧セッション標識（<c>ViewerSessionClaimType</c>）は残すため、閲覧認証が有効な構成でも
+    /// 掲示表示は継続する。
+    /// </summary>
+    private static System.Security.Claims.ClaimsPrincipal SanitizeForGrace(System.Security.Claims.ClaimsPrincipal previous)
+    {
+        var source = previous.Identity as System.Security.Claims.ClaimsIdentity;
+        var safeClaims = (source?.Claims ?? previous.Claims)
+            .Where(c => c.Type != AdminAuthenticationExtensions.AdminSessionClaimType)
+            .Where(c => c.Type != System.Security.Claims.ClaimTypes.GroupSid)
+            .Select(c => new System.Security.Claims.Claim(c.Type, c.Value, c.ValueType, c.Issuer))
+            .ToList();
+
+        var sanitized = new System.Security.Claims.ClaimsIdentity(
+            safeClaims,
+            source?.AuthenticationType,
+            source?.NameClaimType ?? System.Security.Claims.ClaimTypes.Name,
+            source?.RoleClaimType ?? System.Security.Claims.ClaimTypes.Role);
+
+        return new System.Security.Claims.ClaimsPrincipal(sanitized);
+    }
+
+    /// <summary>
+    /// SEC-6 の猶予を開始する: 継続許容の監査（3010）+ 満了タイマー（満了時は認証状態を
+    /// 無認証へ落とし、circuit の協調切断を要求して監査 3011 を残す）。
+    /// </summary>
+    private async Task StartRevocationGraceAsync(System.Security.Claims.ClaimsPrincipal previous)
+    {
+        var deadline = _timeProvider.GetUtcNow() + CircuitGovernanceDefaults.RevocationGracePeriod;
+        _gracePrincipalLabel = previous.Identity?.Name ?? "(不明)";
+        _graceEnded = false;
+
+        if (_auditRecorder is not null)
+        {
+            await _auditRecorder.RecordAsync(
+                new AuditEvent(
+                    OccurredAt: _timeProvider.GetUtcNow(),
+                    Kind: AuditEventKind.CircuitRevocationGraceGranted,
+                    RemoteAddress: _context.RemoteAddress,
+                    RemotePort: null,
+                    Detail: $"利用者={_gracePrincipalLabel} 確立時刻={_openedAt:O} 猶予満了予定={deadline:O}" +
+                        $"（読み取り専用表示の継続——新着ログの購読も継続する。security.md §2.3）",
+                    AuthenticatedPrincipal: _gracePrincipalLabel),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+
+        _graceTimer = _timeProvider.CreateTimer(
+            _ => _ = OnGraceExpiredAsync(),
+            state: null,
+            CircuitGovernanceDefaults.RevocationGracePeriod,
+            Timeout.InfiniteTimeSpan);
+    }
+
+    private async Task OnGraceExpiredAsync()
+    {
+        await EndRevocationGraceAsync("猶予満了").ConfigureAwait(false);
+
+        // 満了: 認証状態を実状態（無認証）へ落とし、circuit の協調切断を要求する（再認証誘導は
+        // 切断後の案内ページ——CircuitGovernor——が担う）。
+        _authenticationStateProvider.SetAuthenticationState(
+            new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity()));
+        if (_circuitId is { } circuitId)
+        {
+            await _registry.RequestDisconnectAsync(circuitId, CircuitTerminationReasons.RevocationGraceExpired)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>猶予を終了として記録する（満了・切断・全切断・再認証のいずれか 1 回だけ）。</summary>
+    private async Task EndRevocationGraceAsync(string reason)
+    {
+        if (_graceEnded)
+        {
+            return;
+        }
+
+        _graceEnded = true;
+        _graceTimer?.Dispose();
+        _graceTimer = null;
+
+        if (_auditRecorder is not null)
+        {
+            await _auditRecorder.RecordAsync(
+                new AuditEvent(
+                    OccurredAt: _timeProvider.GetUtcNow(),
+                    Kind: AuditEventKind.CircuitRevocationGraceEnded,
+                    RemoteAddress: _context.RemoteAddress,
+                    RemotePort: null,
+                    Detail: $"利用者={_gracePrincipalLabel} 終了理由={reason}（circuit={_circuitId ?? "(unknown)"}）",
+                    AuthenticatedPrincipal: _gracePrincipalLabel),
+                CancellationToken.None).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -155,10 +304,16 @@ public sealed class YaguraCircuitHandler : CircuitHandler
             : httpContext.Connection.LocalPort == _adminPort.Port;
     }
 
-    public override Task OnCircuitClosedAsync(Circuit circuit, CancellationToken cancellationToken)
+    public override async Task OnCircuitClosedAsync(Circuit circuit, CancellationToken cancellationToken)
     {
+        // 猶予中の切断（利用者の離脱・全切断を含む）も 3011 で閉じる——3010 と対にして
+        // 「見得た期間」を監査で確定させる（security.md §2.3）。
+        if (_graceTimer is not null && !_graceEnded)
+        {
+            await EndRevocationGraceAsync("切断").ConfigureAwait(false);
+        }
+
         _registry.Unregister(circuit.Id);
-        return Task.CompletedTask;
     }
 
     public override Func<CircuitInboundActivityContext, Task> CreateInboundActivityHandler(

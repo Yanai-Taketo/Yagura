@@ -58,4 +58,13 @@ public static class CircuitGovernanceDefaults
 
     /// <summary>無操作回収の走査間隔（実装都合の値。SEC-8 のタイムアウト精度はこの間隔に依存する）。</summary>
     public static readonly TimeSpan IdleScanInterval = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// 認証失効後の閲覧 circuit の読み取り専用表示を継続する猶予の上限（SEC-6 **確定値: 15 分**。
+    /// 2026-07-17 オーナー裁定。security.md §2.3。Issue #267）。掲示用途の一時的な失効
+    /// （グループ変更の反映遅延等）を吸収しつつ、失効者が新着ログを見続けられる窓
+    /// （§2.3 が明記する対価——猶予中はライブ購読が継続する）を小さく保つバランス。
+    /// 漏洩対応は緊急全失効（ADR-0013 決定 2）が本猶予をバイパスして即時に全切断する。
+    /// </summary>
+    public static readonly TimeSpan RevocationGracePeriod = TimeSpan.FromMinutes(15);
 }

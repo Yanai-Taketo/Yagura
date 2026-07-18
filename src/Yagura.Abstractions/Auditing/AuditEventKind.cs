@@ -222,4 +222,19 @@ public enum AuditEventKind
     /// 移行先範囲内件数）を記録する。
     /// </summary>
     LogMigrationExecuted,
+
+    /// <summary>
+    /// セキュリティ事象: 認証失効後の閲覧 circuit の継続を猶予として許容した（SEC-6。
+    /// security.md §2.3。イベント ID 3010。Issue #267）。記録内容は継続を許容した circuit の
+    /// 利用者名・接続元・確立時刻・猶予満了予定——「失効から遮断までに誰が何を見得たか」に
+    /// 監査で答える起点。
+    /// </summary>
+    CircuitRevocationGraceGranted,
+
+    /// <summary>
+    /// セキュリティ事象: 猶予中だった circuit の終了（SEC-6。security.md §2.3。イベント ID 3011。
+    /// Issue #267）。<c>Detail</c> に終了の別（猶予満了 / 切断 / 全切断）を記録し、3010 と対で
+    /// 「見得た期間」を閉じる。
+    /// </summary>
+    CircuitRevocationGraceEnded,
 }
