@@ -126,7 +126,21 @@ public sealed class FileAuditRecorder : IAuditRecorder
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
 
-        var eventId = ResolveEventId(auditEvent.Kind);
+        EventId eventId;
+        try
+        {
+            eventId = ResolveEventId(auditEvent.Kind);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            // never-throw 契約（ADR-0004 決定 7）の最終防衛線。EventId 解決表への追随漏れ
+            // （enum に事象種別を足したが switch を更新し忘れた等）があっても、監査記録・要求処理を
+            // 止めてはならない——特に認証拒否の記録経路で throw すると、攻撃を受けている最中に
+            // 要求が 500 になり、かつ攻撃の証跡が沈黙する。未知 Kind は EventId 0（種別名を Name に
+            // 残す）で最善努力で記録し、ドリフト自体は AuditEventKind 全網羅テストが機械検出する。
+            Console.Error.WriteLine($"[audit-eventid-unresolved] {ex.Message}");
+            eventId = new EventId(0, auditEvent.Kind.ToString());
+        }
 
         var fileWriteSucceeded = TryAppendToFile(auditEvent, eventId);
 
@@ -242,7 +256,9 @@ public sealed class FileAuditRecorder : IAuditRecorder
         }
     }
 
-    private static EventId ResolveEventId(AuditEventKind kind) => kind switch
+    // internal: AuditEventKind の全値がここで固有 EventId へ解決されることを
+    // ResolveEventId_maps_every_AuditEventKind テストが機械検証する（switch 追随漏れの検出）。
+    internal static EventId ResolveEventId(AuditEventKind kind) => kind switch
     {
         AuditEventKind.ViewerListenerAdminRequestRejected => AuditEventIds.ViewerListenerAdminRequestRejected,
         AuditEventKind.ConfigurationSaved => AuditEventIds.ConfigurationSaved,
@@ -256,6 +272,10 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.WindowsAuthenticationHandshakeFailed => AuditEventIds.WindowsAuthenticationHandshakeFailed,
         AuditEventKind.AppAuthenticationLoginFailed => AuditEventIds.AppAuthenticationLoginFailed,
         AuditEventKind.AdminAccountLockedOut => AuditEventIds.AdminAccountLockedOut,
+        // ADR-0011 三層防御の拒否事象（3005 ロックアウトの後継。#232 で enum・EventId・emit を
+        // 追加した際に本解決表への追加が漏れていた——認証拒否記録経路での throw を招く）。
+        AuditEventKind.AdminAuthBackoffCapReached => AuditEventIds.AdminAuthBackoffCapReached,
+        AuditEventKind.AdminAuthRateLimited => AuditEventIds.AdminAuthRateLimited,
         AuditEventKind.AdminLoginSucceeded => AuditEventIds.AdminLoginSucceeded,
         AuditEventKind.AdminAuthorizationDenied => AuditEventIds.AdminAuthorizationDenied,
         AuditEventKind.AdminHttpsCertificatePrivateKeyAccessGranted => AuditEventIds.AdminHttpsCertificatePrivateKeyAccessGranted,

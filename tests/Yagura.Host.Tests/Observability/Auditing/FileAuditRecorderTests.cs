@@ -112,6 +112,8 @@ public sealed class FileAuditRecorderTests : IDisposable
     [InlineData(AuditEventKind.AdminAuthorizationDenied, 3008, "認証成功後に管理者権限がなくアクセスを拒否")]
     [InlineData(AuditEventKind.AdminRemoteBindingConfigured, 2011, "管理リスナのリモートバインド設定を変更")]
     [InlineData(AuditEventKind.AdminHttpsCertificateConfigured, 2012, "管理 UI リモート HTTPS の証明書設定を変更")]
+    [InlineData(AuditEventKind.AdminAuthBackoffCapReached, 3006, "アプリ独自認証のバックオフが上限に到達")]
+    [InlineData(AuditEventKind.AdminAuthRateLimited, 3007, "アプリ独自認証のログイン試行をレート制限で拒否")]
     public async Task RecordAsync_EventLogMessage_UsesJapaneseDescriptionAndPreservesEventId(
         AuditEventKind kind,
         int expectedEventId,
@@ -250,5 +252,51 @@ public sealed class FileAuditRecorderTests : IDisposable
         var jstMorning = new DateTimeOffset(2026, 7, 6, 8, 0, 0, TimeSpan.FromHours(9));
 
         Assert.Equal("audit-20260705.jsonl", FileAuditRecorder.GetFileNameFor(jstMorning));
+    }
+
+    [Fact]
+    public void ResolveEventId_MapsEveryAuditEventKind_WithoutFallback()
+    {
+        // F-HOST-1 の再発防止: enum に事象種別を追加したのに ResolveEventId の switch 追随を
+        // 忘れると、認証拒否などの記録経路で ArgumentOutOfRangeException が投げられ、要求が 500 に
+        // なり監査が沈黙する。全 AuditEventKind が固有 EventId（0 = 未解決フォールバック以外）へ
+        // 解決されることを機械検証し、将来の switch 追随漏れをビルド時に検出する。
+        foreach (var kind in Enum.GetValues<AuditEventKind>())
+        {
+            var eventId = FileAuditRecorder.ResolveEventId(kind);
+            Assert.NotEqual(0, eventId.Id);
+        }
+    }
+
+    [Theory]
+    [InlineData(AuditEventKind.AdminAuthBackoffCapReached, 3006)]
+    [InlineData(AuditEventKind.AdminAuthRateLimited, 3007)]
+    public async Task RecordAsync_Adr0011DenialEvents_DoNotThrowAndAreRecorded(
+        AuditEventKind kind, int expectedEventId)
+    {
+        // F-HOST-1 回帰: ADR-0011 三層防御の拒否事象（3006/3007）が ResolveEventId の switch に
+        // 無く、認証拒否の記録経路（AppLoginEndpointHandler.RecordDenialAuditAsync）で throw して
+        // いた。例外を投げず、ファイル・イベントログの双方へ記録されることを固定する。
+        var logger = new FakeLogger();
+        using var metrics = new WebGuardMetrics();
+        var recorder = new FileAuditRecorder(_dataRoot, logger, metrics);
+
+        var occurredAt = new DateTimeOffset(2026, 7, 18, 12, 0, 0, TimeSpan.Zero);
+        var exception = await Record.ExceptionAsync(() => recorder.RecordAsync(new AuditEvent(
+            OccurredAt: occurredAt,
+            Kind: kind,
+            RemoteAddress: "203.0.113.5",
+            RemotePort: 54321,
+            Detail: "layer=ip-rate-limit")));
+
+        Assert.Null(exception);
+
+        var record = Assert.Single(logger.Collector.GetSnapshot());
+        Assert.Equal(expectedEventId, record.Id.Id);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, record.Level);
+
+        var line = Assert.Single(await File.ReadAllLinesAsync(AuditFilePathFor(occurredAt)));
+        Assert.Contains(kind.ToString(), line);
+        Assert.Contains(expectedEventId.ToString(), line);
     }
 }
