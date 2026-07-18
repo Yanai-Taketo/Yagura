@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 質問・試用の相談 / Questions & trial participation
+    url: https://github.com/Yanai-Taketo/Yagura/discussions
+    about: 使い方の質問、試用協力(v1.0 公開基準の実運用実績)のご連絡は Discussions へ / Questions and trial-run participation go to Discussions
+  - name: 脆弱性の報告 / Report a security vulnerability
+    url: https://github.com/Yanai-Taketo/Yagura/security/advisories/new
+    about: 脆弱性は公開 Issue ではなく非公開報告(Private vulnerability reporting)へ。詳細は SECURITY.md / Please use private reporting, not a public issue. See SECURITY.md

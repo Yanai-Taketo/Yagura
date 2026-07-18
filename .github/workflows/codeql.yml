@@ -1,0 +1,54 @@
+# CodeQL 静的解析(C# + GitHub Actions ワークフロー)。結果は Security タブ
+# (code scanning alerts)に集約される。public リポジトリのため無償。
+#
+# C# は build-mode: none(コンパイルせずソースから解析する公式サポートモード)を使う。
+# ビルドを伴わないため、ci.yml が持つ LocalDB セットアップ等の Windows 前提を
+# 持ち込まずに済み、ubuntu ランナーで完結する。クエリは既定スイート(precision の
+# 高い security 系)から始め、ノイズ耐性を見てから拡張を検討する。
+#
+# 週次 schedule は「コード側の変更がなくても、CodeQL のクエリ更新(新規に公表された
+# 脆弱性パターン)を既存コードへ適用する」ための実行。
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '30 20 * * 0' # 毎週月曜 05:30 JST(日曜 20:30 UTC)
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # code scanning への結果アップロードに必要
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

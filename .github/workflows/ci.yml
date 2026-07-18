@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# 同一 PR への連続 push では古い run を自動キャンセルする(Actions 時間の節約)。
+# main への push はキャンセルしない(コミットごとの完全な実行記録を残す)。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-and-test:
     runs-on: windows-latest
