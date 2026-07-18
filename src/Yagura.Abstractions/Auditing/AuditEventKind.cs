@@ -258,4 +258,17 @@ public enum AuditEventKind
     /// 証跡に残す（§4.2）。レベルは警告（監査の欠落可能性を既定の監視で拾えるようにする）。
     /// </summary>
     AuditChannelRecovered,
+
+    /// <summary>
+    /// 管理操作: 前回稼働時から設定ファイルが変更された状態で起動した（起動時の設定差分照合。
+    /// security.md §4.1・configuration.md §3。イベント ID 2019。Issue #329）。手編集 + サービス
+    /// 再起動で反映された変更がどの監査証跡にも残らない特性（Issue #306）への軽量補完で、
+    /// 前回適用スナップショット（<c>last-applied-configuration.json</c>）と起動時点の設定ファイルの
+    /// 差分があるときに 1 件記録する。<c>Detail</c> は変更キー名のみ（<see cref="ConfigurationReloaded"/>
+    /// = 2016 と同粒度。前後値・秘密値は含めない）。「いつ・誰が」変更したかは特定できない——
+    /// 悪意への統制ではなく事故調査のための運用証跡（統制は OS の ACL・SACL に委ねる——
+    /// security.md §4.1）。起動時の自動照合のため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は
+    /// <see langword="null"/>。
+    /// </summary>
+    StartupConfigurationChangeDetected,
 }
