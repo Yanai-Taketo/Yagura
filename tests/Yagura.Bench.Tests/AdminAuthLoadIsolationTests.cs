@@ -76,8 +76,18 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
             var baselineSaved = baselineAfter - baselineBefore;
 
             // --- 区間 2: UDP 送信 + 管理リスナへの継続的なログイン試行を同時実行 ---
+            // 認証負荷を先に始動させ、実際に最初の試行が発行されたことを確認してから並行バーストを
+            // 送る。これにより「認証負荷と受信が確実に重なる」ことを保証し、かつ測定窓の締め
+            // （authLoadCts.Cancel）が認証負荷のセットアップ（初回 GET）と競合してタスクが
+            // TaskCanceledException で fault する、遅い CI ランナー上のレースを構造的に排除する。
             using var authLoadCts = new CancellationTokenSource();
-            var authLoadTask = RunContinuousLoginAttemptsAsync(adminPort, authLoadCts.Token);
+            var authLoadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var authLoadTask = RunContinuousLoginAttemptsAsync(adminPort, authLoadStarted, authLoadCts.Token);
+
+            // 最初のログイン試行が発行される（または起動不能が確定する）まで待つ。起動不能のまま
+            // 応答が無ければ TimeoutException で顕在化させる（負荷生成器が機能していないことを
+            // 黙って通さない）。
+            await authLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
             var concurrentBefore = baselineAfter;
             var concurrentResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
@@ -134,26 +144,43 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
     /// （既定の antiforgery トークンは Cookie の有効期間内で再利用可能——1 リクエスト 1 回限りの
     /// nonce ではない）。
     /// </summary>
-    private static async Task<int> RunContinuousLoginAttemptsAsync(int adminPort, CancellationToken cancellationToken)
+    private static async Task<int> RunContinuousLoginAttemptsAsync(
+        int adminPort,
+        TaskCompletionSource startedSignal,
+        CancellationToken cancellationToken)
     {
         var cookieContainer = new System.Net.CookieContainer();
         using var handler = new HttpClientHandler { CookieContainer = cookieContainer };
         using var httpClient = new HttpClient(handler) { BaseAddress = new Uri($"http://127.0.0.1:{adminPort}") };
 
-        var loginPageResponse = await httpClient.GetAsync("/admin/login", cancellationToken);
-        var loginPageBody = await loginPageResponse.Content.ReadAsStringAsync(cancellationToken);
-        var tokenMatch = AntiforgeryTokenPattern.Match(loginPageBody);
-
-        if (!tokenMatch.Success)
-        {
-            // ページ構造の変化等で取得できない場合、認証処理そのものに到達しない POST を
-            // 大量生成しても本テストの目的（PBKDF2 検証コストの再現）を達成できないため、
-            // ここで諦める（0 件——呼び出し側の Assert.True(loginAttempts > 0) で顕在化する）。
-            return 0;
-        }
-
-        var token = tokenMatch.Groups[1].Value;
         var attempts = 0;
+
+        string token;
+        try
+        {
+            var loginPageResponse = await httpClient.GetAsync("/admin/login", cancellationToken);
+            var loginPageBody = await loginPageResponse.Content.ReadAsStringAsync(cancellationToken);
+            var tokenMatch = AntiforgeryTokenPattern.Match(loginPageBody);
+
+            if (!tokenMatch.Success)
+            {
+                // ページ構造の変化等で取得できない場合、認証処理そのものに到達しない POST を
+                // 大量生成しても本テストの目的（PBKDF2 検証コストの再現）を達成できないため、
+                // ここで諦める（0 件——呼び出し側の Assert.True(loginAttempts > 0) で顕在化する）。
+                // 待機側（authLoadStarted.WaitAsync）を起こしてハングを避ける。
+                startedSignal.TrySetResult();
+                return 0;
+            }
+
+            token = tokenMatch.Groups[1].Value;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+            // セットアップ GET が停止要求と競合した（遅い CI）／一過性の接続失敗——試行 0 として
+            // 返す。待機側を必ず起こす（起こさないと呼び出し側の WaitAsync が上限まで待つ）。
+            startedSignal.TrySetResult();
+            return attempts;
+        }
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -168,13 +195,19 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
 
                 using var response = await httpClient.PostAsync("/admin/login/app", form, cancellationToken);
                 attempts++;
+
+                // 最初の試行が HTTP レベルで完了した時点で「認証負荷が実際に始動した」ことを
+                // 呼び出し側へ通知する（並行バーストはこの通知後に送られる）。
+                startedSignal.TrySetResult();
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
             {
                 // 停止直前の一過性失敗は無視する（試行数のカウントのみが目的）。
             }
         }
 
+        // 1 件も試行が完了しないままキャンセルされた場合の保険（待機側を確実に起こす）。
+        startedSignal.TrySetResult();
         return attempts;
     }
 
