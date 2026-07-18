@@ -1,0 +1,138 @@
+# 署名 WIF 疎通確認(ADR-0014 フェーズ 2 の検証)
+#
+# 目的: 証明書がまだ無い段階で「GitHub Actions → WIF → サービスアカウント借用 → KMS 鍵で署名」
+#       までの経路が実際に通ることを実証する。証明書チェーンが要るのは Authenticode の組み立て
+#       だけなので、認証と鍵アクセスの疎通はここで先に潰せる。
+#
+# 本番(release.yml の sign ジョブ)と同じ認証経路を意図的に踏襲している:
+#   - 同じ google-github-actions/auth を同じ commit SHA でピン
+#   - 同じリポジトリ変数(GCP_WIF_PROVIDER / GCP_SIGNER_SA / GCP_KEYRING / GCP_KEY_ALIAS)
+#   - 同じ GitHub Environment(release-signing)の承認ゲートを通す
+# ここが変わると「本番でも通る」ことの証明にならないため、release.yml 側を変えたら本ファイルも合わせる。
+#
+# 安全性: 署名するのは固定文字列のダイジェストのみ(下記 SMOKE_INPUT)。外部入力は一切署名しない
+#         (署名オラクルにしない)。生成されるのは生の RSA 署名であって Authenticode 署名ではなく、
+#         配布物にはならない。手動起動(workflow_dispatch)限定。
+name: 署名 WIF 疎通確認
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wif-check:
+    name: WIF → KMS 疎通確認
+    runs-on: ubuntu-latest
+    # 本番の署名ジョブと同じ承認ゲートを通す(決定3)。Environment 未作成なら先に作ること。
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write # WIF の OIDC トークン発行に必要
+    steps:
+      - name: リポジトリ変数の設定漏れを先に検出する
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          GCP_SIGNER_SA: ${{ vars.GCP_SIGNER_SA }}
+          GCP_KEYRING: ${{ vars.GCP_KEYRING }}
+          GCP_KEY_ALIAS: ${{ vars.GCP_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for v in GCP_WIF_PROVIDER GCP_SIGNER_SA GCP_KEYRING GCP_KEY_ALIAS; do
+            [ -n "${!v:-}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::リポジトリ変数が未設定: ${missing[*]}"
+            echo "  Settings → Secrets and variables → Actions → Variables で設定する。"
+            echo "  値は installer/sign/README.md を参照(いずれも公開してよい値)。"
+            exit 1
+          fi
+          echo "変数 OK: SA=${GCP_SIGNER_SA} 鍵=${GCP_KEY_ALIAS}"
+
+      # ここが本命。失敗するなら WIF の信頼条件(attribute-condition / principalSet)か
+      # サービスアカウントの借用権限(roles/iam.workloadIdentityUser)が合っていない。
+      - name: WIF で短命アクセストークンを取得
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SIGNER_SA }}
+          token_format: access_token
+
+      - name: KMS 鍵の公開鍵を取得(鍵の可視性を確認)
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          KEY_VERSION: ${{ vars.GCP_KEYRING }}/cryptoKeys/${{ vars.GCP_KEY_ALIAS }}/cryptoKeyVersions/1
+        run: |
+          set -euo pipefail
+          res=$(curl -sS -w '\n%{http_code}' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://cloudkms.googleapis.com/v1/${KEY_VERSION}/publicKey")
+          code=$(echo "$res" | tail -n1); body=$(echo "$res" | sed '$d')
+          if [ "$code" != "200" ]; then
+            echo "::error::公開鍵の取得に失敗 (HTTP $code)"; echo "$body"; exit 1
+          fi
+          echo "$body" | jq -r '"アルゴリズム: \(.algorithm)\n保護レベル: \(.protectionLevel)"'
+          # 署名アルゴリズムが ADR-0014 の想定(RSA 4096 / PKCS#1 v1.5 / SHA256)であることを確認する
+          alg=$(echo "$body" | jq -r '.algorithm')
+          if [ "$alg" != "RSA_SIGN_PKCS1_4096_SHA256" ]; then
+            echo "::error::想定外の署名アルゴリズム: $alg (RSA_SIGN_PKCS1_4096_SHA256 を期待)"; exit 1
+          fi
+          echo "$body" | jq -r '.pem' > /tmp/kms-public.pem
+          echo "PUBKEY_OK=1" >> "$GITHUB_ENV"
+
+      - name: 固定ダイジェストに署名して signerVerifier 権限を実証
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          KEY_VERSION: ${{ vars.GCP_KEYRING }}/cryptoKeys/${{ vars.GCP_KEY_ALIAS }}/cryptoKeyVersions/1
+          # 外部入力を混ぜない固定値。これ以外を署名しないことが安全性の根拠。
+          SMOKE_INPUT: yagura-wif-smoke-test
+        run: |
+          set -euo pipefail
+          digest=$(printf '%s' "$SMOKE_INPUT" | openssl dgst -sha256 -binary | base64 -w0)
+          res=$(curl -sS -w '\n%{http_code}' -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"digest\":{\"sha256\":\"${digest}\"}}" \
+            "https://cloudkms.googleapis.com/v1/${KEY_VERSION}:asymmetricSign")
+          code=$(echo "$res" | tail -n1); body=$(echo "$res" | sed '$d')
+          if [ "$code" != "200" ]; then
+            echo "::error::署名に失敗 (HTTP $code)。roles/cloudkms.signerVerifier の付与を確認する"
+            echo "$body"; exit 1
+          fi
+          echo "$body" | jq -r '.signature' | base64 -d > /tmp/kms-sig.bin
+
+          # 返ってきた署名を公開鍵で検証する。ここまで通れば「この鍵で署名できた」ことが確定する。
+          printf '%s' "$SMOKE_INPUT" > /tmp/smoke-input.txt
+          if openssl dgst -sha256 -verify /tmp/kms-public.pem -signature /tmp/kms-sig.bin /tmp/smoke-input.txt; then
+            echo "署名の検証に成功"
+          else
+            echo "::error::KMS が返した署名が公開鍵で検証できない"; exit 1
+          fi
+
+      - name: 結果サマリ
+        if: always()
+        env:
+          SA: ${{ vars.GCP_SIGNER_SA }}
+          KEY: ${{ vars.GCP_KEY_ALIAS }}
+        run: |
+          {
+            echo "## 署名 WIF 疎通確認"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "**結果: 成功。** 以下が実証された。"
+              echo ""
+              echo "- GitHub Actions の OIDC トークンを WIF が受理した(信頼条件が正しい)"
+              echo "- サービスアカウント \`${SA}\` を借用できた"
+              echo "- 鍵 \`${KEY}\` で実際に署名でき、その署名が公開鍵で検証できた"
+              echo ""
+              echo "残る作業は証明書チェーン(\`codesign-chain.pem\`)の配置と \`SIGNER_SUBJECT\` の確定のみ。"
+            else
+              echo "**結果: 失敗。** 失敗したステップのログを確認する。"
+              echo ""
+              echo "- トークン取得で失敗 → WIF の attribute-condition / principalSet の綴りを確認"
+              echo "- 公開鍵取得・署名で失敗 → 鍵リソースへの \`roles/cloudkms.signerVerifier\` 付与を確認"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

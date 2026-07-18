@@ -65,7 +65,16 @@ CSR は Cloud Shell で `libengine-pkcs11-openssl` + Google の `libkmsp11`（PK
 
 > 鍵アルゴリズムは RSA を選んでいる。SignTool + Google Cloud KMS CNG provider は RSA のみ対応（EC 不可）で、jsign は RSA/EC いずれも可。両にらみのため RSA 4096 で統一した。
 
-## フェーズ 2: WIF + リポジトリ別サービスアカウント + IAM + 監査ログ（証明書審査中に実行可）
+## フェーズ 2: WIF + リポジトリ別サービスアカウント + IAM + 監査ログ ✅ `gcloud` 部分は完了（2026-07-18）
+
+> **実行済みの状態（2026-07-18 に `describe` / `get-iam-policy` で実機確認）**
+>
+> - プロバイダの `attributeCondition` = `(assertion.repository=='Yanai-Taketo/Yagura' || assertion.repository=='Open-DUMP-Viewer/Open-DUMP-Viewer') && assertion.environment=='release-signing'`
+> - `attributeMapping` に `attribute.environment: assertion.environment` を含む
+> - 鍵 `codesign-rsa4096` の IAM は両 SA に `roles/cloudkms.signerVerifier` **のみ**
+> - `yagura-signer` は Yagura リポジトリ、`odv-signer` は ODV リポジトリからのみ借用可
+>
+> **未了: 監査ログの有効化（委任 4。下記）。** これが済むまで「事後の検知・帰属」は成立しない。
 
 GitHub Actions の OIDC トークンを GCP が信頼させる設定。**長期の秘密鍵を GitHub Secrets に置かない**ための要（ADR-0014 委任 3）。**証明書の発行を待たずに実行できる**（署名する対象の証明書が無くても、認証基盤は先に作れる）。Cloud Shell で上から順に実行する。
 
@@ -77,14 +86,20 @@ PROJECT_NUMBER=275116585205
 gcloud iam workload-identity-pools create github-pool \
   --location=global --display-name="GitHub Actions pool"
 
-# 信頼条件で「Yagura と Open DUMP Viewer の 2 リポジトリからのトークンだけ」に絞る(委任3)。
-# fork や無関係な workflow からトークンを受け付けない。
+# 信頼条件(委任3)。2 段で絞る:
+#   1) リポジトリ = Yagura と Open DUMP Viewer からのトークンだけ(fork を弾く)
+#   2) Environment = 承認ゲート付きの release-signing で走るジョブだけ
+#
+# 2) が要る理由: リポジトリだけで絞ると「そのリポジトリの任意のブランチの任意の workflow」が
+# 署名鍵を使えてしまう。決定3 の承認ゲートは release.yml の中に書かれた自主ルールにすぎず、
+# GCP 側は承認の有無を見ないため、別の workflow を 1 つ足すだけでゲートを迂回して
+# オーナーの実名で任意のバイナリに署名できる。2) を入れると承認ゲートが GCP の境界で強制される。
 gcloud iam workload-identity-pools providers create-oidc github-provider \
   --location=global --workload-identity-pool=github-pool \
   --display-name="GitHub OIDC" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
-  --attribute-condition="assertion.repository=='Yanai-Taketo/Yagura' || assertion.repository=='Open-DUMP-Viewer/Open-DUMP-Viewer'"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment" \
+  --attribute-condition="(assertion.repository=='Yanai-Taketo/Yagura' || assertion.repository=='Open-DUMP-Viewer/Open-DUMP-Viewer') && assertion.environment=='release-signing'"
 
 # 2-2) リポジトリ別サービスアカウント(署名主体を分離。決定1 リスク3の緩和策)
 gcloud iam service-accounts create yagura-signer --display-name="Yagura release signer"
@@ -92,6 +107,10 @@ gcloud iam service-accounts create odv-signer    --display-name="Open DUMP Viewe
 
 # 2-3) 最小権限 IAM: 各 SA に「この鍵での署名/検証」だけを鍵リソース単位で付与(委任5)。
 #      プロジェクト全体の権限は与えない。
+#
+# 注意: 2-2 の直後にこれを流すと "Service account ... does not exist" で失敗することがある
+# (サービスアカウント作成の伝播遅延。2026-07-18 に実機で発生)。その場合は数十秒おいて
+# 失敗した SA の分だけ再実行すればよい。冪等なので再実行して害はない。
 for SA in yagura-signer odv-signer; do
   gcloud kms keys add-iam-policy-binding codesign-rsa4096 \
     --location=asia-northeast1 --keyring=codesign \
@@ -111,6 +130,15 @@ gcloud iam service-accounts add-iam-policy-binding \
   --role="roles/iam.workloadIdentityUser" \
   --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/Open-DUMP-Viewer/Open-DUMP-Viewer"
 ```
+
+**この信頼条件が成立する根拠（2026-07-18 に公式ドキュメントで確認）**:
+
+- GitHub Actions の OIDC トークンには、ジョブが Environment を使うとき `environment` クレームが入る（[GitHub 公式](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect)）
+- GCP の `attribute-condition` は CEL であり、**true と評価されたときだけ資格情報を受理し、それ以外は拒否する**（[Google 公式](https://docs.cloud.google.com/iam/docs/workload-identity-federation)）。したがって Environment を使わないジョブは `environment` クレームを持たず、条件が満たされないため拒否される（fail-closed）
+
+**Environment 名 `release-signing` は Yagura と Open DUMP Viewer で共通の規約になる。** プロバイダを 2 リポジトリで共用しており、信頼条件は両者に等しく効くため、署名するジョブは必ずこの名前の Environment を使う。ODV 側の署名を実装するときも同名の Environment を作ること。
+
+**Environment は WIF を作る前に GitHub 側で作成しておく。** 存在しない Environment 名をジョブに書くとトークンが発行されず、署名も疎通確認も通らない。
 
 **監査ログの有効化（委任 4。既定は無効。これが無いと署名記録が残らず、決定 1 の「事後の検知・帰属」が成立しない）**: Console の方が確実。
 GCP コンソール → **IAM と管理 → 監査ログ** → 一覧から **「Cloud Key Management Service (KMS) API」** を選び、**「データ読み取り」「データ書き込み」にチェック → 保存**。以後、どの SA がいつ署名操作をしたかが Cloud Audit Logs に残る。
