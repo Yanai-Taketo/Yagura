@@ -875,15 +875,28 @@ public static class Program
         // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本
         // エントリポイントは [SupportedOSPlatform("windows")]）。解決できない指定は警告してスキップされる
         // （認可を付与しない安全側。WindowsSecurityGroupResolver の remarks 参照）。
-        var sec9Logger = bootstrapLoggerFactory.CreateLogger("Yagura.Host.Administration.WindowsGroupResolver");
-        var windowsGroupAuthorization = new Yagura.Web.Administration.WindowsGroupAuthorizationOptions(
-            AdminGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
-                resolvedConfiguration.AdminWindowsAdminGroups, "Admin:Authentication:Windows:AdminGroups", sec9Logger),
-            ViewerGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
-                resolvedConfiguration.ViewerWindowsViewerGroups, "Viewer:Authentication:Windows:ViewerGroups", sec9Logger),
-            ViewerAdminGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
-                resolvedConfiguration.ViewerWindowsAdminGroups, "Viewer:Authentication:Windows:AdminGroups", sec9Logger));
-        builder.Services.AddSingleton(windowsGroupAuthorization);
+        //
+        // 解決は factory 登録にして、ロガーを DI（app.Build() 後に構築されるロギングパイプライン）から
+        // 取る（Issue #346）。以前は bootstrapLoggerFactory（コンソールのみ）で解決していたため、
+        // [sec9-group-unresolved] の警告が EventLog プロバイダの構築前に出て**運用者に届かなかった**
+        // ——「スキップ」は成立しているのに「警告」が成立しておらず、グループ名のタイプミスが
+        // 「そのグループの所属者が黙って認可されない」という形でしか現れなかった。
+        // FirewallStartupInspector / StartupConfigurationInspector と同じ形（sp から ILoggerFactory を
+        // 取り、実行は app.Build() 後）に揃える。解決の実行時点は下の app.Build() 直後で固定する
+        // （遅延解決のまま放置すると初回のログイン要求まで警告が出ない）。
+        builder.Services.AddSingleton(sp =>
+        {
+            var sec9Logger = sp.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Yagura.Host.Administration.WindowsGroupResolver");
+
+            return new Yagura.Web.Administration.WindowsGroupAuthorizationOptions(
+                AdminGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
+                    resolvedConfiguration.AdminWindowsAdminGroups, "Admin:Authentication:Windows:AdminGroups", sec9Logger),
+                ViewerGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
+                    resolvedConfiguration.ViewerWindowsViewerGroups, "Viewer:Authentication:Windows:ViewerGroups", sec9Logger),
+                ViewerAdminGroupSids: Yagura.Host.Administration.AdminAuthentication.WindowsSecurityGroupResolver.ResolveToSids(
+                    resolvedConfiguration.ViewerWindowsAdminGroups, "Viewer:Authentication:Windows:AdminGroups", sec9Logger));
+        });
 
         // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシー（管理 + 閲覧）の登録
         // （AdminAuthenticationExtensions 参照）。スキームは管理・閲覧で共用の単一構成（ADR-0013 決定 1 の
@@ -942,6 +955,14 @@ public static class Program
         builder.Services.AddYaguraWebViewer();
 
         var app = builder.Build();
+
+        // SEC-9（Issue #346）: AD グループ → SID の解決をここで実行する。singleton の遅延解決に
+        // 任せると初回のログイン要求まで解決されず、解決できない指定の警告
+        // （[sec9-group-unresolved]）が起動時に出ない。ここで一度取得して起動時点に固定する
+        // （以降の参照は同一インスタンス。下の自己ロックアウト注意でも使う）。
+        // 構築済みのロギングパイプライン経由なので、警告は EventLog へ到達する。
+        var windowsGroupAuthorization =
+            app.Services.GetRequiredService<Yagura.Web.Administration.WindowsGroupAuthorizationOptions>();
 
         // CF-2（Issue #265）: 起動時のファイアウォール規則突合 + インストール記録の初回転記。
         // いずれも失敗が起動を妨げない（Inspector 内で完結）。転記は非同期で開始し完了を待たない
