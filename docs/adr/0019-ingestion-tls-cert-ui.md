@@ -3,7 +3,7 @@
 - 状態: proposed
 - 日付: 2026-07-18
 - 決定者: YANAI Taketo
-- 関連: [ADR-0012](0012-admin-https-cert-ui.md)（管理リモート HTTPS の証明書選択 UI——本 ADR の再利用元）/ [security.md](../design/security.md) §6（TLS 受信）/ [configuration.md](../design/configuration.md) §8（`Ingestion:Tls:*`）/ CF-4（Issue #262。リスナ再構成）/ Issue #276 / PR #340
+- 関連: [ADR-0012](0012-admin-https-cert-ui.md)（管理リモート HTTPS の証明書選択 UI——本 ADR の再利用元）/ [security.md](../design/security.md) §6（TLS 受信）/ [configuration.md](../design/configuration.md) §8（`Ingestion:Tls:*`）/ CF-4（Issue #262。リスナ再構成）/ Issue #276 / PR #341
 
 ## 文脈と課題
 
