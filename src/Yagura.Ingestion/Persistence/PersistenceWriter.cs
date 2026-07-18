@@ -182,12 +182,12 @@ public sealed class PersistenceWriter
     {
         foreach (var record in pending)
         {
-            await EvacuateSingleRecordAsync(record).ConfigureAwait(false);
+            await EvacuateSingleRecordAsync(record, SpoolEvacuationReason.Shutdown).ConfigureAwait(false);
         }
 
         while (_q2Reader.TryRead(out var record))
         {
-            await EvacuateSingleRecordAsync(record).ConfigureAwait(false);
+            await EvacuateSingleRecordAsync(record, SpoolEvacuationReason.Shutdown).ConfigureAwait(false);
         }
     }
 
@@ -248,14 +248,15 @@ public sealed class PersistenceWriter
                     "（他の書き込み経路——保持期間削除等——が実行中の可能性）、{Count} 件をスプールへ退避する。",
                     PipelineConstants.WriteGateAcquireTimeout,
                     batch.Count);
-                await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+                // 書き込みゲート取得のタイムアウト = 時間形態の退避（§3.2.1）。
+                await EvacuateToSpoolAsync(batch, SpoolEvacuationReason.WriteTimeout).ConfigureAwait(false);
                 return;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 // 停止要求によるゲート待ちの打ち切り——DB を待たずスプールへ退避する
-                // （§1.3 手順 2 と同じ扱い）。
-                await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+                // （§1.3 手順 2 と同じ扱い）。契機は停止時ドレイン。
+                await EvacuateToSpoolAsync(batch, SpoolEvacuationReason.Shutdown).ConfigureAwait(false);
                 return;
             }
         }
@@ -286,25 +287,28 @@ public sealed class PersistenceWriter
         }
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
+            SpoolEvacuationReason reason;
             if (stoppingToken.IsCancellationRequested)
             {
-                // 停止要求による打ち切り（§1.3 手順 2「DB へ書き切るのを待たず」）。
+                // 停止要求による打ち切り（§1.3 手順 2「DB へ書き切るのを待たず」）。契機は停止時ドレイン。
                 _logger.LogWarning(
                     "停止要求により DB 書き込みを打ち切り、{Count} 件をスプールへ退避する。",
                     batch.Count);
+                reason = SpoolEvacuationReason.Shutdown;
             }
             else
             {
                 // 応答のないハングを打ち切る（architecture.md §2.1・§3.2.1）。打ち切ったバッチは
                 // スプールへ退避する（タイムアウト後に DB 側で書き込みが成立していた場合の重複は
-                // at-least-once の範囲内。§3.2.1）。
+                // at-least-once の範囲内。§3.2.1）。契機は時間形態（タイムアウト）。
                 _logger.LogWarning(
                     "バッチ書き込みがタイムアウト時間 {Timeout} を超過したため打ち切り、{Count} 件をスプールへ退避する。",
                     PipelineConstants.WriteBatchTimeout,
                     batch.Count);
+                reason = SpoolEvacuationReason.WriteTimeout;
             }
 
-            await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+            await EvacuateToSpoolAsync(batch, reason).ConfigureAwait(false);
         }
         catch (LogStoreWriteException ex)
         {
@@ -353,7 +357,8 @@ public sealed class PersistenceWriter
                     break;
             }
 
-            await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+            // DB 書き込み失敗 = 時間形態の退避（§3.2.1「バッチ書き込みが失敗した」）。
+            await EvacuateToSpoolAsync(batch, SpoolEvacuationReason.WriteTimeout).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -364,7 +369,7 @@ public sealed class PersistenceWriter
                 "バッチ書き込みが失敗したため {Count} 件をスプールへ退避し、消費ループを継続する。",
                 batch.Count);
 
-            await EvacuateToSpoolAsync(batch).ConfigureAwait(false);
+            await EvacuateToSpoolAsync(batch, SpoolEvacuationReason.WriteTimeout).ConfigureAwait(false);
         }
     }
 
@@ -406,11 +411,11 @@ public sealed class PersistenceWriter
     /// <summary>
     /// 書き込みに失敗・タイムアウトしたバッチをスプールへ退避する（architecture.md §3.2.1）。
     /// </summary>
-    private async Task EvacuateToSpoolAsync(List<LogRecord> batch)
+    private async Task EvacuateToSpoolAsync(List<LogRecord> batch, SpoolEvacuationReason reason)
     {
         foreach (var record in batch)
         {
-            await EvacuateSingleRecordAsync(record).ConfigureAwait(false);
+            await EvacuateSingleRecordAsync(record, reason).ConfigureAwait(false);
         }
     }
 
@@ -420,7 +425,7 @@ public sealed class PersistenceWriter
     /// 完結させることで、退避処理の途中で強制終了しても、それまでに処理済みの分の
     /// カウンタ計上は失われない（§1.3「退避中に発生した破棄は逐次カウンタへ反映する」）。
     /// </summary>
-    private async Task EvacuateSingleRecordAsync(LogRecord record)
+    private async Task EvacuateSingleRecordAsync(LogRecord record, SpoolEvacuationReason reason)
     {
         if (_spool is null)
         {
@@ -434,7 +439,7 @@ public sealed class PersistenceWriter
         switch (result)
         {
             case SpoolAppendResult.Appended:
-                _metrics.RecordSpoolEvacuated();
+                _metrics.RecordSpoolEvacuated(reason);
                 break;
             case SpoolAppendResult.QuotaExceeded:
                 _metrics.RecordSpoolDiscarded();

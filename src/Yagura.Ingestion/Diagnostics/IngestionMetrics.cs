@@ -376,13 +376,26 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
-    /// スプールへの退避を 1 件計上する（損失ではない。§4.1）。
+    /// スプールへの退避を 1 件計上する（損失ではない。§4.1）。<paramref name="reason"/> を
+    /// <c>reason</c> タグとして付与し、退避契機（容量 / 時間 / 停止時）を判別可能にする
+    /// （M-7 の残作業。Issue #271）。累積総数（<see cref="SnapshotCumulativeCounters"/> が返す
+    /// 永続化対象）は契機によらず単一の総和のまま——タグは実行時の計器（ダッシュボード・試用報告）
+    /// の次元展開であり、損失台帳の「1 事象 = 1 カウンタ」対応は崩さない（§4.1.1 の TLS ハンド
+    /// シェイク失敗と同じ「単一事象の次元展開」の位置づけ）。
     /// </summary>
-    public void RecordSpoolEvacuated()
+    public void RecordSpoolEvacuated(SpoolEvacuationReason reason)
     {
-        _spoolEvacuated.Add(1);
+        _spoolEvacuated.Add(1, new KeyValuePair<string, object?>("reason", ToReasonTag(reason)));
         Interlocked.Increment(ref _spoolEvacuatedTotal);
     }
+
+    private static string ToReasonTag(SpoolEvacuationReason reason) => reason switch
+    {
+        SpoolEvacuationReason.Q2Overflow => "q2_overflow",
+        SpoolEvacuationReason.WriteTimeout => "write_timeout",
+        SpoolEvacuationReason.Shutdown => "shutdown",
+        _ => "unknown",
+    };
 
     /// <summary>
     /// スプール追記の失敗（リトライ後破棄）を 1 件計上する。
