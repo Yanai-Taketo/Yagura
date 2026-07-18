@@ -681,6 +681,39 @@ public static class UiText
     /// <summary>再読み込み拒否の通知。</summary>
     public const string AdminReloadRejectedNotification = "設定の再読み込みを中止しました（設定値を確認してください）";
 
+    // ---- ウィザード保存後の自動反映（Issue #287） ----
+
+    /// <summary>保存後すぐ反映するチェックボックスのラベル（既定オン——2026-07-18 オーナー裁定）。</summary>
+    public const string WizardAutoApplyLabel = "保存後すぐ反映する";
+
+    /// <summary>保存後すぐ反映するチェックボックスの補足。</summary>
+    public const string WizardAutoApplyHelp =
+        "オンにすると、保存の直後に即時反映できる項目をライブ反映します（設定の再読み込みと同じ経路）。" +
+        "オフにすると保存のみを行い、反映は再読み込み操作または再起動で行います（複数の変更をまとめてから一括反映する運用向け）。";
+
+    /// <summary>自動反映の実行結果（{0} = 即時反映のキー数）。</summary>
+    public const string WizardAutoApplyAppliedFormat = "保存後の自動反映を実行しました（即時反映: {0} 件）。";
+
+    /// <summary>自動反映で反映が必要な変更がなかったときの表示。</summary>
+    public const string WizardAutoApplyNoChanges = "保存後の自動反映: 反映が必要な変更はありませんでした。";
+
+    /// <summary>自動反映が検証失敗で実行できなかったときの前置き（保存自体は完了している）。</summary>
+    public const string WizardAutoApplyRejected =
+        "保存は完了しましたが、自動反映は実行できませんでした（設定の検証失敗——実行中の構成は変更されていません）: ";
+
+    // ---- 再起動待ちキーの常設表示（Issue #286。管理面のみ） ----
+
+    /// <summary>再起動待ちカードのタイトル。</summary>
+    public const string AdminPendingRestartCardTitle = "再起動待ちの設定変更";
+
+    /// <summary>再起動待ちカードの説明。</summary>
+    public const string AdminPendingRestartCardDescription =
+        "設定の再読み込みで変更が検出されましたが、反映にサービス再起動が必要なため未反映のまま残っている項目です。" +
+        "サービスを再起動すると反映され、この表示は消えます。";
+
+    /// <summary>再起動待ちキーの検出時刻の前置きラベル（後ろに時刻表示が続く）。</summary>
+    public const string AdminPendingRestartDetectedAtLabel = "検出した再読み込み: ";
+
     /// <summary>カウンタ平易語: 流量制御破棄（Issue #260 で判定・破棄が実装され実値を刻む）。</summary>
     public const string CounterFlowControlDropped = "取りこぼし（送信元ごとの受信量の制限）";
 

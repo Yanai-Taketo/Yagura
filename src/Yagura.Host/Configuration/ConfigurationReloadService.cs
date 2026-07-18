@@ -20,6 +20,8 @@ namespace Yagura.Host.Configuration;
 /// キー、および即時目標だが未実装のキー）は <b>再起動まで累積して</b>報告し続ける
 /// （<see cref="ConfigurationReloadResult.PendingRestartKeys"/> + イベント ID 1020 の警告）。
 /// 「設定した = 反映された」という前提が静かに崩れた状態を、次の再読み込みで見えなくしない。
+/// 累積集合は <see cref="GetPendingRestartKeys"/> により再読み込み操作を伴わず読め、
+/// 認証済み管理面の常設表示（Issue #286）がこれを表示する。
 /// </para>
 /// <para>
 /// <b>検証失敗時は旧設定で継続</b>: 起動失敗分類の不正値（受信ポート不正等）は、起動時なら
@@ -42,7 +44,11 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
     private readonly SemaphoreSlim _reloadGate = new(1, 1);
 
     private YaguraConfigurationOptions _lastAppliedOptions;
-    private readonly HashSet<string> _pendingRestartKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    // キー → 最初に検出した再読み込みの時刻（Issue #286——常設表示に検出時刻を併記する）。
+    // 書き込みは _reloadGate 内だが、GetPendingRestartKeys は管理画面の描画からゲート外で
+    // 呼ばれるため、辞書自体の整合はロックで守る。
+    private readonly Dictionary<string, DateTimeOffset> _pendingRestartKeys = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="dataRoot">データルートの絶対パス。</param>
     /// <param name="startupOptions">
@@ -131,7 +137,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
                 RejectionReason: ex.Message,
                 ChangedKeys: [],
                 AppliedKeys: [],
-                PendingRestartKeys: _pendingRestartKeys.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+                PendingRestartKeys: PendingRestartKeySnapshot(),
                 WarningMessages: [],
                 UnknownKeys: []);
         }
@@ -150,16 +156,22 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         }
 
         // 適用の口がなかった変更キーは「再起動待ち」として累積する（再起動まで見え続ける）。
-        foreach (var key in plan.ChangedKeys.Except(appliedKeys, StringComparer.OrdinalIgnoreCase))
+        // 検出時刻は最初に検出した再読み込みの時刻で固定する（Issue #286——「いつから
+        // 未反映のまま残っているか」を常設表示に併記する）。
+        var detectedAt = _timeProvider.GetUtcNow();
+        lock (_pendingRestartKeys)
         {
-            _pendingRestartKeys.Add(key);
+            foreach (var key in plan.ChangedKeys.Except(appliedKeys, StringComparer.OrdinalIgnoreCase))
+            {
+                _pendingRestartKeys.TryAdd(key, detectedAt);
+            }
         }
 
         // 基準スナップショットは全体を差し替える（未反映キーは _pendingRestartKeys が
         // 追跡し続けるため、差分の再検出には依存しない）。
         _lastAppliedOptions = snapshot.Options;
 
-        var pending = _pendingRestartKeys.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var pending = PendingRestartKeySnapshot();
         var warnings = loadResult.Warnings
             .Select(w => $"{w.Key}: {w.Reason}（適用値: {w.AppliedValue}）")
             .ToArray();
@@ -180,6 +192,26 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
             PendingRestartKeys: pending,
             WarningMessages: warnings,
             UnknownKeys: loadResult.UnknownKeys);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<PendingRestartKey> GetPendingRestartKeys()
+    {
+        lock (_pendingRestartKeys)
+        {
+            return _pendingRestartKeys
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => new PendingRestartKey(pair.Key, pair.Value))
+                .ToArray();
+        }
+    }
+
+    private string[] PendingRestartKeySnapshot()
+    {
+        lock (_pendingRestartKeys)
+        {
+            return _pendingRestartKeys.Keys.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
     }
 
     private static string BuildAuditDetail(ConfigurationReloadResult result)

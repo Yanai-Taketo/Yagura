@@ -5,6 +5,7 @@
 @using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject ISetupWizardService SetupWizard
+@inject IConfigurationReloadService ReloadService
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 
@@ -25,6 +26,14 @@
     - 適用完了後も行き止まりにしない: 「設定を変更する」で BeginReconfigurationAsync により
       現在の設定値を種にウィザードを再開できる（適用にはあらためて確認の確定 = 新トークンが
       必要——§7 の一回性はトークンごとに保たれる）。
+
+    Issue #287（2026-07-18 オーナー裁定）: 保存後の自動反映。確認ステップの
+    「保存後すぐ反映する」チェックボックス（既定オン）がオンのとき、ApplyAsync 成功後に
+    設定の再読み込み（IConfigurationReloadService——CF-4 層1 と同じ適用経路）を自動で呼び、
+    即時キーをライブ反映する。適用結果（反映されたキー・再起動待ちキー）は完了画面に明示する。
+    監査は 2001（保存）+ 2016（反映）の 2 件——実際に 2 つの事象が起きており、統合すると
+    反映失敗時の切り分けができなくなるため（裁定）。チェックを外せば従来どおり保存のみ
+    （複数キーをまとめて編集してから一括反映する運用と両立）。
 *@
 <PageTitle>@UiText.AdminSetupWizardTitle - Yagura</PageTitle>
 
@@ -41,6 +50,36 @@ else if (_snapshot.Applied || _applyResult is not null)
         @if (_applyResult is { Outcome: WizardApplyOutcome.Applied or WizardApplyOutcome.AlreadyApplied })
         {
             <MudText Class="mt-2">@FormatEffect(_applyResult.RequiredEffect)</MudText>
+        }
+        @if (_reloadResult is { } reload)
+        {
+            @* 自動反映の結果（Issue #287——反映されたキー・再起動待ちキーを完了画面に明示）。 *@
+            @if (reload.Rejected)
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-2">
+                    @UiText.WizardAutoApplyRejected @reload.RejectionReason
+                </MudAlert>
+            }
+            else if (!reload.HasChanges)
+            {
+                <MudText Class="mt-2">@UiText.WizardAutoApplyNoChanges</MudText>
+            }
+            else
+            {
+                <MudText Class="mt-2">@string.Format(UiText.WizardAutoApplyAppliedFormat, reload.AppliedKeys.Count)</MudText>
+                @if (reload.AppliedKeys.Count > 0)
+                {
+                    <MudText Typo="Typo.body2"><b>@UiText.AdminReloadAppliedKeys</b>: @string.Join(", ", reload.AppliedKeys)</MudText>
+                }
+            }
+
+            @if (reload.PendingRestartKeys.Count > 0)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">
+                    @UiText.AdminReloadPendingRestart
+                    <div>@string.Join(", ", reload.PendingRestartKeys)</div>
+                </MudAlert>
+            }
         }
         @if (!string.IsNullOrEmpty(_errorText))
         {
@@ -114,6 +153,10 @@ else
                         }
                     </tbody>
                 </MudSimpleTable>
+                @* 保存後の自動反映（Issue #287。既定オン——2026-07-18 オーナー裁定）。 *@
+                <YaguraCheckboxField Label="@UiText.WizardAutoApplyLabel"
+                                     HelpText="@UiText.WizardAutoApplyHelp"
+                                     @bind-Value="_autoApply" />
                 break;
         }
 
@@ -152,6 +195,12 @@ else
     private SetupWizardApplyResult? _applyResult;
     private string? _resultMessage;
     private string? _errorText;
+
+    /// <summary>保存後すぐ反映するか（Issue #287。既定オン——オーナー裁定）。</summary>
+    private bool _autoApply = true;
+
+    /// <summary>保存後の自動反映の結果（実行しなかった場合は null）。</summary>
+    private ConfigurationReloadResult? _reloadResult;
 
     /// <summary>
     /// 現在表示中のステップ（UI ローカル状態。Issue #248）。サーバ側の確定状態
@@ -228,6 +277,7 @@ else
             _snapshot = await SetupWizard.BeginReconfigurationAsync();
             _applyResult = null;
             _resultMessage = null;
+            _reloadResult = null;
             _currentStep = SetupWizardStep.Review;
             SyncFieldsFromSnapshot();
         }
@@ -331,6 +381,14 @@ else
             WizardApplyOutcome.Conflict => UiText.WizardConflict,
             _ => UiText.WizardInvalidToken,
         };
+
+        // 保存後の自動反映（Issue #287）: 保存が新規に成立したときのみ、設定の再読み込みと
+        // 同じ適用経路（CF-4 層1）を自動で呼ぶ。監査は保存（2001）と反映（2016）の 2 件が
+        // それぞれのサービスから記録される（裁定——統合しない）。再読み込み側の検証失敗・
+        // 変更なしの扱いも手動の再読み込みと同一。
+        _reloadResult = _autoApply && _applyResult.Outcome == WizardApplyOutcome.Applied
+            ? await ReloadService.ReloadAsync(CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal)
+            : null;
 
         if (_applyResult.Outcome is WizardApplyOutcome.Conflict or WizardApplyOutcome.InvalidToken)
         {

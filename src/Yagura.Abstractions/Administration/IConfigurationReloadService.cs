@@ -26,7 +26,24 @@ public interface IConfigurationReloadService : IYaguraWriteService
         string? authenticationScheme,
         string? authenticatedPrincipal,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 再起動待ちのまま残っているキーの現在スナップショットを返す（Issue #286。認証済み
+    /// 管理面の常設表示用の読み取り口——再読み込みを実行せず、状態を変更しない）。
+    /// キー昇順。空 = 再起動待ちなし（表示は再起動で自然に消える——プロセス内状態のため）。
+    /// </summary>
+    IReadOnlyList<PendingRestartKey> GetPendingRestartKeys();
 }
+
+/// <summary>
+/// 再起動待ちのまま残っている設定キー 1 件（Issue #286。管理面の常設表示の表示単位）。
+/// </summary>
+/// <param name="Key">設定キー（JSON キーパス）。</param>
+/// <param name="DetectedAt">
+/// このキーの変更を最初に検出した再読み込みの時刻（UTC）。以後の再読み込みで同じキーが
+/// 再び変更されても更新しない——「いつから未反映のまま残っているか」を表す。
+/// </param>
+public sealed record PendingRestartKey(string Key, DateTimeOffset DetectedAt);
 
 /// <summary>
 /// 再読み込み 1 回の結果（configuration.md §3「未反映のまま残る項目を…明示する」の入力）。
