@@ -106,6 +106,25 @@ public sealed class AggregatingAuditRecorderTests
     }
 
     [Fact]
+    public async Task SubThresholdEntry_AfterWindowElapses_IsSweptFromState()
+    {
+        // #313: 閾値未満のまま集約窓が失効した非集約キーは、集約サマリを出さずに回収される。
+        // 異なる送信元 IP から閾値未満の拒否が続いても _states が単調増加しないことを固定する。
+        var inner = new CapturingRecorder();
+        var time = new FakeTimeProvider(Now);
+        await using var recorder = new AggregatingAuditRecorder(inner, time);
+
+        await recorder.RecordAsync(Rejection(address: "203.0.113.9"));
+        Assert.Equal(1, recorder.TrackedStateCount);
+
+        time.Advance(AuditAggregationDefaults.AggregationWindow + TimeSpan.FromSeconds(1));
+        await recorder.FlushStaleAsync();
+
+        Assert.Equal(0, recorder.TrackedStateCount);
+        Assert.DoesNotContain(inner.Events, e => e.Kind == AuditEventKind.RejectionAggregated);
+    }
+
+    [Fact]
     public async Task CountIsNeverLost_SummaryReflectsAllEvents()
     {
         var inner = new CapturingRecorder();

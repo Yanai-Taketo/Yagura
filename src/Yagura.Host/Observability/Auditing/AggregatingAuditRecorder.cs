@@ -49,6 +49,9 @@ public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, I
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AggregatingAuditRecorder> _logger;
     private readonly ConcurrentDictionary<AggregationKey, AggregationState> _states = new();
+
+    /// <summary>現在追跡している集約キー数（テスト・可観測性用。#313 の掃引検証）。</summary>
+    internal int TrackedStateCount => _states.Count;
     private readonly object _sync = new();
 
     private ITimer? _flushTimer;
@@ -141,8 +144,9 @@ public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, I
     }
 
     /// <summary>
-    /// 静穏窓を経過した集約キーのサマリを記録し、キーを破棄する（個別記録へ復帰）。周期スキャンから
-    /// 呼ばれる。例外は握って握りつぶさずログに留める（監査の集約が受信・他記録を妨げない）。
+    /// 静穏窓を経過した集約キーのサマリを記録し、キーを破棄する（個別記録へ復帰）。あわせて、閾値未満の
+    /// まま窓が失効した非集約キーも回収する（送信元 IP の基数に比例した <c>_states</c> の無制限増加を防ぐ）。
+    /// 周期スキャンから呼ばれる。例外は握って握りつぶさずログに留める（監査の集約が受信・他記録を妨げない）。
     /// </summary>
     internal async Task FlushStaleAsync()
     {
@@ -158,6 +162,15 @@ public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, I
                     if (state.IsAggregating && now - state.LastSeen >= AuditAggregationDefaults.QuietWindow)
                     {
                         summaries.Add(state.BuildSummary(key));
+                        _states.TryRemove(key, out _);
+                    }
+                    else if (!state.IsAggregating && now - state.LastSeen >= AuditAggregationDefaults.AggregationWindow)
+                    {
+                        // 閾値未満のまま集約窓が失効した散発的な状態。集約サマリは出さない
+                        // （個別記録で既に出ている）。異なる送信元 IP から閾値未満の拒否が続くと
+                        // (Kind, RemoteAddress) キーが恒久的に残り _states が単調増加するため回収する
+                        // （AdminAuthFailureDefense.SweepIdleIpRateLimitEntries #233 と同種の掃引）。
+                        // 失効後に同一キーの試行が再来すれば RecordAsync が新しい窓で作り直す。
                         _states.TryRemove(key, out _);
                     }
                 }

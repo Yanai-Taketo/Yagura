@@ -326,6 +326,41 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // 通知抑制辞書の掃引（#314。送信元 IP キーの無制限増加防止）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateOnce_StaleSuppressionEntries_ArePruned()
+    {
+        // #314: NotifyIfDue は _lastNotifiedAt へ挿入のみで除去しない。トリガキーには送信元 IP を
+        // 含むものがあり、放置すると辞書が単調増加する。抑制窓の 2 倍を超過したエントリは掃引される。
+        var collector = new FakeLogCollector();
+        var lowSpace = true;
+        var volumeInfo = new MutableMonitoredVolumeInfo(() =>
+        [
+            new MonitoredVolumeReading(
+                @"C:\",
+                100L * 1024 * 1024 * 1024,
+                lowSpace
+                    ? ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes - 1
+                    : ActiveNotificationConstants.MonitoredVolumeFreeSpaceMinBytes + 1),
+        ]);
+        var monitor = CreateMonitor(spool: null, collector, out var time, volumeInfo: volumeInfo);
+
+        // 1 件の通知で抑制エントリを作る。
+        await monitor.EvaluateOnceAsync();
+        Assert.Equal(1, monitor.SuppressionEntryCount);
+
+        // 条件を解消して再通知させず、抑制窓の 2 倍超を経過させて再評価する。
+        // 抑制窓を超えたエントリはもう抑制に寄与しないため掃引される。
+        lowSpace = false;
+        time.Advance(ActiveNotificationConstants.SuppressionWindow * 2 + TimeSpan.FromSeconds(1));
+        await monitor.EvaluateOnceAsync();
+
+        Assert.Equal(0, monitor.SuppressionEntryCount);
+    }
+
+    // ------------------------------------------------------------------
     // SQL Server Express の DB 容量接近（EventId 1007）
     // ------------------------------------------------------------------
 

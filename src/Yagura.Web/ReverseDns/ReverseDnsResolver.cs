@@ -199,19 +199,23 @@ public sealed class ReverseDnsResolver : IReverseDnsResolver, IDisposable
             return;
         }
 
-        // 同時解決数の上限（ADR-0007 決定 3）。到達時は延期——キューに積まず、次の表示更新の
-        // TryGetDisplayName で自然に再試行される（ReverseDnsResolverLimits の説明参照）。
-        if (Volatile.Read(ref _activeLookups) >= _limits.MaxConcurrentLookups)
-        {
-            return;
-        }
-
         if (!_inFlight.TryAdd(key, Task.CompletedTask))
         {
             return;
         }
 
-        Interlocked.Increment(ref _activeLookups);
+        // 同時解決数の上限（ADR-0007 決定 3）。上限チェックと増分を分けると、異なるキーが同時に
+        // 上限未満を観測してから各自増分し、MaxConcurrentLookups を超過し得る（TOCTOU なソフト
+        // リミット）。増分を先に行い、超過していたら巻き戻して予約を原子的にする——上限は延期の
+        // ハードな天井として効く。到達時は延期——キューに積まず、次の表示更新の TryGetDisplayName で
+        // 自然に再試行される（ReverseDnsResolverLimits の説明参照）。
+        if (Interlocked.Increment(ref _activeLookups) > _limits.MaxConcurrentLookups)
+        {
+            Interlocked.Decrement(ref _activeLookups);
+            _inFlight.TryRemove(key, out _);
+            return;
+        }
+
         var task = ResolveAsync(key, address);
 
         // ResolveAsync の finally（TryRemove）が先行した場合は TryUpdate が失敗し、台帳は
