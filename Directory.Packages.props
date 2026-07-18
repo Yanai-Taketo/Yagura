@@ -30,13 +30,13 @@
       最新安定版 10.0.9 を確認（11.0.0-preview.* はプレリリースのため除外。既存の
       Microsoft.* 10.0.9 系列と同一。検証日 2026-07-10）。
     -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.7.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.8.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <!--
       能動通知の背景監視コンポーネント（Issue #149。architecture.md §4.6）のテストで
       周期・抑制窓を FakeTimeProvider により決定的に検証するために追加。当日ライブ検証:
@@ -45,8 +45,8 @@
       確認した最新安定版 10.7.0（既存の Microsoft.Extensions.Diagnostics.Testing 10.7.0 と
       同一系列。検証日 2026-07-09）。
     -->
-    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.7.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <!--
       UI コンポーネントライブラリ（M8-1。Issue #68。採用判断は ADR-0003 決定 3）。
       当日ライブ検証: nuget.org の flat container index
@@ -54,7 +54,7 @@
       (azuresearch-usnc.nuget.org/query?q=packageid:MudBlazor&prerelease=false) の両方で
       最新安定版 9.6.0 を確認（検証日 2026-07-06）。ライセンス MIT（NOTICE 記載は導入 PR で実施）。
     -->
-    <PackageVersion Include="MudBlazor" Version="9.6.0" />
+    <PackageVersion Include="MudBlazor" Version="9.7.0" />
     <!--
       SQL Server 接続文字列の DPAPI 暗号化（ADR-0004 決定 5「v0.1: DPAPI 完動」。
       configuration.md §2）。当日ライブ検証: nuget.org の flat container index
@@ -62,7 +62,7 @@
       確認した最新安定版 10.0.9（11.0.0-preview.5.26302.115 はプレリリースのため除外。
       本リポジトリの他の Microsoft.* 10.0.9 系列と同一。検証日 2026-07-06）。
     -->
-    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <!--
@@ -91,7 +91,7 @@
       修正版 3.50.3 / 3.0.3 へ明示 pin する (検証日 2026-07-05)。
     -->
     <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.3" />
-    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
 
     <!--
       bunit 2.7.2 が推移的に引く AngleSharp の最小版 1.4.0 には既知の中深刻度の脆弱性
