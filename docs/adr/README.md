@@ -33,11 +33,11 @@
 | [0015](0015-gmsa-service-account.md) | AD 環境向け gMSA によるサービス実行（opt-in。ADR-0004 決定 4 の予告・ADR-0006 基準 1・Issue #263） | accepted |
 | [0016](0016-os-drop-gauge-mechanism.md) | OS レベル取りこぼし観測の実現手段の撤回 — 標準 API ゲージから引き算導出 + 無音化検出へ（ADR-0002 決定 2 の OS ゲージ観測部分の部分 supersession。Issue #272） | accepted |
 | [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | proposed |
+| [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | proposed |
 | [0019](0019-ingestion-tls-cert-ui.md) | TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用。Issue #276） | proposed |
 
 ## 起案予定
 
 （新しい委任・決定事項が生じたらここに登録してから起案する）
 
-- **転送の観測性・途絶検知**: [ADR-0008](0008-forwarder-kit-generation.md) 委任事項 4 の引き取り（Issue #275）。主論点: 配布端末別の最終受信の保持・途絶判定（閾値・窓）・能動通知への接続・送信元数スケール時の状態管理コスト。起案は棚卸し A 群（Issue #277）の上位項目の後
 
