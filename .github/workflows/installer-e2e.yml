@@ -8,6 +8,13 @@
 #   - pull_request は installer/ 配下(+ 本 workflow 自身)の変更時のみ。
 #     src/ 側の変更はビルド・テスト・回帰ベンチを ci.yml が検証しており、
 #     本 workflow は MSI の構造・インストール挙動の検証に特化する
+#   - 依存バージョンの集中管理ファイルも対象に含める(Issue #347)。MSI は
+#     Yagura.Host の publish 出力を丸ごとハーベストするため、依存の更新は
+#     MSI に収まるファイルの構成・バージョン資源をそのまま変える。ci.yml は
+#     ビルドとテストが通ることしか見ておらず MSI をビルドしないため、
+#     依存更新だけの PR は本 workflow を通さないと MSI 側の破壊を検出できない。
+#     実例: Dependabot #328 の SQLitePCLRaw.lib.e_sqlite3 3.50.3 → 3.53.3 が
+#     ICE60 で MSI ビルドを落としたが、本 workflow が走らず main へ入った
 #   - workflow_dispatch で任意時点の実行(リリース前の証拠採取等)を可能にする
 #
 # ci.yml には触れない(並行 PR との衝突回避。M9-1 からの方針)。
@@ -19,6 +26,8 @@ on:
     paths:
       - 'installer/**'
       - '.github/workflows/installer-e2e.yml'
+      - 'Directory.Packages.props'
+      - 'Directory.Build.props'
 
 permissions:
   contents: read
