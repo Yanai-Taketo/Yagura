@@ -39,9 +39,10 @@
     Microsoft.Extensions.Logging.EventLog は明示 PackageReference を追加しない。
     Microsoft.Extensions.Hosting と同様に Microsoft.AspNetCore.App が既にこれを含んでおり
     （実機 restore で NU1510 を確認済み。2026-07-05）、追加すると NU1510 でビルド不可になる。
-    ライブ検証: 2026-07-05、`curl https://api.nuget.org/v3-flatcontainer/
-    microsoft.extensions.hosting.windowsservices/index.json` で最新版 10.0.9 を確認
-    （本リポジトリの他の Microsoft.Extensions.* 10.0.9 系と同一マイナー系列）。
+    採用時のライブ検証: `curl https://api.nuget.org/v3-flatcontainer/
+    microsoft.extensions.hosting.windowsservices/index.json` で最新安定版を確認
+    （他の Microsoft.Extensions.* と同一マイナー系列に揃える方針。採用日 2026-07-05）。
+    バージョン番号は Directory.Packages.props が唯一の正（同所のコメント規約を参照）。
   -->
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
