@@ -28,6 +28,15 @@ namespace Yagura.Host.Administration.Https;
 /// 絞ることは configuration.md §6 の対象読者（AD はあるが AD CS 未導入の環境を含む一般的な
 /// Windows 管理者）にとって現実的な範囲である。
 /// </para>
+/// <para>
+/// <b>環境要因の失敗で例外を投げない</b>（<c>Try</c> 接頭辞のとおりの契約。Issue #345）:
+/// 呼び出し元（<c>Program</c>）は付与をベストエフォートとして扱い、失敗しても起動を妨げず
+/// 警告のみ残す設計である（security.md §2.5）。この設計が成立するには、本メソッドが
+/// 鍵へのアクセス不能・ACL 書き換え不可・鍵ファイル不在といった環境要因を
+/// <see cref="AdminCertificatePrivateKeyGrantResult"/> の失敗として返しきる必要がある。
+/// 特に<b>鍵ファイルパスの解決自体が秘密鍵を開くことを要する</b>点に注意（鶏と卵——
+/// 付与しようとしている権限を付与処理が必要とする）。
+/// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public static class AdminCertificatePrivateKeyAccessGranter
@@ -49,7 +58,30 @@ public static class AdminCertificatePrivateKeyAccessGranter
             return AdminCertificatePrivateKeyGrantResult.Failure("証明書に秘密鍵がありません。");
         }
 
-        var keyFilePath = ResolveCngKeyFilePath(certificate);
+        // 鍵ファイルパスの解決は秘密鍵を開くため、「これから付与しようとしている権限」を要求する
+        // （鶏と卵。Issue #345）。既定の鍵 ACL は CREATOR OWNER / SYSTEM / Administrators のみで
+        // サービスアカウントの ACE を持たないため、**本機構が想定する典型状況そのもの**で
+        // CryptographicException（キー セットがありません）が飛ぶ。ここで捕捉しないと呼び出し元
+        // （Program）まで抜けてサービスが起動できない——「付与に失敗しても起動は妨げない
+        // （警告のみ）」という security.md §2.5 の設計に反する。
+        //
+        // 本メソッドは Try 接頭辞のとおり、環境要因の失敗を例外ではなく Failure で返す契約とする。
+        string? keyFilePath;
+        try
+        {
+            keyFilePath = ResolveCngKeyFilePath(certificate);
+        }
+        catch (CryptographicException ex)
+        {
+            return AdminCertificatePrivateKeyGrantResult.Failure(
+                "秘密鍵を開けなかったため、権限付与先の鍵ファイルを特定できませんでした: " +
+                $"{ex.Message} " +
+                "現在の実行アカウントに秘密鍵への権限がない場合に起きます（付与しようとしている権限を" +
+                "付与処理自体が必要とするため、自動では解決できません）。証明書スナップイン" +
+                "（certlm.msc）の「秘密キーの管理」から手動で権限を付与してください" +
+                "（configuration.md §6 CF-D2）。");
+        }
+
         if (keyFilePath is null)
         {
             return AdminCertificatePrivateKeyGrantResult.Failure(
