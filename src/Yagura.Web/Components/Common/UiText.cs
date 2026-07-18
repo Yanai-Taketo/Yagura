@@ -695,15 +695,16 @@ public static class UiText
     public const string GaugeDatabaseSizeUnavailable = "取得できません";
 
     /// <summary>
-    /// OS 受信破棄ゲージの常時説明（M8-3 の設計判断: 値を表示せず説明のみを常時掲示する。
+    /// OS 受信破棄（OS 統計）の常時説明（M8-3 の設計判断: 値を表示せず説明のみを常時掲示する。
     /// architecture.md §4.2・D-6——値 0 の表示が「取りこぼしゼロ」の誤解を生むため。
+    /// 計器（yagura.os.udp.*）自体も ADR-0016 決定 3 で製品コードから撤去済み。
     /// 判断記録は ui.md §5.5）。
     /// </summary>
-    public const string OsUdpGaugeExplanation =
+    public const string OsUdpDiscardExplanation =
         "OS がこのアプリへ渡す前に破棄した受信データの数（OS の統計値）は、この画面に表示していません";
 
-    /// <summary>OS 受信破棄ゲージの常時説明の補足（理由と代替手段）。</summary>
-    public const string OsUdpGaugeExplanationSupplement =
+    /// <summary>OS 受信破棄の常時説明の補足（理由と代替手段）。</summary>
+    public const string OsUdpDiscardExplanationSupplement =
         "検証済みの Windows 環境では、この OS 統計は受信・破棄のどちらも計上しないことが実測で確認されています。" +
         "0 という値を表示すると「取りこぼしなし」という誤解を生むため、値の表示自体を行いません。" +
         "取りこぼしの確認には、上記のカウンタと、ダッシュボードの送信元別の受信状況（最終受信時刻）をあわせて確認してください";

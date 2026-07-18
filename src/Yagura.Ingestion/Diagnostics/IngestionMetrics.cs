@@ -1,5 +1,4 @@
 ﻿using System.Diagnostics.Metrics;
-using System.Net.NetworkInformation;
 
 namespace Yagura.Ingestion.Diagnostics;
 
@@ -39,7 +38,7 @@ namespace Yagura.Ingestion.Diagnostics;
 /// 失敗」「スプール破棄」「永続化失敗」を追加した。M4-4 で「流量制御破棄」（M4-4 時点は挿入点
 /// のみ。Issue #260 で <see cref="Yagura.Ingestion.FlowControl.TokenBucketIngressGate"/> による
 /// 判定・破棄が実装され、実値を刻む計器になった）と、
-/// OS 統計突合ゲージ（§4.2）を追加した。Issue #143・#140（syslog 実務者ペルソナの深掘り
+/// OS 統計突合ゲージ（§4.2。のち ADR-0016 決定 3 で撤去）を追加した。Issue #143・#140（syslog 実務者ペルソナの深掘り
 /// レビューで発見された、1 メッセージの逸脱による接続全損・アイドル接続の資源枯渇の 2 件）の
 /// 対応で「TCP 接続断」（当初計画の 12 種の一つ）・「TCP 接続アイドルタイムアウト」・
 /// 「TCP メッセージ破棄（上限超過）」（後者 2 つは新規）を追加した。PR #169 レビュー指摘 3 への
@@ -123,13 +122,6 @@ public sealed class IngestionMetrics : IDisposable
     private long _tcpConnectionResyncLimitExceededTotal;
     private long _tcpConnectionFramingTimeoutTotal;
     private long _spoolCorruptTailDiscardedTotal;
-
-    private readonly ObservableGauge<long>? _osUdpIPv4DatagramsDiscarded;
-    private readonly ObservableGauge<long>? _osUdpIPv6DatagramsDiscarded;
-    private long _osUdpIPv4BaselineDiscarded;
-    private long _osUdpIPv6BaselineDiscarded;
-    private readonly bool _osUdpIPv4StatsAvailable;
-    private readonly bool _osUdpIPv6StatsAvailable;
 
     public IngestionMetrics()
     {
@@ -280,81 +272,10 @@ public sealed class IngestionMetrics : IDisposable
             unit: "{message}",
             description: "TCP 切断時に解析途中だった不完全メッセージ数（生データのまま保存。§4.1。診断用・プロセス内累積）。");
 
-        // architecture.md §4.2 OS レベル取りこぼしの観測（M4-4 で実機検証: Windows ARM64・
-        // SDK 10.0.301 で IPGlobalProperties.GetUdpIPv4Statistics()/GetUdpIPv6Statistics() の
-        // IncomingDatagramsDiscarded が実際に取得でき、値が単調増加する生きた値であることを
-        // 確認済み（本クラス実装時の実機確認。推測ではない）。システム全体統計であり「本製品の
-        // ソケットで落ちた」ことの直接証明ではない粒度の限界は§4.2 のとおり——ObservableGauge の
-        // description にもこの限界を明記する。
-        //
-        // 「プロセス起動時からの差分」として公開する（システム全体の累積値をそのまま出すと、
-        // 本製品起動前からの値混入で「本製品稼働中の増分」の解釈を誤らせるため）。
-        // GetIPGlobalProperties() 呼び出し自体が稀に PlatformNotSupportedException 等を
-        // 投げ得るため、コンストラクタで一度だけ試行し、失敗した場合はゲージを登録しない
-        // （枠のみ・取得不可を正直に反映する。§4.2「取得できない…場合は正直に報告して枠のみ」）。
-        try
-        {
-            var v4Baseline = IPGlobalProperties.GetIPGlobalProperties().GetUdpIPv4Statistics();
-            _osUdpIPv4BaselineDiscarded = v4Baseline.IncomingDatagramsDiscarded;
-            _osUdpIPv4StatsAvailable = true;
-        }
-        catch (NetworkInformationException)
-        {
-            _osUdpIPv4StatsAvailable = false;
-        }
-        catch (PlatformNotSupportedException)
-        {
-            _osUdpIPv4StatsAvailable = false;
-        }
-
-        try
-        {
-            var v6Baseline = IPGlobalProperties.GetIPGlobalProperties().GetUdpIPv6Statistics();
-            _osUdpIPv6BaselineDiscarded = v6Baseline.IncomingDatagramsDiscarded;
-            _osUdpIPv6StatsAvailable = true;
-        }
-        catch (NetworkInformationException)
-        {
-            _osUdpIPv6StatsAvailable = false;
-        }
-        catch (PlatformNotSupportedException)
-        {
-            _osUdpIPv6StatsAvailable = false;
-        }
-
-        if (_osUdpIPv4StatsAvailable)
-        {
-            _osUdpIPv4DatagramsDiscarded = _meter.CreateObservableGauge(
-                "yagura.os.udp.ipv4.datagrams_discarded",
-                ObserveOsUdpIPv4DatagramsDiscarded,
-                unit: "{datagram}",
-                description:
-                    "OS の IPv4 UDP 統計 (IncomingDatagramsDiscarded) のプロセス起動時からの増分（§4.2 突合値）。" +
-                    "システム全体の値であり、本製品のソケット単独の破棄数ではない（粒度の限界。§4.2）。");
-        }
-
-        if (_osUdpIPv6StatsAvailable)
-        {
-            _osUdpIPv6DatagramsDiscarded = _meter.CreateObservableGauge(
-                "yagura.os.udp.ipv6.datagrams_discarded",
-                ObserveOsUdpIPv6DatagramsDiscarded,
-                unit: "{datagram}",
-                description:
-                    "OS の IPv6 UDP 統計 (IncomingDatagramsDiscarded) のプロセス起動時からの増分（§4.2 突合値）。" +
-                    "システム全体の値であり、本製品のソケット単独の破棄数ではない（粒度の限界。§4.2）。");
-        }
-    }
-
-    private long ObserveOsUdpIPv4DatagramsDiscarded()
-    {
-        var current = IPGlobalProperties.GetIPGlobalProperties().GetUdpIPv4Statistics().IncomingDatagramsDiscarded;
-        return Math.Max(0, current - _osUdpIPv4BaselineDiscarded);
-    }
-
-    private long ObserveOsUdpIPv6DatagramsDiscarded()
-    {
-        var current = IPGlobalProperties.GetIPGlobalProperties().GetUdpIPv6Statistics().IncomingDatagramsDiscarded;
-        return Math.Max(0, current - _osUdpIPv6BaselineDiscarded);
+        // OS 統計突合ゲージ（yagura.os.udp.*）は ADR-0016 決定 3 で撤去した（検証済み環境で
+        // 受信・破棄を反映しないことが実測確定したため。architecture.md §4.2）。再導入は
+        // 同 ADR 再評価トリガ (d) 陽性時の amendment を要する——無自覚な復活は
+        // IngestionMetricsOsUdpAbsenceTests が回帰として防ぐ。
     }
 
     /// <summary>
@@ -648,22 +569,6 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>TCP 不完全メッセージカウンタの計器そのもの（テスト用。Issue #270）。</summary>
     public Counter<long> TcpIncompleteMessageCounter => _tcpIncompleteMessage;
-
-    /// <summary>OS レベル IPv4 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
-    public bool OsUdpIPv4StatsAvailable => _osUdpIPv4StatsAvailable;
-
-    /// <summary>OS レベル IPv6 UDP 破棄ゲージが利用可能か（実機検証。§4.2）。</summary>
-    public bool OsUdpIPv6StatsAvailable => _osUdpIPv6StatsAvailable;
-
-    /// <summary>
-    /// OS レベル IPv4 UDP 破棄ゲージの計器そのもの（テスト用。<see cref="OsUdpIPv4StatsAvailable"/>
-    /// が <c>false</c> の場合は <c>null</c>）。<see cref="InternalBufferDroppedCounter"/> と
-    /// 同じ理由で、Meter 名・計器名の文字列一致より頑健な直接束縛を可能にする。
-    /// </summary>
-    public ObservableGauge<long>? OsUdpIPv4DatagramsDiscardedGauge => _osUdpIPv4DatagramsDiscarded;
-
-    /// <summary>OS レベル IPv6 UDP 破棄ゲージの計器そのもの（テスト用。同上）。</summary>
-    public ObservableGauge<long>? OsUdpIPv6DatagramsDiscardedGauge => _osUdpIPv6DatagramsDiscarded;
 
     public void Dispose() => _meter.Dispose();
 }

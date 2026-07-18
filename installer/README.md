@@ -138,7 +138,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 - **インストール実行のうち ACL 適用・アップグレードの実挙動は未検証**: 実機検証は
   M9-3(lab)の管轄。オーナー実行の手順書:
   [lab/m9-3-lab-procedure.md](lab/m9-3-lab-procedure.md)(Issue #76。ACL = SEC-3・
-  失敗時再起動・アップグレード・M-15・DB-8・イベントログ・ja-JP UI・E2E Full の lab 再現)
+  失敗時再起動・アップグレード・ADR-0016 トリガ (d)(旧 M-15)・DB-8・イベントログ・ja-JP UI・E2E Full の lab 再現)
 - **管理画面への入口(Issue #131)**: ローカルビルドした MSI を WindowsInstaller COM で照合し、
   以下を確認済み(2026-07-09)。
   - `Wix4InternetShortcut` テーブルに 3 行(`ViewerShortcut` → `http://localhost:8514/`・
