@@ -5,10 +5,18 @@
 $ErrorActionPreference = "Stop"
 $port = 51999
 
+# 【2026-07-18 訂正】受信総数の正しいプロパティ名は DatagramsReceived である。
+# .NET の UdpStatistics に IncomingDatagrams というプロパティは存在せず（.NET 10 /
+# .NET Framework 4.8 の両方でリフレクション確認済み）、PowerShell は存在しない
+# プロパティを $null として黙って返すため、本スクリプトの当初版が出力していた
+# "Incoming delta" は実トラフィックと無関係に構造的に常に 0 だった。
+# 2026-07-05 の記録のうち受信総数に関する観測はこの読み取り誤りによる測定
+# アーティファクトである（破棄側 Discarded は実在プロパティのため観測は有効）。
+# 詳細: ADR-0016 改訂履歴 1 / results/2026-07-18-server-udp-stats-trigger-d/
 function Get-UdpStats {
     $p = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
     $v4 = $p.GetUdpIPv4Statistics()
-    [pscustomobject]@{ Incoming = $v4.IncomingDatagrams; Discarded = $v4.IncomingDatagramsDiscarded; Errors = $v4.IncomingDatagramsWithErrors }
+    [pscustomobject]@{ Incoming = $v4.DatagramsReceived; Discarded = $v4.IncomingDatagramsDiscarded; Errors = $v4.IncomingDatagramsWithErrors }
 }
 
 Write-Host "adding temporary firewall rule for UDP $port..."
