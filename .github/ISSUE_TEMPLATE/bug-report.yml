@@ -1,0 +1,64 @@
+name: バグ報告 / Bug report
+description: 動作不良・想定外の挙動の報告 / Report broken or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        日本語・英語どちらでも歓迎です。/ Reports are welcome in Japanese or English.
+        脆弱性の報告は公開 Issue ではなく [Private vulnerability reporting](https://github.com/Yanai-Taketo/Yagura/security/advisories/new) へお願いします(SECURITY.md 参照)。
+  - type: input
+    id: version
+    attributes:
+      label: Yagura バージョン / Version
+      description: 管理 UI のフッター、または MSI ファイル名で確認できます
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: 導入方法 / Install method
+      options:
+        - MSI インストーラ / MSI installer
+        - ソースからビルド / Built from source
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows Server 2022 / Windows 11 23H2 など"
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: データベース / Database
+      options:
+        - SQLite(既定 / default)
+        - SQL Server
+        - その他・不明 / Other or unknown
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 再現手順 / Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: 期待した動作と実際の動作 / Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・スクリーンショット / Logs & screenshots
+      description: Windows イベントログ(アプリケーション)の Yagura エントリや、管理 UI のスクリーンショットがあると調査が速くなります

@@ -11,7 +11,8 @@
 
 - `main` への直接 push 禁止。すべて feature ブランチ（`<type>/<description>`）+ PR 経由
 - squash merge を既定とし、マージ後に feature ブランチを削除
-- **CI green を確認してから merge する**（修正 push の直後に merge すると、その修正が squash に取り込まれない競合が起こり得る）
+- **CI green を確認してから merge する**（修正 push の直後に merge すると、その修正が squash に取り込まれない競合が起こり得る）。CI（`build-and-test`）はブランチ保護の必須ステータスチェックとして機械的にも強制される
+- **PR 上の未解決の会話（conversation）があるとマージ不可**（ブランチ保護で強制。ペルソナレビューの対話を PR コメントで完結させる運用の担保）
 - 個人運用期のブランチ保護は `enforce_admins: false` + admin merge（GitHub は自己 approve 不可のため）。contributor 参加時に `true` へ格上げする
 
 ## PR の要件
@@ -51,7 +52,11 @@
 
 ## CI
 
-- 依存パッケージの脆弱性スキャンを CI に組み込み、検出時は PR をブロックする
+- 依存パッケージの脆弱性スキャンを CI に組み込み、検出時は PR をブロックする。脆弱性対策は三層で構成する:
+  1. **NuGet Audit**（`Directory.Build.props` の `NuGetAuditMode=all` + `WarningsAsErrors` NU1900-1904）——restore/build のたびに照合し、PR をブロックする
+  2. **dependency-review-action**（`.github/workflows/dependency-review.yml`）——PR 差分として入る依存（GitHub Actions を含む）を審査する
+  3. **Dependabot**（`.github/dependabot.yml` + 脆弱性アラート / 自動セキュリティ更新）——マージ後・リリース後も継続監視し、脆弱性公表時に修正 PR を自動作成する（フォワーダ配布キットの Fluent Bit 版は対象外——「フォワーダ配布キットの版運用」節の決定どおり手動運用）
+- **CodeQL 静的解析**（C# + Actions ワークフロー。`.github/workflows/codeql.yml`）を push / PR / 週次で実行し、結果は Security タブ（code scanning）に集約する
 - リリース workflow の GITHUB_TOKEN には `contents: write` を明示付与する（既定は read-only）
 
 ### CI 回帰ベンチの基準値更新（architecture.md §5.2 / Issue #62）
