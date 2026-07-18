@@ -1,6 +1,6 @@
 # ADR-0015: AD 環境向け gMSA によるサービス実行（opt-in）
 
-- 状態: proposed
+- 状態: accepted（2026-07-18 マージ）
 - 日付: 2026-07-16
 - 決定者: YANAI Taketo
 - 関連: [ADR-0004](0004-security-model.md) 決定 4（仮想サービスアカウント既定・gMSA は AD 認証 opt-in とあわせて対応）/ [ADR-0006](0006-v1-release-criteria.md) 基準 1（v1.0 ブロッカー）/ [ADR-0010](0010-admin-ui-authentication.md) 委任事項（SPN と gMSA の接続）/ [security.md](../design/security.md) §4・§5 / Issue #263・#228

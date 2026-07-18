@@ -1,6 +1,6 @@
 # ADR-0016: OS レベル取りこぼし観測の実現手段の撤回 — 標準 API ゲージから引き算導出 + 無音化検出へ（ADR-0002 決定 2 の OS ゲージ観測部分の部分 supersession）
 
-- 状態: proposed
+- 状態: accepted（2026-07-18 マージ）
 - 日付: 2026-07-18
 - 決定者: YANAI Taketo
 - 関連: [ADR-0002](0002-architecture-principles.md)（決定 2 のうち「OS レベルの取りこぼしを標準 API のゲージで観測する」という**実現手段の採用**部分を本 ADR が supersede する。原則「OS 側のロスを無視しない」および決定 2 の他の到達水準〔バックプレッシャ・ディスクスプール・流量制御・アプリ内カウンタ〕は有効なまま維持する）/ [docs/adr/README.md](README.md)（amendment/supersession の判定基準。本 ADR はその「疑わしければ supersession」「最小単位で反転を検証」に従う）/ [docs/development/persona-review.md](../development/persona-review.md)（対話は PR 上に残す制度）/ [docs/design/architecture.md](../design/architecture.md) §4.2（OS 統計突合の設計本体。本 ADR の反映対象）・§4.1.1（計器一覧）/ [ui.md §5.5](../design/ui.md)（v0.1 の UI 非表示判断。既決）/ Issue #272（本 ADR の起案元。M-8 の残作業）/ ADR-0002 §改訂履歴 1・2（2026-07-05。本発見を当初 amendment として記録した先行記述。本 ADR がその分類を supersession へ改める）
