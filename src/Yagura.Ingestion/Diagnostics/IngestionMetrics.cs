@@ -99,6 +99,22 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _parseFailedSaved;
     private readonly Counter<long> _tcpIncompleteMessage;
 
+    /// <summary>
+    /// TLS ハンドシェイク失敗カウンタ（<see cref="RecordTlsHandshakeFailure"/>）の <c>source_address</c>
+    /// タグの distinct 値の上限。送信元 IP は認証成立前に計上される攻撃者制御の次元であり、無制限の
+    /// タグ基数は集約 exporter のメモリを圧迫し得るため上限を設ける。上限到達後の新規送信元は
+    /// <see cref="TlsHandshakeFailureOverflowSource"/> へ畳む——「ほぼ全送信元が失敗」の観測は overflow
+    /// バケットの増加として現れ、SEC-D3 の送信元別脱落確認の目的は損なわれない（security.md §6・
+    /// architecture.md §4.1.1）。
+    /// </summary>
+    public const int MaxTlsHandshakeFailureSourceCardinality = 256;
+
+    /// <summary>カーディナリティ上限到達後の新規送信元を畳み込む集約タグ値。</summary>
+    public const string TlsHandshakeFailureOverflowSource = "(other)";
+
+    private readonly object _tlsSourceTagGate = new();
+    private readonly HashSet<string> _tlsHandshakeFailureSources = new(StringComparer.Ordinal);
+
     // architecture.md §4.3「前回までの累積 + 今回プロセス分」の合成を行うための自前の
     // 累積保持（§4.3 実装ノート参照）。System.Diagnostics.Metrics.Counter<T> は加算専用の
     // 書き込み API のみを公開し、現在の累積値を読み戻す標準 API を持たない
@@ -434,7 +450,10 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>
     /// TLS 受信（RFC 5425。opt-in）の TLS ハンドシェイク確立失敗を 1 件計上する（Issue #137）。
-    /// <paramref name="sourceAddress"/> はタグとして付与する（送信元別の脱落確認。security.md §6）。
+    /// <paramref name="sourceAddress"/> を <c>source_address</c> タグとして付与する（送信元別の脱落確認。
+    /// security.md §6）。ただしタグの distinct 値は <see cref="MaxTlsHandshakeFailureSourceCardinality"/>
+    /// までに有界化し、超過分は <see cref="TlsHandshakeFailureOverflowSource"/> へ集約する——送信元 IP は
+    /// 認証成立前の攻撃者制御次元であり、無制限のタグ基数が集約 exporter のメモリを圧迫するのを防ぐ。
     /// UDP 受信エラー・逆引き解決カウンタと同じ「診断用カウンタ」の扱い——個々の失敗が必ずしも
     /// メッセージ損失と 1 対 1 対応するとは限らないため、プロセス内累積のみで再起動をまたぐ
     /// 永続化（<see cref="SeedCumulativeCounters"/>・<see cref="SnapshotCumulativeCounters"/>）の
@@ -442,7 +461,32 @@ public sealed class IngestionMetrics : IDisposable
     /// </summary>
     public void RecordTlsHandshakeFailure(string sourceAddress)
     {
-        _tlsHandshakeFailure.Add(1, new KeyValuePair<string, object?>("source_address", sourceAddress ?? "unknown"));
+        var tagValue = ResolveBoundedSourceTag(sourceAddress ?? "unknown");
+        _tlsHandshakeFailure.Add(1, new KeyValuePair<string, object?>("source_address", tagValue));
+    }
+
+    /// <summary>
+    /// <c>source_address</c> タグ値を有界化して返す。既知の送信元、または上限未満なら送信元をそのまま
+    /// 使い（新規は追跡集合へ記録）、上限到達後の新規送信元は <see cref="TlsHandshakeFailureOverflowSource"/>
+    /// に畳む。追跡集合も上限で有界。ハンドシェイク失敗は低頻度のため単純なロックで直列化してよい。
+    /// </summary>
+    private string ResolveBoundedSourceTag(string source)
+    {
+        lock (_tlsSourceTagGate)
+        {
+            if (_tlsHandshakeFailureSources.Contains(source))
+            {
+                return source;
+            }
+
+            if (_tlsHandshakeFailureSources.Count < MaxTlsHandshakeFailureSourceCardinality)
+            {
+                _tlsHandshakeFailureSources.Add(source);
+                return source;
+            }
+
+            return TlsHandshakeFailureOverflowSource;
+        }
     }
 
     /// <summary>
