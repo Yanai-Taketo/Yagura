@@ -45,6 +45,24 @@ public static class YaguraConfigurationWriter
     };
 
     /// <summary>
+    /// 読み取り用のオプション。configuration.md §1 の不変条件「読み手の受理範囲は一致していなければ
+    /// ならない」に従い、.NET 構成システム（<c>AddJsonFile</c>）の受理範囲に合わせる（Issue #312）。
+    /// </summary>
+    /// <remarks>
+    /// 差異は数値・真偽値だけではない（2026-07-18 に実測で確認）。末尾カンマとコメントは構成システムが
+    /// 受理するのに <see cref="JsonSerializer"/> の既定は拒否し、同一キーの重複定義は**逆に**構成システムが
+    /// 拒否する（<see cref="InvalidDataException"/>）のに <see cref="JsonSerializer"/> の既定は
+    /// 後勝ちで受理する。§1 は重複キーを受理しないと定めたため、厳格な側（構成システム）に合わせる。
+    /// </remarks>
+    private static readonly JsonSerializerOptions DeserializerOptions = new()
+    {
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowDuplicateProperties = false,
+        Converters = { new ConfigurationValueStringConverter() },
+    };
+
+    /// <summary>
     /// 保存前の下準備として、データルート配下の設定ファイルを読み込む。
     /// ファイルが存在しない場合は既定値のみの空インスタンスと <see cref="ConfigurationVersionToken.FileAbsent"/> を返す
     /// （初回保存 = ウィザードの初期設定生成に対応する）。
@@ -65,7 +83,8 @@ public static class YaguraConfigurationWriter
 
         // JsonSerializer.Deserialize にバイト列をそのまま渡す（System.Text.Json は
         // 既定で先頭の UTF-8 BOM を許容し読み飛ばすため、手編集で BOM が付与されていても失敗しない）。
-        var options = JsonSerializer.Deserialize<YaguraConfigurationOptions>(bytes)
+        // DeserializerOptions により受理範囲を .NET 構成システムへ揃える（§1 の不変条件。Issue #312）。
+        var options = JsonSerializer.Deserialize<YaguraConfigurationOptions>(bytes, DeserializerOptions)
             ?? new YaguraConfigurationOptions();
 
         return new YaguraConfigurationFileSnapshot(options, token);

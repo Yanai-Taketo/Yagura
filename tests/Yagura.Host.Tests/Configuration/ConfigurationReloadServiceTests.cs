@@ -145,6 +145,40 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
         Assert.Equal(new[] { "Retention:Days" }, recovered.AppliedKeys);
     }
 
+    /// <summary>
+    /// 読み取り・解析の失敗（構文エラー・重複キー）も、検証失敗と同じく「適用せず旧設定のまま継続」
+    /// とする（configuration.md §1。イベント ID 1021）。起動時は起動失敗だが稼働中は受信を止めない
+    /// ——この非対称により、再読み込みは再起動前の安全確認として使える（§3）。
+    /// </summary>
+    /// <remarks>
+    /// 重複キーは構文エラーではなく <see cref="InvalidDataException"/> として現れるため、
+    /// <see cref="JsonException"/> だけを捕捉すると「再読み込みは通ったのに再起動で起動しない」
+    /// という潜伏事故が成立する。両方を回帰対象にする（Issue #312）。
+    /// </remarks>
+    [Theory]
+    [InlineData("""{ "Retention": { "Days": "90" """)]                              // 構文エラー（閉じ括弧なし）
+    [InlineData("""{ "Retention": { "Days": "90", "Days": "30" } }""")]              // 重複キー
+    public async Task Reload_UnreadableFile_RejectsAndKeepsOldConfiguration(string brokenJson)
+    {
+        WriteConfigurationFile("""{ }""");
+        var applierCalled = false;
+        var service = CreateService(new ImmediateConfigurationApplier(
+            ["Retention:Days"], _ => applierCalled = true));
+
+        WriteConfigurationFile(brokenJson);
+        var result = await service.ReloadAsync(null, null, null);
+
+        Assert.True(result.Rejected);
+        Assert.NotNull(result.RejectionReason);
+        Assert.False(applierCalled, "読み取りに失敗したときは一切適用しないこと。");
+
+        // 直した後は正常に適用できる（拒否が後を引かない）。
+        WriteConfigurationFile("""{ "Retention": { "Days": "90" } }""");
+        var recovered = await service.ReloadAsync(null, null, null);
+        Assert.False(recovered.Rejected);
+        Assert.True(applierCalled);
+    }
+
     [Fact]
     public async Task Reload_InvalidImmediateValue_AppliesFallbackAndReportsWarning()
     {
