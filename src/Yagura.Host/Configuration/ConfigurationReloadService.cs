@@ -194,6 +194,10 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         // 追跡し続けるため、差分の再検出には依存しない）。
         _lastAppliedOptions = snapshot.Options;
 
+        // 前回適用スナップショットの永続化（Issue #329——保存契機③「再読み込み反映」。
+        // 起動時の設定差分照合の基準を更新する）。失敗は再読み込み自体を妨げない（Try 系）。
+        LastAppliedConfigurationSnapshotStore.TrySave(_dataRoot, snapshot.Options, _logger);
+
         var pending = PendingRestartKeySnapshot();
         var warnings = loadResult.Warnings
             .Select(w => $"{w.Key}: {w.Reason}（適用値: {w.AppliedValue}）")

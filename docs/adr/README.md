@@ -32,12 +32,12 @@
 | [0014](0014-code-signing.md) | リリース成果物のコード署名 — Sectigo + Google Cloud KMS による Authenticode 署名（Yagura・ODV 共用。ADR-0006 基準 5・ADR-0009 委任事項 8・Issue #264 を閉じる） | proposed（決定 1 裁定済み。本文承認待ち） |
 | [0015](0015-gmsa-service-account.md) | AD 環境向け gMSA によるサービス実行（opt-in。ADR-0004 決定 4 の予告・ADR-0006 基準 1・Issue #263） | accepted |
 | [0016](0016-os-drop-gauge-mechanism.md) | OS レベル取りこぼし観測の実現手段の撤回 — 標準 API ゲージから引き算導出 + 無音化検出へ（ADR-0002 決定 2 の OS ゲージ観測部分の部分 supersession。Issue #272） | accepted |
+| [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | proposed |
 | [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | proposed |
 
 ## 起案予定
 
 （新しい委任・決定事項が生じたらここに登録してから起案する）
 
-- **メール通知（SMTP-AUTH + STARTTLS。opt-in）**: 能動通知（architecture.md §4.6）のチャネル追加。現状の出口は Windows イベントログのみで、無人運用では気づけないという空白の解消。採用は 2026-07-16 オーナー裁定で確定（Issue #273）。主論点: opt-in の既定・SMTP 認証情報の保管（設定の秘匿値の扱い）・送信失敗時の縮退・通知トリガ集合
 - **TLS 受信（`Ingestion:Tls:*`）の証明書選択 UI**: [ADR-0012](0012-admin-https-cert-ui.md) のスコープから分離済み（オーナー裁定 2026-07-11・論点 4。Issue #276）。主論点: ADR-0012 で確立した設計（ストア列挙・秘密鍵アクセス権付与・失敗時の縮退）の再利用範囲。反映に受信断を伴う点は CF-4（Issue #262）と接続するため、実装は CF-4 の後が自然
 

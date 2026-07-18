@@ -1,4 +1,6 @@
 using System.Globalization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
@@ -44,6 +46,7 @@ public sealed class SetupWizardService : ISetupWizardService
     private readonly string _dataRoot;
     private readonly IAuditRecorder _auditRecorder;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<SetupWizardService> _logger;
 
     // ---- サーバ側セッション状態（configuration.md §7） ----
     private readonly List<SetupWizardStep> _confirmedSteps = [];
@@ -53,7 +56,11 @@ public sealed class SetupWizardService : ISetupWizardService
     private string? _appliedToken;
     private SetupWizardApplyResult? _appliedResult;
 
-    public SetupWizardService(string dataRoot, IAuditRecorder auditRecorder, TimeProvider? timeProvider = null)
+    public SetupWizardService(
+        string dataRoot,
+        IAuditRecorder auditRecorder,
+        TimeProvider? timeProvider = null,
+        ILogger<SetupWizardService>? logger = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
         ArgumentNullException.ThrowIfNull(auditRecorder);
@@ -61,6 +68,7 @@ public sealed class SetupWizardService : ISetupWizardService
         _dataRoot = dataRoot;
         _auditRecorder = auditRecorder;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _logger = logger ?? NullLogger<SetupWizardService>.Instance;
     }
 
     /// <inheritdoc/>
@@ -272,6 +280,10 @@ public sealed class SetupWizardService : ISetupWizardService
                 _confirmedSteps.Remove(SetupWizardStep.Review);
                 return new SetupWizardApplyResult(WizardApplyOutcome.Conflict, [], ConfigurationApplyEffect.Immediate);
             }
+
+            // 前回適用スナップショットの永続化（Issue #329——保存契機②「ウィザード保存」。
+            // 起動時の設定差分照合の基準を更新する）。失敗は適用自体を妨げない（Try 系）。
+            LastAppliedConfigurationSnapshotStore.TrySave(_dataRoot, after, _logger);
 
             result = new SetupWizardApplyResult(
                 WizardApplyOutcome.Applied,
