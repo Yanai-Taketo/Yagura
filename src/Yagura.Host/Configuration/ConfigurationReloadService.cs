@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Yagura.Abstractions.Administration;
@@ -114,32 +115,54 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         }
     }
 
+    /// <summary>
+    /// 再読み込みを適用せず、実行中の構成をそのまま継続する結果を組み立てる（イベント ID 1021）。
+    /// 検証失敗と読み取り・解析の失敗の両方がここへ合流する（configuration.md §1・§3）。
+    /// </summary>
+    private ConfigurationReloadResult RejectReload(string category, string reason)
+    {
+        _logger.LogWarning(
+            ConfigurationEventIds.ConfigurationReloadRejected,
+            "設定の再読み込みを拒否しました（{Category}）。実行中の構成は変更前のまま継続します: {Reason}",
+            category,
+            reason);
+
+        return new ConfigurationReloadResult(
+            Rejected: true,
+            RejectionReason: reason,
+            ChangedKeys: [],
+            AppliedKeys: [],
+            PendingRestartKeys: PendingRestartKeySnapshot(),
+            WarningMessages: [],
+            UnknownKeys: []);
+    }
+
     private async Task<ConfigurationReloadResult> ExecuteReloadAsync()
     {
-        // ファイルの生 options（差分計算の after 側）。検証済みの実効値は Load が別途作る。
-        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
-
+        YaguraConfigurationFileSnapshot snapshot;
         ConfigurationLoadResult loadResult;
         try
         {
+            // ファイルの生 options（差分計算の after 側）。検証済みの実効値は Load が別途作る。
+            // Read も try の内側に置く——ここで読み取りに失敗した場合も、下の catch で
+            // 「適用せず旧設定のまま継続」へ合流させる必要があるため（configuration.md §1）。
+            snapshot = YaguraConfigurationWriter.Read(_dataRoot);
             loadResult = YaguraConfigurationLoader.Load(_dataRoot, _logger);
         }
         catch (ConfigurationValidationException ex)
         {
             // 検証失敗——何も適用せず旧設定のまま継続する（クラス remarks 参照）。
-            _logger.LogWarning(
-                ConfigurationEventIds.ConfigurationReloadRejected,
-                "設定の再読み込みを拒否しました（検証失敗）。実行中の構成は変更前のまま継続します: {Reason}",
-                ex.Message);
-
-            return new ConfigurationReloadResult(
-                Rejected: true,
-                RejectionReason: ex.Message,
-                ChangedKeys: [],
-                AppliedKeys: [],
-                PendingRestartKeys: PendingRestartKeySnapshot(),
-                WarningMessages: [],
-                UnknownKeys: []);
+            return RejectReload("検証失敗", ex.Message);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            // 読み取り・解析の失敗（構文エラー・文字化け・重複キー）。configuration.md §1 は
+            // 起動時を起動失敗としつつ、稼働中は「受信を止めない」を優先して適用拒否に留める
+            // （意図的な非対称）。この非対称により、再読み込みは再起動前の安全確認として使える。
+            //
+            // 重複キーは構文エラーではなく InvalidDataException として現れるため、JsonException
+            // だけを捕捉すると「再読み込みは通ったのに再起動で起動しない」という潜伏事故になる。
+            return RejectReload("読み取り・解析の失敗", ex.Message);
         }
 
         var plan = ConfigurationChangePlanner.Compare(_lastAppliedOptions, snapshot.Options);
