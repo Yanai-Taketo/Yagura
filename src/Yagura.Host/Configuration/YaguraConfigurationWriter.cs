@@ -29,12 +29,17 @@ namespace Yagura.Host.Configuration;
 /// そのまま配置先へ改名する（<c>File.Replace</c> は置換先の存在を前提とするため）。
 /// </para>
 /// <para>
-/// <b>文字コード: UTF-8、BOM なし</b>。.NET 構成システムの <c>AddJsonFile</c> は BOM の
-/// 有無に関わらず同一の値を読み取る（実機検証済み。UTF-8 BOM 付き JSON と BOM なし JSON の
-/// 両方から同じキーを読めることを確認した）ため読み込み側の制約はないが、書き込む側は
-/// 本リポジトリの既存 JSON ファイル（<c>global.json</c> 等）と同じ BOM なしを採用し、
-/// 手編集者が使う一般的なエディタ・CLI ツール（一部は BOM 付き JSON の扱いに難がある）との
-/// 親和性を優先する。
+/// <b>文字コード: UTF-8、BOM なし</b>。書き込む側は本リポジトリの既存 JSON ファイル
+/// （<c>global.json</c> 等）と同じ BOM なしを採用し、手編集者が使う一般的なエディタ・
+/// CLI ツール（一部は BOM 付き JSON の扱いに難がある）との親和性を優先する。
+/// </para>
+/// <para>
+/// <b>読み込み側は BOM の有無を問わない</b>。.NET 構成システムの <c>AddJsonFile</c> は
+/// BOM を許容し、本クラスの <see cref="Read(string)"/> も <c>JsonSerializer</c> へ渡す前に
+/// BOM を読み飛ばして受理範囲を揃える（§1 の不変条件）。
+/// <c>JsonSerializer.Deserialize(ReadOnlySpan{byte}, ...)</c> は BOM を読み飛ばさないため、
+/// 呼び出し側での除去が必要である（Issue #344。以前このコメントは「構成システムと同じく
+/// BOM を許容する」と記していたが、除去処理がなく実際には起動時クラッシュになっていた）。
 /// </para>
 /// </remarks>
 public static class YaguraConfigurationWriter
@@ -43,6 +48,9 @@ public static class YaguraConfigurationWriter
     {
         WriteIndented = true,
     };
+
+    /// <summary>UTF-8 BOM のバイト列（<c>EF BB BF</c>）。</summary>
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
 
     /// <summary>
     /// 読み取り用のオプション。configuration.md §1 の不変条件「読み手の受理範囲は一致していなければ
@@ -79,16 +87,31 @@ public static class YaguraConfigurationWriter
         }
 
         var bytes = File.ReadAllBytes(path);
+
+        // トークンは「ディスク上の内容」から計算する（BOM を除去する前のバイト列）。
+        // ConfigurationVersionToken.FromFile も生のファイル内容をハッシュしており、
+        // ここで除去後のバイト列を使うと BOM 付きファイルで両者のトークンが食い違い、
+        // 楽観的競合検出（Save の expectedVersionToken 照合）が誤検知する。
         var token = ConfigurationVersionToken.FromContent(bytes);
 
-        // JsonSerializer.Deserialize にバイト列をそのまま渡す（System.Text.Json は
-        // 既定で先頭の UTF-8 BOM を許容し読み飛ばすため、手編集で BOM が付与されていても失敗しない）。
-        // DeserializerOptions により受理範囲を .NET 構成システムへ揃える（§1 の不変条件。Issue #312）。
-        var options = JsonSerializer.Deserialize<YaguraConfigurationOptions>(bytes, DeserializerOptions)
+        // UTF-8 BOM は読み飛ばしてから deserialize する（Issue #344）。
+        // JsonSerializer.Deserialize(ReadOnlySpan<byte>, ...) は BOM を読み飛ばさず
+        // 「'0xEF' is an invalid start of a value」で失敗する（実測で確認）。一方 .NET 構成システムの
+        // AddJsonFile は BOM の有無に関わらず読めるため、除去しないと §1 の不変条件
+        // 「2 つの読み手の受理範囲は一致していなければならない」が破れる（Issue #312 が
+        // 成立させようとした不変条件そのもの）。BOM は Windows PowerShell 5.1 の
+        // Set-Content -Encoding utf8 や一部のエディタが既定で付与するため、手編集で普通に踏み得る。
+        var options = JsonSerializer.Deserialize<YaguraConfigurationOptions>(StripUtf8Bom(bytes), DeserializerOptions)
             ?? new YaguraConfigurationOptions();
 
         return new YaguraConfigurationFileSnapshot(options, token);
     }
+
+    /// <summary>
+    /// 先頭の UTF-8 BOM（<c>EF BB BF</c>）があれば取り除いた範囲を返す（Issue #344）。
+    /// </summary>
+    private static ReadOnlySpan<byte> StripUtf8Bom(ReadOnlySpan<byte> bytes) =>
+        bytes.StartsWith(Utf8Bom) ? bytes[Utf8Bom.Length..] : bytes;
 
     /// <summary>
     /// 設定全体を全体書き換えで保存する（楽観的な競合検出つき）。

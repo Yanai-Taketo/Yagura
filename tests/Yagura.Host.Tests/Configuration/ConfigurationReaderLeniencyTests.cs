@@ -44,6 +44,15 @@ public sealed class ConfigurationReaderLeniencyTests : IDisposable
         File.WriteAllText(Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName), json);
 
     /// <summary>
+    /// UTF-8 BOM 付きで設定ファイルを書く。Windows PowerShell 5.1 の
+    /// <c>Set-Content -Encoding utf8</c> や一部のエディタが既定で行う保存形式を再現する（Issue #344）。
+    /// </summary>
+    private void WriteConfigurationWithUtf8Bom(string json) =>
+        File.WriteAllBytes(
+            Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName),
+            [.. new byte[] { 0xEF, 0xBB, 0xBF }, .. System.Text.Encoding.UTF8.GetBytes(json)]);
+
+    /// <summary>
     /// 構成システム側（基準）が読み取った値。<see cref="YaguraConfigurationLoader"/> と同じ経路を使う。
     /// </summary>
     private string? ReadViaConfigurationSystem(string key)
@@ -152,6 +161,56 @@ public sealed class ConfigurationReaderLeniencyTests : IDisposable
 
         Assert.ThrowsAny<Exception>(() => ReadViaConfigurationSystem("Spool:QuotaBytes"));
         Assert.ThrowsAny<Exception>(() => YaguraConfigurationWriter.Read(_dataRoot));
+    }
+
+    // ------------------------------------------------------------------
+    // UTF-8 BOM（Issue #344）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// UTF-8 BOM 付きの設定ファイルを両方の読み手が同じように受理する。
+    /// </summary>
+    /// <remarks>
+    /// BOM は Windows PowerShell 5.1 の <c>Set-Content -Encoding utf8</c> が既定で付与するため、
+    /// 手編集による設定変更で普通に踏み得る。構成システム（<c>AddJsonFile</c>）は元から BOM を
+    /// 許容しており、<see cref="YaguraConfigurationWriter"/> 側だけが
+    /// <c>'0xEF' is an invalid start of a value</c> で失敗してサービスを起動不能にしていた。
+    /// </remarks>
+    [Theory]
+    [InlineData("""{ "Spool": { "QuotaBytes": "4194304" } }""")]
+    [InlineData("""{ "Spool": { "QuotaBytes": 4194304 } }""")] // BOM と型不一致の組み合わせ
+    public void BothReaders_AcceptUtf8Bom(string json)
+    {
+        WriteConfigurationWithUtf8Bom(json);
+
+        Assert.Equal("4194304", ReadViaConfigurationSystem("Spool:QuotaBytes"));
+        Assert.Equal("4194304", ReadSpoolValue("Spool:QuotaBytes"));
+    }
+
+    /// <summary>
+    /// BOM の有無で <see cref="ConfigurationVersionToken"/> は変わる（ディスク上の内容が異なるため）。
+    /// </summary>
+    /// <remarks>
+    /// トークンは BOM を除去する<b>前</b>のバイト列から計算しなければならない。
+    /// <see cref="ConfigurationVersionToken.FromFile(string)"/> は生のファイル内容をハッシュしており、
+    /// <see cref="YaguraConfigurationWriter.Read(string)"/> が除去後のバイト列を使うと BOM 付き
+    /// ファイルで両者が食い違い、保存時の楽観的競合検出が誤検知する。
+    /// </remarks>
+    [Fact]
+    public void ReadToken_MatchesFromFile_EvenWithUtf8Bom()
+    {
+        const string Json = """{ "Spool": { "QuotaBytes": "4194304" } }""";
+        WriteConfigurationWithUtf8Bom(Json);
+        var path = Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
+
+        var viaRead = YaguraConfigurationWriter.Read(_dataRoot).VersionToken;
+        var viaFile = ConfigurationVersionToken.FromFile(path);
+
+        Assert.Equal(viaFile, viaRead);
+
+        // BOM なしの同内容とはトークンが異なる（内容が実際に違うため）
+        WriteConfiguration(Json);
+        Assert.NotEqual(viaRead, YaguraConfigurationWriter.Read(_dataRoot).VersionToken);
     }
 
     // ------------------------------------------------------------------
