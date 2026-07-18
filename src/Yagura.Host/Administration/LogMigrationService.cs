@@ -123,35 +123,61 @@ public sealed class LogMigrationService : ILogMigrationService
             throw new InvalidOperationException("蓄積ログの移行は既に実行中です。");
         }
 
+        var status = await GetStatusAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var status = await GetStatusAsync(cancellationToken).ConfigureAwait(false);
             if (status.Availability is not LogMigrationAvailability.Ready)
             {
                 throw new InvalidOperationException($"移行を実行できる状態ではありません（{status.Availability}）。");
             }
 
             var result = await ExecuteAsync(status, progress, cancellationToken).ConfigureAwait(false);
+            await RecordMigrationAuditAsync(operatorAddress, authenticationScheme, authenticatedPrincipal, result.Message).ConfigureAwait(false);
+            return result;
+        }
+        catch (Exception ex) when (status.Availability is LogMigrationAvailability.Ready)
+        {
+            // レビュー指摘（fail-open 観点）: 移行の途中失敗（WriteBatchAsync 例外等）は移行先 DB を
+            // 実際に変更した管理操作でありながら無記録になっていた——失敗・部分適用こそ証跡価値が
+            // 高い。例外経路でも監査を残してから再送出する（チェックポイントは保持され再実行で
+            // 追補できる。Detail に「途中失敗」と原因を含める）。実行不能状態（Ready 以外）での
+            // 早期 throw は DB を変更しないため記録しない（when フィルタで除外）。
+            await RecordMigrationAuditAsync(
+                operatorAddress, authenticationScheme, authenticatedPrincipal,
+                $"途中失敗（一部が移行先へ書き込まれた可能性あり。再実行で追補可能）: {ex.Message}").ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            _runGate.Release();
+        }
+    }
 
-            // 移行は管理操作——監査記録（2018。イベントログ併記込み）。記録失敗は結果を妨げない。
+    /// <summary>
+    /// 移行実行の監査記録（2018。イベントログ併記込み）。<b>記録失敗は移行の結果・失敗を
+    /// 覆い隠してはならない</b>——監査シンク障害で移行報告が別の結果に化けないよう、
+    /// <see cref="IAuditRecorder.RecordAsync"/>（例外を投げない契約）の呼び出し自体も
+    /// try/catch で保護する（レビュー指摘への対応）。
+    /// </summary>
+    private async Task RecordMigrationAuditAsync(
+        string? operatorAddress, string? authenticationScheme, string? authenticatedPrincipal, string detailMessage)
+    {
+        try
+        {
             await _auditRecorder.RecordAsync(
                 new AuditEvent(
                     OccurredAt: DateTimeOffset.UtcNow,
                     Kind: AuditEventKind.LogMigrationExecuted,
                     RemoteAddress: operatorAddress,
                     RemotePort: null,
-                    Detail: $"蓄積ログの移行（SQLite → SQL Server）: {result.Message} " +
-                        $"（移行元 {result.SourceRecordCount} 件 / 累計移行 {result.MigratedCount} 件 / " +
-                        $"移行先範囲内 {result.TargetCountInRange} 件）",
+                    Detail: $"蓄積ログの移行（SQLite → SQL Server）: {detailMessage}",
                     AuthenticationScheme: authenticationScheme,
                     AuthenticatedPrincipal: authenticatedPrincipal),
                 CancellationToken.None).ConfigureAwait(false);
-
-            return result;
         }
-        finally
+        catch (Exception ex)
         {
-            _runGate.Release();
+            _logger.LogWarning(ex, "蓄積ログ移行の監査記録に失敗しました（移行自体の結果には影響しません）。");
         }
     }
 
