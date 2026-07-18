@@ -47,7 +47,7 @@ namespace Yagura.Ingestion.FlowControl;
 /// 2 倍を持続速度とし、バーストはその 2 秒ぶんとした。確定は M-4 の実測で行う。
 /// </para>
 /// </remarks>
-public sealed class TokenBucketIngressGate : IIngressGate
+public sealed class TokenBucketIngressGate : IIngressGate, IFlowControlRejectionReader
 {
     /// <summary>持続速度（件/秒）の既定値（M-4 実測確定待ちの仮値。remarks 参照）。</summary>
     public const int DefaultMessagesPerSecond = 10_000;
@@ -149,8 +149,42 @@ public sealed class TokenBucketIngressGate : IIngressGate
                 return true;
             }
 
+            // 送信元別の拒否カウント（Issue #288——「どの送信元が制限に達しているか」の可視化）。
+            // 総数の計上（yagura.ingestion.flow_control.dropped）は従来どおり呼び出し元の責務。
+            bucket.RejectedCount++;
             return false;
         }
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<FlowControlRejectedSource> SnapshotRejectedSources(int maxCount)
+    {
+        if (maxCount < 1)
+        {
+            return [];
+        }
+
+        var rejected = new List<FlowControlRejectedSource>();
+        foreach (var (address, bucket) in _buckets)
+        {
+            long count;
+            lock (bucket.SyncRoot)
+            {
+                count = bucket.RejectedCount;
+            }
+
+            if (count > 0)
+            {
+                rejected.Add(new FlowControlRejectedSource(address, count));
+            }
+        }
+
+        // 同数時の順序を決定的にする（テスト・表示の安定のためのアドレス文字列順）。
+        return rejected
+            .OrderByDescending(source => source.RejectedCount)
+            .ThenBy(source => source.SourceAddress.ToString(), StringComparer.Ordinal)
+            .Take(maxCount)
+            .ToArray();
     }
 
     /// <summary>
@@ -203,6 +237,10 @@ public sealed class TokenBucketIngressGate : IIngressGate
                 {
                     // 満杯のバケットは削除しても次の到着時に満杯で再生成されるため、
                     // 削除が判定結果を変えることはない（remarks「並行性」の過剰許可の議論参照）。
+                    // 拒否カウント（Issue #288）もバケットごと消える——これは意図した設計
+                    // （可視化のために有界化を崩さない。IFlowControlRejectionReader remarks）。
+                    // 「制限なく受信できる状態がしばらく続いた送信元は一覧から消える」として
+                    // 表示側の説明文にも明示する。
                     _buckets.TryRemove(address, out _);
                 }
             }
@@ -224,5 +262,12 @@ public sealed class TokenBucketIngressGate : IIngressGate
 
         /// <summary>前回補充の時刻（<see cref="TimeProvider.GetTimestamp"/> の値）。</summary>
         public long LastRefillTimestamp { get; set; } = createdTimestamp;
+
+        /// <summary>
+        /// 本バケット生成からの拒否（破棄）件数（Issue #288。読み書きとも <see cref="SyncRoot"/> の
+        /// lock 内で行う）。バケットの生存期間と同じ寿命——スイープでバケットごと消える
+        /// （<see cref="IFlowControlRejectionReader"/> remarks 参照）。
+        /// </summary>
+        public long RejectedCount { get; set; }
     }
 }

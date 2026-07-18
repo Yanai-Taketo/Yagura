@@ -294,5 +294,7 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
             Health: YaguraHealthReading.Ok,
             RetentionDays: 30,
             Listeners: []);
+
+        public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) => [];
     }
 }

@@ -29,7 +29,25 @@ public interface IYaguraSystemStatusReader
 {
     /// <summary>現在の観測値のスナップショットを返す（同期・軽量。DB へはアクセスしない）。</summary>
     YaguraSystemStatusSnapshot ReadCurrent();
+
+    /// <summary>
+    /// 流量制限の発火上位送信元を拒否数の多い順に返す（Issue #288。同期・軽量。DB へは
+    /// アクセスしない。最大 <paramref name="maxCount"/> 件——実装は上限を安全側に丸めてよい）。
+    /// 拒否カウントは流量制御ゲートの有界バケットに併せて保持される値であり、
+    /// <b>サービス起動からの累計ではない</b>——制限なく受信できる状態が続いた送信元は
+    /// スイープで一覧から消え、流量制御の設定変更でもリセットされる（総数は計器
+    /// <c>yagura.ingestion.flow_control.dropped</c> が持つ）。流量制御が無効の構成では常に空。
+    /// </summary>
+    IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount);
 }
+
+/// <summary>流量制限の発火上位送信元の 1 行（Issue #288。ダッシュボードのカード表示単位）。</summary>
+/// <param name="SourceAddress">
+/// 送信元アドレスの表示文字列（IPv4-mapped IPv6 は純粋な IPv4 表記へ正規化済み——
+/// configuration.md §4.1 の送信元アドレス表現の正規化と同じ規約）。
+/// </param>
+/// <param name="RejectedCount">拒否（破棄）件数（バケット生成からの累計）。</param>
+public sealed record YaguraFlowControlRejectionReading(string SourceAddress, long RejectedCount);
 
 /// <summary>
 /// <see cref="IYaguraSystemStatusReader.ReadCurrent"/> が返す観測値のスナップショット。

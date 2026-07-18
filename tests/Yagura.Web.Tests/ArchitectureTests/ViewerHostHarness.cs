@@ -274,6 +274,8 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             Health: Yagura.Abstractions.Observability.YaguraHealthReading.Ok,
             RetentionDays: 30,
             Listeners: []);
+
+        public IReadOnlyList<Yagura.Abstractions.Observability.YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) => [];
     }
 
     private sealed class NoopAuditRecorder : IAuditRecorder

@@ -163,13 +163,45 @@ public sealed class SystemStatusReaderTests : IDisposable
         Assert.DoesNotContain(YaguraHealthReason.SpoolEvacuationObserved, status.Health.Reasons);
     }
 
+    [Fact]
+    public void ReadFlowControlRejections_NoGateWired_ReturnsEmpty()
+    {
+        // 読み取り口が結線されていない構成（テスト・将来の縮小構成）は常に空——例外にしない。
+        var reader = CreateReader(spool: null);
+
+        Assert.Empty(reader.ReadFlowControlRejections(10));
+    }
+
+    [Fact]
+    public void ReadFlowControlRejections_MapsAddresses_AndNormalizesIPv4Mapped()
+    {
+        // Issue #288: 送信元アドレスの表示は configuration.md §4.1 の正規化規約に従う——
+        // DualMode ソケット由来の IPv4-mapped IPv6（::ffff:x.x.x.x）は純粋な IPv4 表記へ揃え、
+        // 検索リンク・受信記録との表記一致を壊さない。
+        var gate = new Yagura.Ingestion.FlowControl.TokenBucketIngressGate(
+            messagesPerSecond: 10, burstSize: 1);
+        var mapped = System.Net.IPAddress.Parse("192.0.2.7").MapToIPv6();
+        Assert.True(gate.ShouldAdmit(mapped, ReadOnlySpan<byte>.Empty));
+        Assert.False(gate.ShouldAdmit(mapped, ReadOnlySpan<byte>.Empty));
+
+        var reader = CreateReader(spool: null, flowControlRejections: gate);
+
+        var rejection = Assert.Single(reader.ReadFlowControlRejections(10));
+        Assert.Equal("192.0.2.7", rejection.SourceAddress);
+        Assert.Equal(1, rejection.RejectedCount);
+
+        // 1 未満の要求は空（安全側の丸め）。
+        Assert.Empty(reader.ReadFlowControlRejections(0));
+    }
+
     // ---- ハーネス ----
 
     private SystemStatusReader CreateReader(
         DiskSpool? spool,
         IngestionMetrics? metrics = null,
         FakeTimeProvider? timeProvider = null,
-        bool spoolDegraded = false) =>
+        bool spoolDegraded = false,
+        Yagura.Ingestion.FlowControl.IFlowControlRejectionReader? flowControlRejections = null) =>
         new(
             metrics ?? new IngestionMetrics(),
             spool,
@@ -177,7 +209,8 @@ public sealed class SystemStatusReaderTests : IDisposable
             spoolDegraded: spoolDegraded,
             retentionDays: 30,
             listeners: [],
-            timeProvider: timeProvider ?? new FakeTimeProvider(DateTimeOffset.Parse("2026-07-10T00:00:00Z")));
+            timeProvider: timeProvider ?? new FakeTimeProvider(DateTimeOffset.Parse("2026-07-10T00:00:00Z")),
+            flowControlRejections: flowControlRejections);
 
     private DiskSpool OpenEmptySpool()
     {

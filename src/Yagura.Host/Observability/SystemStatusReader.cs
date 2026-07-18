@@ -64,6 +64,12 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
     /// <summary>スプール使用量の「上限接近」警告のしきい値（比率。M-12 と同様に実測確定までの暫定値）。</summary>
     public const double SpoolNearLimitRatio = 0.8;
 
+    /// <summary>
+    /// <see cref="ReadFlowControlRejections"/> の件数上限（閲覧側からの過大要求の安全弁。
+    /// ダッシュボードのカードは 10 件程度を要求する想定）。
+    /// </summary>
+    internal const int MaxFlowControlRejectionCount = 100;
+
     private readonly IngestionMetrics _metrics;
     private readonly DiskSpool? _spool;
     private readonly long _spoolQuotaBytes;
@@ -71,6 +77,7 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
     private readonly int? _retentionDays;
     private readonly IReadOnlyList<YaguraListenerEndpoint> _listeners;
     private readonly TimeProvider _timeProvider;
+    private readonly Yagura.Ingestion.FlowControl.IFlowControlRejectionReader? _flowControlRejections;
 
     private readonly object _historyLock = new();
     private readonly List<(DateTimeOffset TakenAt, IngestionCounterSnapshot Snapshot)> _history = [];
@@ -82,6 +89,10 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
     /// <param name="retentionDays">保持期間の適用値（不正値フォールバック時は <c>null</c>）。</param>
     /// <param name="listeners">受信リスナの構成。</param>
     /// <param name="timeProvider">時刻源（テスト用の差し替え口。既定はシステム時刻）。</param>
+    /// <param name="flowControlRejections">
+    /// 流量制御ゲートの送信元別拒否状況の読み取り口（Issue #288。ホストの合成ルートが
+    /// <c>SwappableIngressGate</c> を渡す。<c>null</c> は常に空を返す）。
+    /// </param>
     public SystemStatusReader(
         IngestionMetrics metrics,
         DiskSpool? spool,
@@ -89,7 +100,8 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         bool spoolDegraded,
         int? retentionDays,
         IReadOnlyList<YaguraListenerEndpoint> listeners,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Yagura.Ingestion.FlowControl.IFlowControlRejectionReader? flowControlRejections = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(listeners);
@@ -101,6 +113,7 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         _retentionDays = retentionDays;
         _listeners = listeners;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _flowControlRejections = flowControlRejections;
     }
 
     /// <inheritdoc />
@@ -125,6 +138,29 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
             RetentionDays: _retentionDays,
             Listeners: _listeners);
     }
+
+    /// <inheritdoc />
+    public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount)
+    {
+        if (_flowControlRejections is null || maxCount < 1)
+        {
+            return [];
+        }
+
+        return _flowControlRejections
+            .SnapshotRejectedSources(Math.Min(maxCount, MaxFlowControlRejectionCount))
+            .Select(source => new YaguraFlowControlRejectionReading(
+                FormatSourceAddress(source.SourceAddress), source.RejectedCount))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 送信元アドレスの表示正規化: IPv4-mapped IPv6（<c>::ffff:x.x.x.x</c>——DualMode ソケットが
+    /// 受ける IPv4 送信元の OS レベル表現）は純粋な IPv4 表記へ揃える（configuration.md §4.1 の
+    /// 規約——受信記録・逆引きと同じ向き。表示・検索リンクの一致を壊さない）。
+    /// </summary>
+    private static string FormatSourceAddress(System.Net.IPAddress address) =>
+        (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
     private IngestionCounterSnapshot? RecordAndGetBaseline(DateTimeOffset now, IngestionCounterSnapshot snapshot)
     {

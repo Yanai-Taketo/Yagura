@@ -194,6 +194,41 @@ public sealed class ViewerPageRenderTests
     }
 
     [Fact]
+    public async Task Dashboard_NoFlowControlRejections_ShowsCardWithNoDataNote()
+    {
+        // 流量制限の発火上位送信元（Issue #288）: 発火なしでもカード自体は常設し、
+        // 「破棄は発生していない」ことを明示する（住み分けの説明文も常に出す）。
+        var html = await RenderPageAsync<Dashboard>(new FakeLogStore(), new FakeStatusReader());
+
+        Assert.Contains(UiText.FlowControlRejectionsTitle, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.FlowControlRejectionsDescription, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.FlowControlRejectionsNoData, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dashboard_FlowControlRejections_ShowsSourcesWithCountsAndSearchLink()
+    {
+        var reader = new FakeStatusReader
+        {
+            FlowControlRejections =
+            [
+                new YaguraFlowControlRejectionReading("192.0.2.50", 1234),
+                new YaguraFlowControlRejectionReading("192.0.2.51", 56),
+            ],
+        };
+
+        var html = await RenderPageAsync<Dashboard>(new FakeLogStore(), reader);
+
+        Assert.Contains(UiText.FlowControlRejectionsTitle, html, StringComparison.Ordinal);
+        Assert.Contains("192.0.2.50", html, StringComparison.Ordinal);
+        Assert.Contains("1,234", html, StringComparison.Ordinal);
+        Assert.Contains("192.0.2.51", html, StringComparison.Ordinal);
+        // 当該送信元のログ検索への 1 クリック導線（Top talkers と同型）。
+        Assert.Contains("/search?source=192.0.2.50", html, StringComparison.Ordinal);
+        Assert.DoesNotContain(UiText.FlowControlRejectionsNoData, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Dashboard_SpoolEvacuationOngoing_ShowsWarningNoticeAndOngoingSupplement()
     {
         // 一時保管への退避が現在も進行中（SystemStatusReader が消化未完了と判定。Issue #132）:
@@ -667,5 +702,11 @@ public sealed class ViewerPageRenderTests
             Health: Health,
             RetentionDays: RetentionDays,
             Listeners: Listeners);
+
+        /// <summary>流量制限の発火上位送信元（Issue #288。既定は発火なし）。</summary>
+        public List<YaguraFlowControlRejectionReading> FlowControlRejections { get; init; } = [];
+
+        public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) =>
+            FlowControlRejections.Take(maxCount).ToList();
     }
 }

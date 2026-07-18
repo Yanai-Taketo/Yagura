@@ -228,4 +228,70 @@ public sealed class TokenBucketIngressGateTests
 
         Assert.Equal(1000, Volatile.Read(ref admitted));
     }
+
+    // ---- 送信元別の拒否カウント（Issue #288。IFlowControlRejectionReader） ----
+
+    [Fact]
+    public void SnapshotRejectedSources_NoRejections_ReturnsEmpty()
+    {
+        var timeProvider = new FakeTimeProvider();
+        var gate = new TokenBucketIngressGate(messagesPerSecond: 10, burstSize: 5, timeProvider);
+
+        Assert.True(Admit(gate, SourceA));
+
+        // 受け入れのみ（拒否ゼロ）の送信元はスナップショットに載らない。
+        Assert.Empty(gate.SnapshotRejectedSources(10));
+    }
+
+    [Fact]
+    public void SnapshotRejectedSources_CountsPerSource_OrderedByCountDescending()
+    {
+        var timeProvider = new FakeTimeProvider();
+        var gate = new TokenBucketIngressGate(messagesPerSecond: 10, burstSize: 1, timeProvider);
+
+        // SourceA: 拒否 3 件 / SourceB: 拒否 1 件。
+        Assert.True(Admit(gate, SourceA));
+        Assert.False(Admit(gate, SourceA));
+        Assert.False(Admit(gate, SourceA));
+        Assert.False(Admit(gate, SourceA));
+        Assert.True(Admit(gate, SourceB));
+        Assert.False(Admit(gate, SourceB));
+
+        var snapshot = gate.SnapshotRejectedSources(10);
+
+        Assert.Equal(2, snapshot.Count);
+        Assert.Equal(SourceA, snapshot[0].SourceAddress);
+        Assert.Equal(3, snapshot[0].RejectedCount);
+        Assert.Equal(SourceB, snapshot[1].SourceAddress);
+        Assert.Equal(1, snapshot[1].RejectedCount);
+
+        // maxCount で上位のみに絞られる。1 未満は空。
+        Assert.Equal([SourceA], gate.SnapshotRejectedSources(1).Select(s => s.SourceAddress));
+        Assert.Empty(gate.SnapshotRejectedSources(0));
+    }
+
+    [Fact]
+    public void SnapshotRejectedSources_SweptBucket_DisappearsWithItsCount()
+    {
+        // 拒否カウントの寿命はバケットと同じ（意図した設計——可視化のために有界化を崩さない。
+        // IFlowControlRejectionReader remarks）: 制限なく受信できる状態（満杯まで回復）が
+        // スイープ周期続いた送信元は、カウントごと一覧から消える。
+        var timeProvider = new FakeTimeProvider();
+        var gate = new TokenBucketIngressGate(
+            messagesPerSecond: 10,
+            burstSize: 1,
+            maxTrackedSources: 100,
+            sweepInterval: TimeSpan.FromSeconds(60),
+            timeProvider);
+
+        Assert.True(Admit(gate, SourceA));
+        Assert.False(Admit(gate, SourceA));
+        Assert.Single(gate.SnapshotRejectedSources(10));
+
+        // 満杯まで回復 + スイープ周期経過後、別送信元の判定がスイープを駆動する。
+        timeProvider.Advance(TimeSpan.FromSeconds(61));
+        Assert.True(Admit(gate, SourceB));
+
+        Assert.Empty(gate.SnapshotRejectedSources(10));
+    }
 }
