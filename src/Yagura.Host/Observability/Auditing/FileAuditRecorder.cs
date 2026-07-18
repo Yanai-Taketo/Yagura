@@ -249,6 +249,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.LogMigrationExecuted => AuditEventIds.LogMigrationExecuted,
         AuditEventKind.CircuitRevocationGraceGranted => AuditEventIds.CircuitRevocationGraceGranted,
         AuditEventKind.CircuitRevocationGraceEnded => AuditEventIds.CircuitRevocationGraceEnded,
+        AuditEventKind.RejectionAggregated => AuditEventIds.RejectionAggregated,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

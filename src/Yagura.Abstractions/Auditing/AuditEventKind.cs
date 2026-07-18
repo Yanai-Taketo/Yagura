@@ -237,4 +237,15 @@ public enum AuditEventKind
     /// 「見得た期間」を閉じる。
     /// </summary>
     CircuitRevocationGraceEnded,
+
+    /// <summary>
+    /// セキュリティ事象: 拒否試行の集約記録（SEC-4。security.md §4.4。イベント ID 3012。
+    /// Issue #268）。同一送信元・同一種別の拒否が短時間に反復した場合、個別記録から集約記録へ
+    /// 切り替えた結果のサマリ。<c>Detail</c> に集約対象の事象種別・期間・回数・試行された
+    /// 利用者名の集合（「どのアカウントが狙われたか」を件数に畳まない——§4.4）・最初と最後の
+    /// 試行のフル詳細を記録する。EventId 3010・3011 は Issue #267（circuit 失効猶予）が予約済みの
+    /// ため飛ばして 3012 を採る（additive-only。security.md §4.3。並行実装のためマージ順に
+    /// かかわらず番号は付け替えない）。
+    /// </summary>
+    RejectionAggregated,
 }
