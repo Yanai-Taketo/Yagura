@@ -660,6 +660,19 @@ public static class UiText
     /// <summary>再読み込み拒否の通知。</summary>
     public const string AdminReloadRejectedNotification = "設定の再読み込みを中止しました（設定値を確認してください）";
 
+    // ---- 再起動待ちキーの常設表示（Issue #286。管理面のみ） ----
+
+    /// <summary>再起動待ちカードのタイトル。</summary>
+    public const string AdminPendingRestartCardTitle = "再起動待ちの設定変更";
+
+    /// <summary>再起動待ちカードの説明。</summary>
+    public const string AdminPendingRestartCardDescription =
+        "設定の再読み込みで変更が検出されましたが、反映にサービス再起動が必要なため未反映のまま残っている項目です。" +
+        "サービスを再起動すると反映され、この表示は消えます。";
+
+    /// <summary>再起動待ちキーの検出時刻の前置きラベル（後ろに時刻表示が続く）。</summary>
+    public const string AdminPendingRestartDetectedAtLabel = "検出した再読み込み: ";
+
     /// <summary>カウンタ平易語: 流量制御破棄（Issue #260 で判定・破棄が実装され実値を刻む）。</summary>
     public const string CounterFlowControlDropped = "取りこぼし（送信元ごとの受信量の制限）";
 

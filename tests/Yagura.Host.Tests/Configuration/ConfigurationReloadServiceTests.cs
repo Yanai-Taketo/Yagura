@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Testing;
+using Microsoft.Extensions.Time.Testing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
 
@@ -43,11 +44,17 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
 
     private ConfigurationReloadService CreateService(
         params ImmediateConfigurationApplier[] appliers)
+        => CreateService(timeProvider: null, appliers);
+
+    private ConfigurationReloadService CreateService(
+        TimeProvider? timeProvider,
+        params ImmediateConfigurationApplier[] appliers)
     {
         // 起動時スナップショット = 現時点のファイル内容（Program.cs と同じ捕捉方法）。
         var startupOptions = YaguraConfigurationWriter.Read(_dataRoot).Options;
         return new ConfigurationReloadService(
-            _dataRoot, startupOptions, appliers, _auditRecorder, logger: new FakeLogger<ConfigurationReloadService>());
+            _dataRoot, startupOptions, appliers, _auditRecorder, timeProvider,
+            logger: new FakeLogger<ConfigurationReloadService>());
     }
 
     [Fact]
@@ -151,6 +158,48 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
         Assert.False(result.Rejected);
         Assert.Null(appliedDays);
         Assert.Contains(result.WarningMessages, w => w.Contains("Retention:Days"));
+    }
+
+    [Fact]
+    public async Task GetPendingRestartKeys_EmptyInitially_AndReportsDetectionTime()
+    {
+        // Issue #286: 常設表示の読み取り口。再読み込みを実行していない初期状態は空で、
+        // 再起動待ちキーの検出後は検出時刻付きで返る。
+        WriteConfigurationFile("""{ }""");
+        var time = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-18T01:00:00Z"));
+        var service = CreateService(time);
+
+        Assert.Empty(service.GetPendingRestartKeys());
+
+        WriteConfigurationFile("""{ "Viewer": { "HttpPort": "9100" } }""");
+        await service.ReloadAsync(null, null, null);
+
+        var entry = Assert.Single(service.GetPendingRestartKeys());
+        Assert.Equal("Viewer:HttpPort", entry.Key);
+        Assert.Equal(DateTimeOffset.Parse("2026-07-18T01:00:00Z"), entry.DetectedAt);
+    }
+
+    [Fact]
+    public async Task GetPendingRestartKeys_KeepsFirstDetectionTime_AndSortsByKey()
+    {
+        WriteConfigurationFile("""{ }""");
+        var firstDetection = DateTimeOffset.Parse("2026-07-18T01:00:00Z");
+        var time = new FakeTimeProvider(firstDetection);
+        var service = CreateService(time);
+
+        WriteConfigurationFile("""{ "Viewer": { "HttpPort": "9100" } }""");
+        await service.ReloadAsync(null, null, null);
+
+        // 同じキーが後続の再読み込みで再び変更されても、検出時刻は最初の検出のまま
+        // （「いつから未反映のまま残っているか」を表す）。別キーは新しい時刻で検出される。
+        time.Advance(TimeSpan.FromMinutes(10));
+        WriteConfigurationFile("""{ "Viewer": { "HttpPort": "9200" }, "Storage": { "SqliteFileName": "x.db" } }""");
+        await service.ReloadAsync(null, null, null);
+
+        var entries = service.GetPendingRestartKeys();
+        Assert.Equal(new[] { "Storage:SqliteFileName", "Viewer:HttpPort" }, entries.Select(e => e.Key));
+        Assert.Equal(firstDetection + TimeSpan.FromMinutes(10), entries[0].DetectedAt);
+        Assert.Equal(firstDetection, entries[1].DetectedAt);
     }
 
     [Fact]

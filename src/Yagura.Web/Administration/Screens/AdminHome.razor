@@ -1,14 +1,41 @@
 @page "/admin"
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@inject IConfigurationReloadService ReloadService
 
 @*
     設定トップ（ui.md §4 の画面構成「設定（ウィザード群）」の入口。M8-4 骨格）。
     管理リスナ帰属・ガードは AdminScreenLayout が担う。
+
+    再起動待ちの設定変更の常設カード（Issue #286。2026-07-18 オーナー裁定）: 設定の
+    再読み込み（CF-4 層1）が累積追跡する「反映にサービス再起動が要るキー」を、再読み込み
+    操作の時点だけでなく管理面の入口に常設表示する。表示先は認証済み管理面のみ——閲覧面
+    （/status 等）には出さない（裁定——管理系情報を閲覧面に露出しない）。プロセス内状態の
+    ため再起動で自然に消える。
 *@
 <PageTitle>@UiText.AdminHomeTitle - Yagura</PageTitle>
 
 <MudText Typo="Typo.h5">@UiText.AdminHomeTitle</MudText>
+
+@if (_pendingRestartKeys.Count > 0)
+{
+    <MudAlert Severity="Severity.Warning" Class="mt-4">
+        <MudText Typo="Typo.subtitle1"><b>@UiText.AdminPendingRestartCardTitle</b></MudText>
+        <MudText Typo="Typo.body2">@UiText.AdminPendingRestartCardDescription</MudText>
+        <ul class="mt-2">
+            @foreach (var entry in _pendingRestartKeys)
+            {
+                <li>
+                    <code>@entry.Key</code>
+                    <MudText Typo="Typo.caption" Class="ml-2 d-inline">
+                        @UiText.AdminPendingRestartDetectedAtLabel<YaguraTimestamp Value="entry.DetectedAt" />
+                    </MudText>
+                </li>
+            }
+        </ul>
+    </MudAlert>
+}
 
 <MudPaper Elevation="1" Class="pa-4 mt-4">
     <MudNavMenu>
@@ -20,3 +47,13 @@
         <MudNavLink Href="/admin/remote-access">@UiText.AdminRemoteAccessTitle</MudNavLink>
     </MudNavMenu>
 </MudPaper>
+
+@code {
+    private IReadOnlyList<PendingRestartKey> _pendingRestartKeys = [];
+
+    protected override void OnInitialized()
+    {
+        // スナップショット読み取りのみ（再読み込みは実行しない——状態を変更しない読み取り口）。
+        _pendingRestartKeys = ReloadService.GetPendingRestartKeys();
+    }
+}
