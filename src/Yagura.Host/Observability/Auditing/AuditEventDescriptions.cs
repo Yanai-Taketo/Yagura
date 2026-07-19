@@ -64,6 +64,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.RejectionAggregated => "拒否試行を集約記録",
         AuditEventKind.AuditChannelRecovered => "監査チャネル復旧・障害中事象を書き戻し",
         AuditEventKind.StartupConfigurationChangeDetected => "前回稼働時から設定ファイルが変更された状態で起動",
+        AuditEventKind.IngestionTlsCertificateConfigured => "TLS 受信の証明書設定を変更",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

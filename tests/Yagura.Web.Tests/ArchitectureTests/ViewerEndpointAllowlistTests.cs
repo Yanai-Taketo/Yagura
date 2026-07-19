@@ -354,6 +354,11 @@ public sealed class ViewerEndpointAllowlistTests
         // （閲覧リスナへ露出しないこと）を確認する。
         Assert.Contains("/admin/remote-access", adminEndpointRoutes);
 
+        // TLS 受信の証明書設定画面（ADR-0019 決定 1。Issue #349）も管理リスナ帰属であること。
+        // 受信の設定ではあるが、操作面は管理画面であり閲覧リスナへ露出してはならない
+        // （既定無認証 loopback 前提の書き込み面——ADR-0019 決定 6）。
+        Assert.Contains("/admin/ingestion-tls", adminEndpointRoutes);
+
         Assert.Contains("/admin/login", adminEndpointRoutes);
         Assert.Contains("/admin/login/windows", adminEndpointRoutes);
         Assert.Contains("/admin/login/app", adminEndpointRoutes);

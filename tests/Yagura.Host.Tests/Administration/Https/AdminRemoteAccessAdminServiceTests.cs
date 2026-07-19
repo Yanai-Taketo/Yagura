@@ -14,7 +14,7 @@ namespace Yagura.Host.Tests.Administration.Https;
 /// <remarks>
 /// 証明書検証は注入した偽 Func（<see cref="CertificateRequest"/> によるメモリ内生成証明書）で
 /// 決定的に検証し、実ストア（<c>LocalMachine\My</c>）には接触しない（ADR-0012 決定 5。
-/// <see cref="StoreAdminCertificateStoreReaderTests"/> と同じ方針）。fail-closed 検証・差分計算・
+/// <see cref="WindowsCertificateStoreReaderTests"/> と同じ方針）。fail-closed 検証・差分計算・
 /// 監査の分岐（2011/2012）・楽観競合という保存経路の意味論を固定する。
 /// </remarks>
 [SupportedOSPlatform("windows")]
@@ -210,7 +210,7 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
     [Fact]
     public async Task ConfigureAsync_ServerAuthEkuMismatch_Throws()
     {
-        // 列挙 UI（StoreAdminCertificateStoreReader）と同じ最小化: serverAuth EKU 不適合は保存でも拒否。
+        // 列挙 UI（WindowsCertificateStoreReader）と同じ最小化: serverAuth EKU 不適合は保存でも拒否。
         var service = CreateService(hasServerAuthEku: _ => false);
 
         var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>

@@ -1087,6 +1087,167 @@ public static class UiText
     /// <summary>変更ゼロ（no-op）で保存されなかった場合の通知。</summary>
     public const string AdminRemoteAccessSavedNoChanges = "現在の設定と同じ内容のため、保存は行われませんでした。";
 
+    /// <summary>
+    /// 管理 HTTPS 画面から TLS 受信画面への相互リンクの文言（ADR-0019 決定 1——同じ証明書一覧が出る
+    /// 2 画面の取り違えを防ぐため、用途を平易に書き分ける）。
+    /// </summary>
+    public const string AdminRemoteAccessIngestionTlsLinkNote =
+        "送信元機器からのログを TLS で受信する設定は別の画面です: ";
+
+    /// <summary>同上のリンク表示名。</summary>
+    public const string AdminRemoteAccessIngestionTlsLinkText = "TLS 受信の証明書設定";
+
+    // ---- TLS 受信の証明書設定（ADR-0019。Issue #349） ----
+
+    /// <summary>TLS 受信の証明書設定画面の見出し（ADR-0019 決定 1——管理 HTTPS とは分離した画面）。</summary>
+    public const string IngestionTlsTitle = "TLS 受信の証明書設定";
+
+    /// <summary>
+    /// 画面の説明文。<b>管理 HTTPS 画面との用途の書き分けを明示する</b>（ADR-0019 決定 1——
+    /// 同じ証明書一覧が出る 2 画面の取り違えを防ぐ）。
+    /// </summary>
+    public const string IngestionTlsIntro =
+        "送信元の機器から Yagura へ syslog を TLS で受信するための設定です（RFC 5425）。" +
+        "証明書はこのサーバの証明書ストアから選択でき、拇印の手入力は不要です。" +
+        "この設定は「機器 → Yagura」の受信用であり、ブラウザから管理画面を見るための HTTPS とは別です。";
+
+    /// <summary>管理 HTTPS 画面への相互リンクの文言（用途の書き分け）。</summary>
+    public const string IngestionTlsAdminHttpsLinkNote =
+        "ブラウザから管理画面を HTTPS で見るための設定は別の画面です: ";
+
+    /// <summary>同上のリンク表示名。</summary>
+    public const string IngestionTlsAdminHttpsLinkText = "管理 UI のリモートアクセス（HTTPS）";
+
+    /// <summary>現在の状態（永続値）カードの見出し。</summary>
+    public const string IngestionTlsStatusTitle = "現在の設定（保存済み）";
+
+    /// <summary>状態表: TLS 受信の有効/無効。</summary>
+    public const string IngestionTlsStatusEnabled = "TLS 受信";
+
+    /// <summary>状態表: 証明書拇印。</summary>
+    public const string IngestionTlsStatusThumbprint = "証明書の拇印";
+
+    /// <summary>状態表: ポート。</summary>
+    public const string IngestionTlsStatusPort = "ポート";
+
+    /// <summary>状態表: ポート未設定（既定 6514 = RFC 5425 の標準ポート）。</summary>
+    public const string IngestionTlsStatusDefaultPort = "6514（既定・RFC 5425 の標準ポート）";
+
+    /// <summary>TLS 受信の有効化スイッチ。</summary>
+    public const string IngestionTlsEnabledLabel = "TLS での syslog 受信を有効にする";
+
+    /// <summary>有効化スイッチの補足（opt-in であり平文受信とは独立であること）。</summary>
+    public const string IngestionTlsEnabledNote =
+        "既定では無効です。有効にしても平文の UDP / TCP 受信はそのまま継続します（別のポートで待ち受けます）。";
+
+    /// <summary>ポート入力のラベル。</summary>
+    public const string IngestionTlsPortLabel = "TLS 受信のポート";
+
+    /// <summary>ポート入力の補助説明。</summary>
+    public const string IngestionTlsPortHelp = "未指定の場合は RFC 5425 の標準ポート 6514 が使われます。";
+
+    /// <summary>証明書選択カードの見出し。</summary>
+    public const string IngestionTlsCertificatesTitle = "受信に使う証明書";
+
+    /// <summary>証明書一覧の導入文。</summary>
+    public const string IngestionTlsCertificatesIntro =
+        "このサーバの証明書ストア（LocalMachine\\My）にある、サーバー認証用途で秘密鍵を持つ証明書の一覧です。";
+
+    /// <summary>
+    /// 期限切れバッジ。<b>TLS 受信では選択可能</b>（保存は警告付きで通る——ADR-0019 決定 2）。
+    /// 管理 HTTPS 側は同じ状態が保存の拒否理由になる。
+    /// </summary>
+    public const string IngestionTlsCertExpiredBadge = "有効期間外";
+
+    /// <summary>秘密鍵の読取不可バッジ（TLS 受信では保存の拒否理由）。</summary>
+    public const string IngestionTlsCertKeyUnreadableBadge = "秘密鍵の読取権限なし";
+
+    /// <summary>問題なしバッジ。</summary>
+    public const string IngestionTlsCertOkBadge = "使用可能";
+
+    /// <summary>
+    /// 期限切れ証明書を選んだときの警告（ADR-0019 決定 2・委任 4）。<b>管理 HTTPS との挙動差分の
+    /// 説明を含める</b>ことが受け入れ基準。あわせて「保存しても能動通知は出続ける」ことも明示する
+    /// （出続けるのは不具合ではない、と分かるようにするため）。
+    /// </summary>
+    public const string IngestionTlsCertExpiredWarning =
+        "この証明書は有効期間外です。TLS 受信は有効期間外でも待ち受けを続けるため、この証明書のまま保存できます" +
+        "（管理画面の HTTPS 設定では同じ状態は保存できません——あちらは待ち受け自体を開かないためです）。" +
+        "ただし送信元の機器が証明書を検証する設定であれば接続を拒否し、そのログは届かないまま気づきにくい形で失われます。" +
+        "また期限接近・使用不能の通知は、有効期間内の証明書へ差し替えるまで出続けます。";
+
+    /// <summary>
+    /// 秘密鍵が読めない証明書についての説明（TLS 受信では拒否——ADR-0019 決定 2）。
+    /// 管理 HTTPS 側（警告に留める）との違いも書く。
+    /// </summary>
+    public const string IngestionTlsPrivateKeyUnreadableWarning =
+        "この証明書の秘密鍵に、Yagura のサービスアカウントがアクセスできません。秘密鍵を読めないと TLS の" +
+        "ハンドシェイクが成立せず、TLS 受信はまったく機能しないため、この証明書は選択しても保存できません。";
+
+    /// <summary>秘密鍵の読取権限付与の手順（CF-D2 への誘導。管理 HTTPS 画面と同一手順）。</summary>
+    public const string IngestionTlsPrivateKeyGrantSteps =
+        "証明書スナップイン（certlm.msc）で対象の証明書を右クリック →「すべてのタスク」→「秘密キーの管理」から、" +
+        "サービスアカウントへ読み取り権限を付与し、「再確認」を押してください。";
+
+    /// <summary>一覧が空のときの見出し。</summary>
+    public const string IngestionTlsEmptyTitle = "選択できる証明書がありません";
+
+    /// <summary>一覧が空のときの説明。</summary>
+    public const string IngestionTlsEmptyDescription =
+        "このサーバの証明書ストア（LocalMachine\\My）に、サーバー認証用途（serverAuth）で秘密鍵を持つ証明書が" +
+        "見つかりませんでした。";
+
+    /// <summary>一覧が空のときの次の行動。</summary>
+    public const string IngestionTlsEmptyNextAction =
+        "証明書スナップイン（certlm.msc）から「ローカル コンピューター」の「個人」へ、秘密鍵付きの証明書を" +
+        "取り込んでから「再確認」を押してください。";
+
+    /// <summary>一覧の再取得ボタン。</summary>
+    public const string IngestionTlsRefreshButton = "再確認";
+
+    /// <summary>列挙に失敗した場合。{0} に例外メッセージが入る。</summary>
+    public const string IngestionTlsEnumerationFailedFormat = "証明書の一覧を取得できませんでした: {0}";
+
+    /// <summary>永続値の拇印が一覧に無い場合の警告。{0} に拇印が入る。</summary>
+    public const string IngestionTlsThumbprintNotInListFormat =
+        "現在設定されている拇印（{0}）が一覧にありません。証明書が削除されたか、サーバー認証用途・秘密鍵ありの" +
+        "条件を満たさなくなった可能性があります。";
+
+    /// <summary>
+    /// 反映方式の常設注記（ADR-0019 決定 4）。<b>TLS だけでなく全受信が停止する</b>ことを明示し、
+    /// 複数画面の変更をまとめて 1 回の再起動で反映するよう促す（管理 HTTPS 画面と本画面の変更は
+    /// 累積されるため、2 画面 1 再起動で完結できる）。
+    /// </summary>
+    public const string IngestionTlsRestartNote =
+        "この画面の設定は、保存だけでは反映されません。反映は次回のサービス再起動時で、再起動中は TLS だけでなく" +
+        "すべての受信（UDP / TCP を含む）と管理画面が停止します（停止中に送られたログは失われることがあります）。" +
+        "管理画面の HTTPS 設定など他の変更もある場合は、まとめて保存してから 1 回の再起動で反映してください。";
+
+    /// <summary>保存成功の要約。{0} に変更されたキーの一覧が入る。</summary>
+    public const string IngestionTlsSavedFormat =
+        "TLS 受信の設定を保存しました（変更: {0}）。反映するにはサービスの再起動が必要です。";
+
+    /// <summary>変更ゼロ（no-op）の通知。</summary>
+    public const string IngestionTlsSavedNoChanges = "現在の設定と同じ内容のため、保存は行われませんでした。";
+
+    /// <summary>
+    /// 観測性への導線の見出し（ADR-0019 決定 5b——ADR-0012 の委任を引き取ったもの）。
+    /// 証明書差し替え + 再起動の直後に運用者が行う「全送信元が再接続できたかの確認」を、
+    /// 設定画面から始められるようにする。
+    /// </summary>
+    public const string IngestionTlsObservabilityTitle = "受信状況の確認";
+
+    /// <summary>同上の説明文。</summary>
+    public const string IngestionTlsObservabilityNote =
+        "証明書を差し替えて再起動したあとは、送信元の機器がすべて再接続できたかを確認してください。" +
+        "TLS のハンドシェイク失敗は計器に、送信元ごとの最終受信時刻はダッシュボードに出ます。";
+
+    /// <summary>観測性リンク: 送信元別の受信状況。</summary>
+    public const string IngestionTlsObservabilitySourcesLinkText = "送信元別の受信状況";
+
+    /// <summary>観測性リンク: 計器（ハンドシェイク失敗を含む）。</summary>
+    public const string IngestionTlsObservabilityMetricsLinkText = "計器（ハンドシェイク失敗を含む）";
+
     // ---- 初期セットアップウィザード（configuration.md §3〜§7。M8-4 骨格） ----
 
     /// <summary>ステップ: 受信設定。</summary>

@@ -5,7 +5,7 @@
 @using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject IAdminRemoteAccessAdminService RemoteAccessAdminService
-@inject IAdminCertificateStoreReader CertificateStoreReader
+@inject ICertificateStoreReader CertificateStoreReader
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
@@ -16,7 +16,7 @@
     - 認証（/admin/auth-setup）とは分離した新規画面で、既存 4 キー
       （Admin:RemoteBinding:Enabled / Admin:Https:Enabled / Admin:Https:CertificateThumbprint /
       Admin:Https:Port）の編集を完結させる（新設キーはゼロ——決定 6）
-    - 証明書は LocalMachine\My の列挙（IAdminCertificateStoreReader。serverAuth EKU + 秘密鍵ありに
+    - 証明書は LocalMachine\My の列挙（ICertificateStoreReader。serverAuth EKU + 秘密鍵ありに
       最小化済み）から選択し、拇印の手入力を撤廃する（決定 2）。期限切れ・秘密鍵読取不可は
       警告付きで表示し、無警告で選べる状態を作らない（受け入れ基準「一覧の除外／警告」）
     - 秘密鍵の ACL 付与は UI からは行わない（決定 3 = (b)。lab 実測でサービスアカウントに
@@ -31,6 +31,11 @@
 
 <MudText Typo="Typo.h5">@UiText.AdminRemoteAccessTitle</MudText>
 <MudText Typo="Typo.body2" Class="mt-1">@UiText.AdminRemoteAccessIntro</MudText>
+@* 用途の書き分け（ADR-0019 決定 1）: 同じ証明書一覧が出る 2 画面の取り違えを防ぐ *@
+<MudText Typo="Typo.caption" Class="mt-1">
+    @UiText.AdminRemoteAccessIngestionTlsLinkNote
+    <MudLink Href="/admin/ingestion-tls" Typo="Typo.caption">@UiText.AdminRemoteAccessIngestionTlsLinkText</MudLink>
+</MudText>
 
 @if (_status is null)
 {
@@ -207,7 +212,7 @@ else
     private bool _httpsEnabled;
     private string _httpsPort = string.Empty;
     private string _selectedThumbprint = string.Empty;
-    private IReadOnlyList<AdminCertificateCandidate> _candidates = [];
+    private IReadOnlyList<CertificateCandidate> _candidates = [];
     private string? _certificateListError;
     private string? _errorMessage;
     private string? _savedSummary;

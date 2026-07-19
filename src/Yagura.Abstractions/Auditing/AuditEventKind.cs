@@ -271,4 +271,15 @@ public enum AuditEventKind
     /// <see langword="null"/>。
     /// </summary>
     StartupConfigurationChangeDetected,
+
+    /// <summary>
+    /// 管理操作: TLS 受信の証明書設定の変更（ADR-0019 決定 5。イベント ID 2020。Issue #349）。
+    /// <c>Ingestion:Tls:Enabled</c>・<c>Ingestion:Tls:Port</c>・
+    /// <c>Ingestion:Tls:CertificateThumbprint</c> の変更を記録する。
+    /// <see cref="AdminHttpsCertificateConfigured"/>（= 2012。管理リモート HTTPS 版）と対になる
+    /// TLS 受信版であり、記録内容も同型——変更キーと新値（拇印は証明書の公開識別子であり秘密では
+    /// ないため値を残す）+ 操作者。<c>Port</c> を対象に含めるのは<b>到達面の変更であり監査価値が
+    /// 高い</b>ため（2012 も 3 キーすべてを対象としている）。
+    /// </summary>
+    IngestionTlsCertificateConfigured,
 }

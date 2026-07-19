@@ -1,4 +1,4 @@
-﻿using System.Runtime.Versioning;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -860,14 +860,23 @@ public static class Program
         // 管理リモート HTTPS 証明書の選択 UI 用の read-only 列挙（ADR-0012 決定 2）。副作用なし・
         // 依存なし（LocalMachine\My を ReadOnly で開くだけ）。実体は Windows 専用（他の Store* 型と
         // 同様、合成ルートで直接 new する）。
-        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminCertificateStoreReader>(
-            _ => new Yagura.Host.Administration.Https.StoreAdminCertificateStoreReader());
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.ICertificateStoreReader>(
+            _ => new Yagura.Host.Administration.Https.WindowsCertificateStoreReader());
 
         // 管理リモート HTTPS の設定保存・保存前 fail-closed 検証 + 監査（ADR-0012 決定 1・4・7。
         // 上記 read-only 列挙とは別契約の書き込み系サービス——IAdminAuthenticationAdminService と
         // 同じ「dataRoot + IAuditRecorder を渡して Host 実体を結線する」形式）。
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminRemoteAccessAdminService>(sp =>
             new Yagura.Host.Administration.Https.AdminRemoteAccessAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>()));
+
+        // TLS 受信の証明書設定の保存・保存前 fail-closed 検証 + 監査（ADR-0019 決定 1・2・5。
+        // Issue #349）。上記の管理リモート HTTPS 版と同型で、証明書の列挙・解決・EKU 判定・
+        // 秘密鍵の読取検証は実装を共有する（二重実装しない）。挙動が割れるのは期限切れと
+        // 秘密鍵読取不可の 2 点のみ（IngestionTlsAdminService の remarks 参照）。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IIngestionTlsAdminService>(sp =>
+            new Yagura.Host.Ingestion.Tls.IngestionTlsAdminService(
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
 
