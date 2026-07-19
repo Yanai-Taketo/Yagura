@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Configuration;
 using Microsoft.Extensions.Logging.EventLog;
 using Yagura.Host.Configuration;
+using Yagura.Host.Observability.ActiveNotification.Email;
 using Yagura.Ingestion;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
@@ -430,6 +431,25 @@ public static class Program
             settings.SourceName = WindowsServiceName;
         });
 
+        // 能動通知の第 2 の書き出し先（メール。ADR-0017 決定 7。opt-in・既定無効）。
+        // EventLog と同じ ILogger レールに乗せることで、発火点（ActiveNotificationMonitor・
+        // Yagura.Ingestion の PersistenceWriter・起動時経路・AdminAuthFailureDefense）の
+        // コードを一切触らずに捕捉できる。対象の選別は EmailNotificationAllowlist のみで行う。
+        //
+        // **AddProvider で直接足す理由**: builder.Logging.AddProvider は利用者の
+        // Logging:LogLevel フィルタの影響下に入るため、イベントログのノイズ調整のつもりの
+        // 設定変更が黙ってメールを止め得る（決定 7 が明示的に避ける事態）。
+        // ここは常に「全カテゴリ・全レベルを受け取り、allowlist だけで選別する」を守る。
+        //
+        // キューは合成ルートが所有し、プロバイダ（投入側）とディスパッチャ（消化側）で共有する。
+        // 通知が捕捉されるのはこの登録より後に発火したものに限られる——決定 7 が挙げる
+        // 起動時経路の ID（1001・1022 等）は、いずれも DI ロガー経由で Build 後に発火するため
+        // 本登録の後になる（EmailNotificationStartupCaptureTests が回帰として固定する）。
+        var emailNotificationQueue = new EmailNotificationQueue();
+        builder.Logging.Services.AddSingleton<ILoggerProvider>(
+            _ => new EmailNotificationLoggerProvider(emailNotificationQueue));
+        builder.Services.AddSingleton(emailNotificationQueue);
+
         // provider 選択の結線（M5-3。database.md §1）。YaguraConfigurationLoader が
         // Storage:Provider = sqlserver かつ接続文字列未設定の場合を既に SQLite へ縮小済みのため
         // （ResolveStorageProvider のコメント参照）、ここでは解決済みの値をそのまま分岐すればよい。
@@ -581,6 +601,16 @@ public static class Program
             // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
             sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>()));
 
+        // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
+        // ActiveNotificationMonitor と同じく IHostedService にはしない——停止順序を Generic Host の
+        // 逆順登録で表現できないため、親（IngestionHostedService）が Start/StopAsync を明示的に呼ぶ。
+        builder.Services.AddSingleton(sp => new EmailNotificationDispatcher(
+            emailNotificationQueue,
+            new MailKitEmailSender(),
+            resolvedConfiguration.EmailNotification,
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<EmailNotificationDispatcher>()));
+
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
         // 同じインスタンスへメタデータ領域の値を引き継ぐ・書き出す）。
@@ -711,6 +741,21 @@ public static class Program
                         new Yagura.Host.Retention.RetentionSchedulerOptions(
                             newConfiguration.RetentionDays,
                             newConfiguration.RetentionExecutionTimeOfDay))),
+                // メール通知（ADR-0017 決定 9）。送信クライアントは接続を保持しないため参照の
+                // 差し替えだけで足りる（次回送信から新しい値が効く）。DPAPI 復号は
+                // YaguraConfigurationLoader が再読み込み時にも通るため、解決済みの値を渡すだけでよい。
+                // 無効化（null）の場合はキュー内の未送信通知も破棄する——送り切りを待たず
+                // 無効化の意図を優先する（決定 5）。
+                // 注: 配列キー Notification:Email:To は ChangePlanner の比較対象外であり、
+                // 宛先のみの変更は現時点では再読み込みで検出されない（委任 9 の UI 保存経路と
+                // 合わせて第 3 段で解消する）。
+                new ImmediateConfigurationApplier(
+                    ["Notification:Email:Enabled", "Notification:Email:From",
+                     "Notification:Email:Smtp:Host", "Notification:Email:Smtp:Port",
+                     "Notification:Email:Smtp:Security", "Notification:Email:Smtp:Username",
+                     "Notification:Email:Smtp:Password"],
+                    newConfiguration => sp.GetRequiredService<EmailNotificationDispatcher>()
+                        .UpdateConfiguration(newConfiguration.EmailNotification)),
                 // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
                 new ImmediateConfigurationApplier(
                     ["Audit:RetentionDays"],
