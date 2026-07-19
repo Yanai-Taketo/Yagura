@@ -45,7 +45,8 @@ public sealed class ParsingStage
         DiskSpool? spool,
         IngestionMetrics metrics,
         TimeZoneInfo? defaultRfc3164TimeZone = null,
-        ILogger<ParsingStage>? logger = null)
+        ILogger<ParsingStage>? logger = null,
+        Yagura.Storage.Observability.ISourceActivityTracker? sourceActivityTracker = null)
     {
         ArgumentNullException.ThrowIfNull(q1Reader);
         ArgumentNullException.ThrowIfNull(q2Writer);
@@ -57,7 +58,15 @@ public sealed class ParsingStage
         _metrics = metrics;
         _defaultRfc3164TimeZone = defaultRfc3164TimeZone;
         _logger = logger ?? NullLogger<ParsingStage>.Instance;
+        _sourceActivityTracker = sourceActivityTracker;
     }
+
+    /// <summary>
+    /// 送信元の途絶検知の追跡先（ADR-0018 決定 3。opt-in のため <see langword="null"/> 可）。
+    /// <c>SpoolSelfTestTracker</c> と同じ注入形——機能が無効なら注入されず、ホットパスの
+    /// 分岐 1 つだけが残る。
+    /// </summary>
+    private readonly Yagura.Storage.Observability.ISourceActivityTracker? _sourceActivityTracker;
 
     /// <summary>
     /// RFC 3164 TIMESTAMP の既定タイムゾーンを実行中に更新する（設定ライブ再読み込み。
@@ -142,6 +151,12 @@ public sealed class ParsingStage
     /// </summary>
     private LogRecord ParseAndCount(RawDatagram datagram)
     {
+        // 途絶検知の「受信した」の定義（ADR-0018 決定 3）: **解析段に到達した当該送信元の
+        // レコードの存在**をもって受信とする。解析の成否は問わない——解析失敗の raw 保存も
+        // 受信であり、保存の成否も問わない。したがって解析の**前**に記録する。
+        // 追跡側はウォッチリスト外を辞書引き 1 回で捨てるため、ホットパスの費用は無視できる。
+        _sourceActivityTracker?.RecordActivity(datagram.SourceAddress);
+
         var record = SyslogParser.Parse(datagram, _defaultRfc3164TimeZone);
 
         switch (record.ParseStatus)
