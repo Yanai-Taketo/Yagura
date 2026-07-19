@@ -1,0 +1,391 @@
+@page "/admin/email-notification"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
+@using Yagura.Web.Circuits
+@inject IEmailNotificationAdminService EmailNotificationAdminService
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+@inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
+
+@*
+    メール通知の設定画面（ADR-0017 決定 4・5・8、委任 12。Issue #350）。
+
+    - opt-in・既定無効（決定 1）。ゼロ設定ファーストランでは存在すら意識させないため、
+      この画面に来るのは「メールで受け取りたい」と決めた利用者だけである
+    - テスト送信は「画面に入力中の（未保存の）値」で行う（決定 8）。誤設定を保存しないと
+      試せない作りにしない。キュー・流量上限を経由しない直送
+    - パスワードは再表示しない。空欄 = 「変更しない」に固定する（決定 8）
+    - 失敗理由は生の SMTP 応答をそのまま出さず、平易な説明と次の一手を添える（委任 12）。
+      とくに認証拒否は「打ち直させない」ことが最重要——繰り返すとアカウントがロックされ、
+      決定 3 が避けたい事態そのものになる
+    - 「送信状況」カードは常設（決定 5）。at-most-once + 破棄という設計は、チャネルの
+      静かな死に日常動線で気づける経路があって初めて正当化される
+*@
+<PageTitle>@UiText.EmailNotificationTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.EmailNotificationTitle</MudText>
+<MudText Typo="Typo.body2" Class="mt-1">@UiText.EmailNotificationIntro</MudText>
+
+@if (_status is null)
+{
+    <MudText>@UiText.AdminScreenAccessChecking</MudText>
+}
+else
+{
+    @* 「有効にしたつもりで送られていない」状態を最上位に出す（決定 2 の縮退の可視化） *@
+    @if (_status.Health.DisabledByInvalidConfiguration)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.EmailNotificationDisabledByInvalidConfiguration</MudAlert>
+    }
+
+    <MudAlert Severity="Severity.Info" Class="mt-4">@UiText.EmailNotificationAtMostOnceNote</MudAlert>
+
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudSwitch T="bool" @bind-Value="_enabled" Label="@UiText.EmailNotificationEnabledLabel" Color="Color.Primary" />
+
+        <div class="mt-2" style="max-width: 480px;">
+            <YaguraTextField Label="@UiText.EmailNotificationFromLabel"
+                             HelpText="@UiText.EmailNotificationFromHelp"
+                             @bind-Value="_from" />
+        </div>
+
+        <div class="mt-3" style="max-width: 480px;">
+            @* 配列キーの UI 保存経路は本 ADR が初めて要求する（委任 9）。表現は「1 行 1 件」に固定する
+               ——カンマ区切りはアドレス中の記号との衝突が起きやすく、区切りの誤りが宛先の欠落として
+               現れる（届かないことに気づけない失敗になる） *@
+            <MudTextField T="string" Label="@UiText.EmailNotificationToLabel"
+                          HelperText="@UiText.EmailNotificationToHelp"
+                          @bind-Value="_toText"
+                          Lines="4" Variant="Variant.Outlined" />
+        </div>
+    </MudPaper>
+
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.EmailNotificationSmtpTitle</MudText>
+
+        <div class="mt-2 d-flex" style="gap: 16px;">
+            <YaguraTextField Label="@UiText.EmailNotificationSmtpHostLabel" @bind-Value="_smtpHost" />
+            <div style="max-width: 160px;">
+                <YaguraTextField Label="@UiText.EmailNotificationSmtpPortLabel"
+                                 HelpText="@UiText.EmailNotificationSmtpPortHelp"
+                                 @bind-Value="_smtpPort" />
+            </div>
+        </div>
+
+        <div class="mt-3" style="max-width: 480px;">
+            @* 決定 2: none / auto / required の 3 択。既定は auto *@
+            <MudSelect T="string" Label="@UiText.EmailNotificationSecurityLabel"
+                       HelperText="@UiText.EmailNotificationSecurityHelp"
+                       @bind-Value="_security" Variant="Variant.Outlined">
+                <MudSelectItem T="string" Value="@("none")">@UiText.EmailNotificationSecurityNone</MudSelectItem>
+                <MudSelectItem T="string" Value="@("auto")">@UiText.EmailNotificationSecurityAuto</MudSelectItem>
+                <MudSelectItem T="string" Value="@("required")">@UiText.EmailNotificationSecurityRequired</MudSelectItem>
+            </MudSelect>
+        </div>
+    </MudPaper>
+
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.EmailNotificationAuthTitle</MudText>
+        <MudText Typo="Typo.body2" Class="mt-1">@UiText.EmailNotificationAuthHelp</MudText>
+
+        <div class="mt-2" style="max-width: 480px;">
+            <YaguraTextField Label="@UiText.EmailNotificationUsernameLabel" @bind-Value="_username" />
+
+            @* パスワードは再表示しない（決定 3）。空欄 = 変更しない（決定 8） *@
+            <div class="mt-3">
+                <MudTextField T="string" Label="@UiText.EmailNotificationPasswordLabel"
+                              HelperText="@(_status.PasswordConfigured
+                                  ? UiText.EmailNotificationPasswordHelpConfigured
+                                  : UiText.EmailNotificationPasswordHelpUnset)"
+                              @bind-Value="_password"
+                              Disabled="@_clearPassword"
+                              InputType="InputType.Password" Variant="Variant.Outlined" />
+            </div>
+
+            @* 「空欄 = 変更しない」に固定した帰結として、削除には専用の口が要る——これがないと
+               一度パスワードを保存した構成は SMTP 認証をやめられない（PR #366 レビュー対応） *@
+            @if (_status.PasswordConfigured)
+            {
+                <div class="mt-2">
+                    <MudSwitch T="bool" @bind-Value="_clearPassword"
+                               Label="@UiText.EmailNotificationClearPasswordLabel" Color="Color.Warning" />
+                    @if (_clearPassword)
+                    {
+                        <MudText Typo="Typo.caption">@UiText.EmailNotificationClearPasswordHelp</MudText>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (ShouldWarnAboutCredentialExposure)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-3">@UiText.EmailNotificationPlaintextCredentialWarning</MudAlert>
+        }
+    </MudPaper>
+
+    @if (_errorMessage is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+    }
+
+    @if (_savedSummary is not null)
+    {
+        <MudAlert Severity="Severity.Success" Class="mt-4">@_savedSummary</MudAlert>
+    }
+
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="ApplyAsync">
+        適用する
+    </MudButton>
+
+    @* --- テスト送信（決定 8） --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.EmailNotificationTestTitle</MudText>
+        <MudText Typo="Typo.body2" Class="mt-1">@UiText.EmailNotificationTestIntro</MudText>
+
+        @if (string.IsNullOrEmpty(_password) && !string.IsNullOrWhiteSpace(_username) && _status.PasswordConfigured && !_clearPassword)
+        {
+            <MudText Typo="Typo.caption" Class="mt-1">@UiText.EmailNotificationTestUsesStoredPassword</MudText>
+        }
+
+        <div class="mt-2 d-flex align-center" style="gap: 12px;">
+            @* 同時実行 1 件・キャンセル可能（決定 8）——接続 10 秒 + 送信 30 秒の間、画面を塞がない *@
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                       Disabled="@_testInFlight" OnClick="SendTestAsync">
+                @UiText.EmailNotificationTestButton
+            </MudButton>
+
+            @if (_testInFlight)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                <MudText Typo="Typo.body2">@UiText.EmailNotificationTestSending</MudText>
+                <MudButton Variant="Variant.Text" OnClick="CancelTest">@UiText.EmailNotificationTestCancelButton</MudButton>
+            }
+        </div>
+
+        @if (_testResult is not null)
+        {
+            <MudAlert Severity="@(_testResult.Succeeded ? Severity.Success : Severity.Error)" Class="mt-3">
+                @* 生の応答ではなく平易な説明を主にする（委任 12） *@
+                @_testResult.Guidance
+
+                @if (_testResult.RejectedRecipients.Count > 0)
+                {
+                    <br />
+                    @string.Format(UiText.EmailNotificationTestRejectedRecipientsFormat,
+                        string.Join("、", _testResult.RejectedRecipients))
+                }
+
+                @if (_testResult.ServerResponse is not null)
+                {
+                    @* 応答は参考情報として畳んでおく——最初に目に入るのは説明のほうであるべき *@
+                    <MudExpansionPanels Class="mt-2" Elevation="0">
+                        <MudExpansionPanel Text="サーバの応答（参考）">
+                            <MudText Typo="Typo.body2" Style="font-family: monospace;">@_testResult.ServerResponse</MudText>
+                        </MudExpansionPanel>
+                    </MudExpansionPanels>
+                }
+            </MudAlert>
+        }
+    </MudPaper>
+
+    @* --- チャネル健全性の常設カード（決定 5） --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.EmailNotificationHealthTitle</MudText>
+
+        <MudSimpleTable Dense="true" Class="mt-2" Elevation="0">
+            <tbody>
+                <tr>
+                    <td>@UiText.EmailNotificationHealthLastSuccess</td>
+                    <td>@FormatTimestamp(_status.Health.LastSuccessAt)</td>
+                </tr>
+                <tr>
+                    <td>@UiText.EmailNotificationHealthLastFailure</td>
+                    <td>
+                        @if (_status.Health.LastFailureKind is null)
+                        {
+                            @UiText.EmailNotificationHealthNever
+                        }
+                        else
+                        {
+                            @_status.Health.LastFailureDetail
+                        }
+                    </td>
+                </tr>
+                <tr>
+                    <td>@UiText.EmailNotificationHealthQueueDepth</td>
+                    <td>@string.Format(UiText.EmailNotificationHealthCountFormat, _status.Health.QueueDepth)</td>
+                </tr>
+                <tr>
+                    <td>@UiText.EmailNotificationHealthDropped</td>
+                    <td>@string.Format(UiText.EmailNotificationHealthCountFormat, _status.Health.DroppedCount)</td>
+                </tr>
+                <tr>
+                    <td>@UiText.EmailNotificationHealthSuppressed</td>
+                    <td>
+                        @string.Format(UiText.EmailNotificationHealthCountFormat, _status.Health.SuppressedCount)
+                        @if (_status.Health.LastSuppressedAt is not null)
+                        {
+                            @($"（直近: {FormatTimestamp(_status.Health.LastSuppressedAt)}）")
+                        }
+                    </td>
+                </tr>
+            </tbody>
+        </MudSimpleTable>
+
+        @* 抑制は「累積回数だけ」にしない——回数のみでは、先週の 1 回の障害でついた数字と
+           毎晩じわじわ増えているものが区別できず、何が届かなかったかも特定できない（決定 5） *@
+        @if (_status.Health.SuppressedCountByEventId.Count > 0)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.EmailNotificationHealthSuppressedBreakdownTitle</MudText>
+            <MudSimpleTable Dense="true" Class="mt-1" Elevation="0">
+                <tbody>
+                    @foreach (var entry in _status.Health.SuppressedCountByEventId.OrderByDescending(e => e.Value))
+                    {
+                        <tr>
+                            <td>@($"イベント ID {entry.Key}")</td>
+                            <td>@string.Format(UiText.EmailNotificationHealthCountFormat, entry.Value)</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+
+        <MudText Typo="Typo.caption" Class="mt-2">@UiText.EmailNotificationHealthSuppressedNote</MudText>
+    </MudPaper>
+}
+
+@code {
+    private EmailNotificationStatus? _status;
+    private bool _enabled;
+    private string _from = string.Empty;
+    private string _toText = string.Empty;
+    private string _smtpHost = string.Empty;
+    private string _smtpPort = "25";
+    private string _security = "auto";
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+    private bool _clearPassword;
+
+    private string? _errorMessage;
+    private string? _savedSummary;
+    private EmailNotificationTestResult? _testResult;
+    private bool _testInFlight;
+    private CancellationTokenSource? _testCts;
+
+    /// <summary>
+    /// パスワードを持つ構成なのに暗号化が必須でない（決定 3 の能動警告）。保存前から出す
+    /// ——保存してから気づかせるより、選択している最中に見えるほうが直せる。
+    /// </summary>
+    private bool ShouldWarnAboutCredentialExposure =>
+        (!string.IsNullOrEmpty(_password) || ((_status?.PasswordConfigured ?? false) && !_clearPassword))
+        && !string.Equals(_security, "required", StringComparison.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = await EmailNotificationAdminService.GetStatusAsync();
+        ApplyStatusToFields(_status);
+    }
+
+    private void ApplyStatusToFields(EmailNotificationStatus status)
+    {
+        _enabled = status.Enabled;
+        _from = status.From ?? string.Empty;
+        _toText = string.Join(Environment.NewLine, status.To);
+        _smtpHost = status.SmtpHost ?? string.Empty;
+        _smtpPort = status.SmtpPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _security = status.Security;
+        _username = status.Username ?? string.Empty;
+        // パスワードは再表示しない（決定 3）。保存後も空欄に戻す——「変更しない」の意味を保つ。
+        _password = string.Empty;
+        // 削除は 1 回の適用で完結する操作——保存後は必ずチェックを外へ戻す。
+        _clearPassword = false;
+    }
+
+    /// <summary>入力欄（1 行 1 件）を宛先の一覧へ変換する。</summary>
+    private IReadOnlyList<string> ParseRecipients() =>
+        _toText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private EmailNotificationSettings BuildSettings() => new(
+        Enabled: _enabled,
+        From: _from,
+        To: ParseRecipients(),
+        SmtpHost: _smtpHost,
+        SmtpPort: int.TryParse(_smtpPort, out var port) ? port : 0,
+        Security: _security,
+        Username: _username,
+        Password: string.IsNullOrEmpty(_password) ? null : _password,
+        ClearPassword: _clearPassword);
+
+    private async Task ApplyAsync()
+    {
+        _errorMessage = null;
+        _savedSummary = null;
+
+        try
+        {
+            // 「誰が」欄（ADR-0010 決定 6）: circuit の認証状態から操作者を導出して監査 2021 へ渡す。
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+            var result = await EmailNotificationAdminService.ConfigureAsync(
+                BuildSettings(), CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
+
+            _status = result.Status;
+            ApplyStatusToFields(_status);
+
+            if (result.ChangedKeys.Count == 0)
+            {
+                // no-op（保存も監査も行われていない）——「保存された」と誤認させない。
+                Notifier.NotifyInfo(UiText.EmailNotificationSavedNoChanges);
+            }
+            else
+            {
+                _savedSummary = string.Format(
+                    UiText.EmailNotificationSavedFormat, string.Join("、", result.ChangedKeys));
+                Notifier.NotifyOk(_savedSummary);
+            }
+        }
+        catch (WizardValidationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+    }
+
+    private async Task SendTestAsync()
+    {
+        _errorMessage = null;
+        _testResult = null;
+        _testInFlight = true;
+        _testCts = new CancellationTokenSource();
+
+        try
+        {
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+            _testResult = await EmailNotificationAdminService.SendTestAsync(
+                BuildSettings(), CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal, _testCts.Token);
+        }
+        catch (WizardValidationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        catch (OperationCanceledException)
+        {
+            // 利用者による中止。結果は表示しない（失敗として記録もしない）。
+        }
+        finally
+        {
+            _testInFlight = false;
+            _testCts?.Dispose();
+            _testCts = null;
+        }
+    }
+
+    private void CancelTest() => _testCts?.Cancel();
+
+    private static string FormatTimestamp(DateTimeOffset? value) =>
+        value is null ? UiText.EmailNotificationHealthNever : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+}

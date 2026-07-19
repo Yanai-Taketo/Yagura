@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Configuration;
 using Microsoft.Extensions.Logging.EventLog;
 using Yagura.Host.Configuration;
+using Yagura.Host.Observability.ActiveNotification.Email;
 using Yagura.Ingestion;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
@@ -430,6 +431,25 @@ public static class Program
             settings.SourceName = WindowsServiceName;
         });
 
+        // 能動通知の第 2 の書き出し先（メール。ADR-0017 決定 7。opt-in・既定無効）。
+        // EventLog と同じ ILogger レールに乗せることで、発火点（ActiveNotificationMonitor・
+        // Yagura.Ingestion の PersistenceWriter・起動時経路・AdminAuthFailureDefense）の
+        // コードを一切触らずに捕捉できる。対象の選別は EmailNotificationAllowlist のみで行う。
+        //
+        // 決定 7 の「利用者の Logging:* 設定がメールを止めない」は、AddEmailNotificationSink が
+        // 積む本プロバイダ名指しのフィルタ規則（Trace）で成立させる——登録経路の選び方では
+        // フィルタを迂回できない（PR #366 レビューで判明。詳細は同メソッドの remarks と
+        // EmailNotificationLoggingTests）。
+        //
+        // キューは合成ルートが所有し、プロバイダ（投入側）とディスパッチャ（消化側）で共有する。
+        // 通知が捕捉されるのはこの登録より後に発火したものに限られる——決定 7 が挙げる
+        // 起動時経路の ID（1001・1022 等）は、いずれも app.Build() 後に DI ロガー経由で発火する
+        // ため、構造上必ず本登録（builder 段階）の後になる（発火点: 1001 = 本メソッド末尾の
+        // startupLogger、1022 = IngestionHostedService.StartAsync）。
+        var emailNotificationQueue = new EmailNotificationQueue();
+        builder.Logging.AddEmailNotificationSink(emailNotificationQueue);
+        builder.Services.AddSingleton(emailNotificationQueue);
+
         // provider 選択の結線（M5-3。database.md §1）。YaguraConfigurationLoader が
         // Storage:Provider = sqlserver かつ接続文字列未設定の場合を既に SQLite へ縮小済みのため
         // （ResolveStorageProvider のコメント参照）、ここでは解決済みの値をそのまま分岐すればよい。
@@ -581,6 +601,16 @@ public static class Program
             // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
             sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>()));
 
+        // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
+        // ActiveNotificationMonitor と同じく IHostedService にはしない——停止順序を Generic Host の
+        // 逆順登録で表現できないため、親（IngestionHostedService）が Start/StopAsync を明示的に呼ぶ。
+        builder.Services.AddSingleton(sp => new EmailNotificationDispatcher(
+            emailNotificationQueue,
+            new MailKitEmailSender(),
+            resolvedConfiguration.EmailNotification,
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<EmailNotificationDispatcher>()));
+
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と
         // 同じインスタンスへメタデータ領域の値を引き継ぐ・書き出す）。
@@ -711,6 +741,21 @@ public static class Program
                         new Yagura.Host.Retention.RetentionSchedulerOptions(
                             newConfiguration.RetentionDays,
                             newConfiguration.RetentionExecutionTimeOfDay))),
+                // メール通知（ADR-0017 決定 9）。送信クライアントは接続を保持しないため参照の
+                // 差し替えだけで足りる（次回送信から新しい値が効く）。DPAPI 復号は
+                // YaguraConfigurationLoader が再読み込み時にも通るため、解決済みの値を渡すだけでよい。
+                // 無効化（null）の場合はキュー内の未送信通知も破棄する——送り切りを待たず
+                // 無効化の意図を優先する（決定 5）。
+                // 宛先（配列キー Notification:Email:To）も対象に含む——ADR-0017 委任 9 で
+                // ChangePlanner が配列キーを比較するようになったため、手編集で宛先だけを
+                // 変えた再読み込みもここへ届く。
+                new ImmediateConfigurationApplier(
+                    ["Notification:Email:Enabled", "Notification:Email:From", "Notification:Email:To",
+                     "Notification:Email:Smtp:Host", "Notification:Email:Smtp:Port",
+                     "Notification:Email:Smtp:Security", "Notification:Email:Smtp:Username",
+                     "Notification:Email:Smtp:Password"],
+                    newConfiguration => sp.GetRequiredService<EmailNotificationDispatcher>()
+                        .UpdateConfiguration(newConfiguration.EmailNotification)),
                 // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
                 new ImmediateConfigurationApplier(
                     ["Audit:RetentionDays"],
@@ -879,6 +924,16 @@ public static class Program
             new Yagura.Host.Ingestion.Tls.IngestionTlsAdminService(
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
+
+        // メール通知の設定・テスト送信・健全性参照（ADR-0017 決定 4・8。Issue #350）。
+        // ディスパッチャは Func 経由で遅延解決する——本サービスとディスパッチャの登録順に
+        // 依存させないため（AddSingleton のファクトリは Build 後の初回解決時に走る）。
+        builder.Services.AddSingleton<IEmailNotificationAdminService>(sp =>
+            new EmailNotificationAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>(),
+                emailNotificationQueue,
+                () => sp.GetService<EmailNotificationDispatcher>()));
 
         // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）。設定の生指定（名/SID）を
         // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本

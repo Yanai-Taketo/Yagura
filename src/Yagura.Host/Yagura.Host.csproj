@@ -53,6 +53,13 @@
       （バージョンは Directory.Packages.props で中央管理。ライブ検証の記録も同所）。
     -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+    <!--
+      メール通知の SMTP 送信（ADR-0017。Issue #350）。MimeKit は MailKit の推移的依存だが、
+      本アセンブリのコード（本文の組み立て）が MimeKit の型を直接使うため明示参照する
+      （推移的参照への暗黙依存を作らない）。
+    -->
+    <PackageReference Include="MailKit" />
+    <PackageReference Include="MimeKit" />
   </ItemGroup>
 
   <PropertyGroup>

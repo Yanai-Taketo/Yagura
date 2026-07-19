@@ -194,4 +194,16 @@ public sealed record ResolvedYaguraConfiguration(
     /// <see cref="UdpBindAddressIsExplicit"/> と同一。Issue #137）。
     /// </summary>
     public bool IngestionTlsBindAddressIsExplicit { get; init; }
+
+    /// <summary>
+    /// メール通知（ADR-0017。opt-in）の検証済み設定。<see langword="null"/> は「送らない」
+    /// （明示的な無効化・未設定、および構成不備による縮退のいずれも含む——区別は警告一覧
+    /// 〔<see cref="ConfigurationLoadResult.Warnings"/>〕側に現れる）。
+    /// </summary>
+    /// <remarks>
+    /// 位置パラメータではなく init プロパティにしているのは、opt-in の後付け機能であり
+    /// 既定値（無効）が自然に定まるため——既存の構築箇所（テストを含む）に無効の指定を
+    /// 書き足させない。<see cref="UdpBindAddressIsExplicit"/> 群と同じ判断。
+    /// </remarks>
+    internal ResolvedEmailNotification? EmailNotification { get; init; }
 }

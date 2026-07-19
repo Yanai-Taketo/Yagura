@@ -53,6 +53,36 @@ public sealed class RetentionTests : IDisposable
         }
     }
 
+    // 配列キーはスカラーとは別の表（KnownArrayKeys ⇔ RegisteredArrayKeys）で管理する
+    // ——.NET 構成システム上インデックス付きリーフへ展開されるため KnownKeys には現れない。
+    // 上の 2 つと同じ双方向一致を、配列側にも掛ける（ADR-0017 委任 9。2026-07-19）。
+
+    [Fact]
+    public void EveryKnownArrayKey_HasDeclaredReloadEffect()
+    {
+        foreach (var key in YaguraConfigurationLoader.KnownArrayKeys)
+        {
+            _ = ConfigurationKeyMetadata.GetReloadEffect(key);
+        }
+    }
+
+    [Fact]
+    public void EveryDeclaredArrayKey_IsKnownToLoader()
+    {
+        foreach (var key in ConfigurationKeyMetadata.RegisteredArrayKeys)
+        {
+            Assert.Contains(key, YaguraConfigurationLoader.KnownArrayKeys);
+        }
+    }
+
+    [Fact]
+    public void ScalarAndArrayKeyTables_DoNotOverlap()
+    {
+        // 同じキーが両表にあると GetReloadEffect の解決順に依存した挙動になる。
+        Assert.Empty(ConfigurationKeyMetadata.RegisteredKeys
+            .Intersect(ConfigurationKeyMetadata.RegisteredArrayKeys, StringComparer.OrdinalIgnoreCase));
+    }
+
     // ------------------------------------------------------------------
     // Retention:Days / Retention:ExecutionTimeOfDay の読み込み(§1「既定値で継続」分類)
     // ------------------------------------------------------------------

@@ -83,6 +83,30 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Retention:Days", before.Retention?.Days, after.Retention?.Days);
         CompareKey(changedKeys, "Retention:ExecutionTimeOfDay", before.Retention?.ExecutionTimeOfDay, after.Retention?.ExecutionTimeOfDay);
         CompareKey(changedKeys, "Audit:RetentionDays", before.Audit?.RetentionDays, after.Audit?.RetentionDays);
+        // メール通知（ADR-0017）。宛先一覧（Notification:Email:To）は配列キーのため
+        // ここではなく下の CompareArrayKey 節で比較する（委任 9。配列キーを追加する際は
+        // ConfigurationKeyMetadata.RegisteredArrayKeys への登録もセットで行う——網羅性は
+        // ConfigurationChangePlannerTests が機械検証する）。
+        CompareKey(changedKeys, "Notification:Email:Enabled", before.Notification?.Email?.Enabled, after.Notification?.Email?.Enabled);
+        CompareKey(changedKeys, "Notification:Email:From", before.Notification?.Email?.From, after.Notification?.Email?.From);
+        CompareKey(changedKeys, "Notification:Email:Smtp:Host", before.Notification?.Email?.Smtp?.Host, after.Notification?.Email?.Smtp?.Host);
+        CompareKey(changedKeys, "Notification:Email:Smtp:Port", before.Notification?.Email?.Smtp?.Port, after.Notification?.Email?.Smtp?.Port);
+        CompareKey(changedKeys, "Notification:Email:Smtp:Security", before.Notification?.Email?.Smtp?.Security, after.Notification?.Email?.Smtp?.Security);
+        CompareKey(changedKeys, "Notification:Email:Smtp:Username", before.Notification?.Email?.Smtp?.Username, after.Notification?.Email?.Smtp?.Username);
+        CompareKey(changedKeys, "Notification:Email:Smtp:Password", before.Notification?.Email?.Smtp?.Password, after.Notification?.Email?.Smtp?.Password);
+
+        // --- 配列キー（ADR-0017 委任 9。2026-07-19 追加） ---
+        // 従来これらは比較対象ですらなく、手編集で宛先・グループ一覧だけを変えて再読み込みしても
+        // 反映も「再起動待ち」の表示もされない無音の穴になっていた（configuration.md §3 が
+        // 約束する「未反映のまま残る項目の明示」から漏れていた）。
+        CompareArrayKey(changedKeys, "Admin:Authentication:Windows:AdminGroups",
+            before.Admin?.Authentication?.Windows?.AdminGroups, after.Admin?.Authentication?.Windows?.AdminGroups);
+        CompareArrayKey(changedKeys, "Viewer:Authentication:Windows:ViewerGroups",
+            before.Viewer?.Authentication?.Windows?.ViewerGroups, after.Viewer?.Authentication?.Windows?.ViewerGroups);
+        CompareArrayKey(changedKeys, "Viewer:Authentication:Windows:AdminGroups",
+            before.Viewer?.Authentication?.Windows?.AdminGroups, after.Viewer?.Authentication?.Windows?.AdminGroups);
+        CompareArrayKey(changedKeys, "Notification:Email:To",
+            before.Notification?.Email?.To, after.Notification?.Email?.To);
 
         var requiredEffect = ConfigurationReloadEffect.Immediate;
         foreach (var key in changedKeys)
@@ -107,6 +131,38 @@ public static class ConfigurationChangePlanner
     private static void CompareKey(List<string> changedKeys, string key, string? beforeValue, string? afterValue)
     {
         if (!string.Equals(beforeValue, afterValue, StringComparison.Ordinal))
+        {
+            changedKeys.Add(key);
+        }
+    }
+
+    /// <summary>
+    /// 配列キーを<b>順序を含めて</b>比較する。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>未設定（<see langword="null"/>）と空配列は同一視する</b>——どちらも「1 件も指定が
+    /// ない」であり、JSON 上の書き方の違いにすぎない。ここを区別すると、キーを消した編集と
+    /// <c>[]</c> に書き換えた編集が別の変更として現れ、再起動待ちの表示に意味のない差が出る。
+    /// </para>
+    /// <para>
+    /// <b>順序は変更として数える</b>。集合として同じでも並びが違えば設定ファイルは変わって
+    /// おり、「変更していないのに変更と出る」より「変更したのに出ない」ほうが害が大きい
+    /// （後者は未反映の無音化そのもの）。
+    /// </para>
+    /// <para>
+    /// 比較は序数・大文字小文字を区別する。グループ名は大文字小文字を区別しないが、
+    /// <b>ここは実効値ではなくファイル上の記述の変化を見る場所</b>であり、正規化の責務は
+    /// 解決側（<c>ResolveGroupSpecs</c> 等）にある。
+    /// </para>
+    /// </remarks>
+    private static void CompareArrayKey(
+        List<string> changedKeys, string key, IReadOnlyList<string>? beforeValue, IReadOnlyList<string>? afterValue)
+    {
+        var before = beforeValue ?? [];
+        var after = afterValue ?? [];
+
+        if (!before.SequenceEqual(after, StringComparer.Ordinal))
         {
             changedKeys.Add(key);
         }

@@ -113,9 +113,10 @@ public static class ConfigurationKeyMetadata
             ["Viewer:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Viewer:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
             // 注: SEC-9 のグループ一覧（Admin/Viewer:Authentication:Windows:*Groups）は配列キー
-            // （KnownArrayKeys）であり、本表（スカラーキーの反映方式表・ChangePlanner の比較対象）とは
-            // 別系統で扱う——名 → SID 解決を含め反映は起動時（サービス再起動）に固定であり、ウィザードの
-            // 差分適用の対象ではない（手編集のみ。restart-required）。
+            // （KnownArrayKeys）であり、下の ArrayReloadEffectsByKey で宣言する（本表はスカラー専用）。
+            // 反映は名 → SID 解決を含め起動時に固定（restart-required）であることは変わらないが、
+            // 2026-07-19 以降は ChangePlanner の比較対象であり、手編集での変更が「再起動待ち」として
+            // 表示される（それ以前は変更が検出されず無音だった。ADR-0017 委任 9）。
             ["Admin:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:App:Enabled"] = ConfigurationReloadEffect.RestartRequired,
@@ -127,6 +128,54 @@ public static class ConfigurationKeyMetadata
             ["Admin:Https:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:Port"] = ConfigurationReloadEffect.RestartRequired,
+            // メール通知（ADR-0017。opt-in）は §8 表の宣言どおり「即時」とする——ソケットの
+            // bind も Kestrel の再構成も要さず、SMTP 接続は送信のたびに張る（常設接続を持たない）
+            // ため、次回送信から新しい値が効く（ADR-0017 決定 9）。現時点の実効は送信側の
+            // 実装（Issue #350 第 2 段）が無く ImmediateConfigurationApplier が未配線のため
+            // 再起動待ちに落ちる——送信側の実装と同じ PR で目標へ揃える。
+            // 注: 宛先一覧（Notification:Email:To）は配列キー（KnownArrayKeys）であり、
+            // 本表（スカラーキーの表）には載せない——Windows 認証のグループ一覧と同じ扱い。
+            // ただし反映方式は他のメールキーと同じ即時である（ADR-0017 委任 9）。
+            ["Notification:Email:Enabled"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:From"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Host"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Port"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Security"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Username"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Password"] = ConfigurationReloadEffect.Immediate,
+        };
+
+    /// <summary>
+    /// 配列キー（<see cref="YaguraConfigurationLoader.KnownArrayKeys"/>）の反映方式。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>スカラー表と分けている理由</b>: 配列キーは .NET 構成システム上
+    /// <c>&lt;key&gt;:0</c>・<c>&lt;key&gt;:1</c> … のインデックス付きリーフに展開されるため
+    /// <see cref="YaguraConfigurationLoader.KnownKeys"/>（スカラーのリーフ集合）には現れない。
+    /// 両者を 1 つの表に混ぜると「スカラー表 ⇔ KnownKeys の双方向一致」というテストの
+    /// 不変条件が壊れる——別表にして、それぞれ対応する集合と突き合わせる。
+    /// </para>
+    /// <para>
+    /// <b>2026-07-19 の追加（ADR-0017 委任 9。Issue #350）</b>: 従来、配列キーは
+    /// <see cref="ConfigurationChangePlanner"/> の比較対象ですらなかった。結果として
+    /// <b>手編集で宛先やグループ一覧だけを変えて再読み込みしても、反映もされなければ
+    /// 「再起動待ち」としても現れない</b>——configuration.md §3 が約束する「未反映のまま残る
+    /// 項目の明示」から漏れる無音の穴だった。メール通知の宛先（即時反映が目標）を扱うには
+    /// この穴を塞ぐ必要があり、同じ性質を持つグループ一覧 3 キーも併せて登録する。
+    /// </para>
+    /// </remarks>
+    private static readonly IReadOnlyDictionary<string, ConfigurationReloadEffect> ArrayReloadEffectsByKey =
+        new Dictionary<string, ConfigurationReloadEffect>(StringComparer.OrdinalIgnoreCase)
+        {
+            // SEC-9 のグループ一覧（ADR-0010 決定 5・7）: 名 → SID 解決を含め反映は起動時に固定。
+            // 「即時が目標だが未配線」ではなく、設計上ここは再起動である。
+            ["Admin:Authentication:Windows:AdminGroups"] = ConfigurationReloadEffect.RestartRequired,
+            ["Viewer:Authentication:Windows:ViewerGroups"] = ConfigurationReloadEffect.RestartRequired,
+            ["Viewer:Authentication:Windows:AdminGroups"] = ConfigurationReloadEffect.RestartRequired,
+            // メール通知の宛先（ADR-0017 決定 9）。他のメールキーと同じく即時——送信のたびに
+            // SMTP 接続を張るため、次回送信から新しい宛先が効く。
+            ["Notification:Email:To"] = ConfigurationReloadEffect.Immediate,
         };
 
     /// <summary>
@@ -138,7 +187,8 @@ public static class ConfigurationKeyMetadata
     {
         ArgumentNullException.ThrowIfNull(key);
 
-        if (ReloadEffectsByKey.TryGetValue(key, out var effect))
+        if (ReloadEffectsByKey.TryGetValue(key, out var effect)
+            || ArrayReloadEffectsByKey.TryGetValue(key, out effect))
         {
             return effect;
         }
@@ -149,6 +199,16 @@ public static class ConfigurationKeyMetadata
             "configuration.md §8 を同じ PR で更新してください（configuration.md §8「設定キー追加の規約」）。");
     }
 
-    /// <summary>本表に登録済みのすべてのキー。テスト・網羅性検証用。</summary>
+    /// <summary>
+    /// スカラーキーの表に登録済みのすべてのキー。テスト・網羅性検証用
+    /// （<see cref="YaguraConfigurationLoader.KnownKeys"/> と双方向に一致すること）。
+    /// </summary>
     public static IReadOnlyCollection<string> RegisteredKeys => (IReadOnlyCollection<string>)ReloadEffectsByKey.Keys;
+
+    /// <summary>
+    /// 配列キーの表に登録済みのすべてのキー。テスト・網羅性検証用
+    /// （<see cref="YaguraConfigurationLoader.KnownArrayKeys"/> と双方向に一致すること）。
+    /// </summary>
+    public static IReadOnlyCollection<string> RegisteredArrayKeys =>
+        (IReadOnlyCollection<string>)ArrayReloadEffectsByKey.Keys;
 }

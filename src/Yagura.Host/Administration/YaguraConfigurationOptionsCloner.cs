@@ -122,6 +122,24 @@ internal static class YaguraConfigurationOptionsCloner
             {
                 RetentionDays = source.Audit.RetentionDays,
             },
+            Notification = source.Notification is null ? null : new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = source.Notification.Email is null ? null : new YaguraConfigurationOptions.NotificationOptions.EmailOptions
+                {
+                    Enabled = source.Notification.Email.Enabled,
+                    From = source.Notification.Email.From,
+                    // 配列は参照ではなく複製する（呼び出し側が after を編集しても before に波及しない）。
+                    To = source.Notification.Email.To is null ? null : new List<string>(source.Notification.Email.To),
+                    Smtp = source.Notification.Email.Smtp is null ? null : new YaguraConfigurationOptions.NotificationOptions.EmailOptions.SmtpOptions
+                    {
+                        Host = source.Notification.Email.Smtp.Host,
+                        Port = source.Notification.Email.Smtp.Port,
+                        Security = source.Notification.Email.Smtp.Security,
+                        Username = source.Notification.Email.Smtp.Username,
+                        Password = source.Notification.Email.Smtp.Password,
+                    },
+                },
+            },
         };
     }
 }

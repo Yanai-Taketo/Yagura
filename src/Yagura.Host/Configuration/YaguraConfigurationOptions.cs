@@ -40,6 +40,9 @@ public sealed class YaguraConfigurationOptions
     /// <summary>§8「監査」区分（SEC-2。security.md §4.2。Issue #261）。</summary>
     public AuditOptions? Audit { get; set; }
 
+    /// <summary>能動通知の書き出し先の追加（ADR-0017。opt-in・既定無効）。</summary>
+    public NotificationOptions? Notification { get; set; }
+
     public sealed class IngestionOptions
     {
         /// <summary>UDP 受信リスナの設定。</summary>
@@ -371,6 +374,78 @@ public sealed class YaguraConfigurationOptions
         /// （M-12 実測確定待ちの暫定値）。
         /// </summary>
         public string? QuotaBytes { get; set; }
+    }
+
+    /// <summary>
+    /// 能動通知の書き出し先の追加（ADR-0017）。現在はメールのみ。
+    /// </summary>
+    /// <remarks>
+    /// 将来チャネルを足す場合（Slack / webhook 等。ADR-0017 の再評価トリガ）は、
+    /// <see cref="NotificationOptions"/> 配下に兄弟を並べる形になる。
+    /// </remarks>
+    public sealed class NotificationOptions
+    {
+        /// <summary>メール通知（ADR-0017。opt-in・既定無効）。</summary>
+        public EmailOptions? Email { get; set; }
+
+        public sealed class EmailOptions
+        {
+            /// <summary>
+            /// メール通知の有効/無効（既定 <c>false</c>。opt-in。ADR-0017 決定 1
+            /// ——ゼロ設定ファーストランには一切現れない）。
+            /// </summary>
+            public string? Enabled { get; set; }
+
+            /// <summary>差出人アドレス。<see cref="Enabled"/> が true のとき必須。</summary>
+            public string? From { get; set; }
+
+            /// <summary>
+            /// 宛先アドレスの配列（JSON 配列。既存の配列キー——<c>Admin:Authentication:Windows:AdminGroups</c>
+            /// 等——と同じ表現）。<see cref="Enabled"/> が true のとき必須。宛先ごとの振り分けはしない。
+            /// </summary>
+            /// <remarks>
+            /// <b>配列キーを UI から保存する経路は ADR-0017 が初めて要求する</b>（既存の配列キーは
+            /// 手編集のみ）。保存経路の実装は ADR-0017 委任 9（ADR-0018 委任 3 と共通機構）。
+            /// </remarks>
+            public List<string>? To { get; set; }
+
+            /// <summary>SMTP 接続の属性（ADR-0017 決定 2）。</summary>
+            public SmtpOptions? Smtp { get; set; }
+
+            public sealed class SmtpOptions
+            {
+                /// <summary>SMTP サーバのホスト名。<c>Enabled</c> が true のとき必須。</summary>
+                public string? Host { get; set; }
+
+                /// <summary>SMTP ポート（既定 25。ADR-0017 決定 2）。</summary>
+                public string? Port { get; set; }
+
+                /// <summary>
+                /// STARTTLS の扱い（<c>none</c> / <c>auto</c> / <c>required</c>。既定 <c>auto</c>）。
+                /// <c>auto</c> は opportunistic——確立できなければ平文で継続する。
+                /// <c>required</c> は確立できなければ送信失敗（fail-closed）。
+                /// </summary>
+                public string? Security { get; set; }
+
+                /// <summary>
+                /// SMTP-AUTH のユーザー名（任意）。<see cref="Password"/> と<b>両方</b>設定された
+                /// ときのみ AUTH する。片方のみは不正構成として機能を無効化する（決定 3
+                /// ——黙って匿名送信へ落とさない）。
+                /// </summary>
+                public string? Username { get; set; }
+
+                /// <summary>
+                /// SMTP-AUTH のパスワード（任意）。UI 経由の入力は常に DPAPI で暗号化して
+                /// <c>dpapi:&lt;Base64&gt;</c> 形式で保存する（<see cref="DpapiEmailPasswordProtector"/>）。
+                /// 手編集の平文は受理しつつ警告する（ADR-0004 決定 5 の様式を踏襲）。
+                /// </summary>
+                /// <remarks>
+                /// <b>復号失敗は送信停止 + 警告</b>（fail-notify）。無認証送信への黙示フォールバックは
+                /// しない——誤送信・送信元アカウントのロック誘発を避けるため（決定 3）。
+                /// </remarks>
+                public string? Password { get; set; }
+            }
+        }
     }
 
     public sealed class AuditOptions

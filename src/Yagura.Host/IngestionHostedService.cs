@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Yagura.Host.Observability;
 using Yagura.Host.Observability.ActiveNotification;
+using Yagura.Host.Observability.ActiveNotification.Email;
 using Yagura.Host.Retention;
 using Yagura.Ingestion;
 using Yagura.Storage;
@@ -42,6 +43,7 @@ public sealed class IngestionHostedService : IHostedService
     private readonly ObservabilityCoordinator _observability;
     private readonly RetentionScheduler _retentionScheduler;
     private readonly ActiveNotificationMonitor _activeNotificationMonitor;
+    private readonly EmailNotificationDispatcher _emailNotificationDispatcher;
     private readonly ILogger<IngestionHostedService> _logger;
 
     public IngestionHostedService(
@@ -50,6 +52,7 @@ public sealed class IngestionHostedService : IHostedService
         ObservabilityCoordinator observability,
         RetentionScheduler retentionScheduler,
         ActiveNotificationMonitor activeNotificationMonitor,
+        EmailNotificationDispatcher emailNotificationDispatcher,
         ILogger<IngestionHostedService> logger)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
@@ -57,6 +60,7 @@ public sealed class IngestionHostedService : IHostedService
         ArgumentNullException.ThrowIfNull(observability);
         ArgumentNullException.ThrowIfNull(retentionScheduler);
         ArgumentNullException.ThrowIfNull(activeNotificationMonitor);
+        ArgumentNullException.ThrowIfNull(emailNotificationDispatcher);
         ArgumentNullException.ThrowIfNull(logger);
 
         _pipeline = pipeline;
@@ -64,6 +68,7 @@ public sealed class IngestionHostedService : IHostedService
         _observability = observability;
         _retentionScheduler = retentionScheduler;
         _activeNotificationMonitor = activeNotificationMonitor;
+        _emailNotificationDispatcher = emailNotificationDispatcher;
         _logger = logger;
     }
 
@@ -203,6 +208,13 @@ public sealed class IngestionHostedService : IHostedService
         // 定期評価し、閾値超過をイベントログへ警告として書き出す（トリガごとの抑制窓あり）。
         _activeNotificationMonitor.Start();
         _logger.LogInformation("能動通知の周期監視を開始しました。");
+
+        // メール送信ループ（ADR-0017 決定 5。opt-in）。機能が無効・構成不備なら
+        // ループは動くが何も送らない（設定の即時反映で有効化された時点から送り始める）。
+        // 投入側（ILoggerProvider）は本ループの状態に関わらずキューへ積むため、
+        // ここより前に発火した allowlist 内の通知も、開始後の最初の周期で送られる。
+        _emailNotificationDispatcher.Start();
+        _logger.LogInformation("メール通知の送信ループを開始しました。");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -210,6 +222,11 @@ public sealed class IngestionHostedService : IHostedService
         // 能動通知の周期監視を止める（保持期間削除と同様、受信・drain の停止順序とは独立のため
         // 早期に止めてよい）。
         await _activeNotificationMonitor.StopAsync().ConfigureAwait(false);
+
+        // メール送信ループも同様に早期に止める。停止時にキューへ残った未送信通知は捨てる
+        // ——SMTP の応答待ち（最大で接続 10 秒 + 送信 30 秒）でサービス停止を引き延ばさない。
+        // メールは at-most-once であり、正本のイベントログには既に書かれている（決定 5）。
+        await _emailNotificationDispatcher.StopAsync().ConfigureAwait(false);
 
         // 保持期間削除の定期実行を止める。
         await _retentionScheduler.StopAsync().ConfigureAwait(false);
