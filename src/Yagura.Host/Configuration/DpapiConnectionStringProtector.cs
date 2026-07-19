@@ -45,19 +45,18 @@ internal static class DpapiConnectionStringProtector
     /// 予約された値。平文接続文字列は SqlClient のキー <c>キー=値;</c> 形式であり、
     /// この接頭辞と衝突しない）。
     /// </summary>
-    internal const string Prefix = "dpapi:";
+    internal const string Prefix = DpapiSecretProtector.Prefix;
 
-    /// <summary>
+/// <summary>
     /// 固有 entropy（クラス remarks 参照。値を変更すると既存の暗号化表現が全て復号不能になる
     /// ため、変更は表現形式の版上げとしてのみ行うこと）。
     /// </summary>
-    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Yagura:Storage:SqlServer:ConnectionString:v1");
+    private const string EntropyNamespace = "Yagura:Storage:SqlServer:ConnectionString:v1";
 
     /// <summary>
     /// 値が暗号化表現（<see cref="Prefix"/> 付き）かどうかを判別する。
     /// </summary>
-    internal static bool IsProtected(string? value) =>
-        value is not null && value.StartsWith(Prefix, StringComparison.Ordinal);
+    internal static bool IsProtected(string? value) => DpapiSecretProtector.IsProtected(value);
 
     /// <summary>
     /// 平文の接続文字列を DPAPI（LocalMachine + 固有 entropy）で暗号化し、
@@ -66,24 +65,8 @@ internal static class DpapiConnectionStringProtector
     /// <param name="plaintext">平文の接続文字列（null/空白は不可）。</param>
     /// <exception cref="PlatformNotSupportedException">Windows 以外の OS で呼ばれた場合。</exception>
     /// <exception cref="CryptographicException">DPAPI の暗号化自体が失敗した場合。</exception>
-    internal static string Protect(string plaintext)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(plaintext);
-
-        if (!OperatingSystem.IsWindows())
-        {
-            // 本製品は Windows 専用（ADR-0001）。CA1416（プラットフォーム互換性解析）を
-            // 満たすためのガードであり、実運用でこの分岐に入ることはない。
-            throw new PlatformNotSupportedException("DPAPI 暗号化は Windows でのみ利用できます。");
-        }
-
-        var protectedBytes = ProtectedData.Protect(
-            Encoding.UTF8.GetBytes(plaintext),
-            Entropy,
-            DataProtectionScope.LocalMachine);
-
-        return Prefix + Convert.ToBase64String(protectedBytes);
-    }
+    internal static string Protect(string plaintext) =>
+        DpapiSecretProtector.Protect(plaintext, EntropyNamespace);
 
     /// <summary>
     /// 暗号化表現を復号する。接頭辞なし・Base64 不正・DPAPI 復号失敗（改ざん・別マシンへの
@@ -92,35 +75,6 @@ internal static class DpapiConnectionStringProtector
     /// </summary>
     /// <param name="value">判定・復号する値。</param>
     /// <param name="plaintext">復号に成功した場合の平文。失敗時は <see langword="null"/>。</param>
-    internal static bool TryUnprotect(string? value, out string? plaintext)
-    {
-        plaintext = null;
-
-        if (!IsProtected(value) || !OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        byte[] protectedBytes;
-        try
-        {
-            protectedBytes = Convert.FromBase64String(value![Prefix.Length..]);
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-
-        try
-        {
-            var plainBytes = ProtectedData.Unprotect(protectedBytes, Entropy, DataProtectionScope.LocalMachine);
-            plaintext = Encoding.UTF8.GetString(plainBytes);
-            return true;
-        }
-        catch (CryptographicException)
-        {
-            // 改ざん・他マシンで暗号化された値・entropy 不一致。復号失敗として扱う。
-            return false;
-        }
-    }
+    internal static bool TryUnprotect(string? value, out string? plaintext) =>
+        DpapiSecretProtector.TryUnprotect(value, EntropyNamespace, out plaintext);
 }

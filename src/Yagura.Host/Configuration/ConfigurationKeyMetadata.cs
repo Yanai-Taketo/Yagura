@@ -127,6 +127,21 @@ public static class ConfigurationKeyMetadata
             ["Admin:Https:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:Port"] = ConfigurationReloadEffect.RestartRequired,
+            // メール通知（ADR-0017。opt-in）は §8 表の宣言どおり「即時」とする——ソケットの
+            // bind も Kestrel の再構成も要さず、SMTP 接続は送信のたびに張る（常設接続を持たない）
+            // ため、次回送信から新しい値が効く（ADR-0017 決定 9）。現時点の実効は送信側の
+            // 実装（Issue #350 第 2 段）が無く ImmediateConfigurationApplier が未配線のため
+            // 再起動待ちに落ちる——送信側の実装と同じ PR で目標へ揃える。
+            // 注: 宛先一覧（Notification:Email:To）は配列キー（KnownArrayKeys）であり、
+            // 本表（スカラーキーの表）には載せない——Windows 認証のグループ一覧と同じ扱い。
+            // ただし反映方式は他のメールキーと同じ即時である（ADR-0017 委任 9）。
+            ["Notification:Email:Enabled"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:From"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Host"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Port"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Security"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Username"] = ConfigurationReloadEffect.Immediate,
+            ["Notification:Email:Smtp:Password"] = ConfigurationReloadEffect.Immediate,
         };
 
     /// <summary>

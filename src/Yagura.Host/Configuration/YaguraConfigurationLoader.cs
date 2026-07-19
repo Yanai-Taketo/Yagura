@@ -91,6 +91,13 @@ public static class YaguraConfigurationLoader
         "Retention:Days",
         "Retention:ExecutionTimeOfDay",
         "Audit:RetentionDays",
+        "Notification:Email:Enabled",
+        "Notification:Email:From",
+        "Notification:Email:Smtp:Host",
+        "Notification:Email:Smtp:Port",
+        "Notification:Email:Smtp:Security",
+        "Notification:Email:Smtp:Username",
+        "Notification:Email:Smtp:Password",
     };
 
     /// <summary>
@@ -105,6 +112,8 @@ public static class YaguraConfigurationLoader
         "Admin:Authentication:Windows:AdminGroups",
         "Viewer:Authentication:Windows:ViewerGroups",
         "Viewer:Authentication:Windows:AdminGroups",
+        // メール通知の宛先一覧（ADR-0017 決定 1。宛先ごとの振り分けはしない）。
+        "Notification:Email:To",
     };
 
     /// <summary>
@@ -296,6 +305,9 @@ public static class YaguraConfigurationLoader
         // --- 監査: 保持期間（SEC-2。security.md §4.2。Issue #261） ---
         var auditRetentionDays = ResolveAuditRetentionDays(options, warnings);
 
+        // --- 能動通知: メール（ADR-0017。opt-in・既定無効。Issue #350） ---
+        var emailNotification = ResolveEmailNotification(options, warnings);
+
         foreach (var warning in warnings)
         {
             logger.LogWarning(
@@ -353,6 +365,7 @@ public static class YaguraConfigurationLoader
             UdpBindAddressIsExplicit = udpBindAddressIsExplicit,
             TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
             IngestionTlsBindAddressIsExplicit = ingestionTlsBindAddressIsExplicit,
+            EmailNotification = emailNotification,
         };
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
@@ -391,7 +404,11 @@ public static class YaguraConfigurationLoader
                 continue;
             }
 
-            if (KnownKeys.Contains(entry.Key) || IsKnownArrayElement(entry.Key))
+            // 空の JSON 配列（"To": []）は要素を 1 つも展開せず、配列キー自身がリーフとして
+            // 現れる（値は空文字）。これを未知キー扱いにすると「全ての宛先を消した」「グループ
+            // 指定を空にした」という正当な編集が、綴り間違いと同じ警告として出てしまうため、
+            // 配列キー自身も既知として扱う（Issue #350 で顕在化。グループ一覧も同じ性質を持つ）。
+            if (KnownKeys.Contains(entry.Key) || KnownArrayKeys.Contains(entry.Key) || IsKnownArrayElement(entry.Key))
             {
                 continue;
             }
@@ -1476,6 +1493,225 @@ public static class YaguraConfigurationLoader
 
         return null;
     }
+
+    /// <summary>
+    /// メール通知（ADR-0017。opt-in・既定無効）の設定を解決する。送信可能な構成が揃って
+    /// いる場合のみ <see cref="ResolvedEmailNotification"/> を返し、それ以外は
+    /// <see langword="null"/>（＝送らない）を返す。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>不正な構成は「機能を無効化して起動は継続」</b>（ADR-0017 決定 2。configuration.md §1 の
+    /// 縮小側継続）。メール通知は受信・保存・閲覧のいずれにも不可欠でないため、構成不備で
+    /// サービスの起動そのものを止めるのは釣り合わない——ただし<b>黙って無効化はしない</b>。
+    /// どの縮退経路も必ず警告を 1 件積み、起動ログと管理 UI の設定警告一覧に現れる。
+    /// </para>
+    /// <para>
+    /// <b>「無効なら以降を検証しない」</b>: <c>Enabled</c> が false のときは他のキーを一切
+    /// 見ない。既定無効の機能について、使っていない利用者の設定ファイルに残った書きかけの値で
+    /// 警告を出すのは雑音でしかない（ゼロ設定ファーストランの体験を汚さない——ADR-0017 決定 1）。
+    /// </para>
+    /// <para>
+    /// <b>SMTP-AUTH の片側のみは不正</b>（決定 3）: ユーザー名だけ・パスワードだけの構成は
+    /// 「認証したいのに設定が未完成」の状態であり、匿名送信へ黙って落とすと、意図しない
+    /// 相手へ認証なしで送る・サーバに拒否され続けるといった形で失敗が遅れて現れる。ここで
+    /// 機能ごと無効化して警告するほうが原因に近い。
+    /// </para>
+    /// <para>
+    /// <b>DPAPI 復号失敗も同じ扱い</b>（決定 3 の fail-notify）: 別マシンからの設定コピー・
+    /// 値の破損が原因。認証なし送信へのフォールバックはしない（同上）。
+    /// </para>
+    /// </remarks>
+    private static ResolvedEmailNotification? ResolveEmailNotification(
+        YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        const int defaultSmtpPort = 25;
+
+        var email = options.Notification?.Email;
+
+        if (!ResolveSecurityFlag(email?.Enabled, "Notification:Email:Enabled", warnings))
+        {
+            return null;
+        }
+
+        // --- 差出人・宛先（必須） ---
+        var from = email?.From?.Trim();
+        if (string.IsNullOrWhiteSpace(from) || !IsPlausibleEmailAddress(from))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Notification:Email:From",
+                InvalidValue: string.IsNullOrWhiteSpace(from) ? "(未設定)" : from,
+                AppliedValue: "(メール通知を無効化)",
+                Reason: "メール通知が有効ですが差出人アドレスが未設定または不正です。" +
+                    "起動を継続するためメール通知のみを無効化しました（ADR-0017 決定 2）"));
+
+            return null;
+        }
+
+        var to = ResolveGroupSpecs(email?.To);
+        var invalidRecipient = to.FirstOrDefault(address => !IsPlausibleEmailAddress(address));
+        if (to.Count == 0 || invalidRecipient is not null)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Notification:Email:To",
+                InvalidValue: invalidRecipient ?? "(未設定)",
+                AppliedValue: "(メール通知を無効化)",
+                Reason: invalidRecipient is not null
+                    ? "宛先アドレスに不正な値が含まれるため、一部だけ送るのではなくメール通知を" +
+                        "無効化しました（宛先の取りこぼしに気づけない状態を作らない）"
+                    : "メール通知が有効ですが宛先が 1 件も設定されていません。" +
+                        "起動を継続するためメール通知のみを無効化しました（ADR-0017 決定 2）"));
+
+            return null;
+        }
+
+        // --- SMTP 接続先（Host は必須。Port・Security は既定あり） ---
+        var smtp = email?.Smtp;
+        var host = smtp?.Host?.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Notification:Email:Smtp:Host",
+                InvalidValue: "(未設定)",
+                AppliedValue: "(メール通知を無効化)",
+                Reason: "メール通知が有効ですが SMTP サーバのホスト名が未設定です。" +
+                    "起動を継続するためメール通知のみを無効化しました（ADR-0017 決定 2）"));
+
+            return null;
+        }
+
+        var port = defaultSmtpPort;
+        var rawPort = smtp?.Port;
+        if (!string.IsNullOrWhiteSpace(rawPort))
+        {
+            if (int.TryParse(rawPort, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPort)
+                && parsedPort is >= 1 and <= 65535)
+            {
+                port = parsedPort;
+            }
+            else
+            {
+                // 既定の 25 番へ黙ってフォールバックしない（ADR-0017 決定 2）——指定した覚えの
+                // ないポートへ送りに行く／送信が失敗し続けるという形で、設定の誤りが
+                // 「届かない」としてしか現れなくなる。
+                warnings.Add(new ConfigurationWarning(
+                    Key: "Notification:Email:Smtp:Port",
+                    InvalidValue: rawPort,
+                    AppliedValue: "(メール通知を無効化)",
+                    Reason: "1〜65535 の整数として不正です。既定のポートへ黙って倒さず、" +
+                        "起動を継続するためメール通知のみを無効化しました（ADR-0017 決定 2）"));
+
+                return null;
+            }
+        }
+
+        var security = EmailTransportSecurity.Auto;
+        var rawSecurity = smtp?.Security?.Trim();
+        if (!string.IsNullOrWhiteSpace(rawSecurity))
+        {
+            switch (rawSecurity.ToLowerInvariant())
+            {
+                case "none":
+                    security = EmailTransportSecurity.None;
+                    break;
+                case "auto":
+                    security = EmailTransportSecurity.Auto;
+                    break;
+                case "required":
+                    security = EmailTransportSecurity.Required;
+                    break;
+                default:
+                    // どちらへも倒さない（ADR-0017 決定 2）——緩い側（auto）へ倒せば暗号化の
+                    // 意図が黙って外れ、厳しい側（required）へ倒せば送信が黙って死ぬ。
+                    // どちらも「設定したのに意図どおりでない」を無音にする。
+                    warnings.Add(new ConfigurationWarning(
+                        Key: "Notification:Email:Smtp:Security",
+                        InvalidValue: rawSecurity,
+                        AppliedValue: "(メール通知を無効化)",
+                        Reason: "既知の値（none / auto / required）ではありません。緩い側にも" +
+                            "厳しい側にも黙って倒さず、起動を継続するためメール通知のみを" +
+                            "無効化しました（ADR-0017 決定 2）"));
+
+                    return null;
+            }
+        }
+
+        // --- SMTP-AUTH（任意。ただし両方揃っているか、両方無いかのいずれかであること） ---
+        var username = string.IsNullOrWhiteSpace(smtp?.Username) ? null : smtp.Username.Trim();
+        var rawPassword = string.IsNullOrWhiteSpace(smtp?.Password) ? null : smtp.Password;
+
+        if ((username is null) != (rawPassword is null))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: username is null ? "Notification:Email:Smtp:Username" : "Notification:Email:Smtp:Password",
+                InvalidValue: "(未設定——対になるキーのみ設定されています。値は記録しない)",
+                AppliedValue: "(メール通知を無効化)",
+                Reason: "SMTP 認証はユーザー名とパスワードの両方が必要です。片方のみが設定されて" +
+                    "いるため、認証なしの送信へ落とさずメール通知を無効化しました（ADR-0017 決定 3）"));
+
+            return null;
+        }
+
+        string? password = null;
+        if (rawPassword is not null)
+        {
+            if (DpapiEmailPasswordProtector.IsProtected(rawPassword))
+            {
+                if (!DpapiEmailPasswordProtector.TryUnprotect(rawPassword, out password))
+                {
+                    // 警告に値は載せない（暗号文であっても資格情報由来の値を警告経路へ流さない
+                    // ——Storage:SqlServer:ConnectionString の復号失敗時と同じ作法）。
+                    warnings.Add(new ConfigurationWarning(
+                        Key: "Notification:Email:Smtp:Password",
+                        InvalidValue: "(dpapi: 暗号化表現——復号失敗。値は記録しない)",
+                        AppliedValue: "(メール通知を無効化)",
+                        Reason: "DPAPI 暗号化されたパスワードを復号できないため、認証なしの送信へ" +
+                            "落とさずメール通知を無効化しました。原因は値の改ざん・破損、または他の" +
+                            "マシンで暗号化された設定ファイルのコピーです（DPAPI machine スコープの" +
+                            "暗号化データは当該マシンでのみ復号可能——configuration.md §2）。" +
+                            "管理 UI でパスワードを再入力すると復旧します（ADR-0017 決定 3）"));
+
+                    return null;
+                }
+            }
+            else
+            {
+                // 平文の手編集は受理する（利用者のファイルを勝手に書き換えない——
+                // configuration.md §2。Storage:SqlServer:ConnectionString と同じ判断）。
+                password = rawPassword;
+
+                warnings.Add(new ConfigurationWarning(
+                    Key: "Notification:Email:Smtp:Password",
+                    InvalidValue: "(平文のパスワード——値は記録しない)",
+                    AppliedValue: "(平文のまま受理して継続)",
+                    Reason: "パスワードが平文で保存されています（ADR-0004 決定 5「設定ファイルに" +
+                        "平文で置かない」）。動作は継続しますが、管理 UI でパスワードを再入力すると" +
+                        "DPAPI 暗号化表現（dpapi:）で保存し直せます。設定ファイルの自動書き換えは" +
+                        "行いません（configuration.md §2）"));
+            }
+        }
+
+        return new ResolvedEmailNotification(
+            From: from,
+            To: to,
+            SmtpHost: host,
+            SmtpPort: port,
+            Security: security,
+            Username: username,
+            Password: password);
+    }
+
+    /// <summary>
+    /// メールアドレスとして最低限の体裁を満たすかを判定する（構成の解決段の受け皿）。
+    /// </summary>
+    /// <remarks>
+    /// <b>ここは RFC 5321/5322 の完全な検証ではない</b>。目的は「空文字・ホスト名だけ・
+    /// 記号の打ち間違い」といった明らかな誤りを設定保存の時点で拾うことであり、最終的な
+    /// 可否は送信時にサーバが決める（ADR-0017 が SMTP を外部境界としている以上、
+    /// 構成層で厳密に判定しても偽陰性——正当なアドレスを拒む——を作るだけになる）。
+    /// </remarks>
+    private static bool IsPlausibleEmailAddress(string value) =>
+        System.Net.Mail.MailAddress.TryCreate(value, out _);
 
     /// <summary>
     /// 保持期間削除の定期実行時刻を解決する（database.md §3。§1「既定値で継続」）。
