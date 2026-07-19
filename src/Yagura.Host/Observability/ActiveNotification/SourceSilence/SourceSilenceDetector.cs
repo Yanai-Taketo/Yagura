@@ -57,7 +57,12 @@ internal sealed record SourceSilenceEvaluation(
 /// 継続していれば遅延発火する。「途絶が継続しているのに警告が一度も出ていない」状態を作らない。
 /// </para>
 /// </remarks>
-internal sealed class SourceSilenceDetector
+/// <remarks>
+/// 型のみ <c>public</c>（公開型 <see cref="ActiveNotificationMonitor"/> のコンストラクタ引数に
+/// 現れるため）。構築と操作の口は <c>internal</c> のままとし、外部アセンブリからの利用面は開かない
+/// ——<c>EmailNotificationDispatcher</c> と同じ扱い。
+/// </remarks>
+public sealed class SourceSilenceDetector
 {
     private readonly SourceActivityTracker _tracker;
     private readonly TimeProvider _timeProvider;

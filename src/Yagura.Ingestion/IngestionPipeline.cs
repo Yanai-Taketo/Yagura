@@ -135,7 +135,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
         LogStoreWriteGate? writeGate = null,
         SpoolSelfTestTracker? selfTestTracker = null,
         TlsSyslogListenerOptions? tlsListenerOptions = null,
-        Func<X509Certificate2?>? tlsCertificateSelector = null)
+        Func<X509Certificate2?>? tlsCertificateSelector = null,
+        Yagura.Storage.Observability.ISourceActivityTracker? sourceActivityTracker = null)
     {
         ArgumentNullException.ThrowIfNull(udpListenerOptions);
         ArgumentNullException.ThrowIfNull(tcpListenerOptions);
@@ -212,7 +213,10 @@ public sealed class IngestionPipeline : IAsyncDisposable
             spool,
             _metrics,
             defaultRfc3164TimeZone,
-            loggerFactory?.CreateLogger<ParsingStage>());
+            loggerFactory?.CreateLogger<ParsingStage>(),
+            // 途絶検知の追跡（ADR-0018 決定 3）。opt-in のため null 可——SpoolSelfTestTracker と
+            // 同じ注入形で、機能が無効なら受信ホットパスには分岐 1 つだけが残る。
+            sourceActivityTracker);
         _persistenceWriter = new PersistenceWriter(
             _q2.Reader,
             logStore,

@@ -527,6 +527,16 @@ public static class Program
                     configuration.FlowControlBurstSize)
                 : new NoopIngressGate();
 
+        // 送信元の途絶検知（ADR-0018。opt-in・既定無効。Issue #351）。追跡器と判定器は
+        // 合成ルートが所有し、受信段（ParsingStage）・監視ループ・設定の即時反映の 3 者で共有する。
+        // 機能が無効（ウォッチリスト未設定）でも構築はしておく——設定の即時反映で有効化された
+        // 時点から、サービスを再起動せずに追跡が始まる（決定 6）。
+        var sourceActivityTracker = new Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceActivityTracker();
+        var sourceSilenceDetector = new Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceDetector(
+            sourceActivityTracker);
+        sourceActivityTracker.ApplyWatchlist(resolvedConfiguration.SourceSilence?.Watchlist);
+        sourceSilenceDetector.ApplyWatchlist(resolvedConfiguration.SourceSilence?.Watchlist);
+
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
             sp.GetRequiredService<TcpSyslogListenerOptions>(),
@@ -539,7 +549,8 @@ public static class Program
             sp.GetRequiredService<LogStoreWriteGate>(),
             selfTestTracker,
             tlsListenerOptions,
-            tlsCertificateSelector));
+            tlsCertificateSelector,
+            sourceActivityTracker));
 
         // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
         // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。
@@ -599,7 +610,8 @@ public static class Program
             // ADR-0011 決定 6: 三層防御の能動通知への昇格。AdminAuthFailureDefense は
             // 本メソッド内で後段に登録されるが、AddSingleton のファクトリは遅延解決されるため
             // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
-            sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>()));
+            sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>(),
+            sourceSilenceDetector));
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
         // ActiveNotificationMonitor と同じく IHostedService にはしない——停止順序を Generic Host の
@@ -756,6 +768,18 @@ public static class Program
                      "Notification:Email:Smtp:Password"],
                     newConfiguration => sp.GetRequiredService<EmailNotificationDispatcher>()
                         .UpdateConfiguration(newConfiguration.EmailNotification)),
+                // 送信元の途絶検知（ADR-0018 決定 6）。ウォッチリストの参照交換のみで反映できる。
+                // **既存エントリの追跡状態（最終受信時刻・途絶フラグ）は保持し、削除された
+                // エントリの状態は破棄する**——保持しないと設定を触るたびに全エントリが
+                // 「登録時点基準」へ戻り、長い閾値のエントリが実質永久に発火しなくなる。
+                new ImmediateConfigurationApplier(
+                    ["Notification:SourceSilence:Watchlist", "Notification:SourceSilence:DefaultThresholdMinutes"],
+                    newConfiguration =>
+                    {
+                        var watchlist = newConfiguration.SourceSilence?.Watchlist;
+                        sourceActivityTracker.ApplyWatchlist(watchlist);
+                        sourceSilenceDetector.ApplyWatchlist(watchlist);
+                    }),
                 // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
                 new ImmediateConfigurationApplier(
                     ["Audit:RetentionDays"],

@@ -97,7 +97,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         SpoolSelfTestTracker? selfTestTracker = null,
         IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
         IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null,
-        Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null)
+        Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null,
+        SourceSilence.SourceSilenceDetector? sourceSilenceDetector = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -113,7 +114,15 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _adminHttpsCertificateProbe = adminHttpsCertificateProbe;
         _ingestionTlsCertificateProbe = ingestionTlsCertificateProbe;
         _adminAuthFailureDefense = adminAuthFailureDefense;
+        _sourceSilenceDetector = sourceSilenceDetector;
     }
+
+    /// <summary>
+    /// 送信元の途絶検知（ADR-0018。opt-in のため <see langword="null"/> 可）。
+    /// 判定の実体は <see cref="SourceSilence.SourceSilenceDetector"/> が持ち、本クラスは
+    /// 既存の周期評価から呼ぶだけ——ADR-0018 の「新しい常駐機構は作らない」に従う。
+    /// </summary>
+    private readonly SourceSilence.SourceSilenceDetector? _sourceSilenceDetector;
 
     /// <summary>周期監視ループを開始する。</summary>
     public void Start()
@@ -216,6 +225,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateAdminHttpsCertificate();
         EvaluateIngestionTlsCertificate();
         EvaluateAdminAuthFailureDefense();
+        EvaluateSourceSilence();
         PruneStaleNotificationSuppression();
     }
 
@@ -244,6 +254,69 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 「現に進行中で通知対象の攻撃者数」で有界</b>であり、攻撃者が任意に膨らませられる恒久ピン留めは
     /// 残らない（詳細は <c>SweepIdleIpRateLimitEntries</c> の remarks 参照）。
     /// </remarks>
+    /// <summary>
+    /// 送信元の途絶を評価し、1027／1028／1029 を書き出す（ADR-0018 決定 3）。
+    /// </summary>
+    /// <remarks>
+    /// <b>本メソッドは既存の抑制窓（<see cref="NotifyIfDue"/>）を通さない</b>——途絶検知は
+    /// エントリ別の抑制窓を判定器側に持っており（決定 3。粒度が既存のトリガ別抑制窓と違う）、
+    /// ここで二重に律速すると装置 A の発火が装置 B の初報を飲む。判定器が「出す」と決めたものは
+    /// そのまま出す。
+    /// </remarks>
+    private void EvaluateSourceSilence()
+    {
+        if (_sourceSilenceDetector is null)
+        {
+            return;
+        }
+
+        // 受信断保留の判定源は委任 6（第 4 段）。それまでは保留しない——保留しないことで
+        // 起きるのは「サーバ側障害を装置側の途絶として通知する」偽陽性であり、
+        // 逆（サーバ障害中に装置の途絶を見逃す）より観測が欠けない側に倒れている。
+        var evaluation = _sourceSilenceDetector.Evaluate(receptionSuspended: false);
+
+        if (evaluation.IsBurst)
+        {
+            _logger.LogWarning(
+                SourceSilence.SourceSilenceEventIds.SourceSilenceBurstDetected,
+                "登録済み送信元 {Count} 件が同一周期に一斉に途絶しました: {Entries}。" +
+                "個別の装置障害より、サーバ側の受信経路（リスナ・ファイアウォール・経路）や" +
+                "上流の共通機器の障害を先に確認してください。" +
+                "なお、サービス起動後に同じ閾値のエントリが揃って再アームされた場合も" +
+                "同時発火し得ます（独立した障害の寄せ集めである可能性）。",
+                evaluation.Silences.Count,
+                string.Join(", ", evaluation.Silences.Select(FormatEntry)));
+        }
+        else
+        {
+            foreach (var silence in evaluation.Silences)
+            {
+                _logger.LogWarning(
+                    SourceSilence.SourceSilenceEventIds.SourceSilenceDetected,
+                    "登録済み送信元 {Entry} からの受信が途絶しています（閾値 {Threshold}・経過 {Elapsed}）。" +
+                    "装置の生死、意図した設定変更・機器障害の有無を確認してください。" +
+                    "いずれでもない場合、証跡の遮断を伴うセキュリティ事象の可能性も検討してください。" +
+                    "送信元アドレスが変わった（DHCP・機器リプレース）場合はウォッチリストの更新が必要です。",
+                    FormatEntry(silence),
+                    silence.Threshold,
+                    silence.Elapsed);
+            }
+        }
+
+        foreach (var recovery in evaluation.Recoveries)
+        {
+            // 情報レベル（決定 3）。能動通知はしないが、途絶警告と対で
+            // 「ログが欠けていた期間」の終端を証跡に残す。
+            _logger.LogInformation(
+                SourceSilence.SourceSilenceEventIds.SourceSilenceRecovered,
+                "登録済み送信元 {Entry} からの受信が再開しました。",
+                FormatEntry(recovery));
+        }
+    }
+
+    private static string FormatEntry(SourceSilence.SourceSilenceEvent entry) =>
+        entry.Label is null ? entry.Address.ToString() : $"{entry.Address}（{entry.Label}）";
+
     private void EvaluateAdminAuthFailureDefense()
     {
         if (_adminAuthFailureDefense is null)
