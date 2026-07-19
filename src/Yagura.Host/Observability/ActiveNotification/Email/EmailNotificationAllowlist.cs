@@ -71,6 +71,11 @@ internal static class EmailNotificationAllowlist
 
             // --- 受信リスナの縮小継続（Issue #291。「届かない」に直結する） ---
             [ConfigurationEventIds.ListenerBindFailedDegradedStartup.Id] = Severity.Warning,     // 1022
+
+            // --- 送信元の途絶検知（ADR-0018 決定 5——本 ADR が名指しで登録を要求する 2 件。
+            //     1029〔復帰〕は対象外: 復帰は対応を要する事象ではなく能動通知しない（決定 3） ---
+            [SourceSilence.SourceSilenceEventIds.SourceSilenceDetected.Id] = Severity.Warning,      // 1027
+            [SourceSilence.SourceSilenceEventIds.SourceSilenceBurstDetected.Id] = Severity.Warning, // 1028
         };
 
     /// <summary>本表に登録済みのすべてのイベント ID。テスト・網羅性検証用。</summary>
