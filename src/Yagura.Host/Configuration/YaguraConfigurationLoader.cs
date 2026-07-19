@@ -934,7 +934,8 @@ public static class YaguraConfigurationLoader
         return result.Count == 0 ? Array.Empty<string>() : result;
     }
 
-    private static bool ResolveSecurityFlag(string? raw, string key, List<ConfigurationWarning> warnings)
+    private static bool ResolveSecurityFlag(
+        string? raw, string key, List<ConfigurationWarning> warnings, string? reason = null)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
@@ -950,8 +951,8 @@ public static class YaguraConfigurationLoader
             Key: key,
             InvalidValue: raw,
             AppliedValue: bool.FalseString,
-            Reason: "真偽値として不正なため縮小側（無効）を適用" +
-                "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない）"));
+            Reason: reason ?? ("真偽値として不正なため縮小側（無効）を適用" +
+                "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない）")));
 
         return false;
     }
@@ -1531,7 +1532,11 @@ public static class YaguraConfigurationLoader
 
         var email = options.Notification?.Email;
 
-        if (!ResolveSecurityFlag(email?.Enabled, "Notification:Email:Enabled", warnings))
+        // 警告文は既定（「認証関連のセキュリティ項目」）を使わない——メール通知の有効フラグに
+        // その説明は当てはまらず、利用者を認証設定側の調査へ誤誘導する（PR #366 レビュー対応）。
+        if (!ResolveSecurityFlag(email?.Enabled, "Notification:Email:Enabled", warnings,
+                reason: "真偽値として不正なため縮小側（無効）を適用" +
+                    "（configuration.md §1 の縮小側継続——opt-in 機能は不正値で有効側へ落とさない）"))
         {
             return null;
         }

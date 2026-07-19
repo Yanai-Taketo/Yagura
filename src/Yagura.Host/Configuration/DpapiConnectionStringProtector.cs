@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 
 namespace Yagura.Host.Configuration;
 
@@ -47,7 +46,7 @@ internal static class DpapiConnectionStringProtector
     /// </summary>
     internal const string Prefix = DpapiSecretProtector.Prefix;
 
-/// <summary>
+    /// <summary>
     /// 固有 entropy（クラス remarks 参照。値を変更すると既存の暗号化表現が全て復号不能になる
     /// ため、変更は表現形式の版上げとしてのみ行うこと）。
     /// </summary>

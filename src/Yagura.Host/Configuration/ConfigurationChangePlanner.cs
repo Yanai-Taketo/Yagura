@@ -83,10 +83,10 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Retention:Days", before.Retention?.Days, after.Retention?.Days);
         CompareKey(changedKeys, "Retention:ExecutionTimeOfDay", before.Retention?.ExecutionTimeOfDay, after.Retention?.ExecutionTimeOfDay);
         CompareKey(changedKeys, "Audit:RetentionDays", before.Audit?.RetentionDays, after.Audit?.RetentionDays);
-        // メール通知（ADR-0017）。宛先一覧（Notification:Email:To）は配列キーであり、
-        // グループ一覧（Admin/Viewer:Authentication:Windows:*Groups）と同じく本比較の対象外
-        // ——ConfigurationKeyMetadata に登録が無いため、ここへ足すと GetReloadEffect が
-        // KeyNotFoundException を投げる。
+        // メール通知（ADR-0017）。宛先一覧（Notification:Email:To）は配列キーのため
+        // ここではなく下の CompareArrayKey 節で比較する（委任 9。配列キーを追加する際は
+        // ConfigurationKeyMetadata.RegisteredArrayKeys への登録もセットで行う——網羅性は
+        // ConfigurationChangePlannerTests が機械検証する）。
         CompareKey(changedKeys, "Notification:Email:Enabled", before.Notification?.Email?.Enabled, after.Notification?.Email?.Enabled);
         CompareKey(changedKeys, "Notification:Email:From", before.Notification?.Email?.From, after.Notification?.Email?.From);
         CompareKey(changedKeys, "Notification:Email:Smtp:Host", before.Notification?.Email?.Smtp?.Host, after.Notification?.Email?.Smtp?.Host);
