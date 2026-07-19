@@ -100,8 +100,23 @@ else
                                   ? UiText.EmailNotificationPasswordHelpConfigured
                                   : UiText.EmailNotificationPasswordHelpUnset)"
                               @bind-Value="_password"
+                              Disabled="@_clearPassword"
                               InputType="InputType.Password" Variant="Variant.Outlined" />
             </div>
+
+            @* 「空欄 = 変更しない」に固定した帰結として、削除には専用の口が要る——これがないと
+               一度パスワードを保存した構成は SMTP 認証をやめられない（PR #366 レビュー対応） *@
+            @if (_status.PasswordConfigured)
+            {
+                <div class="mt-2">
+                    <MudSwitch T="bool" @bind-Value="_clearPassword"
+                               Label="@UiText.EmailNotificationClearPasswordLabel" Color="Color.Warning" />
+                    @if (_clearPassword)
+                    {
+                        <MudText Typo="Typo.caption">@UiText.EmailNotificationClearPasswordHelp</MudText>
+                    }
+                </div>
+            }
         </div>
 
         @if (ShouldWarnAboutCredentialExposure)
@@ -129,7 +144,7 @@ else
         <MudText Typo="Typo.h6">@UiText.EmailNotificationTestTitle</MudText>
         <MudText Typo="Typo.body2" Class="mt-1">@UiText.EmailNotificationTestIntro</MudText>
 
-        @if (string.IsNullOrEmpty(_password) && !string.IsNullOrWhiteSpace(_username) && _status.PasswordConfigured)
+        @if (string.IsNullOrEmpty(_password) && !string.IsNullOrWhiteSpace(_username) && _status.PasswordConfigured && !_clearPassword)
         {
             <MudText Typo="Typo.caption" Class="mt-1">@UiText.EmailNotificationTestUsesStoredPassword</MudText>
         }
@@ -251,6 +266,7 @@ else
     private string _security = "auto";
     private string _username = string.Empty;
     private string _password = string.Empty;
+    private bool _clearPassword;
 
     private string? _errorMessage;
     private string? _savedSummary;
@@ -263,7 +279,7 @@ else
     /// ——保存してから気づかせるより、選択している最中に見えるほうが直せる。
     /// </summary>
     private bool ShouldWarnAboutCredentialExposure =>
-        (!string.IsNullOrEmpty(_password) || (_status?.PasswordConfigured ?? false))
+        (!string.IsNullOrEmpty(_password) || ((_status?.PasswordConfigured ?? false) && !_clearPassword))
         && !string.Equals(_security, "required", StringComparison.Ordinal);
 
     protected override async Task OnInitializedAsync()
@@ -283,6 +299,8 @@ else
         _username = status.Username ?? string.Empty;
         // パスワードは再表示しない（決定 3）。保存後も空欄に戻す——「変更しない」の意味を保つ。
         _password = string.Empty;
+        // 削除は 1 回の適用で完結する操作——保存後は必ずチェックを外へ戻す。
+        _clearPassword = false;
     }
 
     /// <summary>入力欄（1 行 1 件）を宛先の一覧へ変換する。</summary>
@@ -297,7 +315,8 @@ else
         SmtpPort: int.TryParse(_smtpPort, out var port) ? port : 0,
         Security: _security,
         Username: _username,
-        Password: string.IsNullOrEmpty(_password) ? null : _password);
+        Password: string.IsNullOrEmpty(_password) ? null : _password,
+        ClearPassword: _clearPassword);
 
     private async Task ApplyAsync()
     {

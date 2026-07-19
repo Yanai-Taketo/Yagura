@@ -74,6 +74,13 @@ public interface IEmailNotificationAdminService : IYaguraWriteService
 /// <see langword="null"/> または空文字は「変更しない」（保存済みの値を維持する）。
 /// パスワードは UI に再表示しないため、空欄をこの意味に固定する（決定 8）。
 /// </param>
+/// <param name="ClearPassword">
+/// 保存済みのパスワードを削除する（明示操作）。「空欄 = 変更しない」に固定した帰結として、
+/// 削除には専用の口が要る——これがないと、一度パスワードを保存した構成は SMTP 認証を
+/// やめられなくなる（ユーザー名を消すと決定 3 の「両方あり/両方なし」検証に必ず落ちる。
+/// PR #366 レビュー対応）。<paramref name="Password"/> との同時指定は拒否される。
+/// テスト送信では「保存済みパスワードへのフォールバックをしない」の意味になる。
+/// </param>
 public sealed record EmailNotificationSettings(
     bool Enabled,
     string? From,
@@ -82,7 +89,8 @@ public sealed record EmailNotificationSettings(
     int SmtpPort,
     string Security,
     string? Username,
-    string? Password);
+    string? Password,
+    bool ClearPassword = false);
 
 /// <summary>
 /// チャネルの健全性（管理面ダッシュボードの常設カード。ADR-0017 決定 5）。

@@ -74,8 +74,37 @@ public sealed class EmailNotificationAdminServiceTests : IDisposable
         int port = 25,
         string security = "auto",
         string? username = null,
-        string? password = null) =>
-        new(enabled, from, to ?? ["ops@example.com"], host, port, security, username, password);
+        string? password = null,
+        bool clearPassword = false) =>
+        new(enabled, from, to ?? ["ops@example.com"], host, port, security, username, password, clearPassword);
+
+    /// <summary>
+    /// 保存済みパスワードのある構成を DPAPI を経由せずに作る（平文は Loader が警告付きで
+    /// 受理する正当な表現——§2。DPAPI に依存しないため Windows 以外でも走る）。
+    /// </summary>
+    private void SeedStoredPlaintextCredential(string username = "yagura", string password = "stored-secret")
+    {
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        var options = snapshot.Options;
+        options.Notification = new YaguraConfigurationOptions.NotificationOptions
+        {
+            Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions
+            {
+                Enabled = "true",
+                From = "yagura@example.com",
+                To = ["ops@example.com"],
+                Smtp = new YaguraConfigurationOptions.NotificationOptions.EmailOptions.SmtpOptions
+                {
+                    Host = "smtp.example.com",
+                    Port = "25",
+                    Security = "required",
+                    Username = username,
+                    Password = password,
+                },
+            },
+        };
+        YaguraConfigurationWriter.Save(_dataRoot, options, snapshot.VersionToken);
+    }
 
     // ------------------------------------------------------------------
     // 保存前検証（起動時の縮退を、利用者が目の前にいる場面では拒否に倒す）
@@ -204,6 +233,106 @@ public sealed class EmailNotificationAdminServiceTests : IDisposable
 
         Assert.DoesNotContain("Notification:Email:Smtp:Password", result.ChangedKeys);
         Assert.True((await service.GetStatusAsync()).PasswordConfigured);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ClearPassword_RemovesTheStoredValueAndEndsAuthentication()
+    {
+        // 「空欄 = 変更しない」に固定した帰結として、削除には専用の口が要る——これがないと
+        // 一度パスワードを保存した構成は SMTP 認証をやめられない（PR #366 レビュー対応）。
+        SeedStoredPlaintextCredential();
+        var service = CreateService();
+
+        var result = await service.ConfigureAsync(
+            ValidSettings(username: null, password: null, security: "required", clearPassword: true));
+
+        Assert.Contains("Notification:Email:Smtp:Password", result.ChangedKeys);
+        Assert.Contains("Notification:Email:Smtp:Username", result.ChangedKeys);
+
+        var persisted = YaguraConfigurationWriter.Read(_dataRoot).Options.Notification?.Email?.Smtp;
+        Assert.True(string.IsNullOrEmpty(persisted?.Password));
+        Assert.True(string.IsNullOrEmpty(persisted?.Username));
+        Assert.False((await service.GetStatusAsync()).PasswordConfigured);
+
+        // 監査には「削除した」事実が値なしで残る。
+        var audit = Assert.Single(_audit.Events);
+        Assert.Contains("(削除)", audit.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("stored-secret", audit.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ClearPasswordWithoutAStoredValue_IsANoOpForThePasswordKey()
+    {
+        // 保存済みの値がなければ「削除」は変更として数えない（監査 2021 を空振りで積まない）。
+        var service = CreateService();
+
+        await service.ConfigureAsync(ValidSettings());
+        _audit.Events.Clear();
+
+        var result = await service.ConfigureAsync(ValidSettings(clearPassword: true));
+
+        Assert.DoesNotContain("Notification:Email:Smtp:Password", result.ChangedKeys);
+        Assert.Empty(result.ChangedKeys);
+        Assert.Empty(_audit.Events);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ClearPasswordTogetherWithANewPassword_IsRejected()
+    {
+        var service = CreateService();
+
+        await Assert.ThrowsAsync<WizardValidationException>(() => service.ConfigureAsync(
+            ValidSettings(username: "yagura", password: "new-secret", clearPassword: true)));
+
+        Assert.Empty(_audit.Events);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_ClearPasswordWhileKeepingTheUsername_IsRejected()
+    {
+        // 削除しても決定 3 の「両方あり/両方なし」は破れない——ユーザー名を残したままの削除は拒否。
+        SeedStoredPlaintextCredential();
+        var service = CreateService();
+
+        await Assert.ThrowsAsync<WizardValidationException>(() => service.ConfigureAsync(
+            ValidSettings(username: "yagura", password: null, security: "required", clearPassword: true)));
+    }
+
+    [Fact]
+    public async Task SendTestAsync_ClearPassword_DoesNotFallBackToTheStoredCredential()
+    {
+        // 削除を指定している間は保存済み資格情報でのテスト送信を行わない——削除しようとしている
+        // 資格情報で「成功」を見せない。
+        SeedStoredPlaintextCredential();
+        var sender = new StubSender(EmailSendResult.Success());
+        var service = CreateService(sender);
+
+        await Assert.ThrowsAsync<WizardValidationException>(() => service.SendTestAsync(
+            ValidSettings(username: "yagura", password: null, security: "required", clearPassword: true)));
+
+        Assert.Null(sender.LastConfiguration); // 送信の試行自体が行われていない
+    }
+
+    [Fact]
+    public async Task SendTestAsync_CancelledByTheOperator_StillRecordsTheAuditTrail()
+    {
+        // 2022 を監査対象とした理由（任意ホストへの接続試行 = 到達性探査に転用し得る）は、
+        // 接続開始直後の中止で証跡ゼロになるなら成立しない（PR #366 レビュー対応）。
+        var service = CreateService(new CancelledSender());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.SendTestAsync(ValidSettings()));
+
+        var audit = Assert.Single(_audit.Events);
+        Assert.Equal(AuditEventKind.EmailNotificationTestSent, audit.Kind);
+        Assert.Contains("result=cancelled", audit.Detail, StringComparison.Ordinal);
+    }
+
+    private sealed class CancelledSender : IEmailSender
+    {
+        public Task<EmailSendResult> SendAsync(
+            ResolvedEmailNotification configuration, string subject, string body, CancellationToken cancellationToken = default) =>
+            throw new OperationCanceledException();
     }
 
     [Fact]

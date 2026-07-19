@@ -1710,6 +1710,14 @@ public static class UiText
     public const string EmailNotificationPasswordHelpUnset =
         "入力した値は暗号化して保存します（このサーバでのみ復号できます）。画面に再表示することはありません。";
 
+    /// <summary>
+    /// 保存済みパスワードの明示的な削除（PR #366 レビュー対応）。「空欄 = 変更しない」に固定した
+    /// 帰結として、削除には専用の口が要る——これがないと SMTP 認証をやめる操作ができない。
+    /// </summary>
+    public const string EmailNotificationClearPasswordLabel = "保存済みのパスワードを削除する";
+    public const string EmailNotificationClearPasswordHelp =
+        "SMTP 認証をやめる場合は、ユーザー名を空にしたうえでこれを有効にして適用してください。";
+
     /// <summary>決定 3 の能動警告。STARTTLS ストリップで漏れるのが「資格情報」であることを明示する。</summary>
     public const string EmailNotificationPlaintextCredentialWarning =
         "パスワードを設定していますが、暗号化が「必須」になっていません。"

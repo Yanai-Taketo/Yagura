@@ -103,16 +103,29 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
 
         var normalized = Normalize(settings, validateForEnabled: settings.Enabled);
 
+        if (settings.ClearPassword && normalized.Password is not null)
+        {
+            throw new WizardValidationException(
+                "「保存済みのパスワードを削除する」と新しいパスワードの入力は同時に指定できません。" +
+                "パスワードを差し替える場合は削除のチェックを外し、新しい値だけを入力してください。");
+        }
+
         var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
         var before = snapshot.Options;
         var beforeEmail = before.Notification?.Email;
 
-        // パスワードは「空欄 = 変更しない」（UI に再表示しないため。決定 8）。
+        // パスワードは「空欄 = 変更しない」（UI に再表示しないため。決定 8）。削除は
+        // ClearPassword の明示操作でのみ行う——空欄に削除の意味を持たせない（PR #366 レビュー対応。
+        // これがないと SMTP 認証をやめる操作が決定 3 の対検証に必ず落ちる）。
         var storedPassword = beforeEmail?.Smtp?.Password;
-        var passwordChanged = normalized.Password is not null;
-        var effectivePassword = passwordChanged
-            ? DpapiEmailPasswordProtector.Protect(normalized.Password!)
-            : storedPassword;
+        var passwordChanged = settings.ClearPassword
+            ? !string.IsNullOrWhiteSpace(storedPassword)
+            : normalized.Password is not null;
+        var effectivePassword = settings.ClearPassword
+            ? null
+            : normalized.Password is not null
+                ? DpapiEmailPasswordProtector.Protect(normalized.Password)
+                : storedPassword;
 
         // 認証は「両方あり」か「両方なし」のいずれかでなければならない（決定 3）。
         // ユーザー名を消したのにパスワードが残る／その逆を、保存の時点で防ぐ。
@@ -126,7 +139,8 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
                 throw new WizardValidationException(
                     "SMTP 認証を使う場合はユーザー名とパスワードの両方を入力してください。" +
                     "片方だけの構成では、認証なしの送信へ黙って切り替わることを避けるため" +
-                    "メール通知そのものが無効になります。認証を使わない場合は両方を空にしてください。");
+                    "メール通知そのものが無効になります。認証を使わない場合はユーザー名を空にし、" +
+                    "保存済みのパスワードは「保存済みのパスワードを削除する」で削除してください。");
             }
         }
 
@@ -192,7 +206,7 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
                     $"{SmtpPortKey}={normalized.SmtpPort} " +
                     $"{SmtpSecurityKey}={normalized.Security} " +
                     $"{SmtpUsernameKey}={normalized.Username ?? "(未設定)"} " +
-                    $"{SmtpPasswordKey}={(passwordChanged ? "(変更あり。値は記録しない)" : "(変更なし)")} " +
+                    $"{SmtpPasswordKey}={(passwordChanged ? settings.ClearPassword ? "(削除)" : "(変更あり。値は記録しない)" : "(変更なし)")} " +
                     $"changedKeys={string.Join(",", changedKeys)}",
                 AuthenticationScheme: operatorScheme,
                 AuthenticatedPrincipal: operatorPrincipal),
@@ -225,11 +239,12 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
 
         // パスワード欄が空欄なら保存済みの値を使う（UI に再表示しないため。決定 8）。
         // この形態は「画面上の任意ホストへ保存済み資格情報で AUTH を試行できる」操作になるため、
-        // 監査に「保存済み資格情報を使用」の別を残す。
+        // 監査に「保存済み資格情報を使用」の別を残す。削除（ClearPassword）を指定している間は
+        // フォールバックしない——削除しようとしている資格情報でのテスト送信は意図と食い違う。
         var usedStoredCredential = false;
         var password = normalized.Password;
 
-        if (password is null && normalized.Username is not null)
+        if (password is null && normalized.Username is not null && !settings.ClearPassword)
         {
             var stored = YaguraConfigurationWriter.Read(_dataRoot).Options.Notification?.Email?.Smtp?.Password;
 
@@ -269,13 +284,6 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
             Username: normalized.Username,
             Password: password);
 
-        // キュー・流量上限を経由しない直送（テストが実通知の枠を消費しない。決定 8）。
-        var result = await _sender.SendAsync(
-            configuration,
-            "[Yagura] テスト送信",
-            BuildTestBody(),
-            cancellationToken).ConfigureAwait(false);
-
         // 監査 2022（決定 8）: 接続先・宛先・成否・操作者と「保存済み資格情報の使用」の別。
         // 資格情報の値は記録しない（authenticated / storedCredentialUsed はいずれも真偽値であり、
         // ユーザー名・パスワードそのものは含まない）。
@@ -286,22 +294,46 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         // 事後に「誰が宛先を書き換えたか」を追えなければ監査の意味を成さない。ただし帰結として
         // **監査記録・イベントログを読める者は宛先アドレスを読める**（security.md §4.1 の記録内容と
         // 同じ保護水準に置かれる）。
-        await _auditRecorder.RecordAsync(
-            new AuditEvent(
-                OccurredAt: _timeProvider.GetUtcNow(),
-                Kind: AuditEventKind.EmailNotificationTestSent,
-                RemoteAddress: operatorAddress,
-                RemotePort: null,
-                Detail:
-                    $"smtpHost={configuration.SmtpHost} port={configuration.SmtpPort} " +
-                    $"security={normalized.Security} from={configuration.From} " +
-                    $"to={string.Join(";", configuration.To)} " +
-                    $"authenticated={configuration.UsesAuthentication} " +
-                    $"storedCredentialUsed={usedStoredCredential} " +
-                    $"result={(result.Succeeded ? "success" : $"failure:{result.FailureKind}")}",
-                AuthenticationScheme: operatorScheme,
-                AuthenticatedPrincipal: operatorPrincipal),
-            CancellationToken.None).ConfigureAwait(false);
+        async Task RecordTestAuditAsync(string resultLabel) =>
+            await _auditRecorder.RecordAsync(
+                new AuditEvent(
+                    OccurredAt: _timeProvider.GetUtcNow(),
+                    Kind: AuditEventKind.EmailNotificationTestSent,
+                    RemoteAddress: operatorAddress,
+                    RemotePort: null,
+                    Detail:
+                        $"smtpHost={configuration.SmtpHost} port={configuration.SmtpPort} " +
+                        $"security={normalized.Security} from={configuration.From} " +
+                        $"to={string.Join(";", configuration.To)} " +
+                        $"authenticated={configuration.UsesAuthentication} " +
+                        $"storedCredentialUsed={usedStoredCredential} " +
+                        $"result={resultLabel}",
+                    AuthenticationScheme: operatorScheme,
+                    AuthenticatedPrincipal: operatorPrincipal),
+                CancellationToken.None).ConfigureAwait(false);
+
+        // キュー・流量上限を経由しない直送（テストが実通知の枠を消費しない。決定 8）。
+        EmailSendResult result;
+        try
+        {
+            result = await _sender.SendAsync(
+                configuration,
+                "[Yagura] テスト送信",
+                BuildTestBody(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // 利用者の「中止」でも接続試行の事実は監査に残す（PR #366 レビュー対応）——
+            // 2022 を監査対象とした理由そのもの（未保存の値で任意ホストへ接続を試せる操作は
+            // 内部ネットワークの到達性探査に転用し得る）が、接続開始直後の中止で証跡ゼロに
+            // なるなら成立しない。失敗の記録と同じく、中止も結果の一種として記録する。
+            await RecordTestAuditAsync("cancelled").ConfigureAwait(false);
+            throw;
+        }
+
+        await RecordTestAuditAsync(result.Succeeded ? "success" : $"failure:{result.FailureKind}")
+            .ConfigureAwait(false);
 
         return new EmailNotificationTestResult(
             Succeeded: result.Succeeded,
