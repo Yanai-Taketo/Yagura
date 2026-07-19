@@ -168,6 +168,16 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         // 監査 2021（決定 4）: 変更キーと新値を残す。**パスワードは変更の事実のみ**。
         // 宛先・接続先は「通知がどこへ向かうか」= 流出経路そのものの定義であり、
         // キー名粒度（2016）では事後に追えない。
+        //
+        // **CodeQL の cs/cleartext-storage-of-sensitive-information について（2026-07-19。PR #366）**:
+        // 本箇所は high 深刻度で報告されるが誤検知である。SmtpPasswordKey は設定キーの「名前」
+        // （"Notification:Email:Smtp:Password" という定数文字列）であり、= の右に置くのは
+        // 固定の marker 文字列のみ——パスワードの値も、その DPAPI 暗号化表現も、ここへは流れない。
+        // CodeQL は「識別子名に Password を含む定数」を機微データの発生源とみなすヒューリスティックで
+        // 判定しており、定数名を変えれば黙るが、それはスキャナを回避するためだけの改名になるため行わない。
+        // 値が載らないことは EmailNotificationAdminServiceTests
+        // .ConfigureAsync_PasswordIsEncryptedAtRestAndNeverAudited が機械的に固定している
+        // （本コメントではなくそのテストが不変条件の担保である）。
         await _auditRecorder.RecordAsync(
             new AuditEvent(
                 OccurredAt: _timeProvider.GetUtcNow(),
@@ -267,7 +277,15 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
             cancellationToken).ConfigureAwait(false);
 
         // 監査 2022（決定 8）: 接続先・宛先・成否・操作者と「保存済み資格情報の使用」の別。
-        // 資格情報の値は記録しない。
+        // 資格情報の値は記録しない（authenticated / storedCredentialUsed はいずれも真偽値であり、
+        // ユーザー名・パスワードそのものは含まない）。
+        //
+        // **宛先アドレスを載せることについて**: CodeQL は cs/exposure-of-sensitive-information で
+        // 「個人情報を外部の場所へ書いている」と報告する。これは ADR-0017 決定 4 の意図した
+        // 記録内容であり欠陥ではない——通知の宛先は「どこへ情報が出ていくか」の定義そのもので、
+        // 事後に「誰が宛先を書き換えたか」を追えなければ監査の意味を成さない。ただし帰結として
+        // **監査記録・イベントログを読める者は宛先アドレスを読める**（security.md §4.1 の記録内容と
+        // 同じ保護水準に置かれる）。
         await _auditRecorder.RecordAsync(
             new AuditEvent(
                 OccurredAt: _timeProvider.GetUtcNow(),
