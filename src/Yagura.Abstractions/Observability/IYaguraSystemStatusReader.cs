@@ -39,7 +39,28 @@ public interface IYaguraSystemStatusReader
     /// <c>yagura.ingestion.flow_control.dropped</c> が持つ）。流量制御が無効の構成では常に空。
     /// </summary>
     IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount);
+
+    /// <summary>
+    /// 送信元の途絶検知（ADR-0018。Issue #351）のウォッチリスト登録状況と途絶状態を返す
+    /// （同期・軽量。DB へはアクセスしない）。ダッシュボードの送信元別受信状況（UI-4）が
+    /// 登録済みマーク・途絶中の強調表示に使う。機能無効（ウォッチリスト未設定）の構成では常に空。
+    /// アドレスは正規化済み（IPv4-mapped IPv6 は IPv4 表記）——照合側も同じ正規化を通すこと。
+    /// </summary>
+    IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries();
 }
+
+/// <summary>
+/// ウォッチリスト 1 エントリの現在状態（ADR-0018 決定 4。UI-4 の表示単位）。
+/// </summary>
+/// <param name="Address">正規化済みの送信元アドレス。</param>
+/// <param name="Label">表示名（未設定なら <see langword="null"/>）。</param>
+/// <param name="Threshold">実効閾値。</param>
+/// <param name="IsSilent">現在途絶中と判定されているか（判定は周期評価——最大 1 分の遅延を持つ）。</param>
+public sealed record YaguraSourceSilenceReading(
+    string Address,
+    string? Label,
+    TimeSpan Threshold,
+    bool IsSilent);
 
 /// <summary>流量制限の発火上位送信元の 1 行（Issue #288。ダッシュボードのカード表示単位）。</summary>
 /// <param name="SourceAddress">

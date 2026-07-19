@@ -84,7 +84,8 @@ public sealed class SpoolDrainCoordinator
         ILogger<SpoolDrainCoordinator>? logger = null,
         ICapacityExhaustionHandler? capacityExhaustionHandler = null,
         LogStoreWriteGate? writeGate = null,
-        SpoolSelfTestTracker? selfTestTracker = null)
+        SpoolSelfTestTracker? selfTestTracker = null,
+        Yagura.Storage.Observability.ISourceActivityTracker? sourceActivityTracker = null)
     {
         ArgumentNullException.ThrowIfNull(spool);
         ArgumentNullException.ThrowIfNull(q2Reader);
@@ -99,7 +100,14 @@ public sealed class SpoolDrainCoordinator
         _capacityExhaustionHandler = capacityExhaustionHandler;
         _writeGate = writeGate;
         _selfTestTracker = selfTestTracker;
+        _sourceActivityTracker = sourceActivityTracker;
     }
+
+    /// <summary>
+    /// 途絶検知への遅延反映先（ADR-0018 決定 3。opt-in のため <see langword="null"/> 可。
+    /// <see cref="_selfTestTracker"/> と同じ注入形）。
+    /// </summary>
+    private readonly Yagura.Storage.Observability.ISourceActivityTracker? _sourceActivityTracker;
 
     /// <summary>
     /// drain ループ。<paramref name="stoppingToken"/> がキャンセルされるまで実行し続ける。
@@ -222,6 +230,18 @@ public sealed class SpoolDrainCoordinator
             .Where(r => r.Kind == SpoolRecordKind.Normal)
             .Select(r => r.LogRecord!)
             .ToList();
+
+        // 途絶検知への遅延反映（ADR-0018 決定 3。**「受信した」の定義の唯一の例外**）。
+        // 深いスプール滞留 + 再起動の組で、直前まで送っていた装置が途絶に見える偽陽性を塞ぐ
+        // ——§3.2.2 は滞留を正常状態と明記しており「短い窓」ではない。運ぶのは過去の実績なので
+        // 追跡側は max() 更新で受け、より新しい実受信を引き戻さない。
+        if (_sourceActivityTracker is not null)
+        {
+            foreach (var logRecord in logRecords)
+            {
+                _sourceActivityTracker.RecordHistoricalActivity(logRecord.SourceAddress, logRecord.ReceivedAt);
+            }
+        }
 
         if (logRecords.Count == 0)
         {

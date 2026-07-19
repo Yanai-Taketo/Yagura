@@ -93,6 +93,11 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
     /// 流量制御ゲートの送信元別拒否状況の読み取り口（Issue #288。ホストの合成ルートが
     /// <c>SwappableIngressGate</c> を渡す。<c>null</c> は常に空を返す）。
     /// </param>
+    /// <param name="sourceSilenceEntries">
+    /// 送信元の途絶検知のエントリ状態の読み取り口（ADR-0018 決定 4。Issue #351。合成ルートが
+    /// <c>SourceSilenceDetector.SnapshotEntryStatuses</c> を渡す。<c>null</c> は常に空を返す
+    /// ——テスト等で途絶検知を結線しない構成向け）。
+    /// </param>
     public SystemStatusReader(
         IngestionMetrics metrics,
         DiskSpool? spool,
@@ -101,7 +106,8 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         int? retentionDays,
         IReadOnlyList<YaguraListenerEndpoint> listeners,
         TimeProvider? timeProvider = null,
-        Yagura.Ingestion.FlowControl.IFlowControlRejectionReader? flowControlRejections = null)
+        Yagura.Ingestion.FlowControl.IFlowControlRejectionReader? flowControlRejections = null,
+        Func<IReadOnlyList<YaguraSourceSilenceReading>>? sourceSilenceEntries = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(listeners);
@@ -114,7 +120,14 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         _listeners = listeners;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _flowControlRejections = flowControlRejections;
+        _sourceSilenceEntries = sourceSilenceEntries;
     }
+
+    private readonly Func<IReadOnlyList<YaguraSourceSilenceReading>>? _sourceSilenceEntries;
+
+    /// <inheritdoc />
+    public IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries() =>
+        _sourceSilenceEntries?.Invoke() ?? [];
 
     /// <inheritdoc />
     public YaguraSystemStatusSnapshot ReadCurrent()

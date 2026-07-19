@@ -388,7 +388,7 @@ public sealed class ConfigurationChangePlannerTests
         {
             var before = new YaguraConfigurationOptions();
             var after = new YaguraConfigurationOptions();
-            SetArrayByKeyPath(after, key, ["changed-value"]);
+            SetArrayByKeyPath(after, key, "changed-value");
 
             var plan = ConfigurationChangePlanner.Compare(before, after);
 
@@ -397,10 +397,16 @@ public sealed class ConfigurationChangePlannerTests
     }
 
     /// <summary>
-    /// 配列キーのパスを辿って値を設定する（<see cref="SetValueByKeyPath"/> の配列版）。
-    /// 末端のプロパティ型は <see cref="List{T}"/> of <see cref="string"/>。
+    /// 配列キーのパスを辿って「1 要素の配列」を設定する（<see cref="SetValueByKeyPath"/> の配列版）。
     /// </summary>
-    private static void SetArrayByKeyPath(YaguraConfigurationOptions options, string keyPath, List<string> value)
+    /// <remarks>
+    /// 末端のプロパティ型は <c>List&lt;string&gt;</c>（スカラー配列）か
+    /// <c>List&lt;WatchlistEntryOptions&gt;</c>（オブジェクト配列。ADR-0018）のいずれか。
+    /// <b>要素型をリフレクションで判定して生成する</b>——ここを <c>List&lt;string&gt;</c> 決め打ちに
+    /// すると、オブジェクト配列キーを追加した PR がこの網羅性テストで型変換例外として落ち、
+    /// 「検出漏れ」と「テスト側の未対応」の区別がつかなくなる。
+    /// </remarks>
+    private static void SetArrayByKeyPath(YaguraConfigurationOptions options, string keyPath, string marker)
     {
         var segments = keyPath.Split(':');
         object current = options;
@@ -425,7 +431,24 @@ public sealed class ConfigurationChangePlannerTests
             ?? throw new InvalidOperationException(
                 $"キーパス '{keyPath}' の末端 '{segments[^1]}' に対応するプロパティがありません。");
 
-        leaf.SetValue(current, value);
+        var elementType = leaf.PropertyType.GetGenericArguments().Single();
+        var list = (System.Collections.IList)Activator.CreateInstance(leaf.PropertyType)!;
+
+        if (elementType == typeof(string))
+        {
+            list.Add(marker);
+        }
+        else
+        {
+            // オブジェクト要素: 最初の string プロパティへ marker を入れれば差分は生じる。
+            var element = Activator.CreateInstance(elementType)!;
+            var firstStringProperty = elementType.GetProperties()
+                .First(p => p.PropertyType == typeof(string) && p.CanWrite);
+            firstStringProperty.SetValue(element, marker);
+            list.Add(element);
+        }
+
+        leaf.SetValue(current, list);
     }
 
     // ------------------------------------------------------------------

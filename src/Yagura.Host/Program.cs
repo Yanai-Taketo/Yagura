@@ -527,6 +527,26 @@ public static class Program
                     configuration.FlowControlBurstSize)
                 : new NoopIngressGate();
 
+        // 送信元の途絶検知（ADR-0018。opt-in・既定無効。Issue #351）。追跡器と判定器は
+        // 合成ルートが所有し、受信段（ParsingStage）・監視ループ・設定の即時反映の 3 者で共有する。
+        // 機能が無効（ウォッチリスト未設定）でも構築はしておく——設定の即時反映で有効化された
+        // 時点から、サービスを再起動せずに追跡が始まる（決定 6）。
+        var sourceActivityTracker = new Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceActivityTracker();
+        var sourceSilenceDetector = new Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceDetector(
+            sourceActivityTracker);
+        sourceActivityTracker.ApplyWatchlist(resolvedConfiguration.SourceSilence?.Watchlist);
+        sourceSilenceDetector.ApplyWatchlist(resolvedConfiguration.SourceSilence?.Watchlist);
+
+        // ウォッチリスト反映の口を 1 本に束ねる（決定 6）——設定の再読み込み
+        // （ImmediateConfigurationApplier）と管理画面の保存（SourceSilenceAdminService）が
+        // 同じ実体を使い、経路によって反映挙動が食い違う余地を作らない。
+        Action<IReadOnlyList<Yagura.Host.Configuration.SourceSilenceWatchEntry>?> applySourceSilenceWatchlist =
+            watchlist =>
+            {
+                sourceActivityTracker.ApplyWatchlist(watchlist);
+                sourceSilenceDetector.ApplyWatchlist(watchlist);
+            };
+
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
             sp.GetRequiredService<TcpSyslogListenerOptions>(),
@@ -539,7 +559,8 @@ public static class Program
             sp.GetRequiredService<LogStoreWriteGate>(),
             selfTestTracker,
             tlsListenerOptions,
-            tlsCertificateSelector));
+            tlsCertificateSelector,
+            sourceActivityTracker));
 
         // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
         // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。
@@ -586,20 +607,29 @@ public static class Program
                     resolvedConfiguration.IngestionTlsCertificateThumbprint!)
                 : null;
 
-        builder.Services.AddSingleton(sp => new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
-            spool,
-            sp.GetRequiredService<IngestionPipeline>().Metrics,
-            sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(),
-            sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
-            timeProvider: null,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
-            selfTestTracker,
-            adminHttpsCertificateProbe,
-            ingestionTlsCertificateProbe,
-            // ADR-0011 決定 6: 三層防御の能動通知への昇格。AdminAuthFailureDefense は
-            // 本メソッド内で後段に登録されるが、AddSingleton のファクトリは遅延解決されるため
-            // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
-            sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>()));
+        builder.Services.AddSingleton(sp =>
+        {
+            var pipelineForMonitor = sp.GetRequiredService<IngestionPipeline>();
+            return new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
+                spool,
+                pipelineForMonitor.Metrics,
+                sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(),
+                sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
+                timeProvider: null,
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
+                selfTestTracker,
+                adminHttpsCertificateProbe,
+                ingestionTlsCertificateProbe,
+                // ADR-0011 決定 6: 三層防御の能動通知への昇格。AdminAuthFailureDefense は
+                // 本メソッド内で後段に登録されるが、AddSingleton のファクトリは遅延解決されるため
+                // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
+                sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>(),
+                sourceSilenceDetector,
+                // 受信断保留の判定源（ADR-0018 委任 6）: 全リスナ受信不能の間は途絶判定を保留し、
+                // 回復で再アームする。判定器がスレッド安全でないため、ListenerBindRecovered の
+                // 購読ではなく監視ループ内のポーリングで観測する（EvaluateSourceSilence 参照）。
+                listenerAvailabilityProbe: () => pipelineForMonitor.ListenerAvailability);
+        });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
         // ActiveNotificationMonitor と同じく IHostedService にはしない——停止順序を Generic Host の
@@ -640,7 +670,10 @@ public static class Program
                 // 流量制限の発火上位送信元（Issue #288）: SwappableIngressGate を渡す——設定
                 // ライブ再読み込みでゲートが差し替わっても、読み取りは常に現在の実装へ届く
                 // （流量制御 opt-out 時は NoopIngressGate のため空になる）。
-                flowControlRejections: ingressGate));
+                flowControlRejections: ingressGate,
+                // 途絶検知のエントリ状態（ADR-0018 決定 4。Issue #351）: UI-4 の登録済みマーク・
+                // 途絶中強調の入力。機能無効（ウォッチリスト未設定）の間は空を返す。
+                sourceSilenceEntries: sourceSilenceDetector.SnapshotEntryStatuses));
 
         // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
         //
@@ -756,6 +789,13 @@ public static class Program
                      "Notification:Email:Smtp:Password"],
                     newConfiguration => sp.GetRequiredService<EmailNotificationDispatcher>()
                         .UpdateConfiguration(newConfiguration.EmailNotification)),
+                // 送信元の途絶検知（ADR-0018 決定 6）。ウォッチリストの参照交換のみで反映できる。
+                // **既存エントリの追跡状態（最終受信時刻・途絶フラグ）は保持し、削除された
+                // エントリの状態は破棄する**——保持しないと設定を触るたびに全エントリが
+                // 「登録時点基準」へ戻り、長い閾値のエントリが実質永久に発火しなくなる。
+                new ImmediateConfigurationApplier(
+                    ["Notification:SourceSilence:Watchlist", "Notification:SourceSilence:DefaultThresholdMinutes"],
+                    newConfiguration => applySourceSilenceWatchlist(newConfiguration.SourceSilence?.Watchlist)),
                 // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
                 new ImmediateConfigurationApplier(
                     ["Audit:RetentionDays"],
@@ -934,6 +974,17 @@ public static class Program
                 sp.GetRequiredService<IAuditRecorder>(),
                 emailNotificationQueue,
                 () => sp.GetService<EmailNotificationDispatcher>()));
+
+        // 途絶検知のウォッチリスト設定（ADR-0018 決定 4・5・6。Issue #351）。即時反映の口は
+        // 再読み込み経路（ImmediateConfigurationApplier）と同一のデリゲートを渡す——反映経路を
+        // 1 本に保つ。候補選択（決定 4）は ILogStore の送信元別集計から取る。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISourceSilenceAdminService>(sp =>
+            new Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>(),
+                sp.GetRequiredService<ILogStore>(),
+                applySourceSilenceWatchlist,
+                sourceSilenceDetector.SnapshotEntryStatuses));
 
         // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）。設定の生指定（名/SID）を
         // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本

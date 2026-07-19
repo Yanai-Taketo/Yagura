@@ -1,0 +1,401 @@
+@page "/admin/source-silence"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using System.Globalization
+@using System.Net
+@using Yagura.Abstractions.Administration
+@using Yagura.Abstractions.Observability
+@using Yagura.Web.Administration
+@using Yagura.Web.Circuits
+@inject ISourceSilenceAdminService SourceSilenceAdminService
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+@inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
+
+@*
+    送信元の途絶検知のウォッチリスト設定画面（ADR-0018 決定 4・5・6、委任 5。Issue #351）。
+
+    - 登録は既知送信元からの候補選択を主経路とする（決定 4）——IP の転記ミスによる
+      「形式は正しいが違うアドレス」の黙った空振りを構造的に減らす。手入力は
+      「まだ受信のない先回り登録」用に残す
+    - 閾値は明示確定を必須とする（決定 4——既定 24 時間の意味と「登録した = すぐ気づける」
+      という期待のズレを、登録の瞬間に確認させる）。入力は値 + 単位（分/時間/日）で行い
+      分の直打ちを強要しない（委任 5）
+    - 一覧への追加・編集・削除はローカル編集で、「適用する」でまとめて保存する
+      （保存 1 回 = 監査 2023 が 1 件——差分のエントリ列挙つき）
+    - 閲覧面（ダッシュボード）には登録導線を置かない（#286 の閲覧/管理分離の裁定）
+*@
+<PageTitle>@UiText.SourceSilenceTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.SourceSilenceTitle</MudText>
+<MudText Typo="Typo.body2" Class="mt-1">@UiText.SourceSilenceIntro</MudText>
+
+@if (_status is null)
+{
+    <MudText>@UiText.AdminScreenAccessChecking</MudText>
+}
+else
+{
+    @* --- 現在のウォッチリスト --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.SourceSilenceListTitle</MudText>
+
+        @if (_rows.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.SourceSilenceListEmpty</MudText>
+        }
+        else
+        {
+            <MudSimpleTable Dense="true" Class="mt-2" Elevation="0">
+                <thead>
+                    <tr>
+                        <th>@UiText.SourceSilenceColumnAddress</th>
+                        <th>@UiText.SourceSilenceColumnLabel</th>
+                        <th>@UiText.SourceSilenceColumnThreshold</th>
+                        <th>@UiText.SourceSilenceColumnState</th>
+                        <th>@UiText.SourceSilenceColumnActions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _rows)
+                    {
+                        <tr>
+                            <td>@row.Address</td>
+                            <td>@(row.Label ?? "—")</td>
+                            <td>@FormatRowThreshold(row)</td>
+                            <td>@RenderRowState(row)</td>
+                            <td>
+                                <MudButton Size="Size.Small" Variant="Variant.Text"
+                                           OnClick="@(() => BeginEdit(row))">@UiText.SourceSilenceEditButton</MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                           OnClick="@(() => RemoveRow(row))">@UiText.SourceSilenceDeleteButton</MudButton>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+            <MudText Typo="Typo.caption" Class="mt-1">
+                @string.Format(CultureInfo.InvariantCulture, UiText.SourceSilenceLimitFormat, _status.MaxWatchlistEntries, _rows.Count)
+            </MudText>
+        }
+    </MudPaper>
+
+    @* --- 登録（候補選択が主経路。決定 4） --- *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.SourceSilenceAddTitle</MudText>
+        <MudText Typo="Typo.body2" Class="mt-1">@UiText.SourceSilenceAddIntro</MudText>
+
+        <div class="mt-3" style="max-width: 560px;">
+            <MudSelect T="string" Label="@UiText.SourceSilenceCandidateLabel"
+                       @bind-Value="_candidateAddress" Clearable="true" Variant="Variant.Outlined">
+                @foreach (var candidate in _candidates)
+                {
+                    <MudSelectItem T="string" Value="@candidate.Address" Disabled="@candidate.AlreadyRegistered">
+                        @CandidateText(candidate)
+                    </MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+
+        <div class="mt-3" style="max-width: 560px;">
+            <YaguraTextField Label="@UiText.SourceSilenceManualAddressLabel"
+                             HelpText="@UiText.SourceSilenceManualAddressHelp"
+                             @bind-Value="_manualAddress" />
+        </div>
+
+        <div class="mt-3" style="max-width: 560px;">
+            <YaguraTextField Label="@UiText.SourceSilenceLabelLabel"
+                             HelpText="@UiText.SourceSilenceLabelHelp"
+                             @bind-Value="_labelInput" />
+        </div>
+
+        @* 閾値の明示確定（決定 4）。値 + 単位で入力し、分の直打ちを強要しない（委任 5） *@
+        <div class="mt-3 d-flex" style="gap: 16px; max-width: 560px;">
+            <div style="max-width: 160px;">
+                <YaguraTextField Label="@UiText.SourceSilenceThresholdLabel"
+                                 HelpText="@UiText.SourceSilenceThresholdHelp"
+                                 @bind-Value="_thresholdValue" />
+            </div>
+            <div style="max-width: 120px;">
+                <MudSelect T="int" Label="&nbsp;" @bind-Value="_thresholdUnitMinutes" Variant="Variant.Outlined">
+                    <MudSelectItem T="int" Value="1">@UiText.SourceSilenceUnitMinutes</MudSelectItem>
+                    <MudSelectItem T="int" Value="60">@UiText.SourceSilenceUnitHours</MudSelectItem>
+                    <MudSelectItem T="int" Value="1440">@UiText.SourceSilenceUnitDays</MudSelectItem>
+                </MudSelect>
+            </div>
+        </div>
+
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Class="mt-3" OnClick="AddOrUpdateRow">
+            @(_editingAddress is null ? UiText.SourceSilenceAddButton : UiText.SourceSilenceUpdateButton)
+        </MudButton>
+    </MudPaper>
+
+    @if (_errorMessage is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+    }
+
+    @if (_savedSummary is not null)
+    {
+        <MudAlert Severity="Severity.Success" Class="mt-4">@_savedSummary</MudAlert>
+    }
+
+    <MudText Typo="Typo.caption" Class="mt-4 d-block">@UiText.SourceSilencePendingChangesNote</MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-1"
+               Disabled="@_saveInFlight" OnClick="ApplyAsync">
+        @UiText.SourceSilenceApplyButton
+    </MudButton>
+}
+
+@code {
+    /// <summary>画面上の 1 エントリ（未適用の編集を含むローカル状態）。</summary>
+    private sealed class Row
+    {
+        internal required string Address { get; init; }
+        internal string? Label { get; init; }
+        internal int? ThresholdMinutes { get; init; }
+
+        /// <summary>読み込み後に追加・編集された（= まだ保存されていない）行。</summary>
+        internal bool IsPending { get; init; }
+    }
+
+    private SourceSilenceAdminStatus? _status;
+    private List<Row> _rows = [];
+    private IReadOnlyList<SourceSilenceCandidate> _candidates = [];
+    private Dictionary<string, YaguraSourceSilenceReading> _runtime = new(StringComparer.OrdinalIgnoreCase);
+
+    private string? _candidateAddress;
+    private string _manualAddress = string.Empty;
+    private string _labelInput = string.Empty;
+    private string _thresholdValue = "24";
+    private int _thresholdUnitMinutes = 60;
+
+    /// <summary>編集中の既存行のアドレス（編集はフォームへ読み込み、更新で書き戻す）。</summary>
+    private string? _editingAddress;
+
+    private string? _errorMessage;
+    private string? _savedSummary;
+    private bool _saveInFlight;
+
+    /// <summary>候補一覧の取得件数（画面の選択肢として現実的な範囲。全量はウォッチリスト上限と同じ 1000）。</summary>
+    private const int CandidateLimit = 200;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = await SourceSilenceAdminService.GetStatusAsync();
+        _candidates = await SourceSilenceAdminService.GetCandidatesAsync(CandidateLimit);
+        ApplyStatus(_status);
+    }
+
+    private void ApplyStatus(SourceSilenceAdminStatus status)
+    {
+        _rows = [.. status.Watchlist.Select(item => new Row
+        {
+            Address = item.Address,
+            Label = item.Label,
+            ThresholdMinutes = item.ThresholdMinutes,
+        })];
+        _runtime = status.RuntimeStates.ToDictionary(state => state.Address, StringComparer.OrdinalIgnoreCase);
+        ResetForm();
+    }
+
+    private void ResetForm()
+    {
+        _candidateAddress = null;
+        _manualAddress = string.Empty;
+        _labelInput = string.Empty;
+        _thresholdValue = "24";
+        _thresholdUnitMinutes = 60;
+        _editingAddress = null;
+    }
+
+    private void AddOrUpdateRow()
+    {
+        _errorMessage = null;
+        _savedSummary = null;
+
+        var address = string.IsNullOrWhiteSpace(_manualAddress) ? _candidateAddress : _manualAddress.Trim();
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            _errorMessage = "送信元アドレスを選択するか入力してください。";
+            return;
+        }
+
+        if (!int.TryParse(_thresholdValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value <= 0)
+        {
+            _errorMessage = "閾値は正の整数で入力してください。";
+            return;
+        }
+
+        var thresholdMinutes = value * _thresholdUnitMinutes;
+        var normalized = NormalizeOrSelf(address);
+
+        // 同一アドレスの二重追加を画面でも防ぐ（確定的な検証は保存時にサービス側が行う）。
+        if (_rows.Any(row => string.Equals(NormalizeOrSelf(row.Address), normalized, StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(NormalizeOrSelf(_editingAddress ?? string.Empty), normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            _errorMessage = $"「{address}」は既に一覧にあります。変更する場合は当該行の「{UiText.SourceSilenceEditButton}」を使ってください。";
+            return;
+        }
+
+        if (_editingAddress is not null)
+        {
+            _rows.RemoveAll(row => string.Equals(row.Address, _editingAddress, StringComparison.OrdinalIgnoreCase));
+        }
+
+        _rows.Add(new Row
+        {
+            Address = address,
+            Label = string.IsNullOrWhiteSpace(_labelInput) ? null : _labelInput.Trim(),
+            ThresholdMinutes = thresholdMinutes,
+            IsPending = true,
+        });
+
+        ResetForm();
+    }
+
+    private void BeginEdit(Row row)
+    {
+        _editingAddress = row.Address;
+        _manualAddress = row.Address;
+        _candidateAddress = null;
+        _labelInput = row.Label ?? string.Empty;
+
+        var effective = row.ThresholdMinutes ?? _status!.DefaultThresholdMinutes;
+        var (value, unit) = DecomposeThreshold(effective);
+        _thresholdValue = value.ToString(CultureInfo.InvariantCulture);
+        _thresholdUnitMinutes = unit;
+    }
+
+    private void RemoveRow(Row row)
+    {
+        _rows.Remove(row);
+        if (string.Equals(_editingAddress, row.Address, StringComparison.OrdinalIgnoreCase))
+        {
+            ResetForm();
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _errorMessage = null;
+        _savedSummary = null;
+        _saveInFlight = true;
+
+        try
+        {
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+            var result = await SourceSilenceAdminService.ConfigureAsync(
+                new SourceSilenceSettings(
+                    [.. _rows.Select(row => new SourceSilenceWatchlistItem(row.Address, row.Label, row.ThresholdMinutes))]),
+                CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
+
+            _status = result.Status;
+            _candidates = await SourceSilenceAdminService.GetCandidatesAsync(CandidateLimit);
+            ApplyStatus(_status);
+
+            if (result.AddedAddresses.Count == 0 && result.RemovedAddresses.Count == 0 && result.ChangedAddresses.Count == 0)
+            {
+                Notifier.NotifyInfo(UiText.SourceSilenceSavedNoChanges);
+            }
+            else
+            {
+                _savedSummary = string.Format(
+                    CultureInfo.InvariantCulture,
+                    UiText.SourceSilenceSavedFormat,
+                    result.AddedAddresses.Count, result.RemovedAddresses.Count, result.ChangedAddresses.Count);
+                Notifier.NotifyOk(_savedSummary);
+            }
+        }
+        catch (WizardValidationException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            // 楽観競合（別画面・手編集との同時変更）や設定ファイル全体の検証例外を circuit エラーに
+            // しない——読める形で表示し、再読み込みで解消できるようにする。
+            _errorMessage = $"保存できませんでした: {ex.Message}";
+        }
+        finally
+        {
+            _saveInFlight = false;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 表示ヘルパー
+    // ------------------------------------------------------------------
+
+    private string FormatRowThreshold(Row row) =>
+        row.ThresholdMinutes is { } minutes
+            ? FormatMinutes(minutes)
+            : string.Format(
+                CultureInfo.InvariantCulture,
+                UiText.SourceSilenceThresholdDefaultedFormat,
+                FormatMinutes(_status!.DefaultThresholdMinutes));
+
+    private RenderFragment RenderRowState(Row row) => builder =>
+    {
+        string text;
+        Color color;
+
+        if (row.IsPending)
+        {
+            (text, color) = (UiText.SourceSilenceStatePending, Color.Default);
+        }
+        else if (_runtime.TryGetValue(NormalizeOrSelf(row.Address), out var state))
+        {
+            (text, color) = state.IsSilent
+                ? (UiText.SourceSilenceStateSilent, Color.Error)
+                : (UiText.SourceSilenceStateWatching, Color.Success);
+        }
+        else
+        {
+            // 保存されているのに稼働状態に現れない = Loader がエントリ単位で無効化している
+            // （手編集の不備）。「監視されているつもりで監視されていない」を画面で見せる（決定 1）。
+            (text, color) = (UiText.SourceSilenceStateInactive, Color.Warning);
+        }
+
+        builder.OpenComponent<MudChip<string>>(0);
+        builder.AddComponentParameter(1, "Size", Size.Small);
+        builder.AddComponentParameter(2, "Color", color);
+        builder.AddComponentParameter(3, "ChildContent", (RenderFragment)(chip => chip.AddContent(0, text)));
+        builder.CloseComponent();
+    };
+
+    private string CandidateText(SourceSilenceCandidate candidate)
+    {
+        var text = string.Format(
+            CultureInfo.InvariantCulture,
+            UiText.SourceSilenceCandidateItemFormat,
+            candidate.Address,
+            candidate.LastReceivedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+            candidate.RecordCount);
+
+        return candidate.AlreadyRegistered ? text + UiText.SourceSilenceCandidateRegisteredSuffix : text;
+    }
+
+    private static string FormatMinutes(int minutes) => minutes switch
+    {
+        >= 1440 when minutes % 1440 == 0 =>
+            $"{minutes / 1440} {UiText.SourceSilenceUnitDays}",
+        >= 60 when minutes % 60 == 0 =>
+            $"{minutes / 60} {UiText.SourceSilenceUnitHours}",
+        _ => $"{minutes} {UiText.SourceSilenceUnitMinutes}",
+    };
+
+    private static (int Value, int UnitMinutes) DecomposeThreshold(int minutes) => minutes switch
+    {
+        >= 1440 when minutes % 1440 == 0 => (minutes / 1440, 1440),
+        >= 60 when minutes % 60 == 0 => (minutes / 60, 60),
+        _ => (minutes, 1),
+    };
+
+    private static string NormalizeOrSelf(string address) =>
+        IPAddress.TryParse(address, out var parsed)
+            ? (parsed.IsIPv4MappedToIPv6 ? parsed.MapToIPv4() : parsed).ToString()
+            : address;
+}

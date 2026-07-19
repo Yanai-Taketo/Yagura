@@ -158,6 +158,17 @@ public static class AuditEventIds
     public static readonly EventId EmailNotificationTestSent =
         new(2022, "EmailNotificationTestSent");
 
+    /// <summary>
+    /// 送信元の途絶検知のウォッチリスト変更（ADR-0018 決定 5。Issue #351）。レベルは情報。
+    /// </summary>
+    /// <remarks>
+    /// Detail には追加・削除・変更されたエントリ（アドレスと表示名）を含める——ウォッチリストは
+    /// <b>検知範囲そのものの定義</b>であり、「管理権限を得た攻撃者が証跡遮断の前にエントリを外す」
+    /// を事後に再構成できる粒度が要る（値を残す前例は 2012・2021）。
+    /// </remarks>
+    public static readonly EventId SourceSilenceWatchlistConfigured =
+        new(2023, "SourceSilenceWatchlistConfigured");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

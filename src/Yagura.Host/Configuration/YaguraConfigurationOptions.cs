@@ -388,6 +388,75 @@ public sealed class YaguraConfigurationOptions
         /// <summary>メール通知（ADR-0017。opt-in・既定無効）。</summary>
         public EmailOptions? Email { get; set; }
 
+        /// <summary>送信元の途絶検知（ADR-0018。opt-in・既定無効）。</summary>
+        public SourceSilenceOptions? SourceSilence { get; set; }
+
+        /// <summary>
+        /// 送信元の途絶検知（ADR-0018）。「来るはずのものが来ていない」を検出する。
+        /// </summary>
+        /// <remarks>
+        /// <b>既定 = ウォッチリスト未設定 = 機能無効</b>。ゼロ設定ファーストランには現れない。
+        /// 本機能は<b>運用検知であってセキュリティ統制ではない</b>——生存判定は「その送信元
+        /// アドレスから何かが届いた」事実のみに依るため、送信元アドレスを詐称できる攻撃者は
+        /// 実機を沈黙させたまま途絶検知を空振りさせられる（平文 UDP syslog の本質的限界）。
+        /// </remarks>
+        public sealed class SourceSilenceOptions
+        {
+            /// <summary>
+            /// 閾値を省略したエントリの補完値（分。既定 1440 = 24 時間）。
+            /// </summary>
+            /// <remarks>
+            /// <b>これは手編集で閾値を省略したエントリの補完値であり、UI 経由の登録では閾値の
+            /// 明示確定を必須とする</b>（ADR-0018 決定 1・4——「登録した = すぐ気づける」という
+            /// 期待と 24 時間既定のズレを、既定値の変更ではなく登録動線で解消する）。
+            /// </remarks>
+            public string? DefaultThresholdMinutes { get; set; }
+
+            /// <summary>
+            /// 監視対象の送信元一覧（<b>本プロジェクト初のオブジェクト構造化配列キー</b>）。
+            /// </summary>
+            /// <remarks>
+            /// <para>
+            /// 上限は <c>SourceSilenceConstants.MaxWatchlistEntries</c>（仮値 1000 件）。
+            /// <b>手編集で上限超過のリストを読んだ場合はファイル順で上限までを有効とし、超過分を
+            /// 無効化して警告する（無効化した対象アドレスを列挙する）</b>——「監視されているつもりで
+            /// 監視されていない」検知ギャップを黙らせない（ADR-0018 決定 1）。
+            /// </para>
+            /// <para>
+            /// <b>空配列 <c>[]</c> は「正常な空リスト = 機能無効（警告なし）」</b>とし、
+            /// configuration.md §1 の「空配列 = 不正値」規定の例外とする——あの規定は
+            /// 「空 + 機能有効 = 誰も対象にならない」文脈のものであり、本キーは空 = 意図的な
+            /// 無効が自然な意味論である。
+            /// </para>
+            /// </remarks>
+            public List<WatchlistEntryOptions>? Watchlist { get; set; }
+
+            /// <summary>ウォッチリストの 1 エントリ。</summary>
+            /// <remarks>
+            /// <b>不正なエントリは当該エントリのみを無効化して警告する</b>（リスト全体は殺さない
+            /// ——1 エントリのタイポで他の監視まで止めない。ADR-0018 決定 1。configuration.md §1 の
+            /// 3 分類に対する第 4 の挙動）。
+            /// </remarks>
+            public sealed class WatchlistEntryOptions
+            {
+                /// <summary>監視する送信元アドレス（必須）。IPv4-mapped IPv6 は正規化して扱う。</summary>
+                public string? Address { get; set; }
+
+                /// <summary>
+                /// 表示名（任意）。「どの端末・装置か」の対応を運用者の語彙で保持する
+                /// ——配布端末の資産管理は運用者の領分であり、製品は送信元アドレスという
+                /// 観測可能な単位に徹する（ADR-0018 決定 2）。
+                /// </summary>
+                public string? Label { get; set; }
+
+                /// <summary>
+                /// このエントリの閾値（分。任意。省略時は <see cref="DefaultThresholdMinutes"/>）。
+                /// 受理範囲は下限 10 分・上限 43200 分（30 日）で、範囲外は当該エントリ無効化 + 警告。
+                /// </summary>
+                public string? ThresholdMinutes { get; set; }
+            }
+        }
+
         public sealed class EmailOptions
         {
             /// <summary>

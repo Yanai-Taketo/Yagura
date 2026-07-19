@@ -145,6 +145,23 @@ public sealed class YaguraConfigurationOptionsClonerTests
                 continue;
             }
 
+            // オブジェクトの配列（ADR-0018 のウォッチリスト = List<WatchlistEntryOptions>）。
+            // 要素を 1 つ生成して**その中身も再帰的に埋める**——要素の各フィールドまで複製されて
+            // いることを検証するため。要素の参照だけを共有する浅いコピーだと、
+            // 「複製後に after を編集したら before も変わる」事故になる。
+            if (property.PropertyType.IsGenericType
+                && property.PropertyType.GetGenericTypeDefinition() == typeof(List<>)
+                && property.PropertyType.GetGenericArguments()[0] is { IsClass: true } elementType
+                && elementType != typeof(string))
+            {
+                var list = (System.Collections.IList)Activator.CreateInstance(property.PropertyType)!;
+                var element = Activator.CreateInstance(elementType)!;
+                PopulateObjectGraph(element, ref leafCount);
+                list.Add(element);
+                property.SetValue(instance, list);
+                continue;
+            }
+
             // YaguraConfigurationOptions のプロパティは string? / List<string>? かネストされた参照型
             // （*Options）のみである前提。将来値型（int 等）が増えた場合は、このテストが
             // 想定外の型として例外で落ちるため、ウォーカーの更新漏れが検出できる。
@@ -205,6 +222,37 @@ public sealed class YaguraConfigurationOptionsClonerTests
                     // 深いコピー（別インスタンス）かつ内容一致であること。
                     Assert.NotSame(expectedList, actualList);
                     Assert.Equal(expectedList, actualList);
+                }
+
+                continue;
+            }
+
+            // オブジェクトの配列（ADR-0018 のウォッチリスト）。**別インスタンスであることと、
+            // 各要素の中身が一致することの両方**を確認する——要素の参照だけを共有する浅いコピーは
+            // 「複製後に after を編集したら before も変わる」事故になり、ウィザードの
+            // 変更前比較が壊れる（このクラスが防いでいる事故そのもの）。
+            if (property.PropertyType.IsGenericType
+                && property.PropertyType.GetGenericTypeDefinition() == typeof(List<>)
+                && property.PropertyType.GetGenericArguments()[0] is { IsClass: true } elementType
+                && elementType != typeof(string))
+            {
+                var expectedList = (System.Collections.IList?)expectedValue;
+                var actualList = (System.Collections.IList?)actualValue;
+
+                if (expectedList is null)
+                {
+                    Assert.True(actualList is null, $"{propertyPath}: 複製元が null なのに複製先が非 null です。");
+                    continue;
+                }
+
+                Assert.True(actualList is not null, $"{propertyPath}: 複製元が非 null なのに複製先が null です（複製漏れ）。");
+                Assert.NotSame(expectedList, actualList);
+                Assert.Equal(expectedList.Count, actualList!.Count);
+
+                for (var i = 0; i < expectedList.Count; i++)
+                {
+                    Assert.NotSame(expectedList[i], actualList[i]);
+                    AssertDeepEqual(expectedList[i], actualList[i], $"{propertyPath}[{i}]");
                 }
 
                 continue;

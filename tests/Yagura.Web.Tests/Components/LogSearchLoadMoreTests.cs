@@ -296,5 +296,7 @@ public sealed class LogSearchLoadMoreTests : IAsyncLifetime
             Listeners: []);
 
         public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) => [];
+
+        public IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries() => [];
     }
 }

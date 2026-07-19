@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Yagura.Host.Observability.ActiveNotification.SourceSilence;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Tls;
@@ -98,6 +99,7 @@ public static class YaguraConfigurationLoader
         "Notification:Email:Smtp:Security",
         "Notification:Email:Smtp:Username",
         "Notification:Email:Smtp:Password",
+        "Notification:SourceSilence:DefaultThresholdMinutes",
     };
 
     /// <summary>
@@ -117,6 +119,32 @@ public static class YaguraConfigurationLoader
         // メール通知の宛先一覧（ADR-0017 決定 1。宛先ごとの振り分けはしない）。
         "Notification:Email:To",
     };
+
+    /// <summary>
+    /// <b>オブジェクトの</b>構造化配列キーと、その各要素が持ち得るフィールド名
+    /// （ADR-0018 決定 1。本プロジェクト初のオブジェクト構造化配列キー）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="KnownArrayKeys"/>（スカラーの配列）とは平坦化の形が違う。実測（2026-07-19）:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>スカラー配列 <c>["a","b"]</c> → <c>key:0</c> = "a" / <c>key:1</c> = "b"</description></item>
+    /// <item><description>オブジェクト配列 <c>[{"Address":"x"}]</c> → <c>key:0:Address</c> = "x"</description></item>
+    /// </list>
+    /// <para>
+    /// 後者はリーフの親が <c>key:0</c> であり <c>key</c> ではないため、
+    /// <see cref="IsKnownArrayElement"/> の「親が既知の配列キーか」という判定では既知にできない。
+    /// フィールド名まで含めて照合する（<b>綴りを間違えたフィールドは未知キーとして検出される</b>
+    /// ——これは望ましい: <c>Adress</c> と書いたエントリは黙って無視されるのではなく警告に現れる）。
+    /// </para>
+    /// </remarks>
+    internal static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> KnownObjectArrayKeys =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Notification:SourceSilence:Watchlist"] =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Address", "Label", "ThresholdMinutes" },
+        };
 
     /// <summary>
     /// データルート配下の設定ファイルを読み込み、検証済みの設定と警告一式を返す。
@@ -310,6 +338,9 @@ public static class YaguraConfigurationLoader
         // --- 能動通知: メール（ADR-0017。opt-in・既定無効。Issue #350） ---
         var emailNotification = ResolveEmailNotification(options, warnings);
 
+        // --- 能動通知: 送信元の途絶検知（ADR-0018。opt-in・既定無効。Issue #351） ---
+        var sourceSilence = ResolveSourceSilence(options, warnings, logger);
+
         foreach (var warning in warnings)
         {
             logger.LogWarning(
@@ -368,6 +399,7 @@ public static class YaguraConfigurationLoader
             TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
             IngestionTlsBindAddressIsExplicit = ingestionTlsBindAddressIsExplicit,
             EmailNotification = emailNotification,
+            SourceSilence = sourceSilence,
         };
 
         return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
@@ -410,7 +442,11 @@ public static class YaguraConfigurationLoader
             // 現れる（値は空文字）。これを未知キー扱いにすると「全ての宛先を消した」「グループ
             // 指定を空にした」という正当な編集が、綴り間違いと同じ警告として出てしまうため、
             // 配列キー自身も既知として扱う（Issue #350 で顕在化。グループ一覧も同じ性質を持つ）。
-            if (KnownKeys.Contains(entry.Key) || KnownArrayKeys.Contains(entry.Key) || IsKnownArrayElement(entry.Key))
+            if (KnownKeys.Contains(entry.Key)
+                || KnownArrayKeys.Contains(entry.Key)
+                || KnownObjectArrayKeys.ContainsKey(entry.Key)
+                || IsKnownArrayElement(entry.Key)
+                || IsKnownObjectArrayField(entry.Key))
             {
                 continue;
             }
@@ -444,6 +480,44 @@ public static class YaguraConfigurationLoader
 
         var parentKey = key[..lastSeparator];
         return KnownArrayKeys.Contains(parentKey);
+    }
+
+    /// <summary>
+    /// <paramref name="key"/> が既知のオブジェクト構造化配列キーの要素フィールド
+    /// （<c>&lt;arrayKey&gt;:&lt;整数&gt;:&lt;フィールド名&gt;</c>）かどうか。
+    /// </summary>
+    /// <remarks>
+    /// フィールド名まで照合するため、<b>綴りを間違えたフィールドは未知キーとして検出される</b>。
+    /// これは意図した挙動である——<c>Adress</c> と書いたエントリが黙って無視される
+    /// （＝監視されているつもりで監視されていない）のを防ぐ。
+    /// </remarks>
+    private static bool IsKnownObjectArrayField(string key)
+    {
+        var lastSeparator = key.LastIndexOf(':');
+        if (lastSeparator <= 0 || lastSeparator == key.Length - 1)
+        {
+            return false;
+        }
+
+        var fieldName = key[(lastSeparator + 1)..];
+        var indexedParent = key[..lastSeparator];
+
+        var indexSeparator = indexedParent.LastIndexOf(':');
+        if (indexSeparator <= 0 || indexSeparator == indexedParent.Length - 1)
+        {
+            return false;
+        }
+
+        foreach (var c in indexedParent.AsSpan(indexSeparator + 1))
+        {
+            if (!char.IsAsciiDigit(c))
+            {
+                return false;
+            }
+        }
+
+        var arrayKey = indexedParent[..indexSeparator];
+        return KnownObjectArrayKeys.TryGetValue(arrayKey, out var fields) && fields.Contains(fieldName);
     }
 
     /// <summary>
@@ -1707,6 +1781,203 @@ public static class YaguraConfigurationLoader
             Username: username,
             Password: password);
     }
+
+    /// <summary>
+    /// 送信元の途絶検知（ADR-0018。opt-in・既定無効）のウォッチリストを解決する。
+    /// 監視すべきエントリが 1 件以上ある場合のみ <see cref="ResolvedSourceSilence"/> を返す。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>縮退はエントリ単位</b>（ADR-0018 決定 1。configuration.md §1 の 3 分類に対する第 4 の
+    /// 挙動）: アドレスの形式不正・閾値の範囲外は<b>当該エントリのみ</b>を無効化して警告し、
+    /// リスト全体は生かす。1 エントリのタイポで他の監視まで止めるのは巻き添えが過剰である。
+    /// </para>
+    /// <para>
+    /// <b>空配列は「正常な空リスト」</b>（警告なし）。configuration.md §1 の「空配列 = 不正値」
+    /// 規定の例外——あの規定は「空 + 機能有効 = 誰も対象にならない」文脈のものであり、
+    /// 本キーは空 = 意図的な無効が自然な意味論である。
+    /// </para>
+    /// <para>
+    /// <b>上限超過はファイル順で先頭から採用し、超過分を列挙して警告する</b>。「監視されている
+    /// つもりで監視されていない」検知ギャップを黙らせないため、無効化した対象アドレスを
+    /// 警告に載せる。<b>先頭への追記は末尾の既存監視を押し出す</b>（新規追加が失敗するのではなく
+    /// 既存の監視が止まる向き）ため、利用者向けドキュメントでは末尾追記を推奨する（申し送り D-2）。
+    /// </para>
+    /// </remarks>
+    private static ResolvedSourceSilence? ResolveSourceSilence(
+        YaguraConfigurationOptions options, List<ConfigurationWarning> warnings, ILogger logger)
+    {
+        var sourceSilence = options.Notification?.SourceSilence;
+        var rawWatchlist = sourceSilence?.Watchlist;
+
+        // 未設定・空配列はいずれも「機能無効」。空配列は正常な意思表示であり警告しない。
+        if (rawWatchlist is null || rawWatchlist.Count == 0)
+        {
+            return null;
+        }
+
+        var defaultThreshold = ResolveDefaultSilenceThreshold(sourceSilence, warnings);
+
+        var entries = new List<SourceSilenceWatchEntry>();
+        var seenAddresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var droppedByCap = new List<string>();
+
+        for (var index = 0; index < rawWatchlist.Count; index++)
+        {
+            var raw = rawWatchlist[index];
+            var rawAddress = raw?.Address?.Trim();
+
+            // --- 上限（ファイル順で先頭から採用する。ADR-0018 決定 1） ---
+            if (entries.Count >= SourceSilenceConstants.MaxWatchlistEntries)
+            {
+                droppedByCap.Add(rawAddress ?? $"[{index}]");
+                continue;
+            }
+
+            // --- アドレス（必須・形式検証・正規化） ---
+            if (string.IsNullOrWhiteSpace(rawAddress) || !IPAddress.TryParse(rawAddress, out var parsedAddress))
+            {
+                warnings.Add(new ConfigurationWarning(
+                    Key: $"{SourceSilenceWatchlistKey}[{index}]:Address",
+                    InvalidValue: rawAddress ?? "(未設定)",
+                    AppliedValue: "(当該エントリのみ無効化)",
+                    Reason: "IP アドレスとして解釈できないため、このエントリのみ監視対象から外しました" +
+                        "（他のエントリの監視は継続します）"));
+                continue;
+            }
+
+            // IPv4-mapped IPv6 は IPv4 へ畳む（流量制御・Top talkers と同じ既存規約）。
+            // 同一装置が 2 エントリに割れ、片方だけが更新されて他方が途絶に見える事故を防ぐ。
+            if (parsedAddress.IsIPv4MappedToIPv6)
+            {
+                parsedAddress = parsedAddress.MapToIPv4();
+            }
+
+            var normalizedAddress = parsedAddress.ToString();
+
+            if (!seenAddresses.Add(normalizedAddress))
+            {
+                warnings.Add(new ConfigurationWarning(
+                    Key: $"{SourceSilenceWatchlistKey}[{index}]:Address",
+                    InvalidValue: rawAddress,
+                    AppliedValue: "(当該エントリのみ無効化)",
+                    Reason: "同じ送信元アドレスが既に登録されているため、後から現れたエントリを外しました" +
+                        "（先に現れたエントリの閾値・表示名が有効です）"));
+                continue;
+            }
+
+            // --- 閾値（任意。範囲外は当該エントリのみ無効化） ---
+            var threshold = defaultThreshold;
+            var thresholdIsDefaulted = true;
+            var rawThreshold = raw?.ThresholdMinutes?.Trim();
+
+            if (!string.IsNullOrWhiteSpace(rawThreshold))
+            {
+                if (!int.TryParse(rawThreshold, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes)
+                    || minutes < SourceSilenceConstants.MinThresholdMinutes
+                    || minutes > SourceSilenceConstants.MaxThresholdMinutes)
+                {
+                    warnings.Add(new ConfigurationWarning(
+                        Key: $"{SourceSilenceWatchlistKey}[{index}]:ThresholdMinutes",
+                        InvalidValue: rawThreshold,
+                        AppliedValue: "(当該エントリのみ無効化)",
+                        Reason: $"{SourceSilenceConstants.MinThresholdMinutes}〜" +
+                            $"{SourceSilenceConstants.MaxThresholdMinutes} 分の整数ではないため、" +
+                            "このエントリのみ監視対象から外しました。既定の閾値へ黙って倒すと" +
+                            "「指定したつもりの閾値で監視されていない」状態になるため、" +
+                            "既定値へのフォールバックはしません"));
+
+                    seenAddresses.Remove(normalizedAddress);
+                    continue;
+                }
+
+                threshold = TimeSpan.FromMinutes(minutes);
+                thresholdIsDefaulted = false;
+            }
+
+            entries.Add(new SourceSilenceWatchEntry(
+                parsedAddress,
+                string.IsNullOrWhiteSpace(raw?.Label) ? null : raw.Label.Trim(),
+                threshold,
+                thresholdIsDefaulted));
+        }
+
+        if (droppedByCap.Count > 0)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: SourceSilenceWatchlistKey,
+                InvalidValue: $"{rawWatchlist.Count} 件（上限 {SourceSilenceConstants.MaxWatchlistEntries} 件）",
+                AppliedValue: $"ファイル順で先頭 {SourceSilenceConstants.MaxWatchlistEntries} 件のみ有効",
+                Reason: "登録上限を超えたため、超過分を監視対象から外しました。外したアドレス: " +
+                    string.Join(", ", droppedByCap) +
+                    "。（先頭への追記は末尾の既存監視を押し出します——新規追加が失敗するのではなく" +
+                    "既存の監視が止まる向きです。追記は末尾に行ってください）"));
+        }
+
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        // 既定値で補完したエントリは情報レベルで残す（ADR-0018 決定 1——手編集の大量投入で
+        // 閾値の省略が起きやすく、「登録した = すぐ気づける」という期待と 24 時間既定のズレが
+        // 黙って生じるのを防ぐ）。警告ではない——省略自体は正当な使い方である。
+        var defaulted = entries.Where(entry => entry.ThresholdIsDefaulted).ToList();
+        if (defaulted.Count > 0)
+        {
+            logger.LogInformation(
+                "途絶検知のウォッチリスト {TotalCount} 件のうち {DefaultedCount} 件は閾値が未指定のため既定値 " +
+                "{DefaultThreshold} を適用しました（対象: {DefaultedAddresses}）。",
+                entries.Count,
+                defaulted.Count,
+                defaultThreshold,
+                string.Join(", ", defaulted.Select(entry => entry.Address.ToString())));
+        }
+
+        return new ResolvedSourceSilence(entries);
+    }
+
+    /// <summary>
+    /// 閾値を省略したエントリの補完値を解決する（既定 1440 分 = 24 時間）。
+    /// </summary>
+    /// <remarks>
+    /// エントリ個別の閾値と違い、こちらは<b>既定値へフォールバックする</b>——本キーが不正でも
+    /// 「補完値が決まらない」だけであり、監視自体を止める理由にはならない（エントリ個別の
+    /// 閾値は「指定したつもりの値で監視されていない」を作るため無効化に倒す。非対称は意図的）。
+    /// </remarks>
+    private static TimeSpan ResolveDefaultSilenceThreshold(
+        YaguraConfigurationOptions.NotificationOptions.SourceSilenceOptions? options,
+        List<ConfigurationWarning> warnings)
+    {
+        var fallback = TimeSpan.FromMinutes(SourceSilenceConstants.DefaultThresholdMinutes);
+        var raw = options?.DefaultThresholdMinutes?.Trim();
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var minutes)
+            && minutes >= SourceSilenceConstants.MinThresholdMinutes
+            && minutes <= SourceSilenceConstants.MaxThresholdMinutes)
+        {
+            return TimeSpan.FromMinutes(minutes);
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: SourceSilenceDefaultThresholdKey,
+            InvalidValue: raw,
+            AppliedValue: $"{SourceSilenceConstants.DefaultThresholdMinutes} 分",
+            Reason: $"{SourceSilenceConstants.MinThresholdMinutes}〜" +
+                $"{SourceSilenceConstants.MaxThresholdMinutes} 分の整数ではないため既定値を適用" +
+                "（本キーは閾値を省略したエントリの補完値であり、不正でも監視自体を止める理由に" +
+                "ならないため既定へフォールバックします）"));
+
+        return fallback;
+    }
+
+    private const string SourceSilenceWatchlistKey = "Notification:SourceSilence:Watchlist";
+    private const string SourceSilenceDefaultThresholdKey = "Notification:SourceSilence:DefaultThresholdMinutes";
 
     /// <summary>
     /// メールアドレスとして最低限の体裁を満たすかを判定する（構成の解決段の受け皿）。

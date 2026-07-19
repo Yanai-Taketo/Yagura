@@ -107,6 +107,16 @@ public static class ConfigurationChangePlanner
             before.Viewer?.Authentication?.Windows?.AdminGroups, after.Viewer?.Authentication?.Windows?.AdminGroups);
         CompareArrayKey(changedKeys, "Notification:Email:To",
             before.Notification?.Email?.To, after.Notification?.Email?.To);
+        CompareKey(changedKeys, "Notification:SourceSilence:DefaultThresholdMinutes",
+            before.Notification?.SourceSilence?.DefaultThresholdMinutes,
+            after.Notification?.SourceSilence?.DefaultThresholdMinutes);
+
+        // オブジェクト構造化配列（ADR-0018）。**論理キーを 1 件だけ積む**——平坦化キー
+        // （...:Watchlist:0:Address）を積むと ImmediateConfigurationApplier の照合にも
+        // 再起動待ちキーの集計にも載らず、即時反映のはずが偽の再起動待ちとして #286 の
+        // 常設表示に出る（ADR-0018 委任 3 が名指しで警戒している 3 点連鎖の破綻）。
+        CompareWatchlist(changedKeys, "Notification:SourceSilence:Watchlist",
+            before.Notification?.SourceSilence?.Watchlist, after.Notification?.SourceSilence?.Watchlist);
 
         var requiredEffect = ConfigurationReloadEffect.Immediate;
         foreach (var key in changedKeys)
@@ -165,6 +175,47 @@ public static class ConfigurationChangePlanner
         if (!before.SequenceEqual(after, StringComparer.Ordinal))
         {
             changedKeys.Add(key);
+        }
+    }
+
+    /// <summary>
+    /// ウォッチリスト（オブジェクトの配列）を順序とフィールド値で比較する（ADR-0018 委任 3）。
+    /// </summary>
+    /// <remarks>
+    /// 規約は <see cref="CompareArrayKey"/> と揃える——未設定と空配列は同一視し、順序の変更は
+    /// 変更として数える。等価判定は 3 フィールドすべて（<c>Address</c>・<c>Label</c>・
+    /// <c>ThresholdMinutes</c>）で行う: <b><c>Label</c> だけの変更も変更である</b>——通知の
+    /// Detail と UI に出る表示名であり、直したのに反映されないのは「変更したのに出ない」の系。
+    /// <para>
+    /// 比較はファイル上の生の文字列に対して行う（正規化前）。正規化の責務は
+    /// <c>ResolveSourceSilence</c> にあり、ここは「ファイルの記述が変わったか」だけを見る
+    /// ——<see cref="CompareArrayKey"/> の remarks と同じ整理。
+    /// </para>
+    /// </remarks>
+    private static void CompareWatchlist(
+        List<string> changedKeys,
+        string key,
+        IReadOnlyList<YaguraConfigurationOptions.NotificationOptions.SourceSilenceOptions.WatchlistEntryOptions>? beforeValue,
+        IReadOnlyList<YaguraConfigurationOptions.NotificationOptions.SourceSilenceOptions.WatchlistEntryOptions>? afterValue)
+    {
+        var before = beforeValue ?? [];
+        var after = afterValue ?? [];
+
+        if (before.Count != after.Count)
+        {
+            changedKeys.Add(key);
+            return;
+        }
+
+        for (var i = 0; i < before.Count; i++)
+        {
+            if (!string.Equals(before[i]?.Address, after[i]?.Address, StringComparison.Ordinal)
+                || !string.Equals(before[i]?.Label, after[i]?.Label, StringComparison.Ordinal)
+                || !string.Equals(before[i]?.ThresholdMinutes, after[i]?.ThresholdMinutes, StringComparison.Ordinal))
+            {
+                changedKeys.Add(key);
+                return;
+            }
         }
     }
 }
