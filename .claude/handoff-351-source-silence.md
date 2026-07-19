@@ -1,14 +1,12 @@
 # 引き継ぎ: #351（ADR-0018 送信元の途絶検知）
 
-最終更新: 2026-07-19 / ブランチ `claude/source-silence-reception-state-y2vvjn`（`feat/351-source-silence-config` の続き。push 済み・PR 未作成）
+最終更新: 2026-07-19（同日 2 回目）/ ブランチ `claude/source-silence-reception-state-y2vvjn` = `feat/351-source-silence-config`（main ベースへリベース済み・push 済み・PR 未作成）
 
-## 前提: このブランチは PR #366 にスタックしている
+## 前提の更新: PR #366 はマージ済み・スタック解消済み
 
-`feat/350-email-notification`（[PR #366](https://github.com/Yanai-Taketo/Yagura/pull/366)）から分岐している。#351 の委任 3 は #366 で作った**配列キーの差分検出機構**に直接依存するため、main から切ると機構ごと失う。
+PR #366（#350 メール通知）はレビュー対応 4 コミット（Logging フィルタ・送信例外ガード・パスワード削除・中止時監査）を足したうえで squash マージ済み（main `d82a63f`）。本ブランチは main へリベース済みで、スタックは解消している。レビューの残指摘は Issue #370〜#372、調査中に見つけた CF-6 巻き添え停止は Issue #373 として起票済み。
 
-**#366 がマージされたら、このブランチを main へリベースしてから PR を作ること。**
-
-## 完了した段（6 コミット）
+## 完了した段（全段完了）
 
 | 段 | 内容 | 委任 |
 |---|---|---|
@@ -18,8 +16,10 @@
 | 3 後 | 周期評価・受信段・即時反映への配線 | — |
 | 4 前 | drain 合流点からの遅延反映 | — |
 | 4 後 | 受信断保留・回復時再アーム・Detail への受信経路併記 | 6 |
+| 5 | allowlist 登録（1027/1028）・判定器のロック + 状態スナップショット・管理サービス + 監査 2023・設定画面 `/admin/source-silence`・UI-4 の登録済みマーク/途絶中強調 | 1・4・5 |
+| 6 | 設計書改訂（security.md 2023 行 + 採番・architecture.md §4.6・ui.md §4・configuration.md §8・ADR-0018 改訂履歴 1 = 委任 1〜7 の実施結果） | — |
 
-**機能の実装は完結した**（残りは UI・監査・設計書改訂）。
+**全段完了。次の作業は PR 作成**（本メモ末尾参照）。
 
 ## 第 4 段 後半（委任 6）の実装内容
 
@@ -33,16 +33,18 @@
 
 本コンテナは Linux のため、Windows 依存テスト（DPAPI・EventLog・Windows サービス・SQL Server LocalDB・IPv6 なし環境のデュアルスタック・E2E）が環境要因で落ちる。**変更領域（ActiveNotification・IngestionPipeline・SourceSilence）は全件グリーン**を確認済み。Windows でのフル 1647 件の確認は次のセッションか lab で。
 
-### 調査中に見つけた既存の潜在問題（本変更とは独立・Issue 化はオーナー未裁定）
+### 調査中に見つけた既存の潜在問題（→ Issue #373 として起票済み）
 
 `ReconfigureListenersAsync` は冒頭で `CancelBindRetryAsync()` により**全リスナの CF-6 再試行を打ち切る**が、options が変わらなかったリスナ（`NotChanged`）には触れず再試行も張り直さない。つまり「UDP が起動時縮小継続（再試行中）+ 運用者が TCP のポートだけ再読み込みで変更」の組で、**UDP の再試行が巻き添えで止まり、サービス再起動まで UDP が復旧しなくなる**。#262（層2）と #291 の相互作用で、doc コメントの「望ましい構成が変わったため」という前提が部分変更の場合に成立していない。実コード確認済み（`IngestionPipeline.cs` の `ReconfigureListenersAsync` 冒頭と `NotChanged` 分岐）。
 
-## その後の段
+## 第 5・6 段の実装内容（2026-07-19 実装）
 
-| 段 | 内容 | 委任 | メモ |
-|---|---|---|---|
-| 5 | UI（設定画面・UI-4 拡張）+ 監査 | 4・5 | **委任 4 は「導線を置かない」で決着させる方針**（下記） |
-| 6 | 設計書改訂 | — | architecture.md §4.6 への追記など |
+- **allowlist**: 1027/1028 を `EmailNotificationAllowlist` へ Warning で登録（security.md が先に宣言済みだった実装ギャップの解消）。1029 は対象外のまま
+- **判定器**: 全操作をロックで直列化（従来から ApplyWatchlist は再読み込みスレッド・Evaluate は監視ループの並行があり得た）+ `SnapshotEntryStatuses()`（正規化済みアドレス・途絶フラグ）を公開
+- **閲覧契約**: `IYaguraSystemStatusReader.ReadSourceSilenceEntries()` を追加（新契約を作らず既存の読み取り専用契約を拡張——閲覧面の参照分離検査の許容リストを増やさない）
+- **管理サービス**: `ISourceSilenceAdminService`（状態・候補・全量保存）。保存時検証は拒否に倒す。新規登録は閾値必須・既存の省略は保持。監査 2023 は added/removed/changed のエントリ列挙つき。即時反映は再読み込み経路と同一デリゲート
+- **画面**: `/admin/source-silence`（候補選択主経路 + 手入力・値 + 単位の閾値入力・ローカル編集 → 一括適用・「無効（設定を確認）」の識別表示）。ダッシュボード UI-4 に登録済みマーク（表示名つき）+ 途絶中強調 chip
+- **委任 4 は「導線を置かない」で決着**（ADR-0018 改訂履歴 1 に記録済み——下記の調査根拠のとおり）
 
 ### 委任 4 は落とす結論で調査済み
 
@@ -69,6 +71,12 @@
 **ただし利用者から見た挙動は揃っている**: 起動は writer を先に呼ぶため起動失敗（1024）、再読み込みは `JsonException` 捕捉で適用拒否（1021）。#312 の「再読み込みは通ったのに再起動で起動しない」潜伏の向きにはならない（厳しい側の writer が両経路に居る）。`SourceSilenceConfigurationTests.Load_EmptyStringInsteadOfArray_FailsLoudlyThroughTheWriter` が固定している。
 
 **この性質は #351 固有ではなく既存の `*Groups` 配列キーも同じ。** Issue 化するかはオーナー未裁定。
+
+## 次の作業: PR 作成
+
+1. `git fetch origin main` で最新化し、乖離があればリベース（現時点では main = `d82a63f` ベース）
+2. **PR は `feat/351-source-silence-config` から main へ**。body には ADR-0018 の委任 1〜7 の裁定（ADR 改訂履歴 1 と同内容の要約）・受け入れ基準の充足状況・lab 検証項目（下記）を含める
+3. CI green を確認してから merge（規約）。E2E の 30 秒タイムアウト複数同時失敗はランナー負荷フレークを疑いリラン
 
 ## lab 検証項目（CI で担保できない受け入れ基準）
 
