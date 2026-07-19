@@ -238,7 +238,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 loggerFactory?.CreateLogger<SpoolDrainCoordinator>(),
                 capacityExhaustionHandler,
                 writeGate,
-                selfTestTracker);
+                selfTestTracker,
+                sourceActivityTracker);
     }
 
     /// <summary>

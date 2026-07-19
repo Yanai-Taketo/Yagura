@@ -84,20 +84,27 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
     /// <param name="observedAt">
     /// レコードが実際に受信された壁時計時刻。<b>単調タイムラインへ換算してから</b>反映する。
     /// </param>
-    internal void RecordHistoricalActivity(IPAddress address, DateTimeOffset observedAt)
+    public void RecordHistoricalActivity(string sourceAddress, DateTimeOffset observedAt)
     {
-        if (address is null)
-        {
-            return;
-        }
-
-        var key = NormalizeAddress(address);
-        if (!_slots.TryGetValue(key, out var slot))
+        // RecordActivity と同じく、ここでも解析しない——drain は 1 セグメントぶんの
+        // レコードをまとめて流すため、件数ぶんの解析が積み上がる。
+        if (sourceAddress is null || !_slots.TryGetValue(sourceAddress, out var slot))
         {
             return;
         }
 
         UpdateToMax(slot, ToMonotonicTimestamp(observedAt));
+    }
+
+    /// <summary>
+    /// <see cref="IPAddress"/> 版（テスト・診断用）。
+    /// </summary>
+    internal void RecordHistoricalActivity(IPAddress address, DateTimeOffset observedAt)
+    {
+        if (address is not null)
+        {
+            RecordHistoricalActivity(NormalizeAddress(address), observedAt);
+        }
     }
 
     /// <summary>

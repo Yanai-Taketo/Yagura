@@ -33,4 +33,24 @@ public interface ISourceActivityTracker
     /// </summary>
     /// <param name="sourceAddress">送信元アドレスの文字列表現。</param>
     void RecordActivity(string sourceAddress);
+
+    /// <summary>
+    /// <b>過去の</b>受信実績を遅延反映する（スプール drain の合流点から呼ぶ）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// これがある理由（ADR-0018 決定 3）: <b>深いスプール滞留 + 再起動</b>の組で、直前まで
+    /// 送っていた装置が途絶に見える偽陽性を塞ぐため。architecture.md §3.2.2 は滞留を正常状態と
+    /// 明記しており「短い窓」ではない——滞留中のレコードが後から DB へ合流するとき、その
+    /// レコードが実際に受信された時刻を追跡へ反映しないと、装置は健在なのに「閾値ぶん受信が
+    /// ない」と判定され得る。
+    /// </para>
+    /// <para>
+    /// <b>これは新規受信の定義ではない</b>（決定 3 の「受信した」の定義の唯一の例外）。実装は
+    /// <c>max()</c> 更新であり、より新しい実受信を過去へ引き戻してはならない。
+    /// </para>
+    /// </remarks>
+    /// <param name="sourceAddress">送信元アドレスの文字列表現。</param>
+    /// <param name="observedAt">当該レコードが実際に受信された壁時計時刻。</param>
+    void RecordHistoricalActivity(string sourceAddress, DateTimeOffset observedAt);
 }
