@@ -708,5 +708,10 @@ public sealed class ViewerPageRenderTests
 
         public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) =>
             FlowControlRejections.Take(maxCount).ToList();
+
+        /// <summary>途絶検知のウォッチリスト状態（ADR-0018。既定は未登録 = 空）。</summary>
+        public List<YaguraSourceSilenceReading> SourceSilenceEntries { get; init; } = [];
+
+        public IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries() => SourceSilenceEntries;
     }
 }

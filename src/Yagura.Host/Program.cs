@@ -660,7 +660,10 @@ public static class Program
                 // 流量制限の発火上位送信元（Issue #288）: SwappableIngressGate を渡す——設定
                 // ライブ再読み込みでゲートが差し替わっても、読み取りは常に現在の実装へ届く
                 // （流量制御 opt-out 時は NoopIngressGate のため空になる）。
-                flowControlRejections: ingressGate));
+                flowControlRejections: ingressGate,
+                // 途絶検知のエントリ状態（ADR-0018 決定 4。Issue #351）: UI-4 の登録済みマーク・
+                // 途絶中強調の入力。機能無効（ウォッチリスト未設定）の間は空を返す。
+                sourceSilenceEntries: sourceSilenceDetector.SnapshotEntryStatuses));
 
         // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
         //

@@ -67,6 +67,15 @@ public sealed class SourceSilenceDetector
     private readonly SourceActivityTracker _tracker;
     private readonly TimeProvider _timeProvider;
 
+    /// <summary>
+    /// 全操作を直列化するロック（#351 第 5 段）。書き手は監視ループ
+    /// （<see cref="Evaluate"/>・<see cref="RearmAfterReceptionRecovery"/>）だけでなく、
+    /// 設定の即時反映（<see cref="ApplyWatchlist"/>——再読み込みスレッド・管理画面の保存）と
+    /// UI の状態読み取り（<see cref="SnapshotEntryStatuses"/>——Blazor スレッド）が別スレッドから
+    /// 呼ぶ。競合は稀（周期 1 分 + 設定変更時のみ）で保持時間はごく短いため、素直な lock で足りる。
+    /// </summary>
+    private readonly object _gate = new();
+
     /// <summary>エントリ別の状態（キーは正規化済みアドレス文字列）。</summary>
     private readonly Dictionary<string, EntryState> _states = new(StringComparer.OrdinalIgnoreCase);
 
@@ -102,12 +111,33 @@ public sealed class SourceSilenceDetector
     /// </remarks>
     internal void ApplyWatchlist(IReadOnlyList<SourceSilenceWatchEntry>? watchlist)
     {
-        _watchlist = watchlist ?? [];
-
-        var live = _watchlist.Select(entry => Key(entry.Address)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var stale in _states.Keys.Where(key => !live.Contains(key)).ToList())
+        lock (_gate)
         {
-            _states.Remove(stale);
+            _watchlist = watchlist ?? [];
+
+            var live = _watchlist.Select(entry => Key(entry.Address)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var stale in _states.Keys.Where(key => !live.Contains(key)).ToList())
+            {
+                _states.Remove(stale);
+            }
+        }
+    }
+
+    /// <summary>
+    /// エントリ別の現在状態のスナップショット（UI-4 の登録済みマーク・途絶中強調と
+    /// 設定画面の一覧表示の入力。ADR-0018 決定 4）。アドレスは正規化済み文字列
+    /// （IPv4-mapped IPv6 は IPv4 表記）で返す——閲覧側の照合キーと揃える。
+    /// </summary>
+    internal IReadOnlyList<Yagura.Abstractions.Observability.YaguraSourceSilenceReading> SnapshotEntryStatuses()
+    {
+        lock (_gate)
+        {
+            return [.. _watchlist.Select(entry =>
+                new Yagura.Abstractions.Observability.YaguraSourceSilenceReading(
+                    Key(entry.Address),
+                    entry.Label,
+                    entry.Threshold,
+                    IsSilent: _states.TryGetValue(Key(entry.Address), out var state) && state.IsSilent))];
         }
     }
 
@@ -119,6 +149,14 @@ public sealed class SourceSilenceDetector
     /// <see langword="true"/> の間は途絶へ遷移させない。
     /// </param>
     internal SourceSilenceEvaluation Evaluate(bool receptionSuspended = false)
+    {
+        lock (_gate)
+        {
+            return EvaluateCore(receptionSuspended);
+        }
+    }
+
+    private SourceSilenceEvaluation EvaluateCore(bool receptionSuspended)
     {
         if (_watchlist.Count == 0)
         {
@@ -214,14 +252,17 @@ public sealed class SourceSilenceDetector
     /// </remarks>
     internal void RearmAfterReceptionRecovery()
     {
-        foreach (var entry in _watchlist)
+        lock (_gate)
         {
-            _tracker.Seed(entry.Address, _timeProvider.GetUtcNow());
-
-            if (_states.TryGetValue(Key(entry.Address), out var state))
+            foreach (var entry in _watchlist)
             {
-                state.IsSilent = false;
-                state.NotificationPending = false;
+                _tracker.Seed(entry.Address, _timeProvider.GetUtcNow());
+
+                if (_states.TryGetValue(Key(entry.Address), out var state))
+                {
+                    state.IsSilent = false;
+                    state.NotificationPending = false;
+                }
             }
         }
     }

@@ -222,5 +222,7 @@ public sealed class LogSearchQueryBindingTests : IDisposable
             Listeners: []);
 
         public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) => [];
+
+        public IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries() => [];
     }
 }

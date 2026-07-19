@@ -272,4 +272,44 @@ public sealed class SourceSilenceDetectorTests
         Assert.Empty(result.Silences);
         Assert.Single(result.Recoveries);
     }
+
+    // ------------------------------------------------------------------
+    // エントリ状態のスナップショット（決定 4。UI-4 の登録済みマーク・途絶中強調）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void SnapshotEntryStatuses_TracksTheSilenceLifecycle()
+    {
+        var (detector, tracker, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+        var address = IPAddress.Parse("192.0.2.10");
+
+        // 登録直後: 登録済みだが途絶ではない。
+        var initial = Assert.Single(detector.SnapshotEntryStatuses());
+        Assert.Equal("192.0.2.10", initial.Address);
+        Assert.Equal("装置-192.0.2.10", initial.Label);
+        Assert.Equal(TimeSpan.FromMinutes(60), initial.Threshold);
+        Assert.False(initial.IsSilent);
+
+        // 途絶判定後は IsSilent が立つ。
+        time.Advance(TimeSpan.FromMinutes(61));
+        detector.Evaluate();
+        Assert.True(Assert.Single(detector.SnapshotEntryStatuses()).IsSilent);
+
+        // 受信再開の評価で解除される。
+        tracker.RecordActivity(address);
+        detector.Evaluate();
+        Assert.False(Assert.Single(detector.SnapshotEntryStatuses()).IsSilent);
+    }
+
+    [Fact]
+    public void SnapshotEntryStatuses_NormalizesIPv4MappedAddresses()
+    {
+        // 閲覧側（SourceActivity の文字列アドレス）との照合キーを揃える——IPv4-mapped IPv6 は
+        // IPv4 表記へ畳む（流量制御・Top talkers と同じ既存規約）。
+        var entry = new SourceSilenceWatchEntry(
+            IPAddress.Parse("::ffff:192.0.2.99"), null, TimeSpan.FromMinutes(60), false);
+        var (detector, _, _) = Create(entry);
+
+        Assert.Equal("192.0.2.99", Assert.Single(detector.SnapshotEntryStatuses()).Address);
+    }
 }

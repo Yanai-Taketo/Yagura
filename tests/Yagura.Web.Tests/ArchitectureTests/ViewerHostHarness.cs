@@ -277,6 +277,8 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             Listeners: []);
 
         public IReadOnlyList<Yagura.Abstractions.Observability.YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) => [];
+
+        public IReadOnlyList<Yagura.Abstractions.Observability.YaguraSourceSilenceReading> ReadSourceSilenceEntries() => [];
     }
 
     private sealed class NoopAuditRecorder : IAuditRecorder
