@@ -303,4 +303,15 @@ public enum AuditEventKind
     /// 「保存済み資格情報を使用したか」の別を記録し、資格情報の値そのものは記録しない。
     /// </remarks>
     EmailNotificationTestSent,
+
+    /// <summary>
+    /// 送信元の途絶検知のウォッチリスト変更（イベント ID 2023。ADR-0018 決定 5。Issue #351）。
+    /// </summary>
+    /// <remarks>
+    /// Detail には<b>追加・削除・変更されたエントリ（アドレスと表示名）を必ず含める</b>——
+    /// ウォッチリストは検知範囲そのものの定義であり、「管理権限を得た攻撃者が証跡遮断の前に
+    /// エントリを外す」を事後に再構成できる粒度が要る（キー名だけの既存粒度——2016——では
+    /// 答えられない。値は秘密情報ではない）。
+    /// </remarks>
+    SourceSilenceWatchlistConfigured,
 }

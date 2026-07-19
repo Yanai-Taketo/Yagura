@@ -537,6 +537,16 @@ public static class Program
         sourceActivityTracker.ApplyWatchlist(resolvedConfiguration.SourceSilence?.Watchlist);
         sourceSilenceDetector.ApplyWatchlist(resolvedConfiguration.SourceSilence?.Watchlist);
 
+        // ウォッチリスト反映の口を 1 本に束ねる（決定 6）——設定の再読み込み
+        // （ImmediateConfigurationApplier）と管理画面の保存（SourceSilenceAdminService）が
+        // 同じ実体を使い、経路によって反映挙動が食い違う余地を作らない。
+        Action<IReadOnlyList<Yagura.Host.Configuration.SourceSilenceWatchEntry>?> applySourceSilenceWatchlist =
+            watchlist =>
+            {
+                sourceActivityTracker.ApplyWatchlist(watchlist);
+                sourceSilenceDetector.ApplyWatchlist(watchlist);
+            };
+
         builder.Services.AddSingleton(sp => new IngestionPipeline(
             sp.GetRequiredService<UdpSyslogListenerOptions>(),
             sp.GetRequiredService<TcpSyslogListenerOptions>(),
@@ -785,12 +795,7 @@ public static class Program
                 // 「登録時点基準」へ戻り、長い閾値のエントリが実質永久に発火しなくなる。
                 new ImmediateConfigurationApplier(
                     ["Notification:SourceSilence:Watchlist", "Notification:SourceSilence:DefaultThresholdMinutes"],
-                    newConfiguration =>
-                    {
-                        var watchlist = newConfiguration.SourceSilence?.Watchlist;
-                        sourceActivityTracker.ApplyWatchlist(watchlist);
-                        sourceSilenceDetector.ApplyWatchlist(watchlist);
-                    }),
+                    newConfiguration => applySourceSilenceWatchlist(newConfiguration.SourceSilence?.Watchlist)),
                 // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
                 new ImmediateConfigurationApplier(
                     ["Audit:RetentionDays"],
@@ -969,6 +974,17 @@ public static class Program
                 sp.GetRequiredService<IAuditRecorder>(),
                 emailNotificationQueue,
                 () => sp.GetService<EmailNotificationDispatcher>()));
+
+        // 途絶検知のウォッチリスト設定（ADR-0018 決定 4・5・6。Issue #351）。即時反映の口は
+        // 再読み込み経路（ImmediateConfigurationApplier）と同一のデリゲートを渡す——反映経路を
+        // 1 本に保つ。候補選択（決定 4）は ILogStore の送信元別集計から取る。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISourceSilenceAdminService>(sp =>
+            new Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>(),
+                sp.GetRequiredService<ILogStore>(),
+                applySourceSilenceWatchlist,
+                sourceSilenceDetector.SnapshotEntryStatuses));
 
         // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）。設定の生指定（名/SID）を
         // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本
