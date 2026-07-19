@@ -49,6 +49,16 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private CancellationTokenSource? _bindRetryCts;
     private readonly List<Task> _bindRetryTasks = [];
 
+    // リスナ別の現在の受信可否（ADR-0018 委任 6。Issue #351）。起動 Outcome・再構成 Outcome・
+    // CF-6 再試行成功の 3 系統の帰結を現在状態へ畳む（ListenerAvailabilitySnapshot の remarks 参照）。
+    // 書き手は起動/再構成の呼び出し元スレッドと CF-6 再試行のバックグラウンドスレッド、読み手は
+    // 能動通知の監視ループ——独立した bool の volatile 読み書きで足りる（3 値をまたぐ不変条件はない。
+    // 再構成中の旧リスナ停止〜新リスナ起動の短い瞬断は追わず、確定した帰結だけを反映する——読み手の
+    // 周期は 1 分で、瞬断の粒度は判定に影響しない）。
+    private volatile bool _udpReceiving;
+    private volatile bool _tcpReceiving;
+    private volatile bool _tlsReceiving;
+
     private CancellationTokenSource? _consumerStoppingCts;
     private Task? _parsingTask;
     private Task? _persistenceTask;
@@ -264,6 +274,35 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public IngestionMetrics Metrics => _metrics;
 
     /// <summary>
+    /// 受信リスナの現在の受信可否（ADR-0018 委任 6。Issue #351）。送信元の途絶検知が
+    /// 「サーバ都合の受信断」の保留判定と警告 Detail への受信経路の状態の併記に使う。
+    /// <see cref="StartListenerAsync"/> より前はすべて受信不能として返る。
+    /// </summary>
+    public ListenerAvailabilitySnapshot ListenerAvailability =>
+        new(_udpReceiving, _tcpReceiving, _tlsListener is null ? null : _tlsReceiving);
+
+    /// <summary>
+    /// リスナ別の受信可否を更新する。<paramref name="protocolLabel"/> は起動・再構成・CF-6 再試行が
+    /// 共有するラベル（"UDP" / "TCP" / "TLS"）——新しいリスナ種別を足すときは本メソッドと
+    /// <see cref="ListenerAvailability"/> の両方に加えること。
+    /// </summary>
+    private void SetListenerReceiving(string protocolLabel, bool receiving)
+    {
+        switch (protocolLabel)
+        {
+            case "UDP":
+                _udpReceiving = receiving;
+                break;
+            case "TCP":
+                _tcpReceiving = receiving;
+                break;
+            case "TLS":
+                _tlsReceiving = receiving;
+                break;
+        }
+    }
+
+    /// <summary>
     /// 受信段を開始する（architecture.md §1.2 手順 2「受信ソケットを開き、受信を開始する」）。
     /// DB 初期化の完了を待たずに呼び出してよい——Q1・Q2 が緩衝になる。UDP・TCP は同時に開始する
     /// （依頼「起動順序: UDP と同時（受信先行の一部）」）。
@@ -393,10 +432,12 @@ public sealed class IngestionPipeline : IAsyncDisposable
         {
             await start(cancellationToken).ConfigureAwait(false);
             startedListeners.Add(stop);
+            SetListenerReceiving(protocolLabel, true);
             return new ListenerStartupOutcome(ListenerStartupStatus.Started);
         }
         catch (SocketException ex)
         {
+            SetListenerReceiving(protocolLabel, false);
             _logger?.LogWarning(
                 ex,
                 "{Protocol} リスナの bind に失敗しました。開けたリスナのみで縮小継続し、{Interval} 間隔で再試行します" +
@@ -497,6 +538,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
             await newListener.StartAsync(cancellationToken).ConfigureAwait(false);
             _udpListener = newListener;
             _udpOptions = newOptions;
+            SetListenerReceiving("UDP", true);
             _logger?.LogInformation(
                 "UDP リスナを再構成しました（{Address}:{Port}）。", newOptions.BindAddress, newListener.BoundPort);
             return new ListenerReconfigurationOutcome(
@@ -537,6 +579,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
             await newListener.StartAsync(cancellationToken).ConfigureAwait(false);
             _tcpListener = newListener;
             _tcpOptions = newOptions;
+            SetListenerReceiving("TCP", true);
             _logger?.LogInformation(
                 "TCP リスナを再構成しました（{Address}:{Port}）。", newOptions.BindAddress, newListener.BoundPort);
             return new ListenerReconfigurationOutcome(
@@ -589,6 +632,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         try
         {
             await restartOld(CancellationToken.None).ConfigureAwait(false);
+            SetListenerReceiving(protocolLabel, true);
             return new ListenerReconfigurationOutcome(
                 ListenerReconfigurationStatus.RolledBack, gapStartedAt, DateTimeOffset.UtcNow, newBindFailure.Message);
         }
@@ -600,6 +644,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 protocolLabel,
                 BindRetryInterval);
 
+            SetListenerReceiving(protocolLabel, false);
             StartBindRetryLoop(protocolLabel, retryNew, gapStartedAt);
             return new ListenerReconfigurationOutcome(
                 ListenerReconfigurationStatus.DownRetrying, gapStartedAt, GapEndedAt: null, newBindFailure.Message);
@@ -632,6 +677,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 {
                     await Task.Delay(BindRetryInterval, token).ConfigureAwait(false);
                     await retryNew(token).ConfigureAwait(false);
+                    SetListenerReceiving(protocolLabel, true);
                     _logger?.LogInformation("{Protocol} リスナの bind 再試行に成功し、受信を再開しました（CF-6）。", protocolLabel);
                     ListenerBindRecovered?.Invoke(new ListenerBindRecovery(protocolLabel, gapStartedAt, DateTimeOffset.UtcNow));
                     return;

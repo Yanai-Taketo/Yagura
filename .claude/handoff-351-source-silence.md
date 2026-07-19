@@ -1,6 +1,6 @@
 # 引き継ぎ: #351（ADR-0018 送信元の途絶検知）
 
-最終更新: 2026-07-19 / ブランチ `feat/351-source-silence-config`（push 済み・PR 未作成）
+最終更新: 2026-07-19 / ブランチ `claude/source-silence-reception-state-y2vvjn`（`feat/351-source-silence-config` の続き。push 済み・PR 未作成）
 
 ## 前提: このブランチは PR #366 にスタックしている
 
@@ -8,7 +8,7 @@
 
 **#366 がマージされたら、このブランチを main へリベースしてから PR を作ること。**
 
-## 完了した段（5 コミット・全テスト 1639 件グリーン）
+## 完了した段（6 コミット）
 
 | 段 | 内容 | 委任 |
 |---|---|---|
@@ -17,33 +17,25 @@
 | 3 前 | 判定器 + イベント ID 1027/1028/1029 | 1 |
 | 3 後 | 周期評価・受信段・即時反映への配線 | — |
 | 4 前 | drain 合流点からの遅延反映 | — |
+| 4 後 | 受信断保留・回復時再アーム・Detail への受信経路併記 | 6 |
 
-**現時点で機能として動作する**（ウォッチリストを設定すれば途絶を検知して 1027 を出す）。
+**機能の実装は完結した**（残りは UI・監査・設計書改訂）。
 
-## 次にやること: 第 4 段 後半（委任 6）
+## 第 4 段 後半（委任 6）の実装内容
 
-**唯一の未接続機能**。`SourceSilenceDetector.Evaluate(receptionSuspended:)` の引数を、現在 `ActiveNotificationMonitor.EvaluateSourceSilence()` が**常に `false`** で渡している。
+- **`IngestionPipeline.ListenerAvailability`**（`ListenerAvailabilitySnapshot` を返す公開プロパティ）を新設。起動 Outcome・再構成 Outcome・CF-6 再試行成功の 3 系統の帰結をリスナ別 `volatile bool` へ畳む。TLS 未構成（`_tlsListener is null`）は `AllListenersDown` の判定に数えない
+- **`ActiveNotificationMonitor`** に `listenerAvailabilityProbe`（`Func<ListenerAvailabilitySnapshot>?`）を注入。`EvaluateSourceSilence()` が毎周期観測し、`AllListenersDown` を `Evaluate(receptionSuspended:)` へ渡す。**true → false の遷移で `RearmAfterReceptionRecovery()` を呼ぶ**
+- **回復検知はイベント購読ではなくポーリング**にした: 判定器はスレッド安全でなく（監視ループの単一スレッド前提）、`ListenerBindRecovered` はバックグラウンドスレッドから発火する。周期評価内の遷移検知なら同期不要。保留解除が最大 1 周期（1 分）遅れるが閾値下限（10 分）に対して無害。**副作用として 1 周期未満で完結した全リスナ受信断は観測されない**（保留も再アームもされない——観測が欠けない側に倒れており許容）
+- **Detail 併記**（委任 6 の 2 点目）: 1027/1028 の本文に「サーバ側受信経路の状態」（`UDP=受信中・TCP=受信不能・TLS=未構成` 形式）を追加。部分受信断はこれで対応する（決定 3——保留はしない）。プローブ未注入時は「不明」
+- テスト: `ActiveNotificationMonitorSourceSilenceTests`（保留・再アーム・部分受信断・プローブ未注入の 5 件）+ `IngestionPipelineIntegrationTests` に状態面の 3 件
 
-### 何が要るか
+### 検証環境の注記
 
-ADR-0018 決定 3 は「全受信リスナが受信不能な間は途絶判定を保留し、受信経路の回復時に再アームする」と決めている。`IngestionPipeline` には材料が揃っているが、**「今この瞬間の可否」を問い合わせる口がない**。
+本コンテナは Linux のため、Windows 依存テスト（DPAPI・EventLog・Windows サービス・SQL Server LocalDB・IPv6 なし環境のデュアルスタック・E2E）が環境要因で落ちる。**変更領域（ActiveNotification・IngestionPipeline・SourceSilence）は全件グリーン**を確認済み。Windows でのフル 1647 件の確認は次のセッションか lab で。
 
-| 既存 | 性質 |
-|---|---|
-| `StartListenerAsync` → `ListenerStartupResult`（`IsDegraded` を持つ） | 起動時 1 回の戻り値 |
-| `ReconfigureListenersAsync` → `ListenerReconfigurationResult` | 再構成時 1 回の戻り値 |
-| `ListenerBindRecovered` イベント（`ListenerBindRecovery`） | 回復の瞬間に 1 回発火 |
+### 調査中に見つけた既存の潜在問題（本変更とは独立・Issue 化はオーナー未裁定）
 
-この 3 つを購読して 1 つの真偽値（全リスナ受信不能か）へ畳む小さな状態面を `IngestionPipeline` に足す。**新しい観測機構を作るわけではない**——調査の結果、当初 ADR の記述から想像したより軽い。
-
-### 接続先
-
-- `EvaluateSourceSilence()` の `receptionSuspended: false` を実際の状態へ差し替える
-- 回復時に `SourceSilenceDetector.RearmAfterReceptionRecovery()` を呼ぶ（実装・テスト済み。呼び出し側が未接続）
-
-### 現状で許容している挙動
-
-保留しないことで起きるのは「サーバ側障害を装置側の途絶として通知する」偽陽性。逆（サーバ障害中に装置の途絶を見逃す）より**観測が欠けない側**に倒れているため、未完成のままでも安全側。
+`ReconfigureListenersAsync` は冒頭で `CancelBindRetryAsync()` により**全リスナの CF-6 再試行を打ち切る**が、options が変わらなかったリスナ（`NotChanged`）には触れず再試行も張り直さない。つまり「UDP が起動時縮小継続（再試行中）+ 運用者が TCP のポートだけ再読み込みで変更」の組で、**UDP の再試行が巻き添えで止まり、サービス再起動まで UDP が復旧しなくなる**。#262（層2）と #291 の相互作用で、doc コメントの「望ましい構成が変わったため」という前提が部分変更の場合に成立していない。実コード確認済み（`IngestionPipeline.cs` の `ReconfigureListenersAsync` 冒頭と `NotChanged` 分岐）。
 
 ## その後の段
 

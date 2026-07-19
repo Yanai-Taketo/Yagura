@@ -597,21 +597,29 @@ public static class Program
                     resolvedConfiguration.IngestionTlsCertificateThumbprint!)
                 : null;
 
-        builder.Services.AddSingleton(sp => new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
-            spool,
-            sp.GetRequiredService<IngestionPipeline>().Metrics,
-            sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(),
-            sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
-            timeProvider: null,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
-            selfTestTracker,
-            adminHttpsCertificateProbe,
-            ingestionTlsCertificateProbe,
-            // ADR-0011 決定 6: 三層防御の能動通知への昇格。AdminAuthFailureDefense は
-            // 本メソッド内で後段に登録されるが、AddSingleton のファクトリは遅延解決されるため
-            // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
-            sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>(),
-            sourceSilenceDetector));
+        builder.Services.AddSingleton(sp =>
+        {
+            var pipelineForMonitor = sp.GetRequiredService<IngestionPipeline>();
+            return new Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor(
+                spool,
+                pipelineForMonitor.Metrics,
+                sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IMonitoredVolumeInfo>(),
+                sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.IExpressCapacityChecker>(),
+                timeProvider: null,
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>(),
+                selfTestTracker,
+                adminHttpsCertificateProbe,
+                ingestionTlsCertificateProbe,
+                // ADR-0011 決定 6: 三層防御の能動通知への昇格。AdminAuthFailureDefense は
+                // 本メソッド内で後段に登録されるが、AddSingleton のファクトリは遅延解決されるため
+                // 登録順は問題にならない（Build() 完了後の初回解決時には両方とも登録済み）。
+                sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>(),
+                sourceSilenceDetector,
+                // 受信断保留の判定源（ADR-0018 委任 6）: 全リスナ受信不能の間は途絶判定を保留し、
+                // 回復で再アームする。判定器がスレッド安全でないため、ListenerBindRecovered の
+                // 購読ではなく監視ループ内のポーリングで観測する（EvaluateSourceSilence 参照）。
+                listenerAvailabilityProbe: () => pipelineForMonitor.ListenerAvailability);
+        });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
         // ActiveNotificationMonitor と同じく IHostedService にはしない——停止順序を Generic Host の

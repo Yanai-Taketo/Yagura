@@ -331,6 +331,97 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// ADR-0018 委任 6（Issue #351）: リスナ受信可否の状態面。起動前はすべて受信不能として
+    /// 返り、起動成功で受信可能へ畳まれる（TLS 未構成は判定に数えない）。
+    /// </summary>
+    [Fact]
+    public async Task ListenerAvailability_ReflectsStartupOutcomes()
+    {
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            _logStore);
+
+        Assert.True(pipeline.ListenerAvailability.AllListenersDown);
+
+        await pipeline.StartListenerAsync();
+
+        var availability = pipeline.ListenerAvailability;
+        Assert.True(availability.Udp);
+        Assert.True(availability.Tcp);
+        Assert.Null(availability.Tls);
+        Assert.False(availability.AllListenersDown);
+
+        await pipeline.StopAsync();
+    }
+
+    /// <summary>
+    /// ADR-0018 委任 6: 部分受信断（TCP のみ bind 失敗）は「全リスナ受信不能」にならない
+    /// （途絶検知は部分受信断を保留対象にしない——警告 Detail への併記で対応する。決定 3）。
+    /// </summary>
+    [Fact]
+    public async Task ListenerAvailability_PartialBindFailure_IsNotAllListenersDown()
+    {
+        using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+        portReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
+            _logStore);
+
+        await pipeline.StartListenerAsync();
+
+        var availability = pipeline.ListenerAvailability;
+        Assert.True(availability.Udp);
+        Assert.False(availability.Tcp);
+        Assert.False(availability.AllListenersDown);
+
+        await pipeline.StopAsync();
+        portReservation.Stop();
+    }
+
+    /// <summary>
+    /// ADR-0018 委任 6: 全リスナが開けない間は「全リスナ受信不能」として畳まれ、CF-6 の
+    /// bind 再試行の成功（<see cref="IngestionPipeline.ListenerBindRecovered"/> の発火経路）で
+    /// 現在状態へ反映される——起動 Outcome・復旧イベント・再構成 Outcome の 3 系統を 1 つの
+    /// 状態面に畳む本委任の中核。
+    /// </summary>
+    [Fact]
+    public async Task ListenerAvailability_AllListenersDown_RecoversViaBindRetry()
+    {
+        var udpReservation = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var occupiedUdpPort = ((IPEndPoint)udpReservation.Client.LocalEndPoint!).Port;
+        var tcpReservation = new TcpListener(IPAddress.Loopback, 0);
+        tcpReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)tcpReservation.LocalEndpoint).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedUdpPort },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
+            _logStore);
+        pipeline.BindRetryInterval = TimeSpan.FromMilliseconds(200);
+
+        await pipeline.StartListenerAsync();
+        Assert.True(pipeline.ListenerAvailability.AllListenersDown);
+
+        // 占有を解消 → 再試行の成功が現在状態へ畳まれる。
+        udpReservation.Dispose();
+        tcpReservation.Stop();
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (pipeline.ListenerAvailability.AllListenersDown && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        Assert.False(pipeline.ListenerAvailability.AllListenersDown);
+
+        await pipeline.StopAsync();
+    }
+
+    /// <summary>
     /// Issue #291: 縮小継続時に警告レベルのログが出ること（#141 時代の「Error + 例外送出」から
     /// 「Warning + 継続」への変更を固定する）。
     /// </summary>
