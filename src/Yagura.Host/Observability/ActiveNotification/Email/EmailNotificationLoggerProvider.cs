@@ -18,10 +18,12 @@ namespace Yagura.Host.Observability.ActiveNotification.Email;
 /// 自動的に捕捉できる。
 /// </para>
 /// <para>
-/// <b>利用者の <c>Logging:*</c> 設定から独立させる</b>: 本プロバイダはフィルタを介さず全カテゴリ・
-/// 全レベルを受け取り、選別は <see cref="EmailNotificationAllowlist"/> のみで行う
-/// （<see cref="ILoggerProvider"/> は DI 上 <c>ILoggerFactory</c> に直接足すため、
-/// <c>Logging:LogLevel</c> のカテゴリ別フィルタが本プロバイダの受信を止めることはない）。
+/// <b>利用者の <c>Logging:*</c> 設定から独立させる</b>: 選別は
+/// <see cref="EmailNotificationAllowlist"/> のみで行う。ただし <c>ILoggerFactory</c> の
+/// フィルタ規則は登録経路にかかわらず全プロバイダへ適用されるため、独立は本プロバイダを
+/// 名指しした明示のフィルタ規則（<see cref="EmailNotificationLogging.AddEmailNotificationSink"/>
+/// が積む）で成立させる——本プロバイダ自身の <see cref="ILogger.IsEnabled"/> が全レベルを
+/// 返すだけでは足りない（集約ロガーが規則側の MinLevel で配送自体を止めるため）。
 /// イベントログのノイズ調整のつもりの設定変更が<b>黙ってメールを止める</b>経路を作らない
 /// ——決定 2 の「設定したのに送られていない状態を警告で必ず見せる」との一貫。
 /// </para>

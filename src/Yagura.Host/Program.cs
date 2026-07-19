@@ -436,18 +436,18 @@ public static class Program
         // Yagura.Ingestion の PersistenceWriter・起動時経路・AdminAuthFailureDefense）の
         // コードを一切触らずに捕捉できる。対象の選別は EmailNotificationAllowlist のみで行う。
         //
-        // **AddProvider で直接足す理由**: builder.Logging.AddProvider は利用者の
-        // Logging:LogLevel フィルタの影響下に入るため、イベントログのノイズ調整のつもりの
-        // 設定変更が黙ってメールを止め得る（決定 7 が明示的に避ける事態）。
-        // ここは常に「全カテゴリ・全レベルを受け取り、allowlist だけで選別する」を守る。
+        // 決定 7 の「利用者の Logging:* 設定がメールを止めない」は、AddEmailNotificationSink が
+        // 積む本プロバイダ名指しのフィルタ規則（Trace）で成立させる——登録経路の選び方では
+        // フィルタを迂回できない（PR #366 レビューで判明。詳細は同メソッドの remarks と
+        // EmailNotificationLoggingTests）。
         //
         // キューは合成ルートが所有し、プロバイダ（投入側）とディスパッチャ（消化側）で共有する。
         // 通知が捕捉されるのはこの登録より後に発火したものに限られる——決定 7 が挙げる
-        // 起動時経路の ID（1001・1022 等）は、いずれも DI ロガー経由で Build 後に発火するため
-        // 本登録の後になる（EmailNotificationStartupCaptureTests が回帰として固定する）。
+        // 起動時経路の ID（1001・1022 等）は、いずれも app.Build() 後に DI ロガー経由で発火する
+        // ため、構造上必ず本登録（builder 段階）の後になる（発火点: 1001 = 本メソッド末尾の
+        // startupLogger、1022 = IngestionHostedService.StartAsync）。
         var emailNotificationQueue = new EmailNotificationQueue();
-        builder.Logging.Services.AddSingleton<ILoggerProvider>(
-            _ => new EmailNotificationLoggerProvider(emailNotificationQueue));
+        builder.Logging.AddEmailNotificationSink(emailNotificationQueue);
         builder.Services.AddSingleton(emailNotificationQueue);
 
         // provider 選択の結線（M5-3。database.md §1）。YaguraConfigurationLoader が
