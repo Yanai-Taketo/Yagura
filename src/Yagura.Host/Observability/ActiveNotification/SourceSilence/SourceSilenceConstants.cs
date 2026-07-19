@@ -35,4 +35,24 @@ internal static class SourceSilenceConstants
 
     /// <summary>エントリ閾値の上限（仮値 43200 分 = 30 日）。</summary>
     internal const int MaxThresholdMinutes = 43200;
+
+    /// <summary>
+    /// 同一エントリの再発火を律速する抑制窓（仮値 15 分。ADR-0018 決定 3）。
+    /// </summary>
+    /// <remarks>
+    /// <b>粒度がエントリ別であることが既存の抑制窓との違い</b>
+    /// （<see cref="ActiveNotificationConstants.SuppressionWindow"/> はトリガ別）——
+    /// 装置 A の発火が装置 B の初報を飲まないようにするため、新設の窓とする。
+    /// </remarks>
+    internal static readonly TimeSpan EntrySuppressionWindow = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// 同一評価周期にこの件数以上が途絶へ遷移したら、個別警告ではなく 1 件の集約警告にする
+    /// （仮値 5 件。ADR-0018 決定 3）。
+    /// </summary>
+    /// <remarks>
+    /// 集約スイッチ障害等で 50 台が同時に黙ったとき、個別 50 件（メール接続時は 50 通）は
+    /// 診断情報としても劣化している。
+    /// </remarks>
+    internal const int BurstAggregationThreshold = 5;
 }
