@@ -1659,4 +1659,98 @@ public static class UiText
     /// <summary>版不一致の確認未了エラー（生成ボタン押下時）。</summary>
     public const string ForwarderKitErrorMsiVersionMismatchNotAcknowledged =
         "MSI の版が検証済み版と異なります。同梱するには確認チェックを入れてください。";
+
+    // ---- メール通知（ADR-0017。Issue #350） ----
+
+    public const string EmailNotificationTitle = "メール通知";
+
+    public const string EmailNotificationIntro =
+        "スプールの上限接近・証明書の期限接近・認証攻撃の予兆といった運用上の警告を、メールで受け取ります。"
+        + "既定では無効です。監視基盤をお持ちの場合は、Windows イベントログ（ソース: Yagura）を"
+        + "そのまま監視するほうが確実です。";
+
+    /// <summary>メールが正本ではないことの常設注記（決定 5 の at-most-once を隠さない）。</summary>
+    public const string EmailNotificationAtMostOnceNote =
+        "通知メールは配送を保証しません（送信できなかった通知は 1 回だけ再試行し、それでも失敗した場合は破棄します）。"
+        + "「メールが来ない ＝ 正常」とは限りません。すべての事象は Windows イベントログに記録され、そちらが正本です。"
+        + "チャネルが静かに壊れていないかは、下の「送信状況」で確認してください。";
+
+    public const string EmailNotificationEnabledLabel = "メール通知を有効にする";
+
+    public const string EmailNotificationFromLabel = "差出人アドレス";
+    public const string EmailNotificationFromHelp =
+        "SMTP サーバが送信を許可しているアドレスを指定してください（例: yagura@example.co.jp）。";
+
+    public const string EmailNotificationToLabel = "宛先アドレス";
+    public const string EmailNotificationToHelp =
+        "1 行に 1 件で入力してください。すべての宛先に同じ内容が送られます（宛先ごとの振り分けはできません）。";
+
+    public const string EmailNotificationSmtpTitle = "SMTP サーバ";
+    public const string EmailNotificationSmtpHostLabel = "ホスト名";
+    public const string EmailNotificationSmtpPortLabel = "ポート";
+    public const string EmailNotificationSmtpPortHelp = "既定は 25 です。STARTTLS を使う場合は 587 が一般的です。";
+
+    public const string EmailNotificationSecurityLabel = "暗号化（STARTTLS）";
+    public const string EmailNotificationSecurityNone = "なし（平文で送信する）";
+    public const string EmailNotificationSecurityAuto = "自動（対応していれば暗号化する）";
+    public const string EmailNotificationSecurityRequired = "必須（暗号化できなければ送信しない）";
+    public const string EmailNotificationSecurityHelp =
+        "「自動」は、サーバが暗号化に対応していない場合は平文のまま送信します。"
+        + "経路に信頼できない区間がある場合は「必須」を選んでください。";
+
+    public const string EmailNotificationAuthTitle = "SMTP 認証（任意）";
+    public const string EmailNotificationAuthHelp =
+        "ユーザー名とパスワードの両方を入力したときだけ認証します。片方だけでは保存できません"
+        + "（認証なしの送信に黙って切り替わることを避けるためです）。";
+
+    public const string EmailNotificationUsernameLabel = "ユーザー名";
+    public const string EmailNotificationPasswordLabel = "パスワード";
+    public const string EmailNotificationPasswordHelpConfigured =
+        "保存済みです。変更する場合のみ入力してください（空欄のままなら現在の値を維持します）。";
+    public const string EmailNotificationPasswordHelpUnset =
+        "入力した値は暗号化して保存します（このサーバでのみ復号できます）。画面に再表示することはありません。";
+
+    /// <summary>決定 3 の能動警告。STARTTLS ストリップで漏れるのが「資格情報」であることを明示する。</summary>
+    public const string EmailNotificationPlaintextCredentialWarning =
+        "パスワードを設定していますが、暗号化が「必須」になっていません。"
+        + "経路上で暗号化が剥がされた場合、漏れるのは通知の内容ではなく SMTP の資格情報です"
+        + "（多くの環境では AD のアカウントと同じものです）。暗号化を「必須」にすることを強く推奨します。";
+
+    public const string EmailNotificationTestTitle = "テスト送信";
+    public const string EmailNotificationTestIntro =
+        "この画面に入力中の値で 1 通だけ送信します（保存前でも試せます）。"
+        + "テスト送信は通知の送信数の上限を消費しません。";
+    public const string EmailNotificationTestButton = "テスト送信する";
+    public const string EmailNotificationTestSending = "送信中…";
+    public const string EmailNotificationTestCancelButton = "中止する";
+
+    /// <summary>テスト送信で保存済みパスワードが使われることの明示（決定 8）。</summary>
+    public const string EmailNotificationTestUsesStoredPassword =
+        "パスワード欄が空欄のため、保存済みのパスワードを使って送信します。";
+
+    public const string EmailNotificationTestRejectedRecipientsFormat =
+        "次の宛先はサーバに受理されませんでした: {0}";
+
+    public const string EmailNotificationHealthTitle = "送信状況";
+    public const string EmailNotificationHealthLastSuccess = "最終送信成功";
+    public const string EmailNotificationHealthLastFailure = "直近の失敗";
+    public const string EmailNotificationHealthQueueDepth = "送信待ち";
+    public const string EmailNotificationHealthDropped = "破棄した通知";
+    public const string EmailNotificationHealthSuppressed = "抑制した通知";
+    public const string EmailNotificationHealthNever = "なし";
+    public const string EmailNotificationHealthCountFormat = "{0} 件";
+
+    /// <summary>抑制の内訳（回数だけでは「何が届かなかったか」が分からない——決定 5）。</summary>
+    public const string EmailNotificationHealthSuppressedBreakdownTitle = "抑制された事象の内訳（イベント ID 別）";
+    public const string EmailNotificationHealthSuppressedNote =
+        "同じ事象の通知は 1 時間に 1 通までに畳まれます。全体では 1 時間に 10 通までです"
+        + "（エラーはこの上限の対象外です）。抑制された事象も Windows イベントログには記録されています。";
+
+    /// <summary>「有効にしたつもりで送られていない」状態——画面上で最も目立たせる（決定 2）。</summary>
+    public const string EmailNotificationDisabledByInvalidConfiguration =
+        "メール通知は有効になっていますが、設定に不備があるため送信されていません。"
+        + "この画面で設定を保存し直すと、不備の内容がその場で表示されます。";
+
+    public const string EmailNotificationSavedNoChanges = "変更はありませんでした（保存していません）。";
+    public const string EmailNotificationSavedFormat = "メール通知の設定を保存しました（変更: {0}）。次回の通知から反映されます。";
 }

@@ -925,6 +925,16 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
 
+        // メール通知の設定・テスト送信・健全性参照（ADR-0017 決定 4・8。Issue #350）。
+        // ディスパッチャは Func 経由で遅延解決する——本サービスとディスパッチャの登録順に
+        // 依存させないため（AddSingleton のファクトリは Build 後の初回解決時に走る）。
+        builder.Services.AddSingleton<IEmailNotificationAdminService>(sp =>
+            new EmailNotificationAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>(),
+                emailNotificationQueue,
+                () => sp.GetService<EmailNotificationDispatcher>()));
+
         // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）。設定の生指定（名/SID）を
         // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本
         // エントリポイントは [SupportedOSPlatform("windows")]）。解決できない指定は警告してスキップされる

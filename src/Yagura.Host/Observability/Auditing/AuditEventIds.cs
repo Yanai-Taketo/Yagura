@@ -132,6 +132,32 @@ public static class AuditEventIds
     public static readonly EventId IngestionTlsCertificateConfigured =
         new(2020, "IngestionTlsCertificateConfigured");
 
+    /// <summary>
+    /// メール通知設定の変更（ADR-0017 決定 4。Issue #350）。レベルは情報。
+    /// </summary>
+    /// <remarks>
+    /// <b>変更キーだけでなく新値も記録する</b>（<c>Smtp:Password</c> は変更の事実のみ）。
+    /// 宛先・接続先は「通知がどこへ向かうか」= 流出経路そのものの定義であり、キー名粒度
+    /// （2016 の「前後値を含めない」）では事後に追えない。値を残す前例は
+    /// <see cref="AdminHttpsCertificateConfigured"/>（2012。証明書拇印・ポートの新値）にある。
+    /// </remarks>
+    public static readonly EventId EmailNotificationConfigured =
+        new(2021, "EmailNotificationConfigured");
+
+    /// <summary>
+    /// メール通知のテスト送信（ADR-0017 決定 8）。レベルは情報。
+    /// </summary>
+    /// <remarks>
+    /// 「状態を変えない操作」だが監査対象とする——①資格情報の使用 + 外向き実トラフィックを
+    /// 伴う点で本番昇格の接続検証（<see cref="SqlServerConnectionVerified"/> = 2002）と同型
+    /// ②<b>未保存値で任意ホスト・ポートへ接続を試せる操作は内部ネットワークの到達性探査に
+    /// 転用し得る</b>ため、「誰がいつどこへ試したか」を証跡に残す。
+    /// 接続先・宛先・成否・操作者を記録し、資格情報の値は記録しない
+    /// （保存済み資格情報を使ったか否かの「別」は記録する——決定 8）。
+    /// </remarks>
+    public static readonly EventId EmailNotificationTestSent =
+        new(2022, "EmailNotificationTestSent");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

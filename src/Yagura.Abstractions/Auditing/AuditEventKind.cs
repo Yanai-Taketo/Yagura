@@ -282,4 +282,25 @@ public enum AuditEventKind
     /// 高い</b>ため（2012 も 3 キーすべてを対象としている）。
     /// </summary>
     IngestionTlsCertificateConfigured,
+
+    /// <summary>
+    /// メール通知設定の変更（イベント ID 2021。ADR-0017 決定 4。Issue #350）。
+    /// </summary>
+    /// <remarks>
+    /// 記録内容は変更キーと新値 + 操作者。<b><c>Smtp:Password</c> は「変更した」事実のみ</b>で
+    /// 値は残さない。宛先（<c>To</c>）と接続先（<c>Smtp:Host</c> / <c>Port</c>）の値を残すのは、
+    /// これらが「通知がどこへ向かうか」= 流出経路そのものの定義であり、キー名粒度（2016）では
+    /// 事後に追えないため。
+    /// </remarks>
+    EmailNotificationConfigured,
+
+    /// <summary>
+    /// メール通知のテスト送信（イベント ID 2022。ADR-0017 決定 8。Issue #350）。
+    /// </summary>
+    /// <remarks>
+    /// 状態を変えない操作だが監査対象とする——未保存の値で任意のホスト・ポートへ接続を試せる
+    /// 操作は<b>内部ネットワークの到達性探査に転用し得る</b>ため。接続先・宛先・成否・操作者と、
+    /// 「保存済み資格情報を使用したか」の別を記録し、資格情報の値そのものは記録しない。
+    /// </remarks>
+    EmailNotificationTestSent,
 }
