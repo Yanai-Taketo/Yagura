@@ -116,7 +116,25 @@ public sealed class SpoolDrainCoordinator
                 continue;
             }
 
-            var segments = _spool.TrySealActiveSegmentAndListDrainable();
+            // 封止 + 列挙は環境要因で例外を投げる（ディスク満杯時の Dispose 失敗・ディレクトリ列挙の
+            // 失敗）。ここで捕捉しないと drain ループごと fault して恒久停止する——スプールが最も
+            // 必要とされている状況（ディスク満杯）で drain が止まるという最悪の組み合わせになる
+            // （Issue #360）。ReadSegmentRecords と同じ「この周期は見送って次の周期で再試行」に揃える。
+            IReadOnlyList<string> segments;
+            try
+            {
+                segments = _spool.SealActiveSegmentAndListDrainable();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "スプールの封止またはセグメント列挙に失敗したため、この周期の drain を見送る" +
+                    "（次の周期で再試行する。ディスク満杯・I/O 障害が疑われる）。");
+                await DelayAsync(SpoolConstants.DrainPollInterval, stoppingToken).ConfigureAwait(false);
+                continue;
+            }
+
             if (segments.Count == 0)
             {
                 await DelayAsync(SpoolConstants.DrainPollInterval, stoppingToken).ConfigureAwait(false);

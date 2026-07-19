@@ -691,12 +691,57 @@ public sealed class IngestionPipeline : IAsyncDisposable
         }
 
         _consumerStoppingCts = new CancellationTokenSource();
-        _parsingTask = Task.Run(() => _parsingStage.RunAsync(_consumerStoppingCts.Token));
-        _persistenceTask = Task.Run(() => _persistenceWriter.RunAsync(_consumerStoppingCts.Token));
+        _parsingTask = Task.Run(() => RunConsumerLoopAsync("解析", _parsingStage.RunAsync, _consumerStoppingCts.Token));
+        _persistenceTask = Task.Run(() => RunConsumerLoopAsync("永続化", _persistenceWriter.RunAsync, _consumerStoppingCts.Token));
 
         if (_drainCoordinator is not null)
         {
-            _drainTask = Task.Run(() => _drainCoordinator.RunAsync(_consumerStoppingCts.Token));
+            _drainTask = Task.Run(() => RunConsumerLoopAsync("drain", _drainCoordinator.RunAsync, _consumerStoppingCts.Token));
+        }
+    }
+
+    /// <summary>
+    /// 消費ループを実行し、想定外の例外でループが死んだ事実を<b>必ず記録する</b>（Issue #360）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 各ループ（解析・永続化・drain）は <see cref="Task.Run(Func{Task})"/> で起動され、
+    /// 戻り値の <see cref="Task"/> は停止時まで await されない。したがってループから例外が抜けると
+    /// <b>タスクは faulted のまま放置され、稼働中は何も起きていないように見える</b>——受信は
+    /// 続いているのにログが保存されない・スプールが永久に drain されない、という無音の縮退になる。
+    /// </para>
+    /// <para>
+    /// 本ラッパは例外を握り潰さない（再スローする）。目的は「無音にしないこと」であり、
+    /// ループの復旧ではない——復旧は各ループ自身が担う責務であり、ここまで抜けてきた例外は
+    /// 想定外の欠陥を意味するため、記録したうえでタスクの faulted 状態は保つ
+    /// （停止時の await で改めて観測できるようにする）。
+    /// </para>
+    /// <para>
+    /// 停止要求によるキャンセルは正常系のため記録しない。
+    /// </para>
+    /// </remarks>
+    private async Task RunConsumerLoopAsync(
+        string loopName,
+        Func<CancellationToken, Task> loop,
+        CancellationToken stoppingToken)
+    {
+        try
+        {
+            await loop(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 停止要求による正常な終了。
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogCritical(
+                ex,
+                "[ingestion-consumer-loop-faulted] {LoopName}ループが想定外の例外で停止した。" +
+                "サービスを再起動するまで回復しない（受信は継続するが、このループが担う処理は行われない）。",
+                loopName);
+            throw;
         }
     }
 

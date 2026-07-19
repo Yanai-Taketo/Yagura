@@ -1,4 +1,4 @@
-﻿using System.Security;
+using System.Security;
 
 namespace Yagura.Storage.Spool;
 
@@ -19,7 +19,7 @@ namespace Yagura.Storage.Spool;
 /// </para>
 /// <para>
 /// <b>スレッド安全性</b>: <see cref="TryAppendAsync"/> と drain 側の
-/// <see cref="TrySealActiveSegmentAndListDrainable"/> ・<see cref="DeleteSegment"/> は
+/// <see cref="SealActiveSegmentAndListDrainable"/> ・<see cref="DeleteSegment"/> は
 /// 並行に呼ばれ得る（ライブ経路の退避と drain が並行動作する。§3.2.2「並行動作」）。
 /// 内部状態（アクティブセグメントの参照・使用量カウンタ）は 1 つの <see cref="_gate"/>
 /// で直列化する——スプールは「所定時間内に DB へ書けない」という飽和シグナルの経路で
@@ -38,10 +38,37 @@ public sealed class DiskSpool : IDisposable
     private long _deletedSegmentsTotal;
     private long _quotaBytes;
 
-    private DiskSpool(DiskSpoolOptions options)
+    /// <summary>
+    /// アクティブセグメントの <see cref="FileStream"/> を生成する。テストで
+    /// 「<c>Dispose</c> が失敗するストリーム」を注入するための差し替え口（Issue #360）。
+    /// 既定は実ファイルを開く。
+    /// </summary>
+    private readonly Func<string, FileStream> _segmentStreamFactory;
+
+    private DiskSpool(DiskSpoolOptions options, Func<string, FileStream>? segmentStreamFactory = null)
     {
         _options = options;
         _quotaBytes = options.QuotaBytes;
+        _segmentStreamFactory = segmentStreamFactory ?? OpenSegmentStream;
+    }
+
+    private static FileStream OpenSegmentStream(string path) =>
+        new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+
+    /// <summary>
+    /// テスト専用の生成口（Issue #360）。封止（<c>Dispose</c>）が I/O 障害で失敗する状況を
+    /// 再現するため、セグメントの <see cref="FileStream"/> 生成を差し替えられるようにする。
+    /// ディスク満杯は実機でしか作れないが、その帰結（<c>Dispose</c> の失敗）はここで注入できる。
+    /// </summary>
+    internal static DiskSpool? TryOpenForTests(
+        DiskSpoolOptions options,
+        Func<string, FileStream> segmentStreamFactory,
+        out Exception? failure)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(segmentStreamFactory);
+
+        return TryOpenCore(options, segmentStreamFactory, out failure);
     }
 
     /// <summary>
@@ -101,6 +128,14 @@ public sealed class DiskSpool : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        return TryOpenCore(options, segmentStreamFactory: null, out failure);
+    }
+
+    private static DiskSpool? TryOpenCore(
+        DiskSpoolOptions options,
+        Func<string, FileStream>? segmentStreamFactory,
+        out Exception? failure)
+    {
         try
         {
             System.IO.Directory.CreateDirectory(options.Directory);
@@ -111,7 +146,7 @@ public sealed class DiskSpool : IDisposable
             File.WriteAllBytes(probePath, []);
             File.Delete(probePath);
 
-            var spool = new DiskSpool(options);
+            var spool = new DiskSpool(options, segmentStreamFactory);
             spool.ScanExistingSegments();
 
             failure = null;
@@ -128,7 +163,7 @@ public sealed class DiskSpool : IDisposable
     {
         // 前回退避分（存在確認。§1.2 手順 1）: 既存セグメントファイルの合計サイズを
         // 使用量カウンタへ反映する。ファイル自体は drain 対象として残す
-        // （列挙は TrySealActiveSegmentAndListDrainable が行う）。
+        // （列挙は SealActiveSegmentAndListDrainable が行う）。
         long total = 0;
         foreach (var path in EnumerateSegmentFilesUnlocked())
         {
@@ -237,18 +272,34 @@ public sealed class DiskSpool : IDisposable
 
         var fileName = SpoolSegmentFileNames.CreateSegmentFileName(DateTimeOffset.UtcNow, _segmentSequence++);
         _activeSegmentPath = Path.Combine(_options.Directory, fileName);
-        _activeSegmentStream = new FileStream(
-            _activeSegmentPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.Read);
+        _activeSegmentStream = _segmentStreamFactory(_activeSegmentPath);
     }
 
+    /// <summary>
+    /// アクティブセグメントを封止する（以後の追記は新しいセグメントへ向かう）。
+    /// </summary>
+    /// <remarks>
+    /// <b>先に状態をクリアしてから <c>Dispose</c> する</b>（Issue #360）。<see cref="FileStream.Dispose()"/>
+    /// はバッファのフラッシュに失敗すると <see cref="IOException"/> を投げうる（ディスク満杯・I/O 障害）。
+    /// 従来のように <c>Dispose</c> を先に呼ぶと、失敗時に <c>_activeSegmentStream</c> が非 null のまま残り、
+    /// 次の追記が <see cref="EnsureActiveSegmentUnderGate"/> で「アクティブセグメントあり」と判断して
+    /// <b>破棄済みストリームへ書き込み、<see cref="ObjectDisposedException"/> になる</b>——これは
+    /// <see cref="AppendAsync"/> の catch フィルタ（<c>IOException or UnauthorizedAccessException</c>）に
+    /// 掛からないため、スプールの追記経路ごと例外が抜ける。
+    /// <para>
+    /// 順序を入れ替えることで、<c>Dispose</c> が失敗しても<b>状態は常に整合する</b>——当該ファイルへの
+    /// 追記は二度と行われず、次の追記は新しいセグメントを開く。例外自体は呼び出し側へ伝播させる
+    /// （失敗を隠さない）。追記経路の呼び出し側はリトライで回復でき、drain 経路の呼び出し側は
+    /// <see cref="SealActiveSegmentAndListDrainable"/> の remarks を参照。
+    /// </para>
+    /// </remarks>
     private void SealActiveSegmentUnderGate()
     {
-        _activeSegmentStream?.Dispose();
+        var stream = _activeSegmentStream;
         _activeSegmentStream = null;
         _activeSegmentPath = null;
+
+        stream?.Dispose();
     }
 
     /// <summary>
@@ -256,7 +307,21 @@ public sealed class DiskSpool : IDisposable
     /// 存在する場合は封止してから含める（drain 中に成長し続けるファイルを読ませない
     /// ため——封止後は新規追記が新しいセグメントへ向かう）。
     /// </summary>
-    public IReadOnlyList<string> TrySealActiveSegmentAndListDrainable()
+    /// <remarks>
+    /// <b>本メソッドは環境要因で例外を投げる</b>（<see cref="IOException"/>・
+    /// <see cref="UnauthorizedAccessException"/>）——封止の <c>Dispose</c> がフラッシュに失敗する場合
+    /// （ディスク満杯・I/O 障害）と、ディレクトリ列挙が失敗する場合がある。呼び出し側で捕捉すること
+    /// （<see cref="ReadSegmentRecords"/> と同じ扱い。Issue #360 以前は <c>Try</c> 接頭辞を持ちながら
+    /// 失敗チャネルが無く、呼び出し側が保護を省いていたため drain タスクが恒久停止しうる状態だった）。
+    /// <para>
+    /// 封止が失敗した場合でも<b>状態は整合している</b>（<see cref="SealActiveSegmentUnderGate"/> の
+    /// remarks 参照）——当該セグメントへの追記は行われないため、次の周期で改めて列挙すれば
+    /// drain 対象として拾える。
+    /// </para>
+    /// </remarks>
+    /// <exception cref="IOException">封止（フラッシュ）またはディレクトリ列挙に失敗した場合。</exception>
+    /// <exception cref="UnauthorizedAccessException">スプールディレクトリへアクセスできない場合。</exception>
+    public IReadOnlyList<string> SealActiveSegmentAndListDrainable()
     {
         lock (_gate)
         {
