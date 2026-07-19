@@ -139,6 +139,44 @@ public sealed class ViewerPageRenderTests
     }
 
     [Fact]
+    public async Task Dashboard_WithSourceSilenceWatchlist_ShowsRegisteredMarkAndSilentEmphasis()
+    {
+        // UI-4 の登録済みマーク + 途絶中の強調（ADR-0018 決定 4。Issue #351）。
+        // IPv4-mapped IPv6 で保存された送信元も正規化して照合されることを併せて固定する。
+        var now = DateTimeOffset.UtcNow;
+        var store = new FakeLogStore
+        {
+            Sources =
+            [
+                new SourceActivity("::ffff:192.0.2.9", now.AddHours(-30), 3),  // 登録済み・途絶中
+                new SourceActivity("192.0.2.1", now.AddMinutes(-10), 42),      // 登録済み・受信中
+                new SourceActivity("192.0.2.99", now.AddMinutes(-1), 7),       // 未登録
+            ],
+            Statistics = new LogStoreStatistics(RecordCount: 52, DatabaseSizeBytes: 4096),
+        };
+        var reader = new FakeStatusReader
+        {
+            RetentionDays = 30,
+            SourceSilenceEntries =
+            [
+                new YaguraSourceSilenceReading("192.0.2.9", "コアスイッチ", TimeSpan.FromHours(24), IsSilent: true),
+                new YaguraSourceSilenceReading("192.0.2.1", null, TimeSpan.FromHours(24), IsSilent: false),
+            ],
+        };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        // 途絶中の強調と表示名つきの登録済みマーク。
+        Assert.Contains(UiText.SourceWatchSilentChip, html, StringComparison.Ordinal);
+        Assert.Contains($"{UiText.SourceWatchRegisteredChip}: コアスイッチ", html, StringComparison.Ordinal);
+
+        // 未登録の送信元にはどちらのマークも付かない（一覧そのものには現れる）。
+        Assert.Contains("192.0.2.99", html, StringComparison.Ordinal);
+        var registeredMarks = html.Split(UiText.SourceWatchRegisteredChip).Length - 1;
+        Assert.Equal(2, registeredMarks);
+    }
+
+    [Fact]
     public async Task Dashboard_RetentionDisabled_ShowsDisabledNotice()
     {
         var store = new FakeLogStore();

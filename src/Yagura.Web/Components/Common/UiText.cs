@@ -1761,4 +1761,73 @@ public static class UiText
 
     public const string EmailNotificationSavedNoChanges = "変更はありませんでした（保存していません）。";
     public const string EmailNotificationSavedFormat = "メール通知の設定を保存しました（変更: {0}）。次回の通知から反映されます。";
+
+    // ------------------------------------------------------------------
+    // 送信元の途絶検知（ADR-0018。/admin/source-silence。Issue #351）
+    // ------------------------------------------------------------------
+
+    public const string SourceSilenceTitle = "送信元の途絶検知";
+    public const string SourceSilenceIntro =
+        "ウォッチリストに登録した送信元からの受信が、指定した時間を超えて途絶えると警告します"
+        + "（Windows イベントログ。メール通知を有効にしていればメールでも届きます）。"
+        + "登録していない送信元は対象になりません。";
+
+    public const string SourceSilenceListTitle = "ウォッチリスト";
+    public const string SourceSilenceListEmpty =
+        "まだ登録がありません。下の「登録」から、受信実績のある送信元を選んで追加してください。";
+    public const string SourceSilenceColumnAddress = "送信元アドレス";
+    public const string SourceSilenceColumnLabel = "表示名";
+    public const string SourceSilenceColumnThreshold = "閾値";
+    public const string SourceSilenceColumnState = "状態";
+    public const string SourceSilenceColumnActions = "操作";
+    public const string SourceSilenceStateSilent = "途絶中";
+    public const string SourceSilenceStateWatching = "監視中";
+
+    /// <summary>保存済みだが稼働状態に現れない（設定不備でエントリ単位無効化された）エントリの表示。</summary>
+    public const string SourceSilenceStateInactive = "無効（設定を確認）";
+
+    /// <summary>未保存の追加・変更があるエントリの表示（適用までは監視されない）。</summary>
+    public const string SourceSilenceStatePending = "未適用";
+
+    /// <summary>閾値が手編集の省略により既定値で補完されているエントリの表示（決定 1 の識別表示）。</summary>
+    public const string SourceSilenceThresholdDefaultedFormat = "{0}（既定値で補完）";
+
+    public const string SourceSilenceEditButton = "編集";
+    public const string SourceSilenceDeleteButton = "削除";
+
+    public const string SourceSilenceAddTitle = "登録";
+    public const string SourceSilenceAddIntro =
+        "受信実績のある送信元から選ぶのが確実です（アドレスの打ち間違いは「登録したのに検知されない」"
+        + "という気づきにくい失敗になります）。まだ受信のない送信元を先回りで登録する場合のみ手入力してください。";
+    public const string SourceSilenceCandidateLabel = "受信実績のある送信元から選択";
+    public const string SourceSilenceCandidateItemFormat = "{0}（最終受信 {1}・累計 {2} 件）";
+    public const string SourceSilenceCandidateRegisteredSuffix = "（登録済み）";
+    public const string SourceSilenceManualAddressLabel = "送信元アドレス（手入力）";
+    public const string SourceSilenceManualAddressHelp =
+        "IPv4 / IPv6 アドレスを入力します。先回り登録した送信元は、登録時点から閾値の時間だけ受信がないと警告されます"
+        + "——機器側の設定漏れや経路の未開通の検出に使えます。";
+    public const string SourceSilenceLabelLabel = "表示名（任意）";
+    public const string SourceSilenceLabelHelp = "どの装置かを自分の言葉で残せます（警告と一覧に表示されます）。";
+    public const string SourceSilenceThresholdLabel = "閾値";
+    public const string SourceSilenceThresholdHelp =
+        "この時間を超えて受信がないと警告します。短すぎると装置の送信間隔やジッタで誤検知になります"
+        + "（例: 24 時間 = 1 日 1 回でもログを送る装置向け）。";
+    public const string SourceSilenceUnitMinutes = "分";
+    public const string SourceSilenceUnitHours = "時間";
+    public const string SourceSilenceUnitDays = "日";
+    public const string SourceSilenceAddButton = "一覧に追加";
+    public const string SourceSilenceUpdateButton = "一覧を更新";
+
+    public const string SourceSilenceApplyButton = "適用する";
+    public const string SourceSilencePendingChangesNote =
+        "一覧への追加・編集・削除は「適用する」を押すまで保存されません。";
+    public const string SourceSilenceSavedFormat = "ウォッチリストを保存しました（追加 {0} 件・削除 {1} 件・変更 {2} 件）。再起動なしで反映されます。";
+    public const string SourceSilenceSavedNoChanges = "変更はありませんでした（保存していません）。";
+    public const string SourceSilenceLimitFormat = "登録は {0} 件までです（現在 {1} 件）。";
+
+    /// <summary>ダッシュボード UI-4: ウォッチリスト登録済みの送信元のマーク（ADR-0018 決定 4）。</summary>
+    public const string SourceWatchRegisteredChip = "監視中";
+
+    /// <summary>ダッシュボード UI-4: 途絶中と判定されている送信元の強調（ADR-0018 決定 4）。</summary>
+    public const string SourceWatchSilentChip = "途絶中";
 }

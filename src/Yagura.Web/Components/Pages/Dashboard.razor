@@ -230,10 +230,33 @@
                     <MudTh>@UiText.SourceColumnActions</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="source">
-                    @* 逆引きホスト名の併記(ADR-0007。ui.md §4) *@
-                    <MudTd DataLabel="@UiText.SourceColumnAddress"><YaguraSourceAddress Address="@source.SourceAddress" /></MudTd>
+                    @* 逆引きホスト名の併記(ADR-0007。ui.md §4)。ウォッチリスト登録済みの
+                       送信元にはマークを付ける(ADR-0018 決定 4——登録は管理面の設定画面で行い、
+                       閲覧面には導線を置かない。#286 の閲覧/管理分離)。 *@
+                    <MudTd DataLabel="@UiText.SourceColumnAddress">
+                        <YaguraSourceAddress Address="@source.SourceAddress" />
+                        @if (FindWatch(source.SourceAddress) is { } watch)
+                        {
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(watch.IsSilent ? Color.Error : Color.Info)"
+                                     Class="ml-1">
+                                @(watch.Label is null
+                                    ? UiText.SourceWatchRegisteredChip
+                                    : $"{UiText.SourceWatchRegisteredChip}: {watch.Label}")
+                            </MudChip>
+                        }
+                    </MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnLastReceived"><YaguraTimestamp Value="@source.LastReceivedAt" /></MudTd>
-                    <MudTd DataLabel="@UiText.SourceColumnSilence">@FormatSilence(source.LastReceivedAt)</MudTd>
+                    <MudTd DataLabel="@UiText.SourceColumnSilence">
+                        @FormatSilence(source.LastReceivedAt)
+                        @if (FindWatch(source.SourceAddress) is { IsSilent: true })
+                        {
+                            @* 途絶中の強調(ADR-0018 決定 4)——判定は周期評価(1 分間隔)の結果 *@
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error" Class="ml-1">
+                                @UiText.SourceWatchSilentChip
+                            </MudChip>
+                        }
+                    </MudTd>
                     <MudTd DataLabel="@UiText.SourceColumnCount">@FormatCount(source.RecordCount)</MudTd>
                     @* 無音化検出 → 当該送信元のログ調査への 1 クリック導線(ui.md §4。
                        リンク遷移のみでサーバ状態を変更しない = 閲覧面の不変条件の範囲内)。 *@
@@ -399,6 +422,12 @@
         // 流量制限の発火上位送信元（Issue #288）: ゲートの in-memory スナップショット
         // （DB 非アクセス）のため毎周期の軽い更新に含める。
         _flowControlRejections = StatusReader.ReadFlowControlRejections(FlowControlRejectionLimit);
+
+        // 途絶検知のウォッチリスト状態（ADR-0018 決定 4。Issue #351）: 判定器の in-memory
+        // スナップショット（DB 非アクセス）のため同じく軽い更新に含める。キーは正規化済み
+        // アドレス（契約参照）。
+        _sourceWatchByAddress = StatusReader.ReadSourceSilenceEntries()
+            .ToDictionary(entry => entry.Address, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>重い更新（保存先への読み取り。初期表示 + 低頻度周期）。</summary>
@@ -533,6 +562,30 @@
         >= 1024L => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1024.0:0.#} KB"),
         _ => string.Create(CultureInfo.InvariantCulture, $"{bytes} B"),
     };
+
+    /// <summary>
+    /// 途絶検知のウォッチリスト状態（正規化済みアドレスがキー。ADR-0018 決定 4）。
+    /// 機能無効（ウォッチリスト未設定）の間は空。
+    /// </summary>
+    private Dictionary<string, YaguraSourceSilenceReading> _sourceWatchByAddress = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// UI-4 の 1 行の送信元がウォッチリストに登録済みなら状態を返す（照合キーは登録側と同じ
+    /// 正規化——IPv4-mapped IPv6 は IPv4 表記へ畳む）。
+    /// </summary>
+    private YaguraSourceSilenceReading? FindWatch(string sourceAddress)
+    {
+        if (_sourceWatchByAddress.Count == 0)
+        {
+            return null;
+        }
+
+        var key = System.Net.IPAddress.TryParse(sourceAddress, out var parsed)
+            ? (parsed.IsIPv4MappedToIPv6 ? parsed.MapToIPv4() : parsed).ToString()
+            : sourceAddress;
+
+        return _sourceWatchByAddress.TryGetValue(key, out var watch) ? watch : null;
+    }
 
     /// <summary>最後に受信してからの経過時間（無音時間）の表示。</summary>
     private static string FormatSilence(DateTimeOffset lastReceivedAt)
