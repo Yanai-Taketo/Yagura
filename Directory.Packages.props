@@ -51,6 +51,21 @@
       採用日 2026-07-09）。
     -->
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
+    <!--
+      メール通知の SMTP 送信（ADR-0017 決定 2・委任 1。Issue #350）。.NET 標準の
+      System.Net.Mail.SmtpClient は公式に非推奨（docs 上で MailKit が名指しの代替）であり、
+      STARTTLS の「試行するが必須にしない / 必須にする」の区別（決定 2 の auto / required）を
+      表現できないため採用しない。MailKit は SecureSocketOptions でこの区別を型で持つ。
+      MimeKit は MailKit の必須依存（本文の組み立て）であり、中央管理へ明示的に載せて
+      推移的更新を Dependabot の可視下に置く。
+      採用時のライブ検証: nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/mailkit/index.json および .../mimekit/index.json) で
+      最新安定版を確認（プレリリースは除外）。2 点は同一版で揃える。
+      ライセンス MIT（NOTICE 記載は本 PR で実施。採用日 2026-07-19）。
+      **下限の制約**: CVE-2026-41319 の影響を受けるため 4.16.0 未満へ下げてはならない。
+    -->
+    <PackageVersion Include="MailKit" Version="4.17.0" />
+    <PackageVersion Include="MimeKit" Version="4.17.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <!--
       UI コンポーネントライブラリ（M8-1。Issue #68。採用判断は ADR-0003 決定 3）。
