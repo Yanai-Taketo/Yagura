@@ -1,4 +1,4 @@
-﻿using Yagura.Storage.Spool;
+using Yagura.Storage.Spool;
 
 namespace Yagura.Storage.Tests.Spool;
 
@@ -73,7 +73,7 @@ public sealed class DiskSpoolTests : IDisposable
         var result = await spool.TryAppendAsync(SpoolRecord.ForLog(record));
         Assert.Equal(SpoolAppendResult.Appended, result);
 
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         Assert.Single(segments);
 
         var records = spool.ReadSegmentRecords(segments[0], out var corruptTailDetected, out var corruptTailBytes);
@@ -111,7 +111,7 @@ public sealed class DiskSpoolTests : IDisposable
             Assert.Equal(SpoolAppendResult.Appended, result);
         }
 
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         Assert.Single(segments);
         var segmentPath = segments[0];
 
@@ -152,7 +152,7 @@ public sealed class DiskSpoolTests : IDisposable
             Message: "good");
         Assert.Equal(SpoolAppendResult.Appended, await spool.TryAppendAsync(SpoolRecord.ForLog(record)));
 
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         var segmentPath = Assert.Single(segments);
 
         // torn write の途中バイトは任意の値を取り得る——長さプレフィックスが巨大値
@@ -193,7 +193,7 @@ public sealed class DiskSpoolTests : IDisposable
             await spool.TryAppendAsync(SpoolRecord.ForLog(record));
         }
 
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         var segmentPath = segments[0];
 
         // 最後の 1 バイトを破壊する（CRC の一部を破壊し、torn write によるビット化けを模擬）。
@@ -292,7 +292,7 @@ public sealed class DiskSpoolTests : IDisposable
             Message: "to-be-deleted");
 
         await spool.TryAppendAsync(SpoolRecord.ForLog(record));
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         Assert.Single(segments);
         Assert.True(spool.CurrentUsageBytes > 0);
 
@@ -316,13 +316,13 @@ public sealed class DiskSpoolTests : IDisposable
             Message: "left-over-from-previous-run");
 
         await firstOpen.TryAppendAsync(SpoolRecord.ForLog(record));
-        firstOpen.TrySealActiveSegmentAndListDrainable();
+        firstOpen.SealActiveSegmentAndListDrainable();
 
         // 2 回目の起動（前回退避分の存在確認。architecture.md §1.2 起動手順 1）。
         var secondOpen = OpenSpool(new DiskSpoolOptions { Directory = _directory });
 
         Assert.True(secondOpen.CurrentUsageBytes > 0);
-        var segments = secondOpen.TrySealActiveSegmentAndListDrainable();
+        var segments = secondOpen.SealActiveSegmentAndListDrainable();
         Assert.Single(segments);
 
         var records = secondOpen.ReadSegmentRecords(segments[0], out var corruptTailDetected, out var corruptTailBytes);

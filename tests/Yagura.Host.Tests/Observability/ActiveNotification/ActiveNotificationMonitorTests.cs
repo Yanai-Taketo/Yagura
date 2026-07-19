@@ -424,7 +424,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id == 1009);
 
         // drain が実際に読んで照合したことを模す: 投入したマーカーで通知する。
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         var segment = Assert.Single(segments);
         var records = spool.ReadSegmentRecords(segment, out _, out _);
         var selfTestRecord = Assert.Single(records, r => r.Kind == SpoolRecordKind.SelfTest);
@@ -1082,7 +1082,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     /// </summary>
     /// <returns>封止したセグメントファイルのパス（新しく封止された、最も新しいセグメント）。</returns>
     /// <remarks>
-    /// <see cref="DiskSpool.TrySealActiveSegmentAndListDrainable"/> はディレクトリ内の drain 対象
+    /// <see cref="DiskSpool.SealActiveSegmentAndListDrainable"/> はディレクトリ内の drain 対象
     /// セグメントを毎回すべて列挙する（累積リスト）ため、本メソッドを複数回呼んでも、返る値は
     /// 「今回新たに封止した 1 件」を古い順ソートの末尾として取り出す。
     /// </remarks>
@@ -1091,7 +1091,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         var result = await spool.TryAppendAsync(SpoolRecord.ForLog(SampleLogRecord()));
         Assert.Equal(SpoolAppendResult.Appended, result);
 
-        var segments = spool.TrySealActiveSegmentAndListDrainable();
+        var segments = spool.SealActiveSegmentAndListDrainable();
         Assert.NotEmpty(segments);
         return segments[^1];
     }

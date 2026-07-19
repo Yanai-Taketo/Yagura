@@ -1,4 +1,4 @@
-﻿using System.Threading.Channels;
+using System.Threading.Channels;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
@@ -47,7 +47,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
             Assert.Equal(SpoolAppendResult.Appended, result);
         }
 
-        var segmentsBeforeDrain = _spool.TrySealActiveSegmentAndListDrainable();
+        var segmentsBeforeDrain = _spool.SealActiveSegmentAndListDrainable();
         Assert.Single(segmentsBeforeDrain);
 
         // DB は最初の 2 回失敗し、3 回目以降成功するスタブ（「復旧」を模す）。
@@ -81,7 +81,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
         // （architecture.md §3.2.4「消化済みセグメントは通常のファイル削除で速やかに削除する」）。
         await WaitUntilAsync(() => _spool.CurrentUsageBytes == 0, TimeSpan.FromSeconds(15));
 
-        var segmentsAfterDrain = _spool.TrySealActiveSegmentAndListDrainable();
+        var segmentsAfterDrain = _spool.SealActiveSegmentAndListDrainable();
         Assert.Empty(segmentsAfterDrain);
     }
 
@@ -222,7 +222,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
             Message: "always-fails-to-write");
 
         await _spool.TryAppendAsync(SpoolRecord.ForLog(record));
-        var segmentsBefore = _spool.TrySealActiveSegmentAndListDrainable();
+        var segmentsBefore = _spool.SealActiveSegmentAndListDrainable();
         Assert.Single(segmentsBefore);
 
         // 常に失敗するストア。
@@ -249,7 +249,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
 
         // 書き込みに一度も成功していないため、セグメントは削除されず 1 本のまま
         // （§3.2.2「drain 由来のバッチはスプールへ再追記しない」——複製されず、かつ喪失もしない）。
-        var segmentsAfter = _spool.TrySealActiveSegmentAndListDrainable();
+        var segmentsAfter = _spool.SealActiveSegmentAndListDrainable();
         Assert.Single(segmentsAfter);
         Assert.Equal(segmentsBefore[0], segmentsAfter[0]);
         Assert.Empty(store.WrittenRecords);
@@ -276,7 +276,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
 
         Assert.Equal(SpoolAppendResult.Appended, await _spool.TryAppendAsync(SpoolRecord.ForLog(record)));
 
-        var segments = _spool.TrySealActiveSegmentAndListDrainable();
+        var segments = _spool.SealActiveSegmentAndListDrainable();
         var segmentPath = Assert.Single(segments);
 
         // 正常な 1 件の直後に、中途半端な末尾バイト（不完全なフレーム）を追記する
@@ -339,7 +339,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
 
         Assert.Equal(SpoolAppendResult.Appended, await _spool.TryAppendAsync(SpoolRecord.ForLog(record)));
 
-        var segments = _spool.TrySealActiveSegmentAndListDrainable();
+        var segments = _spool.SealActiveSegmentAndListDrainable();
         var segmentPath = Assert.Single(segments);
 
         using (var stream = new FileStream(segmentPath, FileMode.Append, FileAccess.Write))

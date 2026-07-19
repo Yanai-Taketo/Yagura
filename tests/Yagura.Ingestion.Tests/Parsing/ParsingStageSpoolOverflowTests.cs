@@ -1,4 +1,4 @@
-﻿using System.Threading.Channels;
+using System.Threading.Channels;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Parsing;
 using Yagura.Ingestion.Udp;
@@ -68,7 +68,7 @@ public sealed class ParsingStageSpoolOverflowTests : IDisposable
         stoppingCts.Cancel();
         await runTask;
 
-        var segments = _spool.TrySealActiveSegmentAndListDrainable();
+        var segments = _spool.SealActiveSegmentAndListDrainable();
         var spooledMessages = segments
             .SelectMany(path => _spool.ReadSegmentRecords(path, out _, out _))
             .Where(r => r.Kind == SpoolRecordKind.Normal)

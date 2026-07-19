@@ -1,4 +1,4 @@
-﻿using System.Threading.Channels;
+using System.Threading.Channels;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
@@ -70,7 +70,7 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
         Assert.DoesNotContain(store.WrittenRecords, r => r.Message == "first");
 
         // スプールから実際に読み戻し、"first" が退避されていることを直接確認する。
-        var segments = spool!.TrySealActiveSegmentAndListDrainable();
+        var segments = spool!.SealActiveSegmentAndListDrainable();
         var spooledMessages = segments
             .SelectMany(path => spool.ReadSegmentRecords(path, out _, out _))
             .Where(r => r.Kind == SpoolRecordKind.Normal)

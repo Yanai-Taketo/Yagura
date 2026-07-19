@@ -237,7 +237,7 @@ public sealed class SystemStatusReaderTests : IDisposable
     /// </summary>
     private static void DrainAllSegments(DiskSpool spool)
     {
-        foreach (var segmentPath in spool.TrySealActiveSegmentAndListDrainable())
+        foreach (var segmentPath in spool.SealActiveSegmentAndListDrainable())
         {
             spool.DeleteSegment(segmentPath);
         }
