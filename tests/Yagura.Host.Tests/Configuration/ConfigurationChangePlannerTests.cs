@@ -258,6 +258,177 @@ public sealed class ConfigurationChangePlannerTests
     }
 
     // ------------------------------------------------------------------
+    // 配列キーの差分検出（ADR-0017 委任 9。2026-07-19）
+    //
+    // 従来、配列キーは Compare の対象ですらなく、手編集で宛先・グループ一覧だけを変えて
+    // 再読み込みしても「反映もされず再起動待ちにも出ない」無音の穴になっていた。
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("Notification:Email:To", ConfigurationReloadEffect.Immediate)]
+    [InlineData("Admin:Authentication:Windows:AdminGroups", ConfigurationReloadEffect.RestartRequired)]
+    [InlineData("Viewer:Authentication:Windows:ViewerGroups", ConfigurationReloadEffect.RestartRequired)]
+    [InlineData("Viewer:Authentication:Windows:AdminGroups", ConfigurationReloadEffect.RestartRequired)]
+    public void GetReloadEffect_ArrayKeys_ReturnsDeclaredEffect(string key, ConfigurationReloadEffect expected)
+    {
+        Assert.Equal(expected, ConfigurationKeyMetadata.GetReloadEffect(key));
+    }
+
+    [Fact]
+    public void Compare_RecipientListChange_IsDetectedAsImmediate()
+    {
+        var before = new YaguraConfigurationOptions
+        {
+            Notification = new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions { To = ["a@example.com"] },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Notification = new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions
+                {
+                    To = ["a@example.com", "b@example.com"],
+                },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(["Notification:Email:To"], plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.Immediate, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_GroupListChange_IsDetectedAsRestartRequired()
+    {
+        // グループ一覧は名 → SID 解決を含め反映が起動時に固定されている。検出できないことと
+        // 「再起動が要る」と示すことは別であり、後者は示せる（示さないと無音の未反映になる）。
+        var before = new YaguraConfigurationOptions();
+        var after = new YaguraConfigurationOptions
+        {
+            Admin = new YaguraConfigurationOptions.AdminOptions
+            {
+                Authentication = new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions
+                {
+                    Windows = new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.WindowsOptions
+                    {
+                        AdminGroups = ["EXAMPLE\\Admins"],
+                    },
+                },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(["Admin:Authentication:Windows:AdminGroups"], plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.RestartRequired, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_NullAndEmptyArray_AreTreatedAsTheSame()
+    {
+        // キーを消した編集と [] に書き換えた編集は、どちらも「1 件も指定がない」。
+        // 区別すると再起動待ちの表示に意味のない差が出る。
+        var before = new YaguraConfigurationOptions
+        {
+            Notification = new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions { To = null },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Notification = new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions { To = [] },
+            },
+        };
+
+        Assert.Empty(ConfigurationChangePlanner.Compare(before, after).ChangedKeys);
+    }
+
+    [Fact]
+    public void Compare_ArrayReorder_IsDetectedAsChange()
+    {
+        // 集合として同じでも設定ファイルは変わっている。「変更したのに出ない」（未反映の
+        // 無音化）より「変更していないのに出る」ほうが害が小さい、という優先順位。
+        var before = new YaguraConfigurationOptions
+        {
+            Notification = new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions
+                {
+                    To = ["a@example.com", "b@example.com"],
+                },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Notification = new YaguraConfigurationOptions.NotificationOptions
+            {
+                Email = new YaguraConfigurationOptions.NotificationOptions.EmailOptions
+                {
+                    To = ["b@example.com", "a@example.com"],
+                },
+            },
+        };
+
+        Assert.Equal(["Notification:Email:To"], ConfigurationChangePlanner.Compare(before, after).ChangedKeys);
+    }
+
+    [Fact]
+    public void Compare_EveryRegisteredArrayKey_IsDetectedAsChanged()
+    {
+        // スカラー側の網羅性テスト（Compare_EveryRegisteredKey_...）の配列版。
+        // 表に登録したのに Compare へ足し忘れる、という組み合わせを CI が検出する。
+        foreach (var key in ConfigurationKeyMetadata.RegisteredArrayKeys)
+        {
+            var before = new YaguraConfigurationOptions();
+            var after = new YaguraConfigurationOptions();
+            SetArrayByKeyPath(after, key, ["changed-value"]);
+
+            var plan = ConfigurationChangePlanner.Compare(before, after);
+
+            Assert.Equal([key], plan.ChangedKeys);
+        }
+    }
+
+    /// <summary>
+    /// 配列キーのパスを辿って値を設定する（<see cref="SetValueByKeyPath"/> の配列版）。
+    /// 末端のプロパティ型は <see cref="List{T}"/> of <see cref="string"/>。
+    /// </summary>
+    private static void SetArrayByKeyPath(YaguraConfigurationOptions options, string keyPath, List<string> value)
+    {
+        var segments = keyPath.Split(':');
+        object current = options;
+
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            var property = current.GetType().GetProperty(segments[i])
+                ?? throw new InvalidOperationException(
+                    $"キーパス '{keyPath}' の区分 '{segments[i]}' に対応するプロパティがありません。");
+
+            var next = property.GetValue(current);
+            if (next is null)
+            {
+                next = Activator.CreateInstance(property.PropertyType)!;
+                property.SetValue(current, next);
+            }
+
+            current = next;
+        }
+
+        var leaf = current.GetType().GetProperty(segments[^1])
+            ?? throw new InvalidOperationException(
+                $"キーパス '{keyPath}' の末端 '{segments[^1]}' に対応するプロパティがありません。");
+
+        leaf.SetValue(current, value);
+    }
+
+    // ------------------------------------------------------------------
     // 残り 5 キーの比較漏れ回帰テスト（Issue #210。PR #209 の調査で発見・記録された
     // 既知ギャップの修正確認）。
     // ------------------------------------------------------------------

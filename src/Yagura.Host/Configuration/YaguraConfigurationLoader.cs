@@ -104,8 +104,10 @@ public static class YaguraConfigurationLoader
     /// 配列（JSON 配列）としてバインドされる既知キーの一覧（SEC-9 のグループ一覧。ADR-0010 決定 5・7）。
     /// .NET 構成システムは配列を <c>&lt;key&gt;:0</c>・<c>&lt;key&gt;:1</c> … のインデックス付きリーフとして
     /// 展開するため、これらは <see cref="KnownKeys"/>（スカラーのリーフキー集合）には現れない。
-    /// <see cref="DetectUnknownKeys"/> はインデックス付き子キーの親をこの集合と照合して既知判定する
-    /// （additive-only の起点——配列キーを追加した際は本集合と configuration.md §8 の両方を更新する）。
+    /// <see cref="DetectUnknownKeys"/> はインデックス付き子キーの親をこの集合と照合して既知判定する。
+    /// <b>配列キーを追加した際は、本集合・<see cref="ConfigurationKeyMetadata.RegisteredArrayKeys"/>・
+    /// <see cref="ConfigurationChangePlanner"/> の比較・configuration.md §8 の 4 箇所を同じ PR で
+    /// 更新する</b>（本集合と反映方式表の双方向一致はテストで機械検証される。ADR-0017 委任 9）。
     /// </summary>
     internal static readonly HashSet<string> KnownArrayKeys = new(StringComparer.OrdinalIgnoreCase)
     {

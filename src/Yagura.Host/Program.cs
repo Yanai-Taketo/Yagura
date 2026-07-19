@@ -746,11 +746,11 @@ public static class Program
                 // YaguraConfigurationLoader が再読み込み時にも通るため、解決済みの値を渡すだけでよい。
                 // 無効化（null）の場合はキュー内の未送信通知も破棄する——送り切りを待たず
                 // 無効化の意図を優先する（決定 5）。
-                // 注: 配列キー Notification:Email:To は ChangePlanner の比較対象外であり、
-                // 宛先のみの変更は現時点では再読み込みで検出されない（委任 9 の UI 保存経路と
-                // 合わせて第 3 段で解消する）。
+                // 宛先（配列キー Notification:Email:To）も対象に含む——ADR-0017 委任 9 で
+                // ChangePlanner が配列キーを比較するようになったため、手編集で宛先だけを
+                // 変えた再読み込みもここへ届く。
                 new ImmediateConfigurationApplier(
-                    ["Notification:Email:Enabled", "Notification:Email:From",
+                    ["Notification:Email:Enabled", "Notification:Email:From", "Notification:Email:To",
                      "Notification:Email:Smtp:Host", "Notification:Email:Smtp:Port",
                      "Notification:Email:Smtp:Security", "Notification:Email:Smtp:Username",
                      "Notification:Email:Smtp:Password"],
