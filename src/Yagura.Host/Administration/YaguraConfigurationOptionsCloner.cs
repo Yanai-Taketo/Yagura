@@ -139,6 +139,20 @@ internal static class YaguraConfigurationOptionsCloner
                         Password = source.Notification.Email.Smtp.Password,
                     },
                 },
+                SourceSilence = source.Notification.SourceSilence is null ? null : new YaguraConfigurationOptions.NotificationOptions.SourceSilenceOptions
+                {
+                    DefaultThresholdMinutes = source.Notification.SourceSilence.DefaultThresholdMinutes,
+                    // エントリも複製する（要素の参照を共有すると、複製後の編集が原本へ波及する）。
+                    Watchlist = source.Notification.SourceSilence.Watchlist is null
+                        ? null
+                        : [.. source.Notification.SourceSilence.Watchlist.Select(entry =>
+                            new YaguraConfigurationOptions.NotificationOptions.SourceSilenceOptions.WatchlistEntryOptions
+                            {
+                                Address = entry.Address,
+                                Label = entry.Label,
+                                ThresholdMinutes = entry.ThresholdMinutes,
+                            })],
+                },
             },
         };
     }

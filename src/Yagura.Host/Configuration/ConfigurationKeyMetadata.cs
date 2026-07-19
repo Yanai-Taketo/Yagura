@@ -143,6 +143,8 @@ public static class ConfigurationKeyMetadata
             ["Notification:Email:Smtp:Security"] = ConfigurationReloadEffect.Immediate,
             ["Notification:Email:Smtp:Username"] = ConfigurationReloadEffect.Immediate,
             ["Notification:Email:Smtp:Password"] = ConfigurationReloadEffect.Immediate,
+            // 途絶検知（ADR-0018 決定 6）。ウォッチリストの参照交換のみで反映できる。
+            ["Notification:SourceSilence:DefaultThresholdMinutes"] = ConfigurationReloadEffect.Immediate,
         };
 
     /// <summary>
@@ -176,6 +178,10 @@ public static class ConfigurationKeyMetadata
             // メール通知の宛先（ADR-0017 決定 9）。他のメールキーと同じく即時——送信のたびに
             // SMTP 接続を張るため、次回送信から新しい宛先が効く。
             ["Notification:Email:To"] = ConfigurationReloadEffect.Immediate,
+            // 途絶検知のウォッチリスト（ADR-0018 決定 6）。オブジェクトの配列だが、反映方式の
+            // 宣言単位はスカラー配列と同じ「論理キー 1 つ」でよい（平坦化キーを単位にすると
+            // 即時反映が偽の再起動待ちとして現れる——委任 3）。
+            ["Notification:SourceSilence:Watchlist"] = ConfigurationReloadEffect.Immediate,
         };
 
     /// <summary>

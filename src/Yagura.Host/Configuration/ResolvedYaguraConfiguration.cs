@@ -206,4 +206,10 @@ public sealed record ResolvedYaguraConfiguration(
     /// 書き足させない。<see cref="UdpBindAddressIsExplicit"/> 群と同じ判断。
     /// </remarks>
     internal ResolvedEmailNotification? EmailNotification { get; init; }
+
+    /// <summary>
+    /// 送信元の途絶検知（ADR-0018。opt-in）の検証済みウォッチリスト。<see langword="null"/> は
+    /// 「監視しない」（未設定・空リスト・全エントリが不正のいずれも含む——区別は警告一覧側に現れる）。
+    /// </summary>
+    internal ResolvedSourceSilence? SourceSilence { get; init; }
 }

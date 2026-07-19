@@ -1,0 +1,38 @@
+namespace Yagura.Host.Observability.ActiveNotification.SourceSilence;
+
+/// <summary>
+/// 送信元の途絶検知（ADR-0018）の暫定定数。
+/// </summary>
+/// <remarks>
+/// <see cref="ActiveNotificationConstants"/> と同じ運用——すべて実測で確定するまでの暫定値。
+/// 本クラスの値は configuration.md §9 の確定待ち一覧（CF-x）に登録して追跡する
+/// （ADR-0018 委任 2）。<b>メール通知の閾値〔<c>EmailNotificationConstants</c>〕とは扱いが違う</b>
+/// ——あちらは「設定キーとして公開しない」と決めた値だが、こちらは
+/// <see cref="DefaultThresholdMinutes"/> と上限が利用者から見える挙動を直接決めるため、
+/// 実運用で確定させる対象として §9 に載せる。
+/// </remarks>
+internal static class SourceSilenceConstants
+{
+    /// <summary>
+    /// ウォッチリストの登録上限（仮値 1000 件。ADR-0018 決定 1）。
+    /// </summary>
+    /// <remarks>
+    /// 有界化はこの上限が担う。当初案 100 件は「数百台の配布現場・通信事業者規模で初日から
+    /// 不足する」というレビュー指摘を受けて引き上げた——エントリ実体は数十バイト・評価は
+    /// O(n) の時刻比較のみであり、技術コストは 100 件と変わらない。
+    /// </remarks>
+    internal const int MaxWatchlistEntries = 1000;
+
+    /// <summary>
+    /// 閾値を省略したエントリの補完値（仮値 1440 分 = 24 時間。ADR-0018 決定 1）。
+    /// </summary>
+    internal const int DefaultThresholdMinutes = 1440;
+
+    /// <summary>
+    /// エントリ閾値の下限（仮値 10 分）。評価周期 1 分 + 送信ジッタを考慮した値。
+    /// </summary>
+    internal const int MinThresholdMinutes = 10;
+
+    /// <summary>エントリ閾値の上限（仮値 43200 分 = 30 日）。</summary>
+    internal const int MaxThresholdMinutes = 43200;
+}

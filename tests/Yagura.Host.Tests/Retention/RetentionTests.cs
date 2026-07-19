@@ -69,10 +69,35 @@ public sealed class RetentionTests : IDisposable
     [Fact]
     public void EveryDeclaredArrayKey_IsKnownToLoader()
     {
+        // 配列キーには 2 つの形がある——スカラーの配列（KnownArrayKeys）と、オブジェクトの
+        // 配列（KnownObjectArrayKeys。ADR-0018）。平坦化の形が違うので未知キー判定は別系統だが、
+        // **反映方式の宣言単位はどちらも「論理キー 1 つ」で同じ**ため反映方式表は 1 つに保つ。
+        var known = YaguraConfigurationLoader.KnownArrayKeys
+            .Concat(YaguraConfigurationLoader.KnownObjectArrayKeys.Keys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var key in ConfigurationKeyMetadata.RegisteredArrayKeys)
         {
-            Assert.Contains(key, YaguraConfigurationLoader.KnownArrayKeys);
+            Assert.Contains(key, known);
         }
+    }
+
+    [Fact]
+    public void EveryKnownObjectArrayKey_HasDeclaredReloadEffect()
+    {
+        foreach (var key in YaguraConfigurationLoader.KnownObjectArrayKeys.Keys)
+        {
+            _ = ConfigurationKeyMetadata.GetReloadEffect(key);
+        }
+    }
+
+    [Fact]
+    public void ScalarAndObjectArrayKeySets_DoNotOverlap()
+    {
+        // 同じキーが両系統にあると未知キー判定の経路が二重になり、片方だけ更新した際に
+        // 挙動が食い違う。
+        Assert.Empty(YaguraConfigurationLoader.KnownArrayKeys
+            .Intersect(YaguraConfigurationLoader.KnownObjectArrayKeys.Keys, StringComparer.OrdinalIgnoreCase));
     }
 
     [Fact]
