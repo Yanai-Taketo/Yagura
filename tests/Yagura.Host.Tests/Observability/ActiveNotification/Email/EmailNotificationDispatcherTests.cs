@@ -175,6 +175,41 @@ public sealed class EmailNotificationDispatcherTests
     }
 
     [Fact]
+    public async Task DrainOnceAsync_SenderThrowingUnexpectedly_IsTreatedAsAFailureWithRetry()
+    {
+        // IEmailSender の「例外を投げない」契約の違反（構成層と送信層のアドレス判定の食い違い等）
+        // でも、dequeue 済みの通知を再試行なしに失わない（PR #366 レビュー対応）。
+        var sender = new ThrowingSender();
+        var (dispatcher, queue, time) = CreateDispatcher(sender, Configuration);
+
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, queue.Depth); // 通常の失敗と同じく再試行待ちとして保持される
+        Assert.NotNull(dispatcher.LastFailure);
+        Assert.Equal(EmailSendFailureKind.Other, dispatcher.LastFailure!.FailureKind);
+
+        time.Advance(EmailNotificationConstants.RetryDelay + TimeSpan.FromSeconds(1));
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, sender.Attempts); // 再試行が生きている
+        Assert.Equal(0, queue.Depth);     // 2 度目の失敗で破棄（at-most-once は維持）
+    }
+
+    private sealed class ThrowingSender : IEmailSender
+    {
+        internal int Attempts { get; private set; }
+
+        public Task<EmailSendResult> SendAsync(
+            ResolvedEmailNotification configuration, string subject, string body, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            throw new InvalidOperationException("契約違反の想定外例外");
+        }
+    }
+
+    [Fact]
     public async Task DrainOnceAsync_PartialRecipientRejection_CountsAsSuccessAndIsNotResent()
     {
         // 委任 7: 一部拒否は「メッセージとしては送信成功・拒否宛先を警告ログ・再送しない」

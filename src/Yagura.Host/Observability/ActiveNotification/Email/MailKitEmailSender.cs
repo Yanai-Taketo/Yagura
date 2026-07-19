@@ -40,14 +40,18 @@ internal sealed class MailKitEmailSender : IEmailSender
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        var message = BuildMessage(configuration, subject, body);
-
         // 一部の宛先だけが拒否された場合に例外にせず収集する（委任 7）。MailKit の既定は
         // OnRecipientNotAccepted で例外を投げるため、記録に振り替える。
         using var client = new PartialRejectionTolerantSmtpClient();
 
         try
         {
+            // メッセージの組み立ても try の中で行う——構成層のアドレス検証
+            // （System.Net.Mail.MailAddress）と MimeKit のパーサは別実装であり、判定が
+            // 食い違う値が構成を通過した場合でも、例外ではなく失敗の分類として返す
+            // （IEmailSender の「例外を投げない」契約。PR #366 レビュー対応）。
+            var message = BuildMessage(configuration, subject, body);
+
             client.Timeout = (int)EmailNotificationConstants.ConnectTimeout.TotalMilliseconds;
 
             await client.ConnectAsync(
@@ -95,9 +99,21 @@ internal sealed class MailKitEmailSender : IEmailSender
             // MailKit のタイムアウトは取り消し要求のない OperationCanceledException として現れる。
             return EmailSendResult.Failure(EmailSendFailureKind.Timeout, "SMTP サーバが時間内に応答しませんでした。");
         }
+        catch (OperationCanceledException)
+        {
+            // 呼び出し元の取り消し要求（停止・テスト送信の中止）だけは結果に変換せず伝播する。
+            throw;
+        }
         catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException)
         {
             return EmailSendResult.Failure(EmailSendFailureKind.ConnectionFailed, Describe(ex));
+        }
+        catch (Exception ex)
+        {
+            // 上の列挙にない例外（アドレスの解析失敗・MailKit の状態例外等）でも契約
+            // （例外を投げない）を守る——ここで漏らすとディスパッチャが当該通知を再試行なしに
+            // 失い、送信ループ側の包括 catch が抑制窓なしの警告を積む（PR #366 レビュー対応）。
+            return EmailSendResult.Failure(EmailSendFailureKind.Other, Describe(ex));
         }
     }
 
@@ -129,7 +145,9 @@ internal sealed class MailKitEmailSender : IEmailSender
         EmailTransportSecurity.Auto => SecureSocketOptions.StartTlsWhenAvailable,
         // 確立できなければ接続を失敗させる（決定 2 の required = fail-closed。平文へ降格しない）。
         EmailTransportSecurity.Required => SecureSocketOptions.StartTls,
-        _ => SecureSocketOptions.StartTlsWhenAvailable,
+        // 写像漏れ（enum への将来の値追加）は緩い側（日和見）ではなく必須側へ倒す——
+        // 未知の値で暗号化の意図が黙って外れる経路を作らない（決定 2 と同じ向き）。
+        _ => SecureSocketOptions.StartTls,
     };
 
     private static EmailSendFailureKind ClassifySmtpCommandFailure(SmtpCommandException ex) => ex.ErrorCode switch

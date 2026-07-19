@@ -163,9 +163,24 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
 
         while (!cancellationToken.IsCancellationRequested && _queue.TryDequeueReady() is { } request)
         {
-            var result = await _sender
-                .SendAsync(configuration, request.Subject, request.Body, cancellationToken)
-                .ConfigureAwait(false);
+            EmailSendResult result;
+            try
+            {
+                result = await _sender
+                    .SendAsync(configuration, request.Subject, request.Body, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // IEmailSender は「例外を投げない」契約だが、契約違反でも dequeue 済みの通知を
+                // 再試行なしに失わない——通常の失敗と同じ経路（LastFailure・再試行 1 回・
+                // 抑制窓付き警告）へ倒す（PR #366 レビュー対応）。
+                result = EmailSendResult.Failure(EmailSendFailureKind.Other, ex.Message);
+            }
 
             if (result.Succeeded)
             {
