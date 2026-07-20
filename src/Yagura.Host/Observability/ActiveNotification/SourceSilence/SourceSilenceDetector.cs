@@ -113,12 +113,83 @@ public sealed class SourceSilenceDetector
     {
         lock (_gate)
         {
+            var previousThresholds = new Dictionary<string, TimeSpan>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in _watchlist)
+            {
+                previousThresholds[Key(entry.Address)] = entry.Threshold;
+            }
+
             _watchlist = watchlist ?? [];
 
             var live = _watchlist.Select(entry => Key(entry.Address)).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var stale in _states.Keys.Where(key => !live.Contains(key)).ToList())
             {
                 _states.Remove(stale);
+            }
+
+            // 閾値が変更されたエントリは途絶フラグを解除するのみ（決定 3。Issue #381 の欠陥 3）。
+            // 解除を Evaluate の復帰分岐に委ねると、実際には 1 件も受信していないのに
+            // 「受信が再開した」（1029）が記録される——復帰の証跡は実受信でのみ出す。
+            foreach (var entry in _watchlist)
+            {
+                var key = Key(entry.Address);
+                if (previousThresholds.TryGetValue(key, out var previous)
+                    && previous != entry.Threshold
+                    && _states.TryGetValue(key, out var state))
+                {
+                    state.IsSilent = false;
+                    state.NotificationPending = false;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 起動時の初期値（seed。決定 3。Issue #381）を反映する。
+    /// <c>QuerySourceActivityAsync</c> の結果を受け取り、ウォッチリスト該当エントリの
+    /// 暫定基準（起動時点）を DB の最終受信時刻へ置き換える。
+    /// </summary>
+    /// <remarks>
+    /// <b>seed 時点で既に閾値超過のエントリは起動時刻仮基準のまま再アームする</b>（即発火しない
+    /// ——サーバ自身が閾値超の期間停止していた場合〔週末メンテ等〕の健在装置の一斉偽陽性を防ぐ。
+    /// 帰結: 既知の長期途絶エントリの再警告は起動から当該閾値経過後になる）。結果に現れない
+    /// エントリ・照会失敗時（呼び出し側が本メソッドを呼ばない）も起動時刻仮基準のまま——
+    /// いずれも決定 3 の規定どおり。
+    /// </remarks>
+    internal void SeedFromStore(IReadOnlyList<Yagura.Storage.SourceActivity> activities)
+    {
+        lock (_gate)
+        {
+            if (_watchlist.Count == 0 || activities.Count == 0)
+            {
+                return;
+            }
+
+            var lastSeenByAddress = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+            foreach (var activity in activities)
+            {
+                // 保存側のアドレス表記（IPv4-mapped IPv6 の可能性）を照合キーへ正規化する。
+                if (IPAddress.TryParse(activity.SourceAddress, out var parsed))
+                {
+                    lastSeenByAddress[Key(parsed)] = activity.LastReceivedAt;
+                }
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            foreach (var entry in _watchlist)
+            {
+                if (!lastSeenByAddress.TryGetValue(Key(entry.Address), out var lastSeenAt))
+                {
+                    continue;
+                }
+
+                if (now - lastSeenAt > entry.Threshold)
+                {
+                    // 既に閾値超過——起動時刻仮基準のまま（上記 remarks）。
+                    continue;
+                }
+
+                _tracker.SeedProvisionalBaseline(entry.Address, lastSeenAt);
             }
         }
     }
@@ -243,27 +314,55 @@ public sealed class SourceSilenceDetector
     }
 
     /// <summary>
-    /// 受信経路の回復時に、保留中のエントリを回復時刻で再アームする（決定 3。委任 6）。
+    /// 受信経路の回復時に、<b>保留中に閾値超過となったエントリ</b>を回復時刻で再アームする
+    /// （決定 3。委任 6。Issue #381 の欠陥 2）。再アームした件数を返す（ログ用）。
     /// </summary>
     /// <remarks>
-    /// 起動時の再アーム（<see cref="SourceActivityTracker.ApplyWatchlist"/> の新規エントリ）と
-    /// 同一規則——固定のグレース値を置かず、各エントリの再検知は<b>当該エントリの閾値</b>で
-    /// 律速する。短閾値エントリの検知を一律に止めず、長閾値エントリに短時間の受信を強要しない。
+    /// <para>
+    /// 対象を限定する理由: 受信断の間はサーバ都合で装置の生死を区別できないため、その間に
+    /// 閾値を跨いだエントリだけが「回復時刻からの再計測」を要する。全エントリを再アームすると、
+    /// 数分の受信断が観測されるたびに、閾値未満で沈黙中の装置（例: 閾値 24h で 23h 沈黙）の
+    /// 時計まで前進し、検知が閾値ぶん先送りされる——短い受信断が繰り返される環境では検知が
+    /// 恒久先送りされ得る。
+    /// </para>
+    /// <para>
+    /// 受信断より<b>前</b>から途絶中（警告済み）のエントリも触らない——その途絶は受信断とは
+    /// 独立に始まっており、復帰の証跡（1029）は実受信でのみ出す。閾値未満のエントリは
+    /// 追跡時計をそのまま保ち、本来の「最終受信 + 閾値」で発火する。
+    /// </para>
+    /// <para>
+    /// 再アーム規則自体は起動時（<see cref="SourceActivityTracker.ApplyWatchlist"/> の新規
+    /// エントリ・<see cref="SeedFromStore"/> の閾値超過エントリ）と同一——固定のグレース値を
+    /// 置かず、各エントリの再検知は<b>当該エントリの閾値</b>で律速する。
+    /// </para>
     /// </remarks>
-    internal void RearmAfterReceptionRecovery()
+    internal int RearmAfterReceptionRecovery()
     {
         lock (_gate)
         {
+            var now = _timeProvider.GetUtcNow();
+            var rearmedCount = 0;
+
             foreach (var entry in _watchlist)
             {
-                _tracker.Seed(entry.Address, _timeProvider.GetUtcNow());
-
-                if (_states.TryGetValue(Key(entry.Address), out var state))
+                var elapsed = _tracker.GetElapsedSinceLastActivity(entry.Address);
+                if (elapsed is null || elapsed <= entry.Threshold)
                 {
-                    state.IsSilent = false;
-                    state.NotificationPending = false;
+                    // 閾値未満——追跡時計を保ち、本来の時点で発火させる。
+                    continue;
                 }
+
+                if (_states.TryGetValue(Key(entry.Address), out var state) && state.IsSilent)
+                {
+                    // 受信断より前から途絶中（警告済み）——再アームせず途絶状態を維持する。
+                    continue;
+                }
+
+                _tracker.Seed(entry.Address, now);
+                rearmedCount++;
             }
+
+            return rearmedCount;
         }
     }
 
