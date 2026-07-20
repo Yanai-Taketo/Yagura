@@ -111,7 +111,7 @@
       明示 pin する。**下限の制約**: 2.1.11 系は影響を受けるため、この 2 点を 2.x 系へ
       下げてはならない（採用日 2026-07-05）。
     -->
-    <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.3" />
+    <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.4" />
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
 
     <!--
