@@ -97,6 +97,53 @@ public sealed class PersistenceWriterSpoolWriteFailedNotificationTests : IDispos
         await runTask;
     }
 
+    [Fact]
+    public async Task PermanentWriteFailure_WarnsWithEventId1030()
+    {
+        // ADR-0017 委任 10（Issue #369）: 恒久障害の開始通知は EventId 1030 を持つ——
+        // 採番なし（= 0）のままだとメール通知プロバイダが構造的に捕捉できず、
+        // イベントログの機械照合もできない。
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(spool);
+
+        var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        using var metrics = new IngestionMetrics();
+        var logCollector = new FakeLogCollector();
+
+        var writer = new PersistenceWriter(
+            q2.Reader,
+            new AlwaysThrowingLogStore(),
+            spool,
+            metrics,
+            new FakeLogger<PersistenceWriter>(logCollector),
+            capacityExhaustionHandler: null,
+            timeProvider: new FakeTimeProvider(DateTimeOffset.Parse("2026-07-20T00:00:00Z")));
+
+        using var stoppingCts = new CancellationTokenSource();
+        var runTask = Task.Run(() => writer.RunAsync(stoppingCts.Token));
+
+        await q2.Writer.WriteAsync(CreateRecord("permanent"));
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!logCollector.GetSnapshot().Any(r => r.Message.Contains("[permanent-failure]")) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        var record = Assert.Single(logCollector.GetSnapshot(), r => r.Message.Contains("[permanent-failure]"));
+        Assert.Equal(1030, record.Id.Id);
+
+        stoppingCts.Cancel();
+        await runTask;
+        spool!.Dispose();
+    }
+
     /// <summary>ログスナップショットが指定件数（EventId 1005）に達するまで条件ポーリングで待つ。</summary>
     private static async Task WaitForLogCountAsync(FakeLogCollector collector, int expectedCount)
     {

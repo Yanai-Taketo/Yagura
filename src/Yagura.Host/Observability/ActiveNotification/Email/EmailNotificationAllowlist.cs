@@ -76,6 +76,9 @@ internal static class EmailNotificationAllowlist
             //     1029〔復帰〕は対象外: 復帰は対応を要する事象ではなく能動通知しない（決定 3） ---
             [SourceSilence.SourceSilenceEventIds.SourceSilenceDetected.Id] = Severity.Warning,      // 1027
             [SourceSilence.SourceSilenceEventIds.SourceSilenceBurstDetected.Id] = Severity.Warning, // 1028
+
+            // --- 恒久障害による書き込み失敗の開始（ADR-0017 委任 10 の裁定。発火点は LogError） ---
+            [PersistenceEventIds.PermanentWriteFailure.Id] = Severity.Error,                        // 1030
         };
 
     /// <summary>本表に登録済みのすべてのイベント ID。テスト・網羅性検証用。</summary>
