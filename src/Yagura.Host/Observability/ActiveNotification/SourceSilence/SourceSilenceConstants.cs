@@ -61,4 +61,15 @@ internal static class SourceSilenceConstants
     /// 診断情報としても劣化している。
     /// </remarks>
     internal const int BurstAggregationThreshold = 5;
+
+    /// <summary>
+    /// 集約警告（1028）の本文に列挙するエントリの上限（仮値 20 件。Issue #382）。
+    /// 超過分は「ほか N 件」の総数表記に畳む。
+    /// </summary>
+    /// <remarks>
+    /// ウォッチリスト上限（1000 件）まで 1 メッセージに列挙すると、Windows イベントログの
+    /// メッセージ長上限（約 31KB）に抵触し得る。全量はダッシュボード（UI-4 の途絶中強調）で
+    /// 確認できるため、イベントログ側は診断の起点になる件数に絞る。
+    /// </remarks>
+    internal const int BurstDetailMaxListedEntries = 20;
 }
