@@ -20,8 +20,23 @@ internal enum EmailSendFailureKind
     /// <summary>サーバ証明書の検証に失敗した。</summary>
     CertificateRejected,
 
-    /// <summary>SMTP 認証が拒否された（資格情報の誤り・AUTH 自体の無効化を含む）。</summary>
+    /// <summary>SMTP 認証が拒否された（資格情報の誤りの可能性が高い側）。</summary>
     AuthenticationRejected,
+
+    /// <summary>
+    /// SMTP サーバ側で SMTP 認証（SMTP AUTH）自体が無効化されている（M365 の
+    /// <c>535 5.7.139 SmtpClientAuthentication is disabled</c> 等。委任 12。Issue #385）。
+    /// 資格情報の誤りと区別する——「打ち直しても解決しない」を案内するための分類。
+    /// 判定は<b>サニタイズ前の生応答</b>で行う（<c>MailKitEmailSender</c> 参照）。
+    /// </summary>
+    AuthenticationDisabledByServer,
+
+    /// <summary>
+    /// SMTP サーバが認証（AUTH）を提供していない（EHLO で AUTH を広告しないサーバへ
+    /// 資格情報つきで接続した。Issue #385）。社内リレー + 書きかけ設定で現実に起こる——
+    /// 「STARTTLS 非対応」と誤案内しないための分類。
+    /// </summary>
+    AuthenticationNotOffered,
 
     /// <summary>中継を拒否された（差出人・宛先がサーバの中継ポリシーの外）。</summary>
     RelayRejected,

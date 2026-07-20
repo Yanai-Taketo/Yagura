@@ -1895,6 +1895,22 @@ public static class YaguraConfigurationLoader
             }
         }
 
+        // 決定 3 の能動警告（Issue #385）: 資格情報あり + Security ≠ required は、設定保存時
+        // （画面のライブバナー）だけでなく**起動時・再読み込み時にも**警告する——手編集で
+        // Security を auto へ戻した場合に誰も気づけない状態を作らない。機能は無効化しない
+        // （推奨からの逸脱であり不正値ではない）。
+        if (password is not null && security != EmailTransportSecurity.Required)
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Notification:Email:Smtp:Security",
+                InvalidValue: security == EmailTransportSecurity.None ? "none" : "auto",
+                AppliedValue: "(そのまま受理して継続——不正値ではなく推奨からの逸脱)",
+                Reason: "パスワードが設定されていますが、暗号化（STARTTLS）が required ではありません。" +
+                    "経路上で暗号化が剥がされた場合に漏れるのは通知の内容ではなく SMTP の資格情報です" +
+                    "（多くの環境では AD のアカウントと同じもの）。required への変更を強く推奨します" +
+                    "（ADR-0017 決定 3）"));
+        }
+
         return new ResolvedEmailNotification(
             From: from,
             To: to,

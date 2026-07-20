@@ -571,7 +571,11 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         var health = new EmailNotificationChannelHealth(
             LastSuccessAt: dispatcher?.LastSuccessAt,
             LastFailureKind: lastFailure?.FailureKind.ToString(),
-            LastFailureDetail: lastFailure?.FailureDetail,
+            // 常設カードにも平易な説明と次の一手を出す（委任 12。Issue #385——従来は生の
+            // 例外メッセージをそのまま表示しており、テスト送信結果だけが平易化されていた）。
+            LastFailureDetail: lastFailure is null
+                ? null
+                : EmailSendFailureGuidance.Describe(lastFailure.FailureKind, lastFailure.FailureDetail),
             QueueDepth: _queue.Depth,
             DroppedCount: _queue.DroppedCount,
             SuppressedCount: _queue.SuppressedCount,
