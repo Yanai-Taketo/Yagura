@@ -255,4 +255,71 @@ public sealed class EmailNotificationQueueTests
         Assert.Equal(0, queue.Depth);
         Assert.Null(queue.TryDequeueReady());
     }
+
+    // ------------------------------------------------------------------
+    // (5) 無効構成の間は投入を受け付けない（Issue #384）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void TryEnqueue_WhileDisabled_IsRejectedWithoutCountingAnything()
+    {
+        var (queue, _) = Create();
+        queue.SetEnabled(false);
+
+        Assert.Equal(EmailEnqueueOutcome.Disabled, Enqueue(queue, Warning1));
+        Assert.Equal(0, queue.Depth);
+        // 一度も有効化していない環境の常設カードに「抑制 N 件・破棄 N 件」を出さない。
+        Assert.Equal(0, queue.SuppressedCount);
+        Assert.Equal(0, queue.DroppedCount);
+
+        // 有効化後の発生分は通常どおり受け付ける。
+        queue.SetEnabled(true);
+        Assert.Equal(EmailEnqueueOutcome.Accepted, Enqueue(queue, Warning1));
+    }
+
+    // ------------------------------------------------------------------
+    // (6) 抑制状態の開始警告（1026）の予約（Issue #384）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void SuppressionAnnouncement_IsTakenOncePerSuppressionState()
+    {
+        var (queue, time) = Create();
+
+        Assert.Null(queue.TryTakeSuppressionAnnouncement()); // 抑制なし
+
+        Enqueue(queue, Warning1);
+        time.Advance(TimeSpan.FromMinutes(5));
+        Enqueue(queue, Warning1); // 再送間隔内 → 抑制（状態の開始）
+        time.Advance(TimeSpan.FromMinutes(5));
+        Enqueue(queue, Warning1); // 抑制の継続
+
+        var onset = queue.TryTakeSuppressionAnnouncement();
+        Assert.NotNull(onset);
+        Assert.Equal(Warning1.Id, onset!.Value.LastSuppressedEventId);
+        Assert.Equal(2, onset.Value.TotalSuppressedCount);
+
+        // 同一状態の間は再予約されない（1 回だけ——security.md §4.3）。
+        time.Advance(TimeSpan.FromMinutes(5));
+        Enqueue(queue, Warning1);
+        Assert.Null(queue.TryTakeSuppressionAnnouncement());
+    }
+
+    [Fact]
+    public void SuppressionAnnouncement_RearmsAfterAQuietResendInterval()
+    {
+        var (queue, time) = Create();
+
+        Enqueue(queue, Warning1);
+        time.Advance(TimeSpan.FromMinutes(5));
+        Enqueue(queue, Warning1); // 状態 1 の開始
+        Assert.NotNull(queue.TryTakeSuppressionAnnouncement());
+
+        // 抑制なしで再送間隔（60 分）が経過 → 状態解消 → 次の抑制は新しい状態の開始として再武装。
+        time.Advance(EmailNotificationConstants.ResendInterval + TimeSpan.FromMinutes(1));
+        Assert.Equal(EmailEnqueueOutcome.Accepted, Enqueue(queue, Warning1));
+        time.Advance(TimeSpan.FromMinutes(5));
+        Enqueue(queue, Warning1); // 状態 2 の開始
+        Assert.NotNull(queue.TryTakeSuppressionAnnouncement());
+    }
 }

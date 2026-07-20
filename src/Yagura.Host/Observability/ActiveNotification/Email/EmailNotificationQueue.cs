@@ -16,6 +16,12 @@ internal enum EmailEnqueueOutcome
 
     /// <summary>全体流量上限（10 通/時）に達しているため抑制した。</summary>
     SuppressedByRateLimit,
+
+    /// <summary>
+    /// メール通知が無効構成のため受け付けなかった（Issue #384——無効期間中の蓄積を作らない。
+    /// カウンタも増やさない）。
+    /// </summary>
+    Disabled,
 }
 
 /// <summary>
@@ -67,6 +73,18 @@ internal sealed class EmailNotificationQueue
 
     internal EmailNotificationQueue(TimeProvider? timeProvider = null) =>
         _timeProvider = timeProvider ?? TimeProvider.System;
+
+    /// <summary>
+    /// メール通知が有効構成か（Issue #384）。無効の間は <see cref="TryEnqueue"/> を受け付けない
+    /// ——無効期間中もキューへ蓄積すると、後日 UI で有効化した瞬間に滞留分（数日前の事象を
+    /// 含み得る）が流量制御を経ずに一斉送信される（抑制・流量上限は投入時にのみ評価されるため、
+    /// 送信時には効かない）。決定 5 の「無効への即時反映時はキュー破棄」と対で、無効「期間中」の
+    /// 蓄積もここで塞ぐ。既定は受付（真）——合成ルートが起動時の解決済み構成で直ちに設定する。
+    /// </summary>
+    private volatile bool _acceptEnqueues = true;
+
+    /// <summary>有効状態の反映（書き手は合成ルートの初期化と <c>EmailNotificationDispatcher.UpdateConfiguration</c>）。</summary>
+    internal void SetEnabled(bool enabled) => _acceptEnqueues = enabled;
 
     /// <summary>現在のキュー深度（常設カードの表示用。決定 5）。</summary>
     internal int Depth
@@ -123,6 +141,14 @@ internal sealed class EmailNotificationQueue
     /// </summary>
     internal EmailEnqueueOutcome TryEnqueue(EventId eventId, string subject, string body)
     {
+        if (!_acceptEnqueues)
+        {
+            // 無効構成の間は受け付けない（Issue #384）。抑制・破棄のカウンタも増やさない——
+            // 一度も有効化していない環境の常設カードに「抑制 N 件」が出て、無効な機能の
+            // 保護動作を運用者に疑わせないため。
+            return EmailEnqueueOutcome.Disabled;
+        }
+
         if (!EmailNotificationAllowlist.TryGetSeverity(eventId, out var severity))
         {
             return EmailEnqueueOutcome.NotAllowlisted;
@@ -273,9 +299,43 @@ internal sealed class EmailNotificationQueue
 
     private void RecordSuppressionUnderGate(EventId eventId, DateTimeOffset now)
     {
+        // 「抑制が発生している状態」の開始判定（Issue #384——1026 は状態が続く間 1 回だけ出す。
+        // security.md §4.3）: 直前の抑制から再送間隔（60 分）以上空いていれば新しい状態の開始と
+        // みなし、警告の持ち出しを予約する。窓内で抑制が続く限りは同一状態として追加予約しない
+        // （状態解消 = 抑制なしで再送間隔が経過、で自然に再武装される）。
+        if (_lastSuppressedAt is not { } previousAt
+            || now - previousAt >= EmailNotificationConstants.ResendInterval)
+        {
+            _suppressionAnnouncementPending = true;
+        }
+
         _suppressedCount++;
         _lastSuppressedAt = now;
+        _lastSuppressedEventId = eventId.Id;
         _suppressedCountByEventId[eventId.Id] =
             _suppressedCountByEventId.GetValueOrDefault(eventId.Id) + 1;
+    }
+
+    private bool _suppressionAnnouncementPending;
+    private int _lastSuppressedEventId;
+
+    /// <summary>
+    /// 抑制状態の開始警告（1026）を 1 回だけ持ち出す（Issue #384）。発火はロギング呼び出し
+    /// （受信ホットパス上）ではなく送信ループ側で行うため、ここでは状態の受け渡しのみを行う
+    /// ——ロック中・ロギング呼び出し中にログを書かない（本クラスの「ブロックせず・例外を
+    /// 漏らさない」契約を保つ）。
+    /// </summary>
+    internal (int LastSuppressedEventId, int TotalSuppressedCount)? TryTakeSuppressionAnnouncement()
+    {
+        lock (_gate)
+        {
+            if (!_suppressionAnnouncementPending)
+            {
+                return null;
+            }
+
+            _suppressionAnnouncementPending = false;
+            return (_lastSuppressedEventId, _suppressedCount);
+        }
     }
 }

@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
 using Yagura.Host.Configuration;
 using Yagura.Host.Observability.ActiveNotification;
@@ -317,19 +318,84 @@ public sealed class EmailNotificationDispatcherTests
     }
 
     [Fact]
-    public async Task UpdateConfiguration_ToEnabled_ResumesSendingWithoutRestart()
+    public async Task UpdateConfiguration_ToEnabled_SendsSubsequentNotificationsWithoutRestart()
     {
         var sender = new ScriptedSender(EmailSendResult.Success());
         var (dispatcher, queue, _) = CreateDispatcher(sender, configuration: null);
 
-        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        // 無効の間は投入自体を受け付けない（Issue #384——無効期間中の滞留分が有効化した瞬間に
+        // 流量制御を経ず一斉送信される事態を作らない。カウンタも増やさない）。
+        Assert.Equal(
+            EmailEnqueueOutcome.Disabled,
+            queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文"));
         await dispatcher.DrainOnceAsync(CancellationToken.None);
         Assert.Empty(sender.SentSubjects);
+        Assert.Equal(0, queue.SuppressedCount);
 
         dispatcher.UpdateConfiguration(Configuration);
+
+        // 有効化後の発生分から送信される（再起動不要。決定 9）。
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
         await dispatcher.DrainOnceAsync(CancellationToken.None);
 
         Assert.Single(sender.SentSubjects);
+    }
+
+    // ------------------------------------------------------------------
+    // 流量制御の可視化と抑制窓（Issue #384）
+    // ------------------------------------------------------------------
+
+    private static (EmailNotificationDispatcher Dispatcher, EmailNotificationQueue Queue,
+        FakeTimeProvider Time, FakeLogCollector Collector)
+        CreateDispatcherWithLogger(IEmailSender sender, ResolvedEmailNotification? configuration)
+    {
+        var time = new FakeTimeProvider(Origin);
+        var queue = new EmailNotificationQueue(time);
+        var collector = new FakeLogCollector();
+        var dispatcher = new EmailNotificationDispatcher(
+            queue, sender, configuration, time, new FakeLogger<EmailNotificationDispatcher>(collector));
+        return (dispatcher, queue, time, collector);
+    }
+
+    [Fact]
+    public async Task DrainOnceAsync_EmitsThrottledWarningOnce_WhenSuppressionStateBegins()
+    {
+        // 1026 は「抑制が発生している状態が続く間、イベントログへは 1 回だけ」（security.md §4.3。
+        // Issue #384——従来は定義のみでどこからも発火していなかった）。
+        var (dispatcher, queue, time, collector) =
+            CreateDispatcherWithLogger(new ScriptedSender(EmailSendResult.Success(), EmailSendResult.Success()), Configuration);
+
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        time.Advance(TimeSpan.FromMinutes(5));
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文"); // 抑制（状態開始）
+
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == EmailNotificationEventIds.Throttled.Id);
+
+        // 状態が続く間は繰り返さない。
+        time.Advance(TimeSpan.FromMinutes(5));
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == EmailNotificationEventIds.Throttled.Id);
+    }
+
+    [Fact]
+    public async Task WarnAboutRejectedRecipients_GoesThroughTheSendFailureSuppressionWindow()
+    {
+        // 1025 の抑制窓（15 分）は部分拒否の経路にも等しく効く（Issue #384——一部経路だけ
+        // 毎回出る状態を作らない）。
+        var rejected = EmailSendResult.Success(rejectedRecipients: ["ops@example.com"]);
+        var (dispatcher, queue, time, collector) =
+            CreateDispatcherWithLogger(new ScriptedSender(rejected, rejected), Configuration);
+
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        time.Advance(TimeSpan.FromMinutes(5)); // 窓（15 分）の内側
+        queue.TryEnqueue(ActiveNotificationEventIds.MonitoredVolumeFreeSpaceLow, "件名", "本文");
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        Assert.Single(collector.GetSnapshot(), r => r.Id.Id == EmailNotificationEventIds.SendFailed.Id);
     }
 
     [Fact]
