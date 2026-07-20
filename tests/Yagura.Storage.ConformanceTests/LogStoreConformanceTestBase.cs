@@ -1147,6 +1147,44 @@ public abstract class LogStoreConformanceTestBase : IAsyncLifetime
         Assert.Equal("192.0.2.1", activity[0].SourceAddress);
     }
 
+    [SkippableFact]
+    public async Task QueryMostRecentlyActiveSourcesAsync_SortsNewestFirst()
+    {
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-20), "192.0.2.1", "a-1"),
+            CreateParsedRecord(baseline.AddMinutes(-1), "192.0.2.1", "a-2"),
+            CreateParsedRecord(baseline.AddMinutes(-30), "192.0.2.2", "b-1"),
+        ]);
+
+        var activity = await Store.QueryMostRecentlyActiveSourcesAsync(limit: 10, TimeSpan.FromSeconds(30));
+
+        Assert.Equal(2, activity.Count);
+        // 新しい順（候補選択用。Issue #383——昇順版とは逆）。
+        Assert.Equal("192.0.2.1", activity[0].SourceAddress);
+        Assert.Equal("192.0.2.2", activity[1].SourceAddress);
+    }
+
+    [SkippableFact]
+    public async Task QueryMostRecentlyActiveSourcesAsync_LimitCutsOldestSide()
+    {
+        // Issue #383 の核心: 送信元数が limit を超える環境で、切り捨てられるのは「古い側」で
+        // なければならない——昇順版を後から並べ替えるだけでは現役の送信元が既に落ちている。
+        var baseline = DateTimeOffset.UtcNow;
+        await Store.WriteBatchAsync(
+        [
+            CreateParsedRecord(baseline.AddMinutes(-30), "192.0.2.1", "old"),
+            CreateParsedRecord(baseline.AddMinutes(-1), "192.0.2.2", "new"),
+        ]);
+
+        var activity = await Store.QueryMostRecentlyActiveSourcesAsync(limit: 1, TimeSpan.FromSeconds(30));
+
+        // 打ち切りで残るのは「最終受信が新しい側」（QuerySourceActivityAsync とは逆方向）。
+        Assert.Single(activity);
+        Assert.Equal("192.0.2.2", activity[0].SourceAddress);
+    }
+
     // ------------------------------------------------------------------
     // M8-5 追加の読み取り専用 2 操作（ILogStore の同名メソッドの doc コメント参照。
     // database.md §1.2「契約拡張の予約」の追加実体化——重大度分布・受信量上位の送信元。

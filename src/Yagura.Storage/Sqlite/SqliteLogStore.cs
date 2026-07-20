@@ -774,10 +774,26 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
+    public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
         int limit,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        // 最終受信時刻の古い順（無音の疑いが強い順。UI-4——ILogStore の契約参照）。
+        QuerySourceActivityCoreAsync(limit, timeout, mostRecentFirst: false, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<SourceActivity>> QueryMostRecentlyActiveSourcesAsync(
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default) =>
+        // 新しい順（候補選択用。Issue #383——打ち切りで切り捨てるのは「古い側」）。
+        QuerySourceActivityCoreAsync(limit, timeout, mostRecentFirst: true, cancellationToken);
+
+    private async Task<IReadOnlyList<SourceActivity>> QuerySourceActivityCoreAsync(
+        int limit,
+        TimeSpan timeout,
+        bool mostRecentFirst,
+        CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeout.Ticks);
@@ -793,13 +809,12 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
             await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
-            // 最終受信時刻の古い順（無音の疑いが強い順。UI-4——ILogStore の契約参照）。
             command.CommandText =
-                """
+                $"""
                 SELECT SourceAddress, MAX(ReceivedAt) AS LastReceivedAt, COUNT(*) AS RecordCount
                 FROM LogRecords
                 GROUP BY SourceAddress
-                ORDER BY LastReceivedAt ASC
+                ORDER BY LastReceivedAt {(mostRecentFirst ? "DESC" : "ASC")}
                 LIMIT $limit;
                 """;
             command.Parameters.Add("$limit", SqliteType.Integer).Value = limit;
