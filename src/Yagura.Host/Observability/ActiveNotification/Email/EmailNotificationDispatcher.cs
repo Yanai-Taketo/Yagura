@@ -50,6 +50,9 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
         _configuration = configuration;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<EmailNotificationDispatcher>.Instance;
+
+        // 無効構成の間は投入自体を受け付けない（Issue #384。合成ルートの初期設定と同じ向き）。
+        _queue.SetEnabled(configuration is not null);
     }
 
     /// <summary>
@@ -81,6 +84,10 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
         {
             _configuration = configuration;
         }
+
+        // 無効の間は投入も受け付けない（Issue #384——有効化した瞬間に無効期間中の滞留分が
+        // 流量制御を経ずに一斉送信されるのを防ぐ。有効化後は以後の発生分から送信が始まる）。
+        _queue.SetEnabled(configuration is not null);
 
         if (configuration is null)
         {
@@ -139,10 +146,17 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             catch (Exception ex)
             {
                 // 監視・通知のコンポーネントは黙って死んではならない（他の周期系と同じ規約）。
-                _logger.LogWarning(
-                    EmailNotificationEventIds.SendFailed,
-                    ex,
-                    "メール通知の送信ループで予期しない例外が発生しました。次の周期で再開します。");
+                // 1025 の抑制窓（15 分。security.md §4.3）はこの経路にも等しく適用する
+                // （Issue #384——恒常的な例外で警告が毎周期〔5 秒間隔〕積み上がるのを防ぐ）。
+                if (TryBeginSendFailureWarning())
+                {
+                    _logger.LogWarning(
+                        EmailNotificationEventIds.SendFailed,
+                        ex,
+                        "メール通知の送信ループで予期しない例外が発生しました。次の周期で再開します。" +
+                        "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                        EmailNotificationConstants.SendFailureWarningSuppressionWindow);
+                }
             }
 
             try
@@ -173,6 +187,11 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             // 機能無効・構成不備。積まれた通知は UpdateConfiguration(null) が既に破棄している。
             return;
         }
+
+        // 抑制状態の開始警告（1026。security.md §4.3——状態が続く間 1 回だけ）。発火点は
+        // 受信ホットパス上のロギング呼び出しのため、キューは状態の予約のみを行い、
+        // ログはこの送信ループ側で書く（Issue #384）。
+        AnnounceSuppressionOnsetIfPending();
 
         while (!cancellationToken.IsCancellationRequested && _queue.TryDequeueReady() is { } request)
         {
@@ -222,9 +241,51 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 抑制状態の開始警告（1026）。キューが予約した「状態の開始」を 1 回だけ書き出す
+    /// （security.md §4.3——抑制が発生している状態が続く間、イベントログへは 1 回だけ。
+    /// 状態解消〔抑制なしで再送間隔が経過〕で自然に再武装される。Issue #384）。
+    /// </summary>
+    private void AnnounceSuppressionOnsetIfPending()
+    {
+        if (_queue.TryTakeSuppressionAnnouncement() is not { } onset)
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            EmailNotificationEventIds.Throttled,
+            "メール通知が流量制御により抑制されています（直近の契機: イベント ID {SuppressedEventId}・累積 {TotalSuppressedCount} 件）。" +
+            "同一イベント ID の再送間隔（{ResendInterval}）または全体流量上限（{RateLimitMaxMessages} 通/{RateLimitWindow}）によるものです。" +
+            "抑制が発生している状態が続く間、本警告は 1 回だけ記録します（内訳は管理画面のメール通知設定の常設カードを参照してください）。",
+            onset.LastSuppressedEventId,
+            onset.TotalSuppressedCount,
+            EmailNotificationConstants.ResendInterval,
+            EmailNotificationConstants.RateLimitMaxMessages,
+            EmailNotificationConstants.RateLimitWindow);
+    }
+
+    /// <summary>
+    /// 1025 の抑制窓（15 分。security.md §4.3）の共通判定。窓内なら <see langword="false"/>
+    /// （警告を出さない）。送信失敗・部分拒否・送信ループの予期しない例外のすべての 1025 経路が
+    /// 同じ窓を通る（Issue #384——一部経路だけ毎回出る状態を作らない）。
+    /// </summary>
+    private bool TryBeginSendFailureWarning()
+    {
+        var now = _timeProvider.GetUtcNow();
+        if (_lastSendFailureWarningAt is { } lastAt
+            && now - lastAt < EmailNotificationConstants.SendFailureWarningSuppressionWindow)
+        {
+            return false;
+        }
+
+        _lastSendFailureWarningAt = now;
+        return true;
+    }
+
     private void WarnAboutRejectedRecipients(EmailNotificationRequest request, EmailSendResult result)
     {
-        if (result.RejectedRecipients.Count == 0)
+        if (result.RejectedRecipients.Count == 0 || !TryBeginSendFailureWarning())
         {
             return;
         }
@@ -234,22 +295,20 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
         _logger.LogWarning(
             EmailNotificationEventIds.SendFailed,
             "メール通知（イベント ID {NotifiedEventId}）は送信されましたが、一部の宛先がサーバに受理されませんでした: {RejectedRecipients}。" +
-            "受理済みの宛先への二重送信を避けるため再送は行いません。宛先の綴りと SMTP サーバの中継ポリシーを確認してください。",
+            "受理済みの宛先への二重送信を避けるため再送は行いません。宛先の綴りと SMTP サーバの中継ポリシーを確認してください。" +
+            "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
             request.EventId.Id,
-            string.Join(", ", result.RejectedRecipients));
+            string.Join(", ", result.RejectedRecipients),
+            EmailNotificationConstants.SendFailureWarningSuppressionWindow);
     }
 
     private void WarnAboutSendFailure(EmailNotificationRequest request, EmailSendResult result, bool retryScheduled)
     {
         // SMTP が長時間落ちている間、失敗のたびに警告を積まない（抑制窓付き。決定 5）。
-        var now = _timeProvider.GetUtcNow();
-        if (_lastSendFailureWarningAt is { } lastAt
-            && now - lastAt < EmailNotificationConstants.SendFailureWarningSuppressionWindow)
+        if (!TryBeginSendFailureWarning())
         {
             return;
         }
-
-        _lastSendFailureWarningAt = now;
 
         _logger.LogWarning(
             EmailNotificationEventIds.SendFailed,

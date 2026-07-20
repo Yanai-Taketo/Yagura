@@ -447,6 +447,10 @@ public static class Program
         // ため、構造上必ず本登録（builder 段階）の後になる（発火点: 1001 = 本メソッド末尾の
         // startupLogger、1022 = IngestionHostedService.StartAsync）。
         var emailNotificationQueue = new EmailNotificationQueue();
+        // 無効構成の間は投入自体を受け付けない（Issue #384——無効期間中の蓄積が有効化時に
+        // 流量制御を経ず一斉送信されるのを防ぐ。ディスパッチャの UpdateConfiguration が以後の
+        // 変更を追従する）。
+        emailNotificationQueue.SetEnabled(resolvedConfiguration.EmailNotification is not null);
         builder.Logging.AddEmailNotificationSink(emailNotificationQueue);
         builder.Services.AddSingleton(emailNotificationQueue);
 
