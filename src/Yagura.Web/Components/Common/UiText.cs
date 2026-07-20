@@ -1762,6 +1762,13 @@ public static class UiText
     public const string EmailNotificationSavedNoChanges = "変更はありませんでした（保存していません）。";
     public const string EmailNotificationSavedFormat = "メール通知の設定を保存しました（変更: {0}）。次回の通知から反映されます。";
 
+    /// <summary>無関係キーの不正で設定ファイル全体の検証が失敗している状態の表示（Issue #370）。</summary>
+    public const string EmailNotificationConfigurationFileErrorIntro =
+        "設定ファイルにメール通知とは別の問題があり、実効状態を判定できません。"
+        + "この画面での保存はできますが、送信側への反映は問題の解消後の再読み込みまで見送られます。検証エラー:";
+
+    public const string EmailNotificationSaveFailedFormat = "保存できませんでした: {0}";
+
     // ------------------------------------------------------------------
     // 送信元の途絶検知（ADR-0018。/admin/source-silence。Issue #351）
     // ------------------------------------------------------------------

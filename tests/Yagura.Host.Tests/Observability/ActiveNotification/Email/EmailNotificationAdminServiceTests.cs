@@ -107,6 +107,91 @@ public sealed class EmailNotificationAdminServiceTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // 無関係キーの不正・不正な生値からの修復（Issue #370）
+    // ------------------------------------------------------------------
+
+    /// <summary>メール通知と無関係な「起動失敗」級の不正（UDP ポート）をファイルへ仕込む。</summary>
+    private void SeedUnrelatedInvalidKey()
+    {
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        var options = snapshot.Options;
+        options.Ingestion ??= new YaguraConfigurationOptions.IngestionOptions();
+        options.Ingestion.Udp ??= new YaguraConfigurationOptions.IngestionOptions.UdpOptions();
+        options.Ingestion.Udp.Port = "not-a-port";
+        YaguraConfigurationWriter.Save(_dataRoot, options, snapshot.VersionToken);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_UnrelatedInvalidKey_DoesNotThrowAndReportsTheFileError()
+    {
+        // Loader は Udp:Port の不正で ConfigurationValidationException を投げるが、
+        // メール設定画面を circuit エラーで壊さず「ファイル側の問題」として見せる（Issue #370）。
+        SeedUnrelatedInvalidKey();
+        var service = CreateService();
+
+        var status = await service.GetStatusAsync();
+
+        Assert.NotNull(status.Health.ConfigurationFileError);
+        // 縮退判定は不能——誤った「送られていません」バナーは出さない。
+        Assert.False(status.Health.DisabledByInvalidConfiguration);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_UnrelatedInvalidKey_StillSavesAuditsAndReportsTheFileError()
+    {
+        // 保存と監査は成功し、即時反映だけが見送られる（保存の成否とファイルの問題を区別する）。
+        SeedUnrelatedInvalidKey();
+        var service = CreateService();
+
+        var result = await service.ConfigureAsync(ValidSettings());
+
+        Assert.NotEmpty(result.ChangedKeys);
+        Assert.Single(_audit.Events);
+        Assert.NotNull(result.Status.Health.ConfigurationFileError);
+
+        var persisted = YaguraConfigurationWriter.Read(_dataRoot).Options.Notification?.Email;
+        Assert.Equal("smtp.example.com", persisted?.Smtp?.Host);
+    }
+
+    [Theory]
+    [InlineData("smtp")]     // 解釈不能な文字列
+    [InlineData("25 25")]    // 数値として不正
+    public async Task ConfigureAsync_InvalidRawPortInFile_IsRepairedEvenWhenTheFormShowsTheDefault(string rawPort)
+    {
+        // 実効値比較が不正な生値を既定値へ写像すると、画面の表示値（既定 25）のまま保存しても
+        // no-op になり「直したのに直らない」が起きる（Issue #370）。不正 → 有効値は常に変更として扱う。
+        var seedService = CreateService();
+        await seedService.ConfigureAsync(ValidSettings());
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        snapshot.Options.Notification!.Email!.Smtp!.Port = rawPort;
+        YaguraConfigurationWriter.Save(_dataRoot, snapshot.Options, snapshot.VersionToken);
+        _audit.Events.Clear();
+
+        var service = CreateService();
+        var result = await service.ConfigureAsync(ValidSettings(port: 25));
+
+        Assert.Contains("Notification:Email:Smtp:Port", result.ChangedKeys);
+        Assert.Equal("25", YaguraConfigurationWriter.Read(_dataRoot).Options.Notification?.Email?.Smtp?.Port);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_InvalidRawEnabledInFile_IsRepairedEvenWhenSavingDisabled()
+    {
+        var seedService = CreateService();
+        await seedService.ConfigureAsync(ValidSettings());
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        snapshot.Options.Notification!.Email!.Enabled = "yes"; // 真偽値として不正（手編集想定）
+        YaguraConfigurationWriter.Save(_dataRoot, snapshot.Options, snapshot.VersionToken);
+        _audit.Events.Clear();
+
+        var service = CreateService();
+        var result = await service.ConfigureAsync(ValidSettings(enabled: false));
+
+        Assert.Contains("Notification:Email:Enabled", result.ChangedKeys);
+        Assert.Equal(bool.FalseString, YaguraConfigurationWriter.Read(_dataRoot).Options.Notification?.Email?.Enabled);
+    }
+
+    // ------------------------------------------------------------------
     // 保存前検証（起動時の縮退を、利用者が目の前にいる場面では拒否に倒す）
     // ------------------------------------------------------------------
 

@@ -354,9 +354,37 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         }
 
         // 検証・DPAPI 復号・縮退の判断はすべて Loader に委ねる（保存経路が独自に解釈しない
-        // ——UI 経由と起動時で解決結果が食い違う余地を作らない）。
-        var loaded = YaguraConfigurationLoader.Load(_dataRoot, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
-        dispatcher.UpdateConfiguration(loaded.Configuration.EmailNotification);
+        // ——UI 経由と起動時で解決結果が食い違う余地を作らない）。設定ファイル全体の検証が
+        // 無関係キーの不正で失敗した場合は反映を見送る（Issue #370——保存は成功しており、
+        // 稼働中の送信設定は変更前のまま。状態は ToStatus の ConfigurationFileError が見せる）。
+        if (TryLoadResolved(out var resolved, out _))
+        {
+            dispatcher.UpdateConfiguration(resolved);
+        }
+    }
+
+    /// <summary>
+    /// 設定ファイル全体を Loader で解決する。メール通知と無関係なキーの「起動失敗」級の不正
+    /// （<see cref="ConfigurationValidationException"/>）でもここでは例外にしない——保存後の
+    /// 即時反映・状態取得の呼び出し元は、メール設定画面を circuit エラーで壊すのではなく
+    /// 「ファイルに別の問題がある」ことを読める形で見せる（Issue #370）。
+    /// </summary>
+    private bool TryLoadResolved(out ResolvedEmailNotification? resolved, out string? loadError)
+    {
+        try
+        {
+            resolved = YaguraConfigurationLoader
+                .Load(_dataRoot, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
+                .Configuration.EmailNotification;
+            loadError = null;
+            return true;
+        }
+        catch (ConfigurationValidationException ex)
+        {
+            resolved = null;
+            loadError = ex.Message;
+            return false;
+        }
     }
 
     /// <summary>正規化済みの入力（検証を通過した形）。</summary>
@@ -441,7 +469,14 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
     {
         var changed = new List<string>();
 
-        if (ParseBool(before?.Enabled) != enabled)
+        // 解釈不能な生値（手編集の "yes" 等）は既定値へ写像して比較しない——写像すると UI の
+        // 表示値（既定）と一致した瞬間に no-op となり、ファイル上の不正値を保存操作で上書き
+        // できなくなる（「直したのに直らない」。Issue #370）。不正 → 有効値は常に変更として扱う。
+        var beforeEnabledRaw = Trimmed(before?.Enabled);
+        var beforeEnabled = beforeEnabledRaw is null
+            ? false
+            : bool.TryParse(beforeEnabledRaw, out var parsedEnabled) ? parsedEnabled : (bool?)null;
+        if (beforeEnabled != enabled)
         {
             changed.Add(EnabledKey);
         }
@@ -463,10 +498,13 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
             changed.Add(SmtpHostKey);
         }
 
-        var beforePort = int.TryParse(
-            before?.Smtp?.Port, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : DefaultSmtpPort;
+        // 未設定（キーなし）は既定 25 の意味だが、解釈不能な生値は「変更あり」へ倒す（同上）。
+        var beforePortRaw = Trimmed(before?.Smtp?.Port);
+        var beforePort = beforePortRaw is null
+            ? DefaultSmtpPort
+            : int.TryParse(beforePortRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : (int?)null;
         if (beforePort != after.SmtpPort)
         {
             changed.Add(SmtpPortKey);
@@ -521,10 +559,10 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         var dispatcher = _dispatcherAccessor();
 
         // 「有効にしたつもりで送られていない」状態（決定 2 の縮退）を画面が検出できるようにする。
+        // 無関係キーの不正でファイル全体の検証が失敗した場合は縮退判定が不能のため、
+        // 誤った「送られていません」バナーは出さず、ファイル側の問題として別に見せる（Issue #370）。
         var enabled = ParseBool(email?.Enabled);
-        var resolved = YaguraConfigurationLoader
-            .Load(_dataRoot, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
-            .Configuration.EmailNotification;
+        var loadSucceeded = TryLoadResolved(out var resolved, out var loadError);
 
         var health = new EmailNotificationChannelHealth(
             LastSuccessAt: dispatcher?.LastSuccessAt,
@@ -535,7 +573,8 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
             SuppressedCount: _queue.SuppressedCount,
             LastSuppressedAt: _queue.LastSuppressedAt,
             SuppressedCountByEventId: _queue.SuppressedCountByEventId,
-            DisabledByInvalidConfiguration: enabled && resolved is null);
+            DisabledByInvalidConfiguration: loadSucceeded && enabled && resolved is null,
+            ConfigurationFileError: loadError);
 
         return new EmailNotificationStatus(
             Enabled: enabled,
