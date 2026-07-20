@@ -38,13 +38,17 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
     private Task? _dispatchTask;
     private DateTimeOffset? _lastSendFailureWarningAt;
 
+    private readonly EmailNotificationMetrics? _metrics;
+
     internal EmailNotificationDispatcher(
         EmailNotificationQueue queue,
         IEmailSender sender,
         ResolvedEmailNotification? configuration,
         TimeProvider? timeProvider = null,
-        ILogger<EmailNotificationDispatcher>? logger = null)
+        ILogger<EmailNotificationDispatcher>? logger = null,
+        EmailNotificationMetrics? metrics = null)
     {
+        _metrics = metrics;
         _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _sender = sender ?? throw new ArgumentNullException(nameof(sender));
         _configuration = configuration;
@@ -222,6 +226,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             }
 
             _deliveryHealth = _deliveryHealth with { LastFailure = result };
+            _metrics?.RecordSendFailure(); // 決定 5 のライブ計器（Issue #386。再試行を含む試行ごと）
 
             // 再試行は 1 通あたり 1 回のみ（決定 5）。2 度目の失敗は破棄する——at-most-once。
             // 正本はイベントログと監査記録であり、届かないことを前提にした設計である。
