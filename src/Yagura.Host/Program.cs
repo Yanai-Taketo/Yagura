@@ -626,9 +626,17 @@ public static class Program
                 sp.GetService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>(),
                 sourceSilenceDetector,
                 // 受信断保留の判定源（ADR-0018 委任 6）: 全リスナ受信不能の間は途絶判定を保留し、
-                // 回復で再アームする。判定器がスレッド安全でないため、ListenerBindRecovered の
-                // 購読ではなく監視ループ内のポーリングで観測する（EvaluateSourceSilence 参照）。
-                listenerAvailabilityProbe: () => pipelineForMonitor.ListenerAvailability);
+                // 回復で保留中に閾値超過となったエントリを再アームする。判定器がスレッド安全で
+                // ないため、ListenerBindRecovered の購読ではなく監視ループ内のポーリングで観測する
+                // （EvaluateSourceSilence 参照）。
+                listenerAvailabilityProbe: () => pipelineForMonitor.ListenerAvailability,
+                // 起動時 seed（ADR-0018 決定 3。Issue #381）: 監視開始時に最終受信時刻を 1 回だけ
+                // DB から取り込み、登録済みエントリの基準を「起動時刻」から「実際の最終受信」へ
+                // 置き換える（照会失敗時は起動時刻仮基準のまま）。
+                sourceActivitySeedQuery: ct => sp.GetRequiredService<ILogStore>().QuerySourceActivityAsync(
+                    Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceConstants.MaxWatchlistEntries,
+                    Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceConstants.SeedQueryTimeout,
+                    ct));
         });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
