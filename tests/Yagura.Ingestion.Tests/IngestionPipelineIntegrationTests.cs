@@ -504,6 +504,47 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Issue #390: 縮小継続中の CF-6 再試行が走っている状態で <see cref="IngestionPipeline.StopListenersAsync"/>
+    /// を呼んだあと、占有が解消されても<b>リスナが復活しない</b>（停止後にリスナが勝手に立ち上がらない）。
+    /// </summary>
+    /// <remarks>
+    /// 停止フラグ（<c>_stopping</c>）と <c>_bindRetryLock</c> による直列化がないと、停止の打ち切りと
+    /// 再構成の再アームが交錯した場合に、停止後の CF-6 再試行が bind に成功してリスナが復活し得た。
+    /// 本テストは「停止後は復活しない」という観測可能な保証を固定する。
+    /// </remarks>
+    [Fact]
+    public async Task StopListenersAsync_WhileDegradedRetrying_DoesNotReviveTheListenerAfterStop()
+    {
+        var portReservation = new TcpListener(IPAddress.Loopback, 0);
+        portReservation.Start();
+        var occupiedTcpPort = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedTcpPort },
+            _logStore);
+        pipeline.BindRetryInterval = TimeSpan.FromMilliseconds(100);
+
+        var recovered = false;
+        pipeline.ListenerBindRecovered += _ => recovered = true;
+
+        var result = await pipeline.StartListenerAsync();
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, result.Tcp.Status);
+
+        // 再試行ループが走っている状態で停止する。
+        await pipeline.StopListenersAsync();
+
+        // 停止後に占有を解消する——ここで再試行が生きていれば bind に成功して復活してしまう。
+        portReservation.Stop();
+
+        // 再試行間隔の数倍待っても、受信は再開せず回復イベントも発火しない。
+        await Task.Delay(TimeSpan.FromMilliseconds(600));
+
+        Assert.False(recovered, "停止後にリスナが復活した（CF-6 再試行が打ち切られていない）。");
+        Assert.False(pipeline.ListenerAvailability.Tcp, "停止後に TCP リスナが受信可能になっている。");
+    }
+
+    /// <summary>
     /// 条件ポーリング（固定 sleep ではなく上限付きで繰り返し確認する。conventions.md の
     /// 時間窓の扱いに準ずる——CI 環境の揺らぎに対して安定させるため）。
     /// </summary>
