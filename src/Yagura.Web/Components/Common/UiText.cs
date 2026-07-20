@@ -675,6 +675,12 @@ public static class UiText
     /// <summary>未知キーの前置き。</summary>
     public const string AdminReloadUnknownKeys = "認識されない設定キー（誤記の可能性）: ";
 
+    /// <summary>
+    /// 型の読み替え一覧の前置き（情報レベル——受理は正常系であり警告にしない。
+    /// configuration.md §1。Issue #334）。
+    /// </summary>
+    public const string AdminReloadTypeCoercions = "文字列以外の JSON 型で書かれ、そのまま受理した設定キー（動作への影響はありません）:";
+
     /// <summary>再読み込み完了の通知。</summary>
     public const string AdminReloadCompletedNotification = "設定を再読み込みしました";
 

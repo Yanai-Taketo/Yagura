@@ -75,6 +75,19 @@
                 @UiText.AdminReloadUnknownKeys @string.Join(", ", result.UnknownKeys)
             </MudAlert>
         }
+
+        @* 型の読み替え(configuration.md §1。Issue #334): 受理は正常系のため情報レベルで、
+           未知キー・警告と同じ場所に並べる(警告の感度を落とさない)。 *@
+        @if (result.TypeCoercionNotes.Count > 0)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-2">
+                @UiText.AdminReloadTypeCoercions
+                @foreach (var note in result.TypeCoercionNotes)
+                {
+                    <div>@note</div>
+                }
+            </MudAlert>
+        }
     </div>
 }
 

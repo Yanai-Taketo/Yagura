@@ -58,6 +58,11 @@ public sealed record PendingRestartKey(string Key, DateTimeOffset DetectedAt);
 /// </param>
 /// <param name="WarningMessages">検証警告（不正値の既定値フォールバック等）の説明文。</param>
 /// <param name="UnknownKeys">未知キー（タイポ検出。configuration.md §1）。</param>
+/// <param name="TypeCoercionNotes">
+/// 型を読み替えて受理したキー（数値・真偽値を文字列として受理）の説明文。警告ではなく情報
+/// ——受理は正常系であり、未知キー・既定値への差し替えと同じ場所に並べて表示する
+/// （configuration.md §1。Issue #334）。
+/// </param>
 public sealed record ConfigurationReloadResult(
     bool Rejected,
     string? RejectionReason,
@@ -65,7 +70,8 @@ public sealed record ConfigurationReloadResult(
     IReadOnlyList<string> AppliedKeys,
     IReadOnlyList<string> PendingRestartKeys,
     IReadOnlyList<string> WarningMessages,
-    IReadOnlyList<string> UnknownKeys)
+    IReadOnlyList<string> UnknownKeys,
+    IReadOnlyList<string> TypeCoercionNotes)
 {
     /// <summary>変更がなかったか（適用・未反映とも空）。</summary>
     public bool HasChanges => ChangedKeys.Count > 0;
