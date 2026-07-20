@@ -903,6 +903,16 @@ public static class Program
             "Yagura.Host.Observability.Auditing",
             LogLevel.Information);
 
+        // 途絶からの復帰（1029。情報レベル——1000 番台に情報レベルを置く初例）もイベントログへ
+        // 届ける（ADR-0018 決定 3——途絶警告と対で「ログが欠けていた期間」の終端を証跡に残す。
+        // Issue #382: 既定フィルタが Warning 以上のため、このフィルタなしでは 1029 がコンソールに
+        // しか出ず、証跡が実在しなかった）。カテゴリを監視ループに限定し、他カテゴリの
+        // Information は開放しない（同カテゴリの他の Information——保留開始・回復・seed 失敗——も
+        // イベントログに残るが、いずれも受信断・判定状態の運用証跡であり対象として妥当）。
+        builder.Logging.AddFilter<EventLogLoggerProvider>(
+            "Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor",
+            LogLevel.Information);
+
         // ---- 管理画面の書き込み系サービス（M8-4。Issue #71）----
         //
         // 契約は Yagura.Abstractions.Administration（IYaguraWriteService 実装群——security.md

@@ -8,11 +8,23 @@ namespace Yagura.Host.Observability.ActiveNotification.SourceSilence;
 /// <param name="Label">表示名（未設定なら <see langword="null"/>）。</param>
 /// <param name="Threshold">適用された実効閾値。</param>
 /// <param name="Elapsed">最終受信からの経過時間。</param>
+/// <param name="LastSeenAt">
+/// 基準時刻の壁時計表示（Issue #382——1027 の Detail が約束する「最終受信時刻（壁時計表示）」）。
+/// 判定に使う単調 tick の経過を評価時点の壁時計から差し引いた換算値（表示・記録専用。
+/// 決定 3 の「壁時計は表示・記録にのみ使う」）。<see cref="BaselineIsRearmed"/> が真の間は
+/// 実受信の時刻ではなく再アーム起点を指す。
+/// </param>
+/// <param name="BaselineIsRearmed">
+/// 基準が再アーム（登録時点・起動時刻・受信断回復）由来か（Issue #382——1028 の Detail が
+/// 約束する「起動後の再アーム起点の一斉発火かの別」の入力）。
+/// </param>
 internal sealed record SourceSilenceEvent(
     IPAddress Address,
     string? Label,
     TimeSpan Threshold,
-    TimeSpan Elapsed);
+    TimeSpan Elapsed,
+    DateTimeOffset LastSeenAt,
+    bool BaselineIsRearmed);
 
 /// <summary>1 回の周期評価の結果。</summary>
 /// <param name="Silences">
@@ -241,13 +253,16 @@ public sealed class SourceSilenceDetector
         foreach (var entry in _watchlist)
         {
             var key = Key(entry.Address);
-            var elapsed = _tracker.GetElapsedSinceLastActivity(entry.Address);
+            var reading = _tracker.GetActivityReading(entry.Address);
 
-            if (elapsed is null)
+            if (reading is null)
             {
                 // 追跡側にスロットが無い（差し替えの過渡状態）。次の周期で整合する。
                 continue;
             }
+
+            var (elapsed, baselineIsRearmed) = reading.Value;
+            var lastSeenAt = now - elapsed; // 壁時計表示は換算値（表示・記録専用。Issue #382）
 
             if (!_states.TryGetValue(key, out var state))
             {
@@ -262,7 +277,8 @@ public sealed class SourceSilenceDetector
             {
                 state.IsSilent = false;
                 state.NotificationPending = false;
-                recoveries.Add(new SourceSilenceEvent(entry.Address, entry.Label, entry.Threshold, elapsed.Value));
+                recoveries.Add(new SourceSilenceEvent(
+                    entry.Address, entry.Label, entry.Threshold, elapsed, lastSeenAt, baselineIsRearmed));
                 continue;
             }
 
@@ -302,7 +318,8 @@ public sealed class SourceSilenceDetector
 
             state.LastNotifiedAt = now;
             state.NotificationPending = false;
-            silences.Add(new SourceSilenceEvent(entry.Address, entry.Label, entry.Threshold, elapsed.Value));
+            silences.Add(new SourceSilenceEvent(
+                entry.Address, entry.Label, entry.Threshold, elapsed, lastSeenAt, baselineIsRearmed));
         }
 
         // --- 一斉集約（決定 3） ---
