@@ -338,7 +338,10 @@ public sealed class PersistenceWriter
                     // 抑制する」）。
                     if (ShouldEmitPermanentFailureWarning())
                     {
+                        // EventId 1030（ADR-0017 委任 10。Issue #369）: 採番なし（= 0）のままだと
+                        // メール通知プロバイダが構造的に捕捉できず、イベントログの機械照合もできない。
                         _logger.LogError(
+                            PersistenceEventIds.PermanentWriteFailure,
                             ex,
                             "[permanent-failure] 恒久障害によりバッチ書き込みが失敗したため {Count} 件をスプールへ退避する" +
                             "（設定・スキーマ・権限を確認すること。同種の警告は {SuppressionWindow} の間は再表示を抑制する）。",
