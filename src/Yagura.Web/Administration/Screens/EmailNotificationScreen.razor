@@ -357,6 +357,13 @@ else
                 _savedSummary = string.Format(
                     UiText.EmailNotificationSavedFormat, string.Join("、", result.ChangedKeys));
                 Notifier.NotifyOk(_savedSummary);
+
+                if (result.PlaintextCredentialWarning)
+                {
+                    // 決定 3 の能動警告を保存結果でも出す（Issue #385——ライブバナー〔フォーム値
+                    // 由来〕とは別に、実際に保存された構成が推奨から逸脱していることを通知する）。
+                    Notifier.NotifyWarning(UiText.EmailNotificationPlaintextCredentialWarning);
+                }
             }
         }
         catch (WizardValidationException ex)

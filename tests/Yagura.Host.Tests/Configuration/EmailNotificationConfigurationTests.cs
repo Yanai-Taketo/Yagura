@@ -173,8 +173,9 @@ public sealed class EmailNotificationConfigurationTests : IDisposable
         Assert.True(email.UsesAuthentication);
         Assert.Equal("s3cret", email.Password);
 
-        var warning = Assert.Single(result.Warnings);
-        Assert.Equal("Notification:Email:Smtp:Password", warning.Key);
+        // 平文警告に加え、Security 既定(auto)のままパスワードを置いているため決定 3 の
+        // 能動警告(Issue #385)も並ぶ——ここでは平文警告の内容だけを検証する。
+        var warning = Assert.Single(result.Warnings, w => w.Key == "Notification:Email:Smtp:Password");
         // 警告経路に資格情報そのものを流さない。
         Assert.DoesNotContain("s3cret", warning.InvalidValue);
         Assert.DoesNotContain("s3cret", warning.Reason);
@@ -198,5 +199,47 @@ public sealed class EmailNotificationConfigurationTests : IDisposable
         Assert.DoesNotContain("s3cret", text);
         Assert.DoesNotContain("yagura", text);
         Assert.Contains("smtp.example.com", text);
+    }
+
+    // ------------------------------------------------------------------
+    // 決定 3 の能動警告: Password あり + Security ≠ required（Issue #385）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_PasswordWithoutRequiredTls_WarnsAtStartupWithoutDisabling()
+    {
+        // 決定 3:「設定保存時・起動時・再読み込み時に警告する」。従来は画面のライブバナーに
+        // しか存在せず、手編集で Security を auto へ戻しても誰も気づけなかった(Issue #385)。
+        var result = Load(ValidJson(
+            smtp: """{ "Host": "smtp.example.com", "Username": "user", "Password": "p@ss", "Security": "auto" }"""));
+
+        Assert.NotNull(result.Configuration.EmailNotification); // 機能は無効化しない(推奨からの逸脱であって不正値ではない)
+
+        var securityWarning = Assert.Single(
+            result.Warnings, w => w.Key == "Notification:Email:Smtp:Security");
+        Assert.Contains("required", securityWarning.Reason, StringComparison.Ordinal);
+        Assert.Contains("資格情報", securityWarning.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_PasswordWithRequiredTls_DoesNotWarnAboutSecurity()
+    {
+        var result = Load(ValidJson(
+            smtp: """{ "Host": "smtp.example.com", "Username": "user", "Password": "p@ss", "Security": "required" }"""));
+
+        Assert.NotNull(result.Configuration.EmailNotification);
+        Assert.DoesNotContain(result.Warnings, w => w.Key == "Notification:Email:Smtp:Security");
+    }
+
+    [Fact]
+    public void Load_NoCredentials_DoesNotWarnAboutSecurity()
+    {
+        // 資格情報なしの平文送信(社内リレー 25 番の代表構成)には警告しない——漏れる資格情報が
+        // 存在しないため。決定 3 の警告は「資格情報の保護」の話であって暗号化の一般推奨ではない。
+        var result = Load(ValidJson(
+            smtp: """{ "Host": "smtp.example.com", "Security": "auto" }"""));
+
+        Assert.NotNull(result.Configuration.EmailNotification);
+        Assert.DoesNotContain(result.Warnings, w => w.Key == "Notification:Email:Smtp:Security");
     }
 }

@@ -44,6 +44,12 @@ internal sealed class MailKitEmailSender : IEmailSender
         // OnRecipientNotAccepted で例外を投げるため、記録に振り替える。
         using var client = new PartialRejectionTolerantSmtpClient();
 
+        // NotSupportedException の発生フェーズ（Issue #385）: MailKit は ConnectAsync
+        // （required 指定で STARTTLS 非対応）だけでなく AuthenticateAsync（サーバが AUTH を
+        // 広告していない）でも NotSupportedException を投げる。一律「STARTTLS 非対応」へ
+        // 写像すると、社内リレー + 書きかけ設定で事実と異なる案内になる。
+        var authenticating = false;
+
         try
         {
             // メッセージの組み立ても try の中で行う——構成層のアドレス検証
@@ -64,7 +70,9 @@ internal sealed class MailKitEmailSender : IEmailSender
             // （構成の解決時に「両方あり」か「両方なし」へ正規化済み——決定 3）。
             if (configuration is { Username: { } username, Password: { } password })
             {
+                authenticating = true;
                 await client.AuthenticateAsync(username, password, cancellationToken).ConfigureAwait(false);
+                authenticating = false;
             }
 
             client.Timeout = (int)EmailNotificationConstants.SendTimeout.TotalMilliseconds;
@@ -75,7 +83,10 @@ internal sealed class MailKitEmailSender : IEmailSender
         }
         catch (AuthenticationException ex)
         {
-            return EmailSendResult.Failure(EmailSendFailureKind.AuthenticationRejected, Describe(ex));
+            // 分類は**サニタイズ前の生応答**で行う（委任 12。Issue #385）——Describe は資格情報
+            // 漏えい防止のためメッセージを固定文言へ置き換えるため、置換後の文字列への部分一致は
+            // 構造的に不発だった。
+            return EmailSendResult.Failure(ClassifyAuthenticationRejection(ex), Describe(ex));
         }
         catch (SslHandshakeException ex)
         {
@@ -83,8 +94,13 @@ internal sealed class MailKitEmailSender : IEmailSender
         }
         catch (NotSupportedException ex)
         {
-            // required 指定で STARTTLS に対応していないサーバへ接続した場合（fail-closed。決定 2）。
-            return EmailSendResult.Failure(EmailSendFailureKind.StartTlsUnavailable, Describe(ex));
+            // 接続フェーズ = required 指定で STARTTLS に対応していないサーバ（fail-closed。決定 2）。
+            // 認証フェーズ = サーバが AUTH を広告していない（Issue #385——別分類で案内を分ける）。
+            return EmailSendResult.Failure(
+                authenticating
+                    ? EmailSendFailureKind.AuthenticationNotOffered
+                    : EmailSendFailureKind.StartTlsUnavailable,
+                Describe(ex));
         }
         catch (SmtpCommandException ex)
         {
@@ -149,6 +165,18 @@ internal sealed class MailKitEmailSender : IEmailSender
         // 未知の値で暗号化の意図が黙って外れる経路を作らない（決定 2 と同じ向き）。
         _ => SecureSocketOptions.StartTls,
     };
+
+    /// <summary>
+    /// 認証拒否の分類（委任 12。Issue #385）。M365 の「SMTP AUTH がテナントで無効」応答
+    /// （<c>535 5.7.139 SmtpClientAuthentication is disabled</c>）に特徴的なトークンのみを見る
+    /// ——単なる <c>disabled</c> の一致は無関係な応答まで拾い過剰に広い（Issue #385 の指摘）。
+    /// 判定できない応答は資格情報誤り側の案内（打ち直しへの注意つき）へ倒れる。
+    /// </summary>
+    internal static EmailSendFailureKind ClassifyAuthenticationRejection(AuthenticationException ex) =>
+        ex.Message.Contains("SmtpClientAuthentication", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("5.7.139", StringComparison.Ordinal)
+            ? EmailSendFailureKind.AuthenticationDisabledByServer
+            : EmailSendFailureKind.AuthenticationRejected;
 
     private static EmailSendFailureKind ClassifySmtpCommandFailure(SmtpCommandException ex) => ex.ErrorCode switch
     {
