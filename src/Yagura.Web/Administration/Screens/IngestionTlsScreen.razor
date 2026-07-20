@@ -187,9 +187,10 @@ else
         <MudAlert Severity="Severity.Warning" Class="mt-4">@UiText.IngestionTlsCertExpiredWarning</MudAlert>
     }
 
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="ApplyAsync">
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
-    </MudButton>
+    </YaguraButton>
 
     @* 観測性への導線（決定 5b。ADR-0012 の委任を引き取ったもの）。
        証明書差し替え + 再起動の直後に「全送信元が再接続できたか」を確認する起点にする。

@@ -55,6 +55,11 @@ internal static class CommonComponentRenderHarness
         services.AddSingleton<IJSRuntime>(new StubJSRuntime());
         services.AddMudServices();
 
+        // YaguraButton が例外の受け皿（Issue #372）として注入する通知経路。本番登録
+        // （YaguraWebViewerExtensions）と同じ実装を与える（ISnackbar は AddMudServices 由来）。
+        services.AddScoped<Yagura.Web.Components.Common.IYaguraNotifier,
+            Yagura.Web.Components.Common.YaguraSnackbarNotifier>();
+
         // ナビゲーション系コンポーネント（MudNavLink・MudLink 等）が要求する NavigationManager
         // （HtmlRenderer には既定登録がないため、固定 URI のテスト実装を与える）。
         services.AddSingleton<NavigationManager>(new TestNavigationManager());
