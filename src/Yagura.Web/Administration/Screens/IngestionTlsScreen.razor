@@ -9,6 +9,7 @@
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
+@inject IConfigurationReloadService ReloadService
 
 @*
     TLS 受信の証明書設定画面（ADR-0019 決定 1・2・3・4・5b。Issue #349）。
@@ -296,6 +297,22 @@ else
                 _savedSummary = string.Format(
                     UiText.IngestionTlsSavedFormat, string.Join("、", result.ChangedKeys));
                 Notifier.NotifyOk(_savedSummary);
+
+                // 保存を再起動待ちカードへ計上する（ADR-0019 委任 2。Issue #388）: カード（#286）の
+                // データ源は再読み込みの実行時にしか更新されないため、保存成功後に自動で
+                // 再読み込みを実行する（#287 の SetupWizard と同じ経路。監査は保存 2020 と
+                // 反映 2016 の 2 件が別々に残る——#287 の裁定どおり統合しない）。対象キーは
+                // すべて RestartRequired であり適用は伴わない——「再起動待ち」の計上だけが
+                // 起きるため、#287 のようなオプトアウトは置かない。
+                var reload = await ReloadService.ReloadAsync(
+                    CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
+                if (reload.Rejected)
+                {
+                    // 保存自体は成立している。計上できなかった旨のみ知らせる（再読み込み画面から
+                    // 手動で実行すれば計上される）。
+                    Notifier.NotifyWarning(string.Format(
+                        UiText.AdminSaveReloadRejectedFormat, reload.RejectionReason));
+                }
             }
         }
         catch (WizardValidationException ex)

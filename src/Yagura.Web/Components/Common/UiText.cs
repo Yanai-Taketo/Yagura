@@ -690,6 +690,13 @@ public static class UiText
     /// </summary>
     public const string AdminReloadTypeCoercions = "文字列以外の JSON 型で書かれ、そのまま受理した設定キー（動作への影響はありません）:";
 
+    /// <summary>
+    /// 保存後の自動再読み込み（再起動待ちカードへの計上。Issue #388）が拒否されたときの通知。
+    /// {0} に拒否理由が入る。保存自体は成立している。
+    /// </summary>
+    public const string AdminSaveReloadRejectedFormat =
+        "保存は完了しましたが、再起動待ちへの計上（設定の再読み込み）が拒否されました: {0}。設定の再読み込み画面から手動で実行してください";
+
     /// <summary>再読み込み完了の通知。</summary>
     public const string AdminReloadCompletedNotification = "設定を再読み込みしました";
 
