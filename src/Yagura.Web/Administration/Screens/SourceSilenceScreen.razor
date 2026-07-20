@@ -221,13 +221,31 @@ else
             return;
         }
 
-        if (!int.TryParse(_thresholdValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value <= 0)
+        // 閾値の省略を保持できるようにする（Issue #383）: 既存エントリの編集で閾値欄を空に
+        // すると「省略のまま」書き戻す。新規登録では省略を許さない（決定 4——閾値の明示確定必須）。
+        // 省略のまま書き戻せないと、表示名だけ直したいケースでも閾値が既定値の明示指定へ
+        // 黙って置き換わり、変更なしのつもりが監査 2023 に載る。
+        int? thresholdMinutes;
+        if (string.IsNullOrWhiteSpace(_thresholdValue))
         {
-            _errorMessage = "閾値は正の整数で入力してください。";
+            if (_editingAddress is null)
+            {
+                _errorMessage = "閾値を入力してください（新規登録では省略できません）。";
+                return;
+            }
+
+            thresholdMinutes = null; // 省略のまま保持
+        }
+        else if (!int.TryParse(_thresholdValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value <= 0)
+        {
+            _errorMessage = "閾値は正の整数で入力してください（省略する場合は空にしてください）。";
             return;
         }
+        else
+        {
+            thresholdMinutes = value * _thresholdUnitMinutes;
+        }
 
-        var thresholdMinutes = value * _thresholdUnitMinutes;
         var normalized = NormalizeOrSelf(address);
 
         // 同一アドレスの二重追加を画面でも防ぐ（確定的な検証は保存時にサービス側が行う）。
@@ -261,10 +279,19 @@ else
         _candidateAddress = null;
         _labelInput = row.Label ?? string.Empty;
 
-        var effective = row.ThresholdMinutes ?? _status!.DefaultThresholdMinutes;
-        var (value, unit) = DecomposeThreshold(effective);
-        _thresholdValue = value.ToString(CultureInfo.InvariantCulture);
-        _thresholdUnitMinutes = unit;
+        // 省略エントリは閾値欄を空にする（Issue #383）——既定値を埋めて明示指定へ変えない。
+        // 空のまま更新すれば「省略のまま」書き戻される（表示名だけの編集で閾値が変わらない）。
+        if (row.ThresholdMinutes is { } minutes)
+        {
+            var (value, unit) = DecomposeThreshold(minutes);
+            _thresholdValue = value.ToString(CultureInfo.InvariantCulture);
+            _thresholdUnitMinutes = unit;
+        }
+        else
+        {
+            _thresholdValue = string.Empty;
+            _thresholdUnitMinutes = 60;
+        }
     }
 
     private void RemoveRow(Row row)

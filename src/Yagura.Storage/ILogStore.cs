@@ -220,6 +220,31 @@ public interface ILogStore
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 送信元別の受信状況を<b>最終受信時刻の降順（新しい順）</b>で集計して返す（Issue #383）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="QuerySourceActivityAsync"/>（昇順・無音化検出用）とは<b>打ち切りの向きが逆</b>
+    /// である点が本メソッドの存在意義: 送信元数が <paramref name="limit"/> を超える環境で、
+    /// 昇順版の結果を後から並べ替えても「最近まで受信している送信元」は既に切り捨てられている。
+    /// 途絶検知のウォッチリスト候補選択（ADR-0018 決定 4——実在確認済みのアドレスから選ばせて
+    /// 転記ミスを防ぐ）は「いま送ってきている送信元」を出すのが目的のため、DB 側で降順に
+    /// 打ち切る本メソッドを使う。打ち切りで切り捨てられるのは「最後の受信が古い送信元」側。
+    /// </para>
+    /// <para>
+    /// <b>既定実装</b>は <see cref="QuerySourceActivityAsync"/> へ委譲する——テスト用の偽実装や
+    /// 送信元数が <paramref name="limit"/> 以下の環境では正しい結果になる（呼び出し側が降順へ
+    /// 並べ替える）。実ストア（SQLite / SQL Server）は DB 側で <c>ORDER BY … DESC LIMIT</c> を
+    /// 発行するよう本メソッドをオーバーライドし、打ち切りの向きを正す。
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<SourceActivity>> QueryMostRecentlyActiveSourcesAsync(
+        int limit,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default) =>
+        QuerySourceActivityAsync(limit, timeout, cancellationToken);
+
     // ------------------------------------------------------------------
     // M8-5（Issue #159）で追加した読み取り専用 2 操作。database.md §1.2「契約拡張の予約」
     // (b) 集計の追加実体化——重大度分布（平常時からの逸脱検知）と受信量上位の送信元

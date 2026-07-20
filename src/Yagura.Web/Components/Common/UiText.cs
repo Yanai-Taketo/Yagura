@@ -1844,7 +1844,8 @@ public static class UiText
     public const string SourceSilenceThresholdLabel = "閾値";
     public const string SourceSilenceThresholdHelp =
         "この時間を超えて受信がないと警告します。短すぎると装置の送信間隔やジッタで誤検知になります"
-        + "（例: 24 時間 = 1 日 1 回でもログを送る装置向け）。";
+        + "（例: 24 時間 = 1 日 1 回でもログを送る装置向け）。"
+        + "既存エントリの編集で空にすると、既定値の明示指定に変えず「省略のまま」を保ちます。";
     public const string SourceSilenceUnitMinutes = "分";
     public const string SourceSilenceUnitHours = "時間";
     public const string SourceSilenceUnitDays = "日";
