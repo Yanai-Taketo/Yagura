@@ -46,8 +46,23 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     private UdpSyslogListenerOptions _udpOptions;
     private TcpSyslogListenerOptions _tcpOptions;
+
+    // CF-6 再試行の共有状態（Issue #390）。_bindRetryCts と _bindRetryTasks の読み書き、および
+    // 停止開始フラグの判定は必ず _bindRetryGate の下で行う——cancel 側の Dispose と
+    // StartBindRetryLoop の .Token 取得が競合すると ObjectDisposedException になり得るため、
+    // 「CTS の取得（なければ生成）→ トークン取得 → タスク登録」と「CTS の取り外し → タスク一覧の
+    // 取り出し」をそれぞれ 1 つのロック区間にまとめ、取り外し後の CTS には新規参照が届かない
+    // 構造にする。
+    private readonly object _bindRetryGate = new();
     private CancellationTokenSource? _bindRetryCts;
     private readonly List<Task> _bindRetryTasks = [];
+
+    // 停止（StopListenersAsync）が始まったら true（以後戻らない）。進行中の再構成の末尾
+    // （RearmBindRetryForUntouchedDownListeners）や復旧失敗（RollBackOrRetryAsync）が
+    // 停止完了「後」に StartBindRetryLoop を呼んでも、再試行ループを張り直さないための
+    // 構造的な保証（Issue #390——StopListenersAsync は _reconfigureGate を取らないため、
+    // 打ち切り（CancelBindRetryAsync）だけでは進行中の再構成による張り直しを防げない）。
+    private bool _listenersStopping;
 
     // リスナ別の現在の受信可否（ADR-0018 委任 6。Issue #351）。起動 Outcome・再構成 Outcome・
     // CF-6 再試行成功の 3 系統の帰結を現在状態へ畳む（ListenerAvailabilitySnapshot の remarks 参照）。
@@ -642,7 +657,14 @@ public sealed class IngestionPipeline : IAsyncDisposable
         UdpSyslogListenerOptions newOptions, CancellationToken cancellationToken)
     {
         var oldOptions = _udpOptions;
-        var gapStartedAt = DateTimeOffset.UtcNow;
+
+        // 受信断区間の始端: 既に受信不能なら、最初に受信できなくなった時刻を引き継ぐ（Issue #390。
+        // #373 の「始端は最初に bind できなくなった時刻のまま」を全経路に適用する）。起動時
+        // 縮小継続中のリスナを再構成した場合、ここを再構成開始時刻にすると [起動時の bind 失敗,
+        // 再構成開始) の区間が downtime 記録（Reconfigured/RolledBack の Outcome と CF-6 復旧の
+        // ListenerBindRecovered の両方）から欠落する。受信中なら今回の停止が始端になる。
+        var (wasDown, existingGapStartedAt) = GetListenerDownState("UDP");
+        var gapStartedAt = wasDown ? existingGapStartedAt : DateTimeOffset.UtcNow;
         await _udpListener.StopAsync().ConfigureAwait(false);
 
         var newListener = CreateUdpListener(newOptions);
@@ -683,7 +705,10 @@ public sealed class IngestionPipeline : IAsyncDisposable
         TcpSyslogListenerOptions newOptions, CancellationToken cancellationToken)
     {
         var oldOptions = _tcpOptions;
-        var gapStartedAt = DateTimeOffset.UtcNow;
+
+        // 受信断区間の始端は既存の受信断があればそれを引き継ぐ（Issue #390。UDP 側の同箇所コメント参照）。
+        var (wasDown, existingGapStartedAt) = GetListenerDownState("TCP");
+        var gapStartedAt = wasDown ? existingGapStartedAt : DateTimeOffset.UtcNow;
         await _tcpListener.StopAsync().ConfigureAwait(false);
 
         var newListener = CreateTcpListener(newOptions);
@@ -779,56 +804,77 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// </summary>
     private void StartBindRetryLoop(string protocolLabel, Func<CancellationToken, Task> retryNew, DateTimeOffset gapStartedAt)
     {
-        _bindRetryCts ??= new CancellationTokenSource();
-        var token = _bindRetryCts.Token;
-
-        var retryTask = Task.Run(async () =>
+        CancellationToken token;
+        lock (_bindRetryGate)
         {
-            while (!token.IsCancellationRequested)
+            // 停止開始後は張り直さない（Issue #390。_listenersStopping のコメント参照）。
+            // 打ち切り済みかどうかによらず、停止が始まった時点で「望ましい状態 = 全リスナ停止」で
+            // あり、以後の再試行はどの経路（起動時縮小継続・再構成の再アーム・復旧失敗）でも無用。
+            if (_listenersStopping)
             {
-                try
-                {
-                    await Task.Delay(BindRetryInterval, token).ConfigureAwait(false);
-                    await retryNew(token).ConfigureAwait(false);
-                    SetListenerReceiving(protocolLabel, true);
-                    _logger?.LogInformation("{Protocol} リスナの bind 再試行に成功し、受信を再開しました（CF-6）。", protocolLabel);
-                    ListenerBindRecovered?.Invoke(new ListenerBindRecovery(protocolLabel, gapStartedAt, DateTimeOffset.UtcNow));
-                    return;
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(
-                        ex, "{Protocol} リスナの bind 再試行に失敗しました。{Interval} 後に再試行します（CF-6）。",
-                        protocolLabel, BindRetryInterval);
-                }
+                _logger?.LogDebug(
+                    "{Protocol} リスナの bind 再試行は開始しません（パイプラインは停止中——停止後にリスナを復活させない）。",
+                    protocolLabel);
+                return;
             }
-        }, CancellationToken.None);
 
-        lock (_bindRetryTasks)
-        {
+            _bindRetryCts ??= new CancellationTokenSource();
+            token = _bindRetryCts.Token;
+
+            var retryTask = Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Task.Delay(BindRetryInterval, token).ConfigureAwait(false);
+                        await retryNew(token).ConfigureAwait(false);
+                        SetListenerReceiving(protocolLabel, true);
+                        _logger?.LogInformation("{Protocol} リスナの bind 再試行に成功し、受信を再開しました（CF-6）。", protocolLabel);
+                        ListenerBindRecovered?.Invoke(new ListenerBindRecovery(protocolLabel, gapStartedAt, DateTimeOffset.UtcNow));
+                        return;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(
+                            ex, "{Protocol} リスナの bind 再試行に失敗しました。{Interval} 後に再試行します（CF-6）。",
+                            protocolLabel, BindRetryInterval);
+                    }
+                }
+            }, CancellationToken.None);
+
+            // タスクの登録まで同じロック区間で行う——トークン取得と登録の間に打ち切りが
+            // 挟まると、打ち切り側の待ち合わせ（Task.WhenAll）から漏れるタスクができるため。
             _bindRetryTasks.Add(retryTask);
         }
     }
 
     private async Task CancelBindRetryAsync()
     {
-        if (_bindRetryCts is null)
+        // CTS の取り外しとタスク一覧の取り出しを 1 つのロック区間で行う（Issue #390）。
+        // 取り外し後の _bindRetryCts は null のため、並行する StartBindRetryLoop が
+        // Dispose 済み CTS の .Token に触れることはない（張り直しは新しい CTS で行われ、
+        // それは次の打ち切りが回収する。停止中は _listenersStopping が張り直し自体を止める）。
+        CancellationTokenSource? cts;
+        Task[] pending;
+        lock (_bindRetryGate)
+        {
+            cts = _bindRetryCts;
+            _bindRetryCts = null;
+            pending = _bindRetryTasks.ToArray();
+            _bindRetryTasks.Clear();
+        }
+
+        if (cts is null)
         {
             return;
         }
 
-        await _bindRetryCts.CancelAsync().ConfigureAwait(false);
-
-        Task[] pending;
-        lock (_bindRetryTasks)
-        {
-            pending = _bindRetryTasks.ToArray();
-            _bindRetryTasks.Clear();
-        }
+        await cts.CancelAsync().ConfigureAwait(false);
 
         try
         {
@@ -838,8 +884,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         {
         }
 
-        _bindRetryCts.Dispose();
-        _bindRetryCts = null;
+        cts.Dispose();
     }
 
     /// <summary>
@@ -936,6 +981,16 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public async Task StopListenersAsync()
     {
         // CF-6 の再試行が走っていれば止める（停止後にリスナが勝手に復活しないように）。
+        // 先に停止開始フラグを立ててから打ち切る（Issue #390）: 本メソッドは _reconfigureGate を
+        // 取らない（停止を進行中の再構成の完了待ちでブロックしない）ため、打ち切りだけでは
+        // 進行中の ReconfigureListenersAsync 末尾の再アームが停止完了後に再試行を張り直し得る。
+        // フラグ判定と張り直しは同じ _bindRetryGate の下にあるため、フラグを立てた後に
+        // 張り直しが成立することはなく、フラグより前に張り直された分は直後の打ち切りが回収する。
+        lock (_bindRetryGate)
+        {
+            _listenersStopping = true;
+        }
+
         await CancelBindRetryAsync().ConfigureAwait(false);
 
         var stopTasks = new List<Task>(3) { _udpListener.StopAsync(), _tcpListener.StopAsync() };
