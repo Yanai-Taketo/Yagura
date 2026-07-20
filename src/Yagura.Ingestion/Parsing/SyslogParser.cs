@@ -431,19 +431,79 @@ public static class SyslogParser
         return true;
     }
 
+    // RFC 5424 §6.2.3 TIMESTAMP の ABNF を書式として列挙する（小数秒 0〜6 桁 × オフセット表現 2 系）。
+    // TIME-SECFRAC は RFC 3339 では桁数無制限だが、RFC 5424 が 1*6DIGIT に制限している。
+    private static readonly string[] Rfc3339UtcFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.f'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.ff'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.ffff'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.fffff'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'",
+    ];
+
+    private static readonly string[] Rfc3339NumOffsetFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:sszzz",
+        "yyyy-MM-dd'T'HH:mm:ss.fzzz",
+        "yyyy-MM-dd'T'HH:mm:ss.ffzzz",
+        "yyyy-MM-dd'T'HH:mm:ss.fffzzz",
+        "yyyy-MM-dd'T'HH:mm:ss.ffffzzz",
+        "yyyy-MM-dd'T'HH:mm:ss.fffffzzz",
+        "yyyy-MM-dd'T'HH:mm:ss.ffffffzzz",
+    ];
+
     /// <summary>
-    /// RFC 5424 §6.2.3 TIMESTAMP（RFC 3339 準拠の FULL-DATE "T" FULL-TIME）を解析する。
-    /// うるう秒（60 秒）は RFC 5424 が明示的に禁じており（"Leap seconds MUST NOT be used"）、
-    /// .NET の DateTimeOffset パーサも受理しないため自然に ParseFailed となる。
+    /// RFC 5424 §6.2.3 TIMESTAMP（RFC 3339 準拠の FULL-DATE "T" FULL-TIME。同節の追加制約——
+    /// "T"・"Z" は大文字必須・小数秒は 1〜6 桁・うるう秒禁止——を含む）を解析する。
     /// </summary>
+    /// <remarks>
+    /// ABNF を書式配列で明示した TryParseExact で解析する（Issue #361。従来の
+    /// DateTimeOffset.TryParse は日付のみ・オフセット欠落・前後空白・独自日付形式など
+    /// ABNF 非適合の入力まで受理し、クラス契約「HEADER が ABNF 違反なら ParseFailed」に
+    /// 反していた）。うるう秒（60 秒）は RFC 5424 が明示的に禁じており（"Leap seconds
+    /// MUST NOT be used"）、.NET の DateTimeOffset パーサも秒 60 を受理しない（SyslogParserTests
+    /// で実測固定）ため ParseFailed となる。
+    /// </remarks>
     private static bool TryParseRfc3339(string text, out DateTimeOffset value)
     {
-        // "O"（round-trip）系ではなく、RFC 3339 が許す小数秒桁数（1〜6 桁）・"Z" と数値オフセットの
-        // 両方を受理するため、DateTimeOffset.TryParse を不変カルチャ・厳格スタイルで用いる。
-        return DateTimeOffset.TryParse(
+        // TIME-OFFSET = "Z" / (("+" / "-") TIME-HOUR ":" TIME-MINUTE)。書式リテラルの 'Z' は
+        // 時刻情報を運ばないため、"Z" 終端の系のみ AssumeUniversal で UTC を確定させる
+        // （数値オフセット系に AssumeUniversal を混ぜると、オフセット欠落入力が UTC として
+        // 受理される従来の欠陥が再発する）。
+        if (text.EndsWith('Z'))
+        {
+            return DateTimeOffset.TryParseExact(
+                text,
+                Rfc3339UtcFormats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal,
+                out value);
+        }
+
+        // 書式指定子 "zzz" はコロン欠落の "+0900" も受理する（実測。SyslogParserTests で固定）
+        // ため、TIME-NUMOFFSET の構造（("+" / "-") TIME-HOUR ":" TIME-MINUTE）は書式適用前に
+        // 検査する。桁の妥当性（2DIGIT・オフセット範囲）は TryParseExact 側が検証する。
+        if (text.Length < 6)
+        {
+            value = default;
+            return false;
+        }
+
+        var offsetPart = text.AsSpan(text.Length - 6);
+        if ((offsetPart[0] != '+' && offsetPart[0] != '-') || offsetPart[3] != ':')
+        {
+            value = default;
+            return false;
+        }
+
+        return DateTimeOffset.TryParseExact(
             text,
+            Rfc3339NumOffsetFormats,
             CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal,
+            DateTimeStyles.None,
             out value);
     }
 

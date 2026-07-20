@@ -429,6 +429,74 @@ public class SyslogParserTests
         Assert.Equal(payload, record.Raw);
     }
 
+    // ------------------------------------------------------------------
+    // RFC 5424 §6.2.3 TIMESTAMP の ABNF 厳格化（Issue #361）。
+    // 旧実装（DateTimeOffset.TryParse + AssumeUniversal）はこれらを受理し、
+    // 壊れた値が DeviceTimestamp として保存されていた。
+    // なお空白入り（先頭タブ等）は TryReadField の PRINTUSASCII 検査で
+    // TIMESTAMP 解析より前に弾かれるため、ここでの対象は非空白の非適合形式のみ。
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("2026-07-18")] // 日付のみ（FULL-TIME 欠落）
+    [InlineData("07/18/2026")] // 独自の日付形式
+    [InlineData("2026-07-18T12:00:00")] // TIME-OFFSET 欠落（旧実装は UTC とみなして受理）
+    [InlineData("2026-07-18t12:00:00Z")] // 小文字 "t"（RFC 5424 は大文字必須）
+    [InlineData("2026-07-18T12:00:00z")] // 小文字 "z"（同上）
+    [InlineData("2026-07-18T12:00:00.1234567Z")] // 小数秒 7 桁（RFC 5424 は 1*6DIGIT）
+    [InlineData("2026-07-18T12:00:00.Z")] // "." のみで小数秒の数字なし
+    [InlineData("2026-07-18T12:00:00+0900")] // オフセットのコロン欠落
+    [InlineData("2026-7-18T12:00:00Z")] // 月が 1 桁（FULL-DATE は 2DIGIT）
+    public void Parse_Rfc5424_NonConformantTimestamp_ReturnsParseFailedWithHeaderPreserved(string timestamp)
+    {
+        var payload = Encoding.ASCII.GetBytes($"<34>1 {timestamp} mymachine.example.com su - ID47 -");
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Null(record.DeviceTimestamp); // 非適合値を解釈して保存しない
+        Assert.Equal("mymachine.example.com", record.Hostname); // 確定済みフィールドは保持（Issue #139）
+        Assert.Equal(payload, record.Raw);
+    }
+
+    [Fact]
+    public void Parse_Rfc5424_LeapSecondTimestamp_ReturnsParseFailed()
+    {
+        // RFC 5424 §6.2.3 "Leap seconds MUST NOT be used"。「.NET の DateTimeOffset パーサは
+        // 秒 60 を受理しない」という SyslogParser doc の主張の実測固定（Issue #361。
+        // CLAUDE.md「技術的な同等性の主張は実体検証を通す」）。
+        var payload = "<34>1 2026-06-30T23:59:60Z mymachine.example.com su - ID47 -"u8.ToArray();
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.ParseFailed, record.ParseStatus);
+        Assert.Null(record.DeviceTimestamp);
+    }
+
+    [Theory]
+    [InlineData("2026-07-18T12:00:00Z", 0)] // 小数秒なし + "Z"
+    [InlineData("2026-07-18T21:00:00+09:00", 540)] // 小数秒なし + 数値オフセット
+    [InlineData("2026-07-18T12:00:00-00:00", 0)] // RFC 3339 が許す「未知のローカルオフセット」表記
+    public void Parse_Rfc5424_ConformantTimestampBoundaryForms_ParsesSuccessfully(
+        string timestamp, int expectedOffsetMinutes)
+    {
+        // 厳格化（Issue #361）が ABNF 適合の境界形式まで巻き添えにしないことの固定。
+        // 小数秒付きの代表形は RFC 5424 §6.5 Example 1・2 のテストが担う。
+        var payload = Encoding.ASCII.GetBytes($"<34>1 {timestamp} mymachine.example.com su - ID47 -");
+        var datagram = CreateDatagram(payload);
+
+        var record = SyslogParser.Parse(datagram);
+
+        Assert.Equal(ParseStatus.Parsed, record.ParseStatus);
+        Assert.NotNull(record.DeviceTimestamp);
+        Assert.Equal(TimeSpan.FromMinutes(expectedOffsetMinutes), record.DeviceTimestamp!.Value.Offset);
+        Assert.Equal(
+            new DateTimeOffset(2026, 7, 18, 12, 0, 0, TimeSpan.Zero),
+            record.DeviceTimestamp.Value.ToUniversalTime());
+    }
+
     [Fact]
     public void Parse_Rfc5424_NonSpaceAfterStructuredData_ReturnsParseFailedWithHeaderPreserved()
     {
