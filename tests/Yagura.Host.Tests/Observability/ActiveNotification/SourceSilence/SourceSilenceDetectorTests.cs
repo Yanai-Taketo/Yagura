@@ -350,6 +350,43 @@ public sealed class SourceSilenceDetectorTests
     }
 
     [Fact]
+    public void Evaluate_EventCarriesLastSeenWallClockAndBaselineOrigin()
+    {
+        // Issue #382: 1027/1028 の Detail 入力——壁時計の最終受信時刻(単調経過からの換算値)と
+        // 基準の由来(再アーム起点か)をイベントに載せる。
+        var (detector, tracker, time) = Create(
+            Entry("192.0.2.10", thresholdMinutes: 60),
+            Entry("192.0.2.11", thresholdMinutes: 60));
+
+        tracker.RecordActivity(IPAddress.Parse("192.0.2.11")); // B のみ実受信あり
+        time.Advance(TimeSpan.FromMinutes(61));
+        var result = detector.Evaluate();
+
+        var a = result.Silences.Single(s => s.Address.Equals(IPAddress.Parse("192.0.2.10")));
+        var b = result.Silences.Single(s => s.Address.Equals(IPAddress.Parse("192.0.2.11")));
+
+        Assert.True(a.BaselineIsRearmed); // 登録時点基準(実受信の記録なし)
+        Assert.False(b.BaselineIsRearmed); // 実受信基準
+        Assert.Equal(Origin, a.LastSeenAt); // 換算値 = 登録時点
+        Assert.Equal(Origin, b.LastSeenAt); // 実受信の時刻
+    }
+
+    [Fact]
+    public void SeedFromStore_SeededEntry_ReportsTheDbTimeAsRealLastSeen()
+    {
+        // DB 実績で seed した基準は「実際に受信した時刻」——再アーム起点として表示しない(Issue #382)。
+        var (detector, _, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+        var lastSeen = Origin - TimeSpan.FromMinutes(30);
+
+        detector.SeedFromStore([Activity("192.0.2.10", lastSeen)]);
+
+        time.Advance(TimeSpan.FromMinutes(31));
+        var silence = Assert.Single(detector.Evaluate().Silences);
+        Assert.False(silence.BaselineIsRearmed);
+        Assert.Equal(lastSeen, silence.LastSeenAt);
+    }
+
+    [Fact]
     public void SeedFromStore_NormalizesIPv4MappedStoredAddresses()
     {
         // 保存側のアドレスが IPv4-mapped IPv6 表記でも照合される(既存の正規化規約)。

@@ -363,17 +363,28 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         if (evaluation.IsBurst)
         {
+            // 「起動後の再アーム起点の一斉発火かの別」を Detail に含める（決定 3。Issue #382）——
+            // 同一閾値で再アームされたエントリ群は起動・回復から閾値経過後に同時発火し得るため、
+            // 独立障害の寄せ集めを「共通上流障害」と誤誘導しない。
+            var rearmedCount = evaluation.Silences.Count(silence => silence.BaselineIsRearmed);
+            var rearmOriginNote = rearmedCount == evaluation.Silences.Count
+                ? "全件が起動・受信断回復後の再アーム起点からの発火です——同じ閾値のエントリが揃って" +
+                  "再アームされると同時発火し得るため、独立した障害の寄せ集めの可能性があります"
+                : rearmedCount > 0
+                    ? $"うち {rearmedCount} 件は起動・受信断回復後の再アーム起点からの発火です" +
+                      "（残りは実受信からの経過による途絶）"
+                    : "全件が実受信からの経過による途絶です（再アーム起点の同時発火ではありません）";
+
             _logger.LogWarning(
                 SourceSilence.SourceSilenceEventIds.SourceSilenceBurstDetected,
                 "登録済み送信元 {Count} 件が同一周期に一斉に途絶しました: {Entries}。" +
                 "個別の装置障害より、サーバ側の受信経路（リスナ・ファイアウォール・経路）や" +
                 "上流の共通機器の障害を先に確認してください" +
-                "（サーバ側受信経路の現在の状態: {ReceptionPath}）。" +
-                "なお、サービス起動後に同じ閾値のエントリが揃って再アームされた場合も" +
-                "同時発火し得ます（独立した障害の寄せ集めである可能性）。",
+                "（サーバ側受信経路の現在の状態: {ReceptionPath}。{RearmOriginNote}）。",
                 evaluation.Silences.Count,
-                string.Join(", ", evaluation.Silences.Select(FormatEntry)),
-                FormatReceptionPath(availability));
+                FormatEntriesCapped(evaluation.Silences),
+                FormatReceptionPath(availability),
+                rearmOriginNote);
         }
         else
         {
@@ -381,12 +392,13 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
             {
                 _logger.LogWarning(
                     SourceSilence.SourceSilenceEventIds.SourceSilenceDetected,
-                    "登録済み送信元 {Entry} からの受信が途絶しています（閾値 {Threshold}・経過 {Elapsed}・" +
-                    "サーバ側受信経路の状態: {ReceptionPath}）。" +
+                    "登録済み送信元 {Entry} からの受信が途絶しています（最終受信 {LastSeen}・" +
+                    "閾値 {Threshold}・経過 {Elapsed}・サーバ側受信経路の状態: {ReceptionPath}）。" +
                     "装置の生死、意図した設定変更・機器障害の有無を確認してください。" +
                     "いずれでもない場合、証跡の遮断を伴うセキュリティ事象の可能性も検討してください。" +
                     "送信元アドレスが変わった（DHCP・機器リプレース）場合はウォッチリストの更新が必要です。",
                     FormatEntry(silence),
+                    FormatLastSeen(silence),
                     silence.Threshold,
                     silence.Elapsed,
                     FormatReceptionPath(availability));
@@ -406,6 +418,27 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     private static string FormatEntry(SourceSilence.SourceSilenceEvent entry) =>
         entry.Label is null ? entry.Address.ToString() : $"{entry.Address}（{entry.Label}）";
+
+    /// <summary>
+    /// 1027 の Detail が約束する「最終受信時刻（壁時計表示）」（決定 3。Issue #382）。
+    /// 基準が再アーム由来（登録・起動・受信断回復）の間は実受信の時刻ではないため、
+    /// 誤読させない表現にする。
+    /// </summary>
+    private static string FormatLastSeen(SourceSilence.SourceSilenceEvent entry) =>
+        entry.BaselineIsRearmed
+            ? $"実受信の記録なし（判定基準 {entry.LastSeenAt:yyyy-MM-dd HH:mm:ss zzz}——登録・起動・受信断回復による再アーム起点）"
+            : entry.LastSeenAt.ToString("yyyy-MM-dd HH:mm:ss zzz");
+
+    /// <summary>
+    /// 集約警告（1028）のエントリ列挙。Windows イベントログのメッセージ長上限（約 31KB）を
+    /// 考慮し、件数上限つきで列挙して残りは総数で表す（Issue #382）。
+    /// </summary>
+    private static string FormatEntriesCapped(IReadOnlyList<SourceSilence.SourceSilenceEvent> silences)
+    {
+        const int max = SourceSilence.SourceSilenceConstants.BurstDetailMaxListedEntries;
+        var listed = string.Join(", ", silences.Take(max).Select(FormatEntry));
+        return silences.Count <= max ? listed : $"{listed} ほか {silences.Count - max} 件";
+    }
 
     /// <summary>
     /// 警告 Detail に併記するサーバ側受信経路の状態（決定 3——真因がサーバ側なのに運用者を
