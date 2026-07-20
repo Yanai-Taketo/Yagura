@@ -71,8 +71,13 @@ internal sealed class EmailNotificationQueue
     /// <summary>流量上限の評価窓に入る投入時刻（古い順。窓外は都度切り落とす）。</summary>
     private readonly Queue<DateTimeOffset> _rateLimitWindow = new();
 
-    internal EmailNotificationQueue(TimeProvider? timeProvider = null) =>
+    private readonly EmailNotificationMetrics? _metrics;
+
+    internal EmailNotificationQueue(TimeProvider? timeProvider = null, EmailNotificationMetrics? metrics = null)
+    {
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _metrics = metrics;
+    }
 
     /// <summary>
     /// メール通知が有効構成か（Issue #384）。無効の間は <see cref="TryEnqueue"/> を受け付けない
@@ -194,6 +199,7 @@ internal sealed class EmailNotificationQueue
                     // 全件が初報。決定 5 の既定どおり最古を破棄して新しい側を保全する。
                     _pending.RemoveFirst();
                     _droppedCount++;
+                    _metrics?.RecordDropped();
                 }
             }
 
@@ -249,6 +255,7 @@ internal sealed class EmailNotificationQueue
             if (_pending.Count >= EmailNotificationConstants.MaxQueueDepth)
             {
                 _droppedCount++;
+                _metrics?.RecordDropped();
                 return false;
             }
 
@@ -281,6 +288,7 @@ internal sealed class EmailNotificationQueue
             {
                 _pending.Remove(node);
                 _droppedCount++;
+                _metrics?.RecordDropped();
                 return true;
             }
         }

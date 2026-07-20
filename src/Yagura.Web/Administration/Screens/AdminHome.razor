@@ -3,6 +3,7 @@
 @layout AdminScreenLayout
 @using Yagura.Abstractions.Administration
 @inject IConfigurationReloadService ReloadService
+@inject IEmailNotificationAdminService EmailNotificationAdminService
 
 @*
     設定トップ（ui.md §4 の画面構成「設定（ウィザード群）」の入口。M8-4 骨格）。
@@ -37,6 +38,28 @@
     </MudAlert>
 }
 
+@* メール通知チャネルの健全性カード(ADR-0017 決定 5。Issue #386): 設定画面ではなく
+   「日常動線」である管理面入口に常設する(#286 の再起動待ちカードと同じ置き場)。機能を
+   有効にしている(有効にしたつもりを含む)間だけ表示し、未使用の環境にはノイズを出さない。 *@
+@if (_emailStatus is { Enabled: true } emailStatus)
+{
+    <MudAlert Severity="@EmailHealthSeverity(emailStatus)" Class="mt-4">
+        <MudText Typo="Typo.subtitle1"><b>@UiText.AdminEmailHealthCardTitle</b></MudText>
+        @if (emailStatus.Health.DisabledByInvalidConfiguration)
+        {
+            <MudText Typo="Typo.body2">@UiText.EmailNotificationDisabledByInvalidConfiguration</MudText>
+        }
+        <MudText Typo="Typo.body2">
+            @UiText.EmailNotificationHealthLastSuccess: @FormatTimestamp(emailStatus.Health.LastSuccessAt) ／
+            @UiText.EmailNotificationHealthLastFailure: @(emailStatus.Health.LastFailureKind ?? UiText.EmailNotificationHealthNever) ／
+            @UiText.EmailNotificationHealthDropped: @string.Format(UiText.EmailNotificationHealthCountFormat, emailStatus.Health.DroppedCount) ／
+            @UiText.EmailNotificationHealthSuppressed: @string.Format(UiText.EmailNotificationHealthCountFormat, emailStatus.Health.SuppressedCount)
+        </MudText>
+        <MudText Typo="Typo.caption" Class="mt-1 d-block">@UiText.AdminEmailHealthCardDescription</MudText>
+        <MudLink Href="/admin/email-notification" Typo="Typo.caption">@UiText.AdminEmailHealthCardDetailLink</MudLink>
+    </MudAlert>
+}
+
 <MudPaper Elevation="1" Class="pa-4 mt-4">
     <MudNavMenu>
         <MudNavLink Href="/admin/setup">@UiText.AdminSetupWizardTitle</MudNavLink>
@@ -53,10 +76,24 @@
 
 @code {
     private IReadOnlyList<PendingRestartKey> _pendingRestartKeys = [];
+    private EmailNotificationStatus? _emailStatus;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         // スナップショット読み取りのみ（再読み込みは実行しない——状態を変更しない読み取り口）。
         _pendingRestartKeys = ReloadService.GetPendingRestartKeys();
+        _emailStatus = await EmailNotificationAdminService.GetStatusAsync();
     }
+
+    /// <summary>
+    /// カードの色: 「有効にしたつもりで送られていない」（設定不正で無効化）と直近の失敗ありは
+    /// 警告、それ以外は情報（常設表示の既定）。
+    /// </summary>
+    private static MudBlazor.Severity EmailHealthSeverity(EmailNotificationStatus status) =>
+        status.Health.DisabledByInvalidConfiguration || status.Health.LastFailureKind is not null
+            ? MudBlazor.Severity.Warning
+            : MudBlazor.Severity.Info;
+
+    private static string FormatTimestamp(DateTimeOffset? value) =>
+        value is null ? UiText.EmailNotificationHealthNever : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 }

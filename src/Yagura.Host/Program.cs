@@ -446,7 +446,10 @@ public static class Program
         // 起動時経路の ID（1001・1022 等）は、いずれも app.Build() 後に DI ロガー経由で発火する
         // ため、構造上必ず本登録（builder 段階）の後になる（発火点: 1001 = 本メソッド末尾の
         // startupLogger、1022 = IngestionHostedService.StartAsync）。
-        var emailNotificationQueue = new EmailNotificationQueue();
+        // ライブ計器（ADR-0017 決定 5。Issue #386）: 破棄数・送信失敗を外部監視から観測できる形で
+        // 計上する（単一 Meter「Yagura」へ統合。カード表示用のプロセス内カウンタとは役割が別）。
+        var emailNotificationMetrics = new EmailNotificationMetrics();
+        var emailNotificationQueue = new EmailNotificationQueue(timeProvider: null, emailNotificationMetrics);
         // 無効構成の間は投入自体を受け付けない（Issue #384——無効期間中の蓄積が有効化時に
         // 流量制御を経ず一斉送信されるのを防ぐ。ディスパッチャの UpdateConfiguration が以後の
         // 変更を追従する）。
@@ -651,7 +654,8 @@ public static class Program
             new MailKitEmailSender(),
             resolvedConfiguration.EmailNotification,
             timeProvider: null,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<EmailNotificationDispatcher>()));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<EmailNotificationDispatcher>(),
+            emailNotificationMetrics));
 
         // メタデータ領域（architecture.md §4.3）: IngestionPipeline が構築する
         // IngestionMetrics をそのまま渡す（Meter を 2 つ持たせず、パイプラインの計測点と

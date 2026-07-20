@@ -697,6 +697,21 @@ public static class UiText
     public const string AdminSaveReloadRejectedFormat =
         "保存は完了しましたが、再起動待ちへの計上（設定の再読み込み）が拒否されました: {0}。設定の再読み込み画面から手動で実行してください";
 
+    // ---- 管理面入口のメール通知チャネル健全性カード（ADR-0017 決定 5。Issue #386） ----
+
+    /// <summary>カードの見出し。</summary>
+    public const string AdminEmailHealthCardTitle = "メール通知チャネル";
+
+    /// <summary>
+    /// カードの説明（日常動線での常設表示——チャネルの静かな死〔パスワード失効・リレー廃止等〕に
+    /// 気づける経路。at-most-once + 破棄の設計はこの常設表示があって正当化される——決定 5）。
+    /// </summary>
+    public const string AdminEmailHealthCardDescription =
+        "メール通知は届かないことがあります（正本はイベントログ）。送信の健全性はここで確認できます。";
+
+    /// <summary>詳細（設定画面）への導線。</summary>
+    public const string AdminEmailHealthCardDetailLink = "詳細と設定（テスト送信・抑制の内訳）";
+
     /// <summary>再読み込み完了の通知。</summary>
     public const string AdminReloadCompletedNotification = "設定を再読み込みしました";
 
