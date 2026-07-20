@@ -210,6 +210,67 @@ public sealed class EmailNotificationDispatcherTests
     }
 
     [Fact]
+    public async Task DrainOnceAsync_ConnectionFailure_StopsTheCurrentDrainSoRetriesSurviveTheOutage()
+    {
+        // Issue #371: 接続不能は 1 通あたり最大で接続タイムアウトを直列に消費するため、
+        // 打ち切らないとキューが深いときに 1 回の drain の滞在時間が RetryDelay を超え、
+        // 序盤に失敗した通知の再試行が同じ停止期間中に消費されて全滅する。
+        var sender = new ScriptedSender(
+            EmailSendResult.Failure(EmailSendFailureKind.ConnectionFailed, "接続不能"));
+        var (dispatcher, queue, _) = CreateDispatcher(sender, Configuration);
+
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaReached, "件名", "本文");
+
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        // 1 通目の接続失敗で当該 drain は打ち切られ、2 通目は試行されない。
+        Assert.Single(sender.SentSubjects);
+        Assert.Equal(2, queue.Depth); // 1 通目 = 再試行待ち、2 通目 = 未試行のまま残る
+    }
+
+    [Fact]
+    public async Task DrainOnceAsync_PerMessageFailure_ContinuesWithTheRemainingQueue()
+    {
+        // 接続不能・タイムアウト以外の失敗は 1 通ごとの事象として扱い、後続は同じ drain で送る。
+        var sender = new ScriptedSender(
+            EmailSendResult.Failure(EmailSendFailureKind.RelayRejected, "中継拒否"),
+            EmailSendResult.Success());
+        var (dispatcher, queue, _) = CreateDispatcher(sender, Configuration);
+
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaReached, "件名", "本文");
+
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, sender.SentSubjects.Count);
+    }
+
+    [Fact]
+    public async Task LastFailure_ExposesAConsistentPairWithLastSuccess()
+    {
+        // Issue #371: 成功・失敗の対は参照 1 回の差し替えで公開される——失敗後も直近の
+        // 成功時刻は保持され、成功で失敗はクリアされる。
+        var sender = new ScriptedSender(
+            EmailSendResult.Success(),
+            EmailSendResult.Failure(EmailSendFailureKind.ConnectionFailed, "接続不能"));
+        var (dispatcher, queue, time) = CreateDispatcher(sender, Configuration);
+
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+        var successAt = dispatcher.LastSuccessAt;
+        Assert.NotNull(successAt);
+        Assert.Null(dispatcher.LastFailure);
+
+        time.Advance(TimeSpan.FromMinutes(61)); // 再送間隔を跨いで同一 ID を再投入できるようにする
+        queue.TryEnqueue(ActiveNotificationEventIds.SpoolQuotaNearLimit, "件名", "本文");
+        await dispatcher.DrainOnceAsync(CancellationToken.None);
+
+        Assert.Equal(successAt, dispatcher.LastSuccessAt); // 失敗しても成功時刻は残る
+        Assert.NotNull(dispatcher.LastFailure);
+    }
+
+    [Fact]
     public async Task DrainOnceAsync_PartialRecipientRejection_CountsAsSuccessAndIsNotResent()
     {
         // 委任 7: 一部拒否は「メッセージとしては送信成功・拒否宛先を警告ログ・再送しない」

@@ -74,14 +74,37 @@ internal sealed class EmailNotificationQueue
         get { lock (_gate) { return _pending.Count; } }
     }
 
-    /// <summary>キュー溢れによる累積破棄数（常設カードの表示用）。</summary>
-    internal int DroppedCount { get; private set; }
+    /// <summary>
+    /// 送信されずに破棄された通知の累積数（常設カードの表示用）。<b>キュー溢れ（64 件超過）
+    /// だけではない</b>——①キュー溢れ時の最古破棄 ②流量上限時に初報が押しのけた再送
+    /// ③再試行を戻す枠が無かった通知、の 3 経路の合計である（Issue #371——「キュー溢れ」と
+    /// 表示すると、キューが一度も満杯になっていなくても計上され、存在しないキュー飽和を
+    /// 運用者に疑わせる。表示名も「送信されず破棄」へ揃えた）。
+    /// </summary>
+    internal int DroppedCount
+    {
+        get { lock (_gate) { return _droppedCount; } }
+    }
+
+    private int _droppedCount;
 
     /// <summary>流量制御による累積抑制数（常設カードの表示用）。</summary>
-    internal int SuppressedCount { get; private set; }
+    internal int SuppressedCount
+    {
+        get { lock (_gate) { return _suppressedCount; } }
+    }
+
+    private int _suppressedCount;
 
     /// <summary>直近に抑制が発生した時刻（<see langword="null"/> = 一度も発生していない）。</summary>
-    internal DateTimeOffset? LastSuppressedAt { get; private set; }
+    /// <remarks>書き込みは <see cref="_gate"/> 下で行われる。<see cref="DateTimeOffset"/> の
+    /// 非アトミック性による torn read を避けるため、読み取りも同じロック下で行う（Issue #371）。</remarks>
+    internal DateTimeOffset? LastSuppressedAt
+    {
+        get { lock (_gate) { return _lastSuppressedAt; } }
+    }
+
+    private DateTimeOffset? _lastSuppressedAt;
 
     /// <summary>
     /// 抑制された EventId ごとの回数（常設カードの内訳表示用）。
@@ -144,7 +167,7 @@ internal sealed class EmailNotificationQueue
                 {
                     // 全件が初報。決定 5 の既定どおり最古を破棄して新しい側を保全する。
                     _pending.RemoveFirst();
-                    DroppedCount++;
+                    _droppedCount++;
                 }
             }
 
@@ -199,7 +222,7 @@ internal sealed class EmailNotificationQueue
             // 再試行待ちも枠を占有するが、TryDequeueReady が待ち時刻を飛ばすため後続は塞がらない。
             if (_pending.Count >= EmailNotificationConstants.MaxQueueDepth)
             {
-                DroppedCount++;
+                _droppedCount++;
                 return false;
             }
 
@@ -231,7 +254,7 @@ internal sealed class EmailNotificationQueue
             if (!node.Value.IsFirstReport)
             {
                 _pending.Remove(node);
-                DroppedCount++;
+                _droppedCount++;
                 return true;
             }
         }
@@ -250,8 +273,8 @@ internal sealed class EmailNotificationQueue
 
     private void RecordSuppressionUnderGate(EventId eventId, DateTimeOffset now)
     {
-        SuppressedCount++;
-        LastSuppressedAt = now;
+        _suppressedCount++;
+        _lastSuppressedAt = now;
         _suppressedCountByEventId[eventId.Id] =
             _suppressedCountByEventId.GetValueOrDefault(eventId.Id) + 1;
     }

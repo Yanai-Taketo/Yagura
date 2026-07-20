@@ -52,11 +52,24 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
         _logger = logger ?? NullLogger<EmailNotificationDispatcher>.Instance;
     }
 
-    /// <summary>最終送信成功時刻（常設カードの表示用。決定 5）。</summary>
-    internal DateTimeOffset? LastSuccessAt { get; private set; }
+    /// <summary>
+    /// 常設カード表示用の対（最終送信成功時刻・直近の失敗）。書き手は送信ループ、読み手は
+    /// Blazor スレッド——<b>不変オブジェクトの参照 1 回の差し替え</b>で更新し、読み手が
+    /// 「成功時刻と失敗が別々の時点の値」という不整合な対や torn read を見ない形にする
+    /// （Issue #371——プロパティ 2 本の個別更新は 2 回読みの間に送信ループが割り込み得た）。
+    /// </summary>
+    private sealed record DeliveryHealth(DateTimeOffset? LastSuccessAt, EmailSendResult? LastFailure);
 
-    /// <summary>直近の失敗の分類と説明（常設カードの表示用）。</summary>
-    internal EmailSendResult? LastFailure { get; private set; }
+    private volatile DeliveryHealth _deliveryHealth = new(null, null);
+
+    /// <summary>最終送信成功時刻（常設カードの表示用。決定 5）。</summary>
+    internal DateTimeOffset? LastSuccessAt => _deliveryHealth.LastSuccessAt;
+
+    /// <summary>
+    /// 直近の失敗の分類と説明（常設カードの表示用）。読み手は本プロパティを<b>ローカルへ 1 回
+    /// 読んでから</b>分類と説明を取り出すこと（2 回読むと間の送信成功で null 化され得る）。
+    /// </summary>
+    internal EmailSendResult? LastFailure => _deliveryHealth.LastFailure;
 
     /// <summary>
     /// 設定の即時反映（決定 9）。<see langword="null"/>（機能無効・構成不備）を渡した場合は、
@@ -184,18 +197,28 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
 
             if (result.Succeeded)
             {
-                LastSuccessAt = _timeProvider.GetUtcNow();
-                LastFailure = null;
+                _deliveryHealth = new DeliveryHealth(_timeProvider.GetUtcNow(), null);
                 WarnAboutRejectedRecipients(request, result);
                 continue;
             }
 
-            LastFailure = result;
+            _deliveryHealth = _deliveryHealth with { LastFailure = result };
 
             // 再試行は 1 通あたり 1 回のみ（決定 5）。2 度目の失敗は破棄する——at-most-once。
             // 正本はイベントログと監査記録であり、届かないことを前提にした設計である。
             var retryScheduled = _queue.TryScheduleRetry(request);
             WarnAboutSendFailure(request, result, retryScheduled);
+
+            if (result.FailureKind is EmailSendFailureKind.ConnectionFailed or EmailSendFailureKind.Timeout)
+            {
+                // サーバへ到達できない間は当該 drain を打ち切る（Issue #371）——接続不能は
+                // 1 通あたり最大で接続タイムアウト（10 秒）を直列に消費するため、キューが深いと
+                // 1 回の drain の滞在時間が RetryDelay（5 分）を超え、序盤に失敗した通知の再試行が
+                // 同じ停止期間中に消費されて全滅する。打ち切れば再試行は次回以降の drain
+                // （ポーリング間隔 5 秒）へ持ち越され、SMTP の復旧後まで生き残る余地が大きく増える。
+                // 打ち切りは本ループだけの話であり、受信・保存・UI への影響経路は従来どおり無い。
+                return;
+            }
         }
     }
 
