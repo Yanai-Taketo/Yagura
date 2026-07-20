@@ -52,12 +52,21 @@ public sealed class IngestionPipeline : IAsyncDisposable
     // リスナ別の現在の受信可否（ADR-0018 委任 6。Issue #351）。起動 Outcome・再構成 Outcome・
     // CF-6 再試行成功の 3 系統の帰結を現在状態へ畳む（ListenerAvailabilitySnapshot の remarks 参照）。
     // 書き手は起動/再構成の呼び出し元スレッドと CF-6 再試行のバックグラウンドスレッド、読み手は
-    // 能動通知の監視ループ——独立した bool の volatile 読み書きで足りる（3 値をまたぐ不変条件はない。
-    // 再構成中の旧リスナ停止〜新リスナ起動の短い瞬断は追わず、確定した帰結だけを反映する——読み手の
-    // 周期は 1 分で、瞬断の粒度は判定に影響しない）。
-    private volatile bool _udpReceiving;
-    private volatile bool _tcpReceiving;
-    private volatile bool _tlsReceiving;
+    // 能動通知の監視ループと再構成（Issue #373 の再アーム判定）——「受信可否 + 受信断の開始時刻」の
+    // 対を崩さず読むため、小さなロックで直列化する（競合は起動・再構成・再試行成功時のみ。
+    // 再構成中の旧リスナ停止〜新リスナ起動の短い瞬断は追わず、確定した帰結だけを反映する）。
+    private readonly object _listenerStateGate = new();
+    private bool _udpReceiving;
+    private bool _tcpReceiving;
+    private bool _tlsReceiving;
+
+    // 受信できなくなった時刻（リスナ別。受信可能な間は null）。CF-6 の再試行が受信を再開した
+    // ときの受信断区間（ListenerBindRecovered → downtime.listener-bind-retry）の始端に使う——
+    // 再構成が再試行ループを張り直しても（Issue #373）、区間の始端は最初に bind できなくなった
+    // 時刻のまま保たれる。
+    private DateTimeOffset? _udpGapStartedAt;
+    private DateTimeOffset? _tcpGapStartedAt;
+    private DateTimeOffset? _tlsGapStartedAt;
 
     private CancellationTokenSource? _consumerStoppingCts;
     private Task? _parsingTask;
@@ -278,27 +287,65 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// 「サーバ都合の受信断」の保留判定と警告 Detail への受信経路の状態の併記に使う。
     /// <see cref="StartListenerAsync"/> より前はすべて受信不能として返る。
     /// </summary>
-    public ListenerAvailabilitySnapshot ListenerAvailability =>
-        new(_udpReceiving, _tcpReceiving, _tlsListener is null ? null : _tlsReceiving);
+    public ListenerAvailabilitySnapshot ListenerAvailability
+    {
+        get
+        {
+            lock (_listenerStateGate)
+            {
+                return new(_udpReceiving, _tcpReceiving, _tlsListener is null ? null : _tlsReceiving);
+            }
+        }
+    }
 
     /// <summary>
     /// リスナ別の受信可否を更新する。<paramref name="protocolLabel"/> は起動・再構成・CF-6 再試行が
     /// 共有するラベル（"UDP" / "TCP" / "TLS"）——新しいリスナ種別を足すときは本メソッドと
-    /// <see cref="ListenerAvailability"/> の両方に加えること。
+    /// <see cref="ListenerAvailability"/>・<see cref="GetListenerDownState"/> に加えること。
     /// </summary>
-    private void SetListenerReceiving(string protocolLabel, bool receiving)
+    /// <param name="gapStartedAt">
+    /// 受信できなくなった時刻（<paramref name="receiving"/> が <see langword="false"/> のとき）。
+    /// 既に受信断が記録済みの場合は<b>早い側を保持する</b>——再構成の失敗が重なっても、受信断
+    /// 区間の始端は最初に受信できなくなった時刻のまま報告する（Issue #373）。
+    /// </param>
+    private void SetListenerReceiving(string protocolLabel, bool receiving, DateTimeOffset? gapStartedAt = null)
     {
-        switch (protocolLabel)
+        lock (_listenerStateGate)
         {
-            case "UDP":
-                _udpReceiving = receiving;
-                break;
-            case "TCP":
-                _tcpReceiving = receiving;
-                break;
-            case "TLS":
-                _tlsReceiving = receiving;
-                break;
+            switch (protocolLabel)
+            {
+                case "UDP":
+                    _udpReceiving = receiving;
+                    _udpGapStartedAt = receiving ? null : _udpGapStartedAt ?? gapStartedAt ?? DateTimeOffset.UtcNow;
+                    break;
+                case "TCP":
+                    _tcpReceiving = receiving;
+                    _tcpGapStartedAt = receiving ? null : _tcpGapStartedAt ?? gapStartedAt ?? DateTimeOffset.UtcNow;
+                    break;
+                case "TLS":
+                    _tlsReceiving = receiving;
+                    _tlsGapStartedAt = receiving ? null : _tlsGapStartedAt ?? gapStartedAt ?? DateTimeOffset.UtcNow;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// リスナが現在受信不能かどうかと、その受信断の始端を返す（Issue #373 の再アーム判定用）。
+    /// </summary>
+    private (bool IsDown, DateTimeOffset GapStartedAt) GetListenerDownState(string protocolLabel)
+    {
+        lock (_listenerStateGate)
+        {
+            var (receiving, gapStartedAt) = protocolLabel switch
+            {
+                "UDP" => (_udpReceiving, _udpGapStartedAt),
+                "TCP" => (_tcpReceiving, _tcpGapStartedAt),
+                "TLS" => (_tlsReceiving, _tlsGapStartedAt),
+                _ => (true, (DateTimeOffset?)null),
+            };
+
+            return (!receiving, gapStartedAt ?? DateTimeOffset.UtcNow);
         }
     }
 
@@ -437,7 +484,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         }
         catch (SocketException ex)
         {
-            SetListenerReceiving(protocolLabel, false);
+            SetListenerReceiving(protocolLabel, false, attemptedAt);
             _logger?.LogWarning(
                 ex,
                 "{Protocol} リスナの bind に失敗しました。開けたリスナのみで縮小継続し、{Interval} 間隔で再試行します" +
@@ -481,7 +528,9 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// </para>
     /// <para>
     /// <b>並行性</b>: 再構成は直列化される（<see cref="_reconfigureGate"/>）。進行中の CF-6
-    /// 再試行は新しい再構成の開始で打ち切られる（望ましい構成が変わったため）。
+    /// 再試行は新しい再構成の開始で一旦打ち切られるが、<b>options に変更のないリスナが受信不能の
+    /// ままの場合は再構成の末尾で張り直す</b>（Issue #373——「望ましい構成が変わった」のは変更
+    /// されたリスナだけであり、無関係なキーの再構成が縮小継続中リスナの復旧を止めてはならない）。
     /// </para>
     /// </remarks>
     public async Task<ListenerReconfigurationResult> ReconfigureListenersAsync(
@@ -495,7 +544,12 @@ public sealed class IngestionPipeline : IAsyncDisposable
         await _reconfigureGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // 進行中の CF-6 再試行があれば打ち切る（望ましい構成が変わった）。
+            // 進行中の CF-6 再試行があれば打ち切る。打ち切りは全リスナ一括（単一 CTS）のため、
+            // options に変更のないリスナの再試行は下の再アームで張り直す（Issue #373）——
+            // 「望ましい構成が変わったため打ち切る」が成立するのは変更されたリスナだけであり、
+            // 変わっていないリスナにとって望ましい構成は変わっていない。張り直しを忘れると、
+            // 起動時縮小継続中のリスナが無関係なキーの再構成を巻き添えにサービス再起動まで
+            // 復旧しなくなる（再試行の警告も止まるため状況の変化にも気づけない）。
             await CancelBindRetryAsync().ConfigureAwait(false);
 
             var udpOutcome = UdpOptionsEqual(_udpOptions, newUdpOptions)
@@ -506,11 +560,70 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 ? new ListenerReconfigurationOutcome(ListenerReconfigurationStatus.NotChanged)
                 : await ReconfigureTcpAsync(newTcpOptions, cancellationToken).ConfigureAwait(false);
 
+            RearmBindRetryForUntouchedDownListeners(
+                udpNotChanged: udpOutcome.Status == ListenerReconfigurationStatus.NotChanged,
+                tcpNotChanged: tcpOutcome.Status == ListenerReconfigurationStatus.NotChanged);
+
             return new ListenerReconfigurationResult(udpOutcome, tcpOutcome);
         }
         finally
         {
             _reconfigureGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 再構成で触れなかった（<see cref="ListenerReconfigurationStatus.NotChanged"/> の）リスナの
+    /// うち、受信不能のままのものへ CF-6 再試行を張り直す（Issue #373）。受信断区間の始端は
+    /// 最初に受信できなくなった時刻を引き継ぐ（<see cref="SetListenerReceiving"/> が保持）。
+    /// TLS は本メソッドの再構成対象外（宣言どおり再起動反映——configuration.md §8）だが、
+    /// 起動時縮小継続からの再試行は同じ一括打ち切りの巻き添えになるため、同様に張り直す。
+    /// </summary>
+    private void RearmBindRetryForUntouchedDownListeners(bool udpNotChanged, bool tcpNotChanged)
+    {
+        if (udpNotChanged && GetListenerDownState("UDP") is (true, var udpGapStartedAt))
+        {
+            StartBindRetryLoop(
+                "UDP",
+                retryNew: async ct =>
+                {
+                    var retried = CreateUdpListener(_udpOptions);
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _udpListener = retried;
+                },
+                udpGapStartedAt);
+        }
+
+        if (tcpNotChanged && GetListenerDownState("TCP") is (true, var tcpGapStartedAt))
+        {
+            StartBindRetryLoop(
+                "TCP",
+                retryNew: async ct =>
+                {
+                    var retried = CreateTcpListener(_tcpOptions);
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _tcpListener = retried;
+                },
+                tcpGapStartedAt);
+        }
+
+        if (_tlsListener is not null && GetListenerDownState("TLS") is (true, var tlsGapStartedAt))
+        {
+            StartBindRetryLoop(
+                "TLS",
+                retryNew: async ct =>
+                {
+                    var retried = new TlsSyslogListener(
+                        _tlsOptions!,
+                        _q1.Writer,
+                        _ingressGate,
+                        _metrics,
+                        _tlsCertificateSelector!,
+                        _loggerFactory?.CreateLogger<TlsSyslogListener>());
+                    await retried.StartAsync(ct).ConfigureAwait(false);
+                    _tlsListener = retried;
+                },
+                tlsGapStartedAt);
         }
     }
 
@@ -644,7 +757,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
                 protocolLabel,
                 BindRetryInterval);
 
-            SetListenerReceiving(protocolLabel, false);
+            SetListenerReceiving(protocolLabel, false, gapStartedAt);
             StartBindRetryLoop(protocolLabel, retryNew, gapStartedAt);
             return new ListenerReconfigurationOutcome(
                 ListenerReconfigurationStatus.DownRetrying, gapStartedAt, GapEndedAt: null, newBindFailure.Message);

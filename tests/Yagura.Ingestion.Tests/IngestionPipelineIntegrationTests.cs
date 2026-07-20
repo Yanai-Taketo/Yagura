@@ -456,6 +456,54 @@ public sealed class IngestionPipelineIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Issue #373: 再構成は options に変更のないリスナの CF-6 再試行を巻き添えで止めない。
+    /// 「UDP が起動時縮小継続（再試行中）+ TCP だけ再構成」の組で、UDP の占有解消後に
+    /// UDP が再試行で復旧すること（修正前はサービス再起動まで復旧しなかった）。
+    /// </summary>
+    [Fact]
+    public async Task ReconfigureListenersAsync_UntouchedDownListener_KeepsItsBindRetryAlive()
+    {
+        var udpReservation = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var occupiedUdpPort = ((IPEndPoint)udpReservation.Client.LocalEndPoint!).Port;
+
+        await using var pipeline = new IngestionPipeline(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedUdpPort },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            _logStore);
+        pipeline.BindRetryInterval = TimeSpan.FromMilliseconds(200);
+
+        var recoveryTcs = new TaskCompletionSource<ListenerBindRecovery>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pipeline.ListenerBindRecovered += recovery => recoveryTcs.TrySetResult(recovery);
+
+        var startResult = await pipeline.StartListenerAsync();
+        Assert.Equal(ListenerStartupStatus.DegradedRetrying, startResult.Udp.Status);
+        var gapObservedAtStart = DateTimeOffset.UtcNow;
+
+        // UDP には触れず、TCP の bind アドレスだけを再構成する（UDP は NotChanged になる）。
+        var reconfigureResult = await pipeline.ReconfigureListenersAsync(
+            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = occupiedUdpPort },
+            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0, BindAddressIsExplicit = true });
+
+        Assert.Equal(ListenerReconfigurationStatus.NotChanged, reconfigureResult.Udp.Status);
+        Assert.True(pipeline.ListenerAvailability.Tcp);
+        Assert.False(pipeline.ListenerAvailability.Udp);
+
+        // 占有を解消 → 張り直された再試行が受信を再開する。
+        udpReservation.Dispose();
+
+        var completed = await Task.WhenAny(recoveryTcs.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(recoveryTcs.Task, completed);
+
+        var recovery = await recoveryTcs.Task;
+        Assert.Equal("UDP", recovery.ProtocolLabel);
+        // 受信断区間の始端は再構成の時刻ではなく、最初に bind できなかった時刻を引き継ぐ。
+        Assert.True(recovery.GapStartedAt <= gapObservedAtStart);
+        Assert.True(pipeline.ListenerAvailability.Udp);
+
+        await pipeline.StopAsync();
+    }
+
+    /// <summary>
     /// 条件ポーリング（固定 sleep ではなく上限付きで繰り返し確認する。conventions.md の
     /// 時間窓の扱いに準ずる——CI 環境の揺らぎに対して安定させるため）。
     /// </summary>
