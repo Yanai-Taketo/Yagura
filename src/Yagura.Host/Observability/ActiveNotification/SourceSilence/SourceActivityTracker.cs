@@ -46,10 +46,20 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
     internal SourceActivityTracker(TimeProvider? timeProvider = null) =>
         _timeProvider = timeProvider ?? TimeProvider.System;
 
-    /// <summary>1 エントリの可変スロット（CAS 対象の <see cref="long"/> を 1 つだけ持つ）。</summary>
+    /// <summary>1 エントリの可変スロット。</summary>
     private sealed class ActivitySlot
     {
+        /// <summary>最終受信時刻（単調タイムスタンプ。CAS 対象）。</summary>
         internal long LastActivityTimestamp;
+
+        /// <summary>
+        /// 実受信（受信段・drain 合流点）を一度でも観測したか（0/1。Issue #381）。
+        /// 0 の間は <see cref="LastActivityTimestamp"/> が暫定基準（登録時点・再アーム時点）で
+        /// あることを表し、起動時 seed（<see cref="SeedProvisionalBaseline"/>）だけが過去へ
+        /// 置き換えられる。実受信の書き手は本フラグを先に立ててから時刻を更新する
+        /// （seed 側はフラグを先に読む——この順序で「実績の引き戻し」を競合下でも防ぐ）。
+        /// </summary>
+        internal int HasObservedActivity;
     }
 
     /// <inheritdoc />
@@ -63,6 +73,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
             return;
         }
 
+        Volatile.Write(ref slot.HasObservedActivity, 1);
         UpdateToMax(slot, _timeProvider.GetTimestamp());
     }
 
@@ -93,6 +104,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
             return;
         }
 
+        Volatile.Write(ref slot.HasObservedActivity, 1);
         UpdateToMax(slot, ToMonotonicTimestamp(observedAt));
     }
 
@@ -153,7 +165,8 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
     }
 
     /// <summary>
-    /// 起動時の初期値を取り込む（seed。決定 3）。既に実受信で更新済みのスロットは<b>後退させない</b>。
+    /// 基準時刻を前方へ進める（再アーム。決定 3——受信断回復時）。<c>max()</c> 更新のため
+    /// 既に新しい実受信があるスロットは後退させない。
     /// </summary>
     internal void Seed(IPAddress address, DateTimeOffset lastSeenAt)
     {
@@ -161,6 +174,45 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         if (_slots.TryGetValue(key, out var slot))
         {
             UpdateToMax(slot, ToMonotonicTimestamp(lastSeenAt));
+        }
+    }
+
+    /// <summary>
+    /// 起動時 seed（決定 3。Issue #381）: DB 照会の最終受信時刻で、暫定基準（登録時点）を
+    /// <b>過去へ</b>置き換える。実受信（受信段・drain 合流点）を一度でも観測したスロットには
+    /// 適用しない——過去の DB 値が今の実績を引き戻さない。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Seed"/>（max 更新 = 前方専用）とは向きが逆のため別メソッドにする。max 更新の
+    /// ままでは、<see cref="ApplyWatchlist"/> が置く登録時点基準より古い DB 値が常に no-op となり、
+    /// 「閾値 24h の装置がサーバ再起動の 23h 前に死んだ場合に最終受信 +24h で発火する」という
+    /// 決定 3 の設計が成立しない（Issue #381 の欠陥 1）。
+    /// </remarks>
+    internal void SeedProvisionalBaseline(IPAddress address, DateTimeOffset lastSeenAt)
+    {
+        var key = NormalizeAddress(address);
+        if (!_slots.TryGetValue(key, out var slot))
+        {
+            return;
+        }
+
+        var target = ToMonotonicTimestamp(lastSeenAt);
+        while (true)
+        {
+            if (Volatile.Read(ref slot.HasObservedActivity) != 0)
+            {
+                // 実受信が先に届いた——DB 値より新しい実績を正とする（引き戻さない）。
+                return;
+            }
+
+            var current = Interlocked.Read(ref slot.LastActivityTimestamp);
+            if (Interlocked.CompareExchange(ref slot.LastActivityTimestamp, target, current) == current)
+            {
+                return;
+            }
+
+            // CAS 失敗 = 実受信の書き手と競合した可能性。フラグを読み直して再判定する
+            // （実受信側は「フラグを立ててから時刻を更新する」順序のため、ここで必ず観測できる）。
         }
     }
 

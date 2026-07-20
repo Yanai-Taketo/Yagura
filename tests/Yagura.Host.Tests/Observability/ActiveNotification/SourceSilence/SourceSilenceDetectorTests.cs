@@ -215,16 +215,17 @@ public sealed class SourceSilenceDetectorTests
     }
 
     [Fact]
-    public void RearmAfterReceptionRecovery_RestartsTheClockForEveryEntry()
+    public void RearmAfterReceptionRecovery_RearmsOnlyEntriesThatCrossedTheThresholdWhileSuspended()
     {
-        // 回復時刻で再アームする（起動時の再アームと同一規則）。固定のグレース値は置かない
-        // ——各エントリの再検知は当該エントリの閾値で律速する。
+        // 決定 3(Issue #381): 再アームの対象は「保留中に閾値超過となったエントリ」のみ。
+        // 回復時刻で再アームし、固定のグレース値は置かない——各エントリの再検知は当該
+        // エントリの閾値で律速する。
         var (detector, _, time) = Create(
             Entry("192.0.2.10", thresholdMinutes: 60),
             Entry("192.0.2.11", thresholdMinutes: 600));
 
         time.Advance(TimeSpan.FromMinutes(700));
-        detector.RearmAfterReceptionRecovery();
+        Assert.Equal(2, detector.RearmAfterReceptionRecovery());
 
         Assert.False(detector.Evaluate().HasAnything);
 
@@ -233,6 +234,131 @@ public sealed class SourceSilenceDetectorTests
         var result = detector.Evaluate();
         Assert.Single(result.Silences);
         Assert.Equal(IPAddress.Parse("192.0.2.10"), result.Silences[0].Address);
+    }
+
+    [Fact]
+    public void RearmAfterReceptionRecovery_LeavesEntriesUnderTheThresholdUntouched()
+    {
+        // 決定 3(Issue #381 の欠陥 2): 閾値未満で沈黙中のエントリ(例: 閾値 60 分で 50 分沈黙)の
+        // 時計を前進させない。旧実装(全エントリ再アーム)では、短い受信断が観測されるたびに
+        // 検知が閾値ぶん先送りされ、反復すると恒久先送りになっていた。
+        var (detector, _, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+
+        time.Advance(TimeSpan.FromMinutes(50));
+        Assert.Equal(0, detector.RearmAfterReceptionRecovery());
+
+        // 本来の「最終受信 + 閾値」で発火する(回復 + 閾値まで先送りされない)。
+        time.Advance(TimeSpan.FromMinutes(11));
+        Assert.Single(detector.Evaluate().Silences);
+    }
+
+    [Fact]
+    public void RearmAfterReceptionRecovery_DoesNotTouchEntriesAlreadySilentBeforeTheOutage()
+    {
+        // 受信断より前から途絶中(警告済み)のエントリの途絶は受信断とは独立に始まっている——
+        // 再アームせず途絶状態を維持し、復帰の証跡(1029)は実受信でのみ出す(Issue #381)。
+        var (detector, tracker, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+        var address = IPAddress.Parse("192.0.2.10");
+
+        time.Advance(TimeSpan.FromMinutes(61));
+        Assert.Single(detector.Evaluate().Silences); // 受信断の前に警告済み
+
+        time.Advance(TimeSpan.FromMinutes(5)); // 短い受信断があったとして回復
+        Assert.Equal(0, detector.RearmAfterReceptionRecovery());
+
+        // 途絶状態は維持され(再警告なし)、復帰も出ない。
+        var afterRecovery = detector.Evaluate();
+        Assert.False(afterRecovery.HasAnything);
+        Assert.True(Assert.Single(detector.SnapshotEntryStatuses()).IsSilent);
+
+        // 実受信で初めて復帰(1029 の入力)が出る。
+        tracker.RecordActivity(address);
+        Assert.Single(detector.Evaluate().Recoveries);
+    }
+
+    // ------------------------------------------------------------------
+    // 起動時 seed（決定 3。Issue #381）
+    // ------------------------------------------------------------------
+
+    private static Yagura.Storage.SourceActivity Activity(string address, DateTimeOffset lastSeenAt) =>
+        new(address, lastSeenAt, RecordCount: 1);
+
+    [Fact]
+    public void SeedFromStore_EntryUnderTheThreshold_FiresAtLastSeenPlusThreshold()
+    {
+        // 決定 3 の設計どおり: 閾値 60 分の装置がサーバ再起動の 30 分前まで送っていた場合、
+        // 起動 +60 分ではなく最終受信 +60 分(= 起動 +30 分)で発火する(Issue #381 の欠陥 1)。
+        var (detector, _, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+
+        detector.SeedFromStore([Activity("192.0.2.10", Origin - TimeSpan.FromMinutes(30))]);
+
+        time.Advance(TimeSpan.FromMinutes(29));
+        Assert.False(detector.Evaluate().HasAnything); // 最終受信から 59 分——まだ
+
+        time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Single(detector.Evaluate().Silences); // 最終受信から 61 分——発火
+    }
+
+    [Fact]
+    public void SeedFromStore_EntryAlreadyOverTheThreshold_RearmsAtStartupInsteadOfFiringImmediately()
+    {
+        // 決定 3: seed 時点で既に閾値超過のエントリは起動時刻仮基準へ再アーム(即発火しない)。
+        // サーバ自身が閾値超の期間停止していた場合(週末メンテ等)の一斉偽陽性を防ぐ。
+        var (detector, _, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+
+        detector.SeedFromStore([Activity("192.0.2.10", Origin - TimeSpan.FromMinutes(120))]);
+
+        Assert.False(detector.Evaluate().HasAnything); // 即発火しない
+
+        time.Advance(TimeSpan.FromMinutes(61));
+        Assert.Single(detector.Evaluate().Silences); // 起動から閾値経過で発火
+    }
+
+    [Fact]
+    public void SeedFromStore_EntryAbsentFromTheResults_KeepsTheStartupBaseline()
+    {
+        // 決定 3: 結果に現れないエントリは起動時刻を仮基準とする。
+        var (detector, _, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+
+        detector.SeedFromStore([Activity("192.0.2.99", Origin - TimeSpan.FromMinutes(30))]);
+
+        time.Advance(TimeSpan.FromMinutes(59));
+        Assert.False(detector.Evaluate().HasAnything);
+
+        time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Single(detector.Evaluate().Silences);
+    }
+
+    [Fact]
+    public void SeedFromStore_DoesNotPullBackAnEntryThatAlreadyObservedRealActivity()
+    {
+        // 実受信が先に届いたスロットへ過去の DB 値を適用しない(実績の引き戻し防止)。
+        var (detector, tracker, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+        var address = IPAddress.Parse("192.0.2.10");
+
+        time.Advance(TimeSpan.FromMinutes(5));
+        tracker.RecordActivity(address); // seed より先に実受信
+
+        detector.SeedFromStore([Activity("192.0.2.10", Origin - TimeSpan.FromMinutes(30))]);
+
+        // 基準は実受信(起動 +5 分)のまま——+65 分までは発火しない。
+        time.Advance(TimeSpan.FromMinutes(59));
+        Assert.False(detector.Evaluate().HasAnything);
+
+        time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Single(detector.Evaluate().Silences);
+    }
+
+    [Fact]
+    public void SeedFromStore_NormalizesIPv4MappedStoredAddresses()
+    {
+        // 保存側のアドレスが IPv4-mapped IPv6 表記でも照合される(既存の正規化規約)。
+        var (detector, _, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
+
+        detector.SeedFromStore([Activity("::ffff:192.0.2.10", Origin - TimeSpan.FromMinutes(30))]);
+
+        time.Advance(TimeSpan.FromMinutes(31));
+        Assert.Single(detector.Evaluate().Silences); // 最終受信から 61 分
     }
 
     // ------------------------------------------------------------------
@@ -255,9 +381,10 @@ public sealed class SourceSilenceDetectorTests
     }
 
     [Fact]
-    public void ApplyWatchlist_RaisingTheThresholdAboveTheElapsedTime_ClearsTheSilentFlag()
+    public void ApplyWatchlist_RaisingTheThresholdAboveTheElapsedTime_ClearsTheFlagWithoutARecoveryRecord()
     {
-        // 決定 3: 閾値の変更で途絶条件を満たさなくなったエントリはフラグを解除する。
+        // 決定 3(Issue #381 の欠陥 3): 閾値変更はフラグの解除のみ。実際には 1 件も受信して
+        // いないのに「受信が再開した」(1029)を記録しない——復帰の証跡は実受信でのみ出す。
         var (detector, tracker, time) = Create(Entry("192.0.2.10", thresholdMinutes: 60));
 
         time.Advance(TimeSpan.FromMinutes(61));
@@ -267,10 +394,12 @@ public sealed class SourceSilenceDetectorTests
         tracker.ApplyWatchlist(relaxed);
         detector.ApplyWatchlist(relaxed);
 
-        // 閾値内に戻ったため復帰として扱われる（次に 600 分超過すれば再発火する）。
+        // フラグは適用時点で解除済み(UI の途絶中強調も同時に消える)。
+        Assert.False(Assert.Single(detector.SnapshotEntryStatuses()).IsSilent);
+
+        // 次の評価でも復帰は記録されない(次に 600 分超過すれば再発火する)。
         var result = detector.Evaluate();
-        Assert.Empty(result.Silences);
-        Assert.Single(result.Recoveries);
+        Assert.False(result.HasAnything);
     }
 
     // ------------------------------------------------------------------

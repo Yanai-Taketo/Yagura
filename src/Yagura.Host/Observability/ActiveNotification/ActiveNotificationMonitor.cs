@@ -99,7 +99,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null,
         Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null,
         SourceSilence.SourceSilenceDetector? sourceSilenceDetector = null,
-        Func<Yagura.Ingestion.ListenerAvailabilitySnapshot>? listenerAvailabilityProbe = null)
+        Func<Yagura.Ingestion.ListenerAvailabilitySnapshot>? listenerAvailabilityProbe = null,
+        Func<CancellationToken, Task<IReadOnlyList<Yagura.Storage.SourceActivity>>>? sourceActivitySeedQuery = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -117,7 +118,15 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _adminAuthFailureDefense = adminAuthFailureDefense;
         _sourceSilenceDetector = sourceSilenceDetector;
         _listenerAvailabilityProbe = listenerAvailabilityProbe;
+        _sourceActivitySeedQuery = sourceActivitySeedQuery;
     }
+
+    /// <summary>
+    /// 起動時 seed の照会口（ADR-0018 決定 3。Issue #381。<c>ILogStore.QuerySourceActivityAsync</c> を
+    /// 結線する）。未注入（テスト等）や照会失敗時は seed を行わず、全エントリが起動時刻仮基準の
+    /// まま動く——決定 3 の照会失敗時の規定どおり。
+    /// </summary>
+    private readonly Func<CancellationToken, Task<IReadOnlyList<Yagura.Storage.SourceActivity>>>? _sourceActivitySeedQuery;
 
     /// <summary>
     /// 送信元の途絶検知（ADR-0018。opt-in のため <see langword="null"/> 可）。
@@ -152,7 +161,42 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         _stoppingCts = new CancellationTokenSource();
+
+        // 起動時 seed（ADR-0018 決定 3。Issue #381）: 監視ループと並行に 1 回だけ DB を照会し、
+        // ウォッチリスト該当エントリの基準を DB の最終受信時刻へ置き換える。ループ開始を
+        // ブロックしない（seed 完了前の周期評価は起動時刻仮基準で判定される——閾値下限 10 分に
+        // 対し seed は数秒で終わるため実害はない）。
+        if (_sourceSilenceDetector is not null && _sourceActivitySeedQuery is not null)
+        {
+            _ = Task.Run(() => SeedSourceSilenceBaselineAsync(_stoppingCts.Token));
+        }
+
         _loopTask = Task.Run(() => RunAsync(_stoppingCts.Token));
+    }
+
+    /// <summary>
+    /// 起動時 seed の実行（ADR-0018 決定 3）。照会失敗は起動時刻仮基準へのフォールバックで
+    /// あり機能停止ではないため、警告ではなく情報レベルで記録する。
+    /// </summary>
+    private async Task SeedSourceSilenceBaselineAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var activities = await _sourceActivitySeedQuery!(cancellationToken).ConfigureAwait(false);
+            _sourceSilenceDetector!.SeedFromStore(activities);
+        }
+        catch (OperationCanceledException)
+        {
+            // 停止と競合しただけ。何もしない。
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(
+                ex,
+                "送信元の途絶検知の起動時 seed（最終受信時刻の照会）に失敗したため、" +
+                "全エントリを起動時刻仮基準で追跡します（ADR-0018 決定 3 のフォールバック。" +
+                "活発な送信元は直後の実受信で更新されるため実害はありません）。");
+        }
     }
 
     /// <summary>
@@ -305,11 +349,12 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
         else if (_receptionWasSuspended && !receptionSuspended)
         {
-            _sourceSilenceDetector.RearmAfterReceptionRecovery();
+            var rearmedCount = _sourceSilenceDetector.RearmAfterReceptionRecovery();
             _logger.LogInformation(
-                "受信経路の回復を検知したため、送信元の途絶判定を再開し、ウォッチリストの全エントリを" +
-                "回復時点で再アームしました（ADR-0018 決定 3。各エントリの再検知は当該エントリの閾値で" +
-                "律速されます）。");
+                "受信経路の回復を検知したため、送信元の途絶判定を再開しました。保留中に閾値超過と" +
+                "なったエントリ {RearmedCount} 件を回復時点で再アームしました（ADR-0018 決定 3。" +
+                "対象外のエントリは追跡時計を保ち、本来の「最終受信 + 閾値」で判定されます）。",
+                rearmedCount);
         }
 
         _receptionWasSuspended = receptionSuspended;

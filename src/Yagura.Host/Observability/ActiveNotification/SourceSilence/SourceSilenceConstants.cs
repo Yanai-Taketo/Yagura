@@ -47,6 +47,12 @@ internal static class SourceSilenceConstants
     internal static readonly TimeSpan EntrySuppressionWindow = TimeSpan.FromMinutes(15);
 
     /// <summary>
+    /// 起動時 seed（ADR-0018 決定 3。Issue #381）の DB 照会タイムアウト（仮値 5 秒。
+    /// 設定画面の候補照会と同じ水準）。超過時は seed を行わず起動時刻仮基準へフォールバックする。
+    /// </summary>
+    internal static readonly TimeSpan SeedQueryTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// 同一評価周期にこの件数以上が途絶へ遷移したら、個別警告ではなく 1 件の集約警告にする
     /// （仮値 5 件。ADR-0018 決定 3）。
     /// </summary>
