@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Yagura.Host.Observability.ActiveNotification.SourceSilence;
@@ -173,6 +174,11 @@ public static class YaguraConfigurationLoader
                 configurationFilePath,
                 unknownKey);
         }
+
+        // 型の読み替え検出（Issue #334）: 平坦化後の値からはトークン型を復元できないため、
+        // 元ファイルを JsonDocument として別途走査する。報告対象の絞り込み（不正値警告・
+        // 未知キーとの重複除外）は警告の収集が終わった Load の末尾で行う。
+        var allTypeCoercions = DetectTypeCoercions(configurationFilePath);
 
         var options = new YaguraConfigurationOptions();
         configurationRoot.Bind(options);
@@ -402,7 +408,29 @@ public static class YaguraConfigurationLoader
             SourceSilence = sourceSilence,
         };
 
-        return new ConfigurationLoadResult(resolved, warnings, unknownKeys);
+        // 型の読み替えの報告対象（Issue #334）: 不正値の警告・未知キーの警告が既に出るキーは
+        // 情報一覧から除外する——同じキーを二重に報告しない。§1 は情報レベルの対象を「意図が
+        // 一意に読み取れる型の読み替え」に限っており、不正値と判定された値（例: "Enabled": 1）は
+        // 既存の警告 3 点（キー・不正値・適用値）が正本になる。
+        var reportedElsewhereKeys = warnings.Select(w => w.Key)
+            .Concat(unknownKeys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var typeCoercions = allTypeCoercions
+            .Where(coercion => !reportedElsewhereKeys.Contains(coercion.Key))
+            .ToArray();
+
+        foreach (var coercion in typeCoercions)
+        {
+            // 警告ではなく情報（§1——受理は正常系。警告の感度を落とさない）。
+            logger.LogInformation(
+                "設定ファイル {ConfigurationFile} のキー {Key} は JSON の{JsonType}で書かれているため、文字列として受理しました（適用値: {AppliedValue}）。",
+                configurationFilePath,
+                coercion.Key,
+                coercion.JsonType,
+                coercion.AppliedValue);
+        }
+
+        return new ConfigurationLoadResult(resolved, warnings, unknownKeys, typeCoercions);
     }
 
     /// <summary>
@@ -425,6 +453,101 @@ public static class YaguraConfigurationLoader
     /// <summary>
     /// 設定ファイル内の JSON キーパスのうち <see cref="KnownKeys"/> に含まれないものを列挙する。
     /// </summary>
+    /// <summary>UTF-8 BOM のバイト列（読み込み側は BOM の有無を問わない——Issue #344 と同じ扱い）。</summary>
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
+
+    /// <summary>
+    /// 設定ファイルを <see cref="JsonDocument"/> として走査し、スカラー位置に数値・真偽値の
+    /// トークンが現れたキー（型の読み替え。configuration.md §1。Issue #334）を収集する。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 構成システム（<c>AddJsonFile</c>）は平坦化の際にトークン型を捨てるため、平坦化後の値からは
+    /// <c>4194304</c> と <c>"4194304"</c> を区別できない——元のトークン型を見られる読み手をここに置く
+    /// （§1 の制約 1）。受理範囲は構成システムに合わせ、末尾カンマ・コメントを受理する
+    /// （<see cref="YaguraConfigurationWriter"/> の DeserializerOptions と同じ根拠）。
+    /// </para>
+    /// <para>
+    /// ファイルが読めない・解析できない場合は空を返す——読み取り・解析の失敗の警告・起動失敗は
+    /// 既存経路（イベント ID 1024・1021）の管轄であり、情報表示のためだけの本走査から新しい
+    /// 失敗様式を作らない。
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyList<ConfigurationTypeCoercion> DetectTypeCoercions(string configurationFilePath)
+    {
+        byte[] bytes;
+        try
+        {
+            if (!File.Exists(configurationFilePath))
+            {
+                return [];
+            }
+
+            bytes = File.ReadAllBytes(configurationFilePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+
+        var offset = bytes.AsSpan().StartsWith(Utf8Bom) ? Utf8Bom.Length : 0;
+
+        try
+        {
+            using var document = JsonDocument.Parse(
+                new ReadOnlyMemory<byte>(bytes, offset, bytes.Length - offset),
+                new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+
+            var coercions = new List<ConfigurationTypeCoercion>();
+            CollectTypeCoercions(document.RootElement, path: null, coercions);
+            return coercions;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static void CollectTypeCoercions(
+        JsonElement element, string? path, List<ConfigurationTypeCoercion> coercions)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectTypeCoercions(
+                        property.Value,
+                        path is null ? property.Name : $"{path}:{property.Name}",
+                        coercions);
+                }
+
+                break;
+
+            case JsonValueKind.Array when path is not null:
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    // 配列要素は構成システムの平坦化と同じインデックス付きパス（key:0 等）で表す。
+                    CollectTypeCoercions(item, $"{path}:{index}", coercions);
+                    index++;
+                }
+
+                break;
+
+            case JsonValueKind.Number when path is not null:
+                // 表記のまま保つ（514.0 を "514" に正規化しない——ConfigurationValueStringConverter と同じ）。
+                coercions.Add(new ConfigurationTypeCoercion(path, "数値", element.GetRawText()));
+                break;
+
+            case JsonValueKind.True or JsonValueKind.False when path is not null:
+                // 構成システムの平坦化結果と同じ表記（"True" / "False"。実測は Issue #312）。
+                coercions.Add(new ConfigurationTypeCoercion(
+                    path, "真偽値", element.ValueKind == JsonValueKind.True ? bool.TrueString : bool.FalseString));
+                break;
+        }
+    }
+
     private static IReadOnlyList<string> DetectUnknownKeys(IConfigurationRoot configurationRoot)
     {
         var unknown = new List<string>();

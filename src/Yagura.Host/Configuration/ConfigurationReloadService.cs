@@ -134,7 +134,8 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
             AppliedKeys: [],
             PendingRestartKeys: PendingRestartKeySnapshot(),
             WarningMessages: [],
-            UnknownKeys: []);
+            UnknownKeys: [],
+            TypeCoercionNotes: []);
     }
 
     private async Task<ConfigurationReloadResult> ExecuteReloadAsync()
@@ -227,7 +228,8 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
             AppliedKeys: appliedKeys,
             PendingRestartKeys: pending,
             WarningMessages: warnings,
-            UnknownKeys: loadResult.UnknownKeys);
+            UnknownKeys: loadResult.UnknownKeys,
+            TypeCoercionNotes: [.. loadResult.TypeCoercions.Select(coercion => coercion.ToDisplayString())]);
     }
 
     /// <inheritdoc />

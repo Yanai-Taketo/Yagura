@@ -16,7 +16,13 @@
 /// 設定ファイル内で認識されなかったキー（JSON のパス表記）の一覧。§1「未知のキーは警告して
 /// 無視する」に対応する。設定ファイルが存在しない場合は常に空。
 /// </param>
+/// <param name="TypeCoercions">
+/// スカラー位置に数値・真偽値のトークンが書かれ、文字列として受理したキー（型の読み替え）の
+/// 一覧（情報レベル。§1。Issue #334）。不正値の警告・未知キーとして既に報告されたキーは
+/// 含まない（同じキーを二重に報告しない）。設定ファイルが存在しない場合は常に空。
+/// </param>
 public sealed record ConfigurationLoadResult(
     ResolvedYaguraConfiguration Configuration,
     IReadOnlyList<ConfigurationWarning> Warnings,
-    IReadOnlyList<string> UnknownKeys);
+    IReadOnlyList<string> UnknownKeys,
+    IReadOnlyList<ConfigurationTypeCoercion> TypeCoercions);

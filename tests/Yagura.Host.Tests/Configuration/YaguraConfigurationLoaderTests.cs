@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging.Testing;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
@@ -1198,5 +1199,93 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         Assert.Null(result.Configuration.AuditRetentionDays);
         var warning = Assert.Single(result.Warnings);
         Assert.Equal("Audit:RetentionDays", warning.Key);
+    }
+
+    // ------------------------------------------------------------------
+    // 型の読み替えの情報表示（configuration.md §1。Issue #334）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Load_NumericAndBooleanTokens_CollectedAsTypeCoercions_WithoutWarnings()
+    {
+        // 数値・真偽値のトークンで書かれた有効値は、警告なしで受理され（#312 の受理範囲の一致）、
+        // 型の読み替えとして情報一覧に現れる。文字列で書かれたキーは現れない。
+        WriteConfigurationFile(
+            """
+            {
+              "Ingestion": { "Udp": { "Port": 514 } },
+              "Spool": { "Enabled": true },
+              "Admin": { "HttpPort": "18515" }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Empty(result.Warnings);
+        Assert.Empty(result.UnknownKeys);
+        Assert.Equal(2, result.TypeCoercions.Count);
+        Assert.Contains(new ConfigurationTypeCoercion("Ingestion:Udp:Port", "数値", "514"), result.TypeCoercions);
+        Assert.Contains(new ConfigurationTypeCoercion("Spool:Enabled", "真偽値", "True"), result.TypeCoercions);
+
+        // 受理された値は通常どおり反映される（読み替えは正常系）。
+        Assert.Equal(514, result.Configuration.UdpPort);
+        Assert.True(result.Configuration.SpoolEnabled);
+        Assert.Equal(18515, result.Configuration.AdminHttpPort);
+
+        // 警告ではなく情報レベルで起動時ログに出る。
+        Assert.Contains(
+            logger.Collector.GetSnapshot(),
+            record => record.Level == LogLevel.Information &&
+                record.Message.Contains("Ingestion:Udp:Port", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Load_InvalidValueWrittenAsNumber_StaysWarning_AndIsNotDuplicatedAsCoercion()
+    {
+        // "不正値の警告を情報レベルへ降格させない"(§1 の制約 2): 不正値として警告済みのキーは
+        // 型の読み替え一覧に重複して現れない。
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "Port": 70000 } } }""");
+        var logger = new FakeLogger();
+
+        Assert.Throws<ConfigurationValidationException>(() => YaguraConfigurationLoader.Load(_dataRoot, logger));
+    }
+
+    [Fact]
+    public void Load_DefaultContinueInvalidValueWrittenAsNumber_StaysWarning_AndIsNotDuplicatedAsCoercion()
+    {
+        // 既定値継続分類のキー(Admin:HttpPort)を数値トークン + 範囲外で書く: 警告(キー・不正値・
+        // 適用値の 3 点)が正本であり、同じキーは型の読み替え一覧から除外される。
+        WriteConfigurationFile("""{ "Admin": { "HttpPort": 99999 } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("Admin:HttpPort", warning.Key);
+        Assert.DoesNotContain(result.TypeCoercions, coercion => coercion.Key == "Admin:HttpPort");
+    }
+
+    [Fact]
+    public void Load_UnknownKeyWrittenAsNumber_ReportedOnlyAsUnknownKey()
+    {
+        // 未知キーとして警告済みのキーは型の読み替え一覧に重複して現れない。
+        WriteConfigurationFile("""{ "Ingestion": { "Udp": { "Prot": 514 } } }""");
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Equal("Ingestion:Udp:Prot", Assert.Single(result.UnknownKeys));
+        Assert.Empty(result.TypeCoercions);
+    }
+
+    [Fact]
+    public void Load_ConfigurationFileMissing_ProducesNoTypeCoercions()
+    {
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Empty(result.TypeCoercions);
     }
 }
