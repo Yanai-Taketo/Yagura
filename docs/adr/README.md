@@ -32,8 +32,8 @@
 | [0014](0014-code-signing.md) | リリース成果物のコード署名 — Sectigo + Google Cloud KMS による Authenticode 署名（Yagura・ODV 共用。ADR-0006 基準 5・ADR-0009 委任事項 8・Issue #264 を閉じる） | proposed（決定 1 裁定済み。本文承認待ち） |
 | [0015](0015-gmsa-service-account.md) | AD 環境向け gMSA によるサービス実行（opt-in。ADR-0004 決定 4 の予告・ADR-0006 基準 1・Issue #263） | accepted |
 | [0016](0016-os-drop-gauge-mechanism.md) | OS レベル取りこぼし観測の実現手段の撤回 — 標準 API ゲージから引き算導出 + 無音化検出へ（ADR-0002 決定 2 の OS ゲージ観測部分の部分 supersession。Issue #272） | accepted |
-| [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | accepted（改訂 2026-07-19。委任 8 の実施結果を記録し、流量閾値を非公開とする理由を明文化。決定は不変） |
-| [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | accepted |
+| [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | accepted（改訂 1 = 2026-07-19: 委任 8 の実施結果と流量閾値を非公開とする理由の明文化。改訂 2 = 2026-07-20: 委任 10 の裁定——`[permanent-failure]` に 1030 を採番。決定は不変） |
+| [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | accepted（改訂 1 = 2026-07-19: 委任 1〜7 の実施結果を記録。決定は不変） |
 | [0019](0019-ingestion-tls-cert-ui.md) | TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用。Issue #276） | accepted |
 
 ## 起案予定
