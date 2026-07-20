@@ -1743,7 +1743,11 @@ public static class UiText
     public const string EmailNotificationHealthLastSuccess = "最終送信成功";
     public const string EmailNotificationHealthLastFailure = "直近の失敗";
     public const string EmailNotificationHealthQueueDepth = "送信待ち";
-    public const string EmailNotificationHealthDropped = "破棄した通知";
+    /// <summary>
+    /// キュー溢れ・流量上限時の押しのけ・再試行の投入不能の 3 経路の合計（Issue #371——
+    /// 「キュー溢れ」と限定して表示しない。内訳は EmailNotificationQueue.DroppedCount 参照）。
+    /// </summary>
+    public const string EmailNotificationHealthDropped = "送信されず破棄した通知";
     public const string EmailNotificationHealthSuppressed = "抑制した通知";
     public const string EmailNotificationHealthNever = "なし";
     public const string EmailNotificationHealthCountFormat = "{0} 件";

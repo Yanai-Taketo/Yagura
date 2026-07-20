@@ -564,10 +564,14 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         var enabled = ParseBool(email?.Enabled);
         var loadSucceeded = TryLoadResolved(out var resolved, out var loadError);
 
+        // LastFailure は 1 回だけ読んでから分類と説明を取り出す——2 回に分けて読むと、間に
+        // 送信ループの成功で null 化され「分類あり・説明 null」の不整合な対になり得る（Issue #371）。
+        var lastFailure = dispatcher?.LastFailure;
+
         var health = new EmailNotificationChannelHealth(
             LastSuccessAt: dispatcher?.LastSuccessAt,
-            LastFailureKind: dispatcher?.LastFailure?.FailureKind.ToString(),
-            LastFailureDetail: dispatcher?.LastFailure?.FailureDetail,
+            LastFailureKind: lastFailure?.FailureKind.ToString(),
+            LastFailureDetail: lastFailure?.FailureDetail,
             QueueDepth: _queue.Depth,
             DroppedCount: _queue.DroppedCount,
             SuppressedCount: _queue.SuppressedCount,
