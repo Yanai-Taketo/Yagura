@@ -111,6 +111,13 @@ public sealed record EmailNotificationSettings(
 /// <see langword="true"/> なのにこれも <see langword="true"/> なら「有効にしたつもりで
 /// 送られていない」状態であり、画面上で最も目立たせるべき状態である。
 /// </param>
+/// <param name="ConfigurationFileError">
+/// 設定ファイル全体の検証がメール通知と<b>無関係なキーの不正</b>で失敗し、実効状態を判定
+/// できなかった場合の説明（Issue #370）。非 <see langword="null"/> の間、
+/// <see cref="DisabledByInvalidConfiguration"/> は判定不能のため <see langword="false"/> を
+/// 返し、保存後の即時反映も見送られる（稼働中の送信設定は変更前のまま——設定ファイルの
+/// 問題を解消して再読み込みすれば反映される）。保存自体の成否とは独立である。
+/// </param>
 public sealed record EmailNotificationChannelHealth(
     DateTimeOffset? LastSuccessAt,
     string? LastFailureKind,
@@ -120,7 +127,8 @@ public sealed record EmailNotificationChannelHealth(
     int SuppressedCount,
     DateTimeOffset? LastSuppressedAt,
     IReadOnlyDictionary<int, int> SuppressedCountByEventId,
-    bool DisabledByInvalidConfiguration);
+    bool DisabledByInvalidConfiguration,
+    string? ConfigurationFileError = null);
 
 /// <summary>現在の設定とチャネル健全性。</summary>
 /// <param name="PasswordConfigured">

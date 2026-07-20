@@ -40,6 +40,17 @@ else
         <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.EmailNotificationDisabledByInvalidConfiguration</MudAlert>
     }
 
+    @* 設定ファイル全体がメール通知と無関係なキーの不正で検証に落ちている状態（Issue #370）。
+       保存はできるが即時反映は見送られる——ファイル側の問題として別に見せる。 *@
+    @if (_status.Health.ConfigurationFileError is { } configurationFileError)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-4">
+            @UiText.EmailNotificationConfigurationFileErrorIntro
+            <br />
+            @configurationFileError
+        </MudAlert>
+    }
+
     <MudAlert Severity="Severity.Info" Class="mt-4">@UiText.EmailNotificationAtMostOnceNote</MudAlert>
 
     <MudPaper Elevation="1" Class="pa-4 mt-4">
@@ -350,6 +361,12 @@ else
         catch (WizardValidationException ex)
         {
             _errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            // 楽観競合（別画面・手編集との同時変更）等を circuit エラーにしない——読める形で
+            // 表示し、再読み込みで解消できるようにする（Issue #370）。
+            _errorMessage = string.Format(UiText.EmailNotificationSaveFailedFormat, ex.Message);
         }
     }
 
