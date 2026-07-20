@@ -451,12 +451,6 @@ public static class YaguraConfigurationLoader
     }
 
     /// <summary>
-    /// 設定ファイル内の JSON キーパスのうち <see cref="KnownKeys"/> に含まれないものを列挙する。
-    /// </summary>
-    /// <summary>UTF-8 BOM のバイト列（読み込み側は BOM の有無を問わない——Issue #344 と同じ扱い）。</summary>
-    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
-
-    /// <summary>
     /// 設定ファイルを <see cref="JsonDocument"/> として走査し、スカラー位置に数値・真偽値の
     /// トークンが現れたキー（型の読み替え。configuration.md §1。Issue #334）を収集する。
     /// </summary>
@@ -490,12 +484,15 @@ public static class YaguraConfigurationLoader
             return [];
         }
 
-        var offset = bytes.AsSpan().StartsWith(Utf8Bom) ? Utf8Bom.Length : 0;
-
         try
         {
+            // BOM を自動判定して復号する（Issue #389——AddJsonFile / YaguraConfigurationWriter.Read と
+            // 同じ StreamReader の BOM 判定に揃える。UTF-16 で保存された設定ファイルでも型の読み替えを
+            // 検出できるようにし、UTF-8 BOM だけ剥がす旧処理で UTF-16 が無言で未検出になる差を作らない）。
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var streamReader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             using var document = JsonDocument.Parse(
-                new ReadOnlyMemory<byte>(bytes, offset, bytes.Length - offset),
+                streamReader.ReadToEnd(),
                 new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
 
             var coercions = new List<ConfigurationTypeCoercion>();

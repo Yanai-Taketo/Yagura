@@ -53,6 +53,17 @@ public sealed class ConfigurationReaderLeniencyTests : IDisposable
             [.. new byte[] { 0xEF, 0xBB, 0xBF }, .. System.Text.Encoding.UTF8.GetBytes(json)]);
 
     /// <summary>
+    /// UTF-16LE BOM 付きで書く（Issue #389）。Windows PowerShell 5.1 の <c>Out-File</c> /
+    /// リダイレクト（<c>&gt;</c>）の既定エンコーディングであり、<c>Set-Content -Encoding utf8</c>
+    /// （UTF-8 BOM）より手編集で踏みやすい。
+    /// </summary>
+    private void WriteConfigurationWithUtf16LeBom(string json) =>
+        File.WriteAllBytes(
+            Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName),
+            System.Text.Encoding.Unicode.GetPreamble()
+                .Concat(System.Text.Encoding.Unicode.GetBytes(json)).ToArray());
+
+    /// <summary>
     /// 構成システム側（基準）が読み取った値。<see cref="YaguraConfigurationLoader"/> と同じ経路を使う。
     /// </summary>
     private string? ReadViaConfigurationSystem(string key)
@@ -185,6 +196,43 @@ public sealed class ConfigurationReaderLeniencyTests : IDisposable
 
         Assert.Equal("4194304", ReadViaConfigurationSystem("Spool:QuotaBytes"));
         Assert.Equal("4194304", ReadSpoolValue("Spool:QuotaBytes"));
+    }
+
+    /// <summary>
+    /// UTF-16LE BOM 付きの設定ファイルを両方の読み手が同じように受理する（Issue #389）。
+    /// </summary>
+    /// <remarks>
+    /// 構成システム（<c>AddJsonFile</c>）は <c>StreamReader</c> の BOM 自動判定で UTF-16 を読める一方、
+    /// <see cref="YaguraConfigurationWriter"/> は UTF-8 BOM だけを剥がしていたため UTF-16 バイト列を
+    /// <c>JsonSerializer</c> に渡して <c>JsonReaderException</c> で失敗し、起動失敗（1024）になっていた
+    /// ——PowerShell 5.1 の <c>Out-File</c> 既定が UTF-16LE のため #344（UTF-8 BOM）より踏みやすい。
+    /// 両読み手の挙動は本テストで実測して確認する（推測で同等性を主張しない）。
+    /// </remarks>
+    [Theory]
+    [InlineData("""{ "Spool": { "QuotaBytes": "4194304" } }""")]
+    [InlineData("""{ "Spool": { "QuotaBytes": 4194304 } }""")] // BOM と型不一致の組み合わせ
+    public void BothReaders_AcceptUtf16LeBom(string json)
+    {
+        WriteConfigurationWithUtf16LeBom(json);
+
+        Assert.Equal("4194304", ReadViaConfigurationSystem("Spool:QuotaBytes"));
+        Assert.Equal("4194304", ReadSpoolValue("Spool:QuotaBytes"));
+    }
+
+    /// <summary>
+    /// UTF-16 BOM 付きでもトークンは生バイト列から計算する（Issue #389・#344 と同じ理由）。
+    /// </summary>
+    [Fact]
+    public void ReadToken_MatchesFromFile_EvenWithUtf16LeBom()
+    {
+        const string Json = """{ "Spool": { "QuotaBytes": "4194304" } }""";
+        WriteConfigurationWithUtf16LeBom(Json);
+        var path = Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
+
+        var viaRead = YaguraConfigurationWriter.Read(_dataRoot).VersionToken;
+        var viaFile = ConfigurationVersionToken.FromFile(path);
+
+        Assert.Equal(viaFile, viaRead);
     }
 
     /// <summary>
