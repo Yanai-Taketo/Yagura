@@ -20,7 +20,7 @@
     - 既存 3 キー（Ingestion:Tls:Enabled / :Port / :CertificateThumbprint）のみを編集する。
       Ingestion:Tls:BindAddress は意図的に対象外（決定 1）
     - 証明書の列挙は管理 HTTPS と同一の ICertificateStoreReader を共有する（二重実装しない）
-    - 管理 HTTPS と挙動が割れるのは 2 点だけで、どちらも security.md が確定した非対称:
+    - 管理 HTTPS と挙動が割れるのは 2 点だけで、いずれも仕様確定済みの非対称（期限切れ = security.md §6、秘密鍵 = ADR-0019 決定 2）:
         期限切れ         : 管理 HTTPS = 拒否 / TLS 受信 = 警告して通す
         秘密鍵が読めない : 管理 HTTPS = 警告   / TLS 受信 = 拒否
       「受信が止まる側を拒否し、止まらない側を警告に倒す」（決定 2）。画面はこの差分の理由も表示する

@@ -1232,6 +1232,28 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
         Assert.Equal(514, result.Configuration.UdpPort);
         Assert.True(result.Configuration.SpoolEnabled);
         Assert.Equal(18515, result.Configuration.AdminHttpPort);
+    }
+
+    [Fact]
+    public void Load_Utf16ConfigurationFile_TypeCoercionsAreStillDetected()
+    {
+        // UTF-16LE BOM 付きのファイルは両読み手が受理する（#389 で読み手を StreamReader の
+        // BOM 自動判別に揃えた）。型読み替えの走査（#334）だけがバイト列直渡しのままだと、
+        // 受理されるファイルなのに情報表示が無音で欠ける——走査も同じ判別機構に乗ることを固定する。
+        File.WriteAllText(
+            Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName),
+            """
+            {
+              "Ingestion": { "Udp": { "Port": 514 } }
+            }
+            """,
+            System.Text.Encoding.Unicode);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Empty(result.Warnings);
+        Assert.Contains(new ConfigurationTypeCoercion("Ingestion:Udp:Port", "数値", "514"), result.TypeCoercions);
 
         // 警告ではなく情報レベルで起動時ログに出る。
         Assert.Contains(

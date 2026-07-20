@@ -451,12 +451,6 @@ public static class YaguraConfigurationLoader
     }
 
     /// <summary>
-    /// 設定ファイル内の JSON キーパスのうち <see cref="KnownKeys"/> に含まれないものを列挙する。
-    /// </summary>
-    /// <summary>UTF-8 BOM のバイト列（読み込み側は BOM の有無を問わない——Issue #344 と同じ扱い）。</summary>
-    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
-
-    /// <summary>
     /// 設定ファイルを <see cref="JsonDocument"/> として走査し、スカラー位置に数値・真偽値の
     /// トークンが現れたキー（型の読み替え。configuration.md §1。Issue #334）を収集する。
     /// </summary>
@@ -475,7 +469,7 @@ public static class YaguraConfigurationLoader
     /// </remarks>
     internal static IReadOnlyList<ConfigurationTypeCoercion> DetectTypeCoercions(string configurationFilePath)
     {
-        byte[] bytes;
+        string text;
         try
         {
             if (!File.Exists(configurationFilePath))
@@ -483,19 +477,22 @@ public static class YaguraConfigurationLoader
                 return [];
             }
 
-            bytes = File.ReadAllBytes(configurationFilePath);
+            // 文字コードは StreamReader の BOM 自動判別でデコードする（YaguraConfigurationWriter.Read と
+            // 同じ機構——Issue #344 / #389）。バイト列を直接 JsonDocument.Parse へ渡すと、両読み手が
+            // 受理する UTF-16 BOM 付きファイルで本走査だけが JsonException → 空振りし、受理される
+            // ファイルなのに型読み替えの情報表示が無音で欠ける。
+            using var reader = new StreamReader(configurationFilePath);
+            text = reader.ReadToEnd();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return [];
         }
 
-        var offset = bytes.AsSpan().StartsWith(Utf8Bom) ? Utf8Bom.Length : 0;
-
         try
         {
             using var document = JsonDocument.Parse(
-                new ReadOnlyMemory<byte>(bytes, offset, bytes.Length - offset),
+                text,
                 new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
 
             var coercions = new List<ConfigurationTypeCoercion>();

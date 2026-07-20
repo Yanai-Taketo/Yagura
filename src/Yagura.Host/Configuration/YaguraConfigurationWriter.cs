@@ -34,12 +34,16 @@ namespace Yagura.Host.Configuration;
 /// CLI ツール（一部は BOM 付き JSON の扱いに難がある）との親和性を優先する。
 /// </para>
 /// <para>
-/// <b>読み込み側は BOM の有無を問わない</b>。.NET 構成システムの <c>AddJsonFile</c> は
-/// BOM を許容し、本クラスの <see cref="Read(string)"/> も <c>JsonSerializer</c> へ渡す前に
-/// BOM を読み飛ばして受理範囲を揃える（§1 の不変条件）。
-/// <c>JsonSerializer.Deserialize(ReadOnlySpan{byte}, ...)</c> は BOM を読み飛ばさないため、
-/// 呼び出し側での除去が必要である（Issue #344。以前このコメントは「構成システムと同じく
-/// BOM を許容する」と記していたが、除去処理がなく実際には起動時クラッシュになっていた）。
+/// <b>読み込み側は BOM の有無・種類を問わない</b>。.NET 構成システムの <c>AddJsonFile</c> は
+/// <see cref="StreamReader"/> の BOM 自動判別でファイルを文字列へデコードしてから解析するため、
+/// UTF-8 BOM だけでなく UTF-16（LE/BE）BOM 付きのファイルも受理する（2026-07-20 実測。
+/// Issue #389）。本クラスの <see cref="Read(string)"/> も同じ機構——<see cref="StreamReader"/>
+/// の BOM 自動判別——でデコードしてから <c>JsonSerializer</c> へ渡し、受理範囲を揃える
+/// （§1 の不変条件。UTF-16 BOM は Windows PowerShell 5.1 の <c>Set-Content</c> 既定
+/// 〔<c>-Encoding Unicode</c>〕が普通に書くため、手編集で踏み得る）。
+/// <c>JsonSerializer.Deserialize(ReadOnlySpan{byte}, ...)</c> は BOM を読み飛ばさない
+/// （Issue #344 で UTF-8 BOM が、#389 で UTF-16 BOM が、それぞれ本クラス側だけの拒否として
+/// 表面化した）。なお <b>BOM のない</b> UTF-16 は基準側も受理しない（同実測）ため対象外である。
 /// </para>
 /// </remarks>
 public static class YaguraConfigurationWriter
@@ -48,9 +52,6 @@ public static class YaguraConfigurationWriter
     {
         WriteIndented = true,
     };
-
-    /// <summary>UTF-8 BOM のバイト列（<c>EF BB BF</c>）。</summary>
-    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
 
     /// <summary>
     /// 読み取り用のオプション。configuration.md §1 の不変条件「読み手の受理範囲は一致していなければ
@@ -88,30 +89,33 @@ public static class YaguraConfigurationWriter
 
         var bytes = File.ReadAllBytes(path);
 
-        // トークンは「ディスク上の内容」から計算する（BOM を除去する前のバイト列）。
+        // トークンは「ディスク上の内容」から計算する（BOM を含む、デコード前の生バイト列）。
         // ConfigurationVersionToken.FromFile も生のファイル内容をハッシュしており、
-        // ここで除去後のバイト列を使うと BOM 付きファイルで両者のトークンが食い違い、
-        // 楽観的競合検出（Save の expectedVersionToken 照合）が誤検知する。
+        // ここでデコード後の表現を使うと BOM 付きファイルで両者のトークンが食い違い、
+        // 楽観的競合検出（Save の expectedVersionToken 照合）が誤検知する（Issue #344。
+        // UTF-16 でも同じ——照合はファイルの生内容どうしで行う）。
         var token = ConfigurationVersionToken.FromContent(bytes);
 
-        // UTF-8 BOM は読み飛ばしてから deserialize する（Issue #344）。
-        // JsonSerializer.Deserialize(ReadOnlySpan<byte>, ...) は BOM を読み飛ばさず
-        // 「'0xEF' is an invalid start of a value」で失敗する（実測で確認）。一方 .NET 構成システムの
-        // AddJsonFile は BOM の有無に関わらず読めるため、除去しないと §1 の不変条件
-        // 「2 つの読み手の受理範囲は一致していなければならない」が破れる（Issue #312 が
-        // 成立させようとした不変条件そのもの）。BOM は Windows PowerShell 5.1 の
-        // Set-Content -Encoding utf8 や一部のエディタが既定で付与するため、手編集で普通に踏み得る。
-        var options = JsonSerializer.Deserialize<YaguraConfigurationOptions>(StripUtf8Bom(bytes), DeserializerOptions)
+        // 文字コードは StreamReader の BOM 自動判別でデコードしてから deserialize する
+        // （Issue #344 / #389）。基準側（.NET 構成システムの AddJsonFile）は StreamReader で
+        // ファイルを読むため UTF-8 BOM に加えて UTF-16（LE/BE）BOM も受理する（2026-07-20 実測）。
+        // JsonSerializer.Deserialize(ReadOnlySpan<byte>, ...) はどちらの BOM も読み飛ばさないため、
+        // バイト列を直接渡すと §1 の不変条件「2 つの読み手の受理範囲は一致していなければならない」
+        // が破れる——UTF-8 BOM だけを手動で除去する方式（#344 の当初対処）では UTF-16 側の
+        // 不一致が残った（#389）。同じ判別機構に乗ることで、受理範囲を構造的に揃える。
+        // BOM は Windows PowerShell 5.1 の Set-Content（既定 -Encoding Unicode = UTF-16LE BOM、
+        // -Encoding utf8 = UTF-8 BOM）や一部のエディタが既定で付与するため、手編集で普通に踏み得る。
+        string text;
+        using (var reader = new StreamReader(new MemoryStream(bytes)))
+        {
+            text = reader.ReadToEnd();
+        }
+
+        var options = JsonSerializer.Deserialize<YaguraConfigurationOptions>(text, DeserializerOptions)
             ?? new YaguraConfigurationOptions();
 
         return new YaguraConfigurationFileSnapshot(options, token);
     }
-
-    /// <summary>
-    /// 先頭の UTF-8 BOM（<c>EF BB BF</c>）があれば取り除いた範囲を返す（Issue #344）。
-    /// </summary>
-    private static ReadOnlySpan<byte> StripUtf8Bom(ReadOnlySpan<byte> bytes) =>
-        bytes.StartsWith(Utf8Bom) ? bytes[Utf8Bom.Length..] : bytes;
 
     /// <summary>
     /// 設定全体を全体書き換えで保存する（楽観的な競合検出つき）。

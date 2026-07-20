@@ -284,7 +284,7 @@ public sealed class DiskSpool : IDisposable
     /// 従来のように <c>Dispose</c> を先に呼ぶと、失敗時に <c>_activeSegmentStream</c> が非 null のまま残り、
     /// 次の追記が <see cref="EnsureActiveSegmentUnderGate"/> で「アクティブセグメントあり」と判断して
     /// <b>破棄済みストリームへ書き込み、<see cref="ObjectDisposedException"/> になる</b>——これは
-    /// <see cref="AppendAsync"/> の catch フィルタ（<c>IOException or UnauthorizedAccessException</c>）に
+    /// <see cref="TryAppendAsync"/> の catch フィルタ（<c>IOException or UnauthorizedAccessException</c>）に
     /// 掛からないため、スプールの追記経路ごと例外が抜ける。
     /// <para>
     /// 順序を入れ替えることで、<c>Dispose</c> が失敗しても<b>状態は常に整合する</b>——当該ファイルへの

@@ -22,8 +22,8 @@ namespace Yagura.Host.Ingestion.Tls;
 /// （ADR-0019 決定 1「列挙・検証の実装は共有し二重実装しない」）。
 /// </para>
 /// <para>
-/// <b>管理 HTTPS と挙動が割れるのは 2 点だけで、どちらも security.md が確定した非対称である</b>
-/// （実装の都合ではない。ADR-0019 決定 2）:
+/// <b>管理 HTTPS と挙動が割れるのは 2 点だけで、いずれも仕様として確定した非対称である</b>
+/// （実装の都合ではない。期限切れ側は security.md §6・§6.1、秘密鍵側の保存ポリシーは ADR-0019 決定 2 が正）:
 /// </para>
 /// <list type="number">
 /// <item><description>

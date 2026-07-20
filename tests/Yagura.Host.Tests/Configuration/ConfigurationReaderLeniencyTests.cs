@@ -53,6 +53,18 @@ public sealed class ConfigurationReaderLeniencyTests : IDisposable
             [.. new byte[] { 0xEF, 0xBB, 0xBF }, .. System.Text.Encoding.UTF8.GetBytes(json)]);
 
     /// <summary>
+    /// UTF-16（BOM 付き）で設定ファイルを書く。Windows PowerShell 5.1 の <c>Set-Content</c> の
+    /// 既定（<c>-Encoding Unicode</c> = UTF-16LE BOM 付き）による保存形式を再現する（Issue #389）。
+    /// </summary>
+    private void WriteConfigurationUtf16Bom(string json, bool bigEndian)
+    {
+        var encoding = new System.Text.UnicodeEncoding(bigEndian, byteOrderMark: true);
+        File.WriteAllBytes(
+            Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName),
+            [.. encoding.GetPreamble(), .. encoding.GetBytes(json)]);
+    }
+
+    /// <summary>
     /// 構成システム側（基準）が読み取った値。<see cref="YaguraConfigurationLoader"/> と同じ経路を使う。
     /// </summary>
     private string? ReadViaConfigurationSystem(string key)
@@ -211,6 +223,85 @@ public sealed class ConfigurationReaderLeniencyTests : IDisposable
         // BOM なしの同内容とはトークンが異なる（内容が実際に違うため）
         WriteConfiguration(Json);
         Assert.NotEqual(viaRead, YaguraConfigurationWriter.Read(_dataRoot).VersionToken);
+    }
+
+    // ------------------------------------------------------------------
+    // UTF-16 BOM（Issue #389）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// UTF-16（LE/BE）BOM 付きの設定ファイルを両方の読み手が同じように受理する。
+    /// </summary>
+    /// <remarks>
+    /// 基準側（<c>AddJsonFile</c>）は <see cref="System.IO.StreamReader"/> の BOM 自動判別で
+    /// ファイルをデコードするため、UTF-8 に限らず UTF-16 BOM 付きも受理する（2026-07-20 実測:
+    /// LE/BE とも値が読める。一方 <see cref="YaguraConfigurationWriter"/> の旧実装は
+    /// <c>'0xFF'（LE）/'0xFE'（BE）is an invalid start of a value</c> で拒否——受理範囲の不一致）。
+    /// UTF-16LE BOM は Windows PowerShell 5.1 の <c>Set-Content</c> の既定
+    /// （<c>-Encoding Unicode</c>）が付与するため、手編集で普通に踏み得る。
+    /// </remarks>
+    [Theory]
+    [InlineData(false)] // UTF-16LE
+    [InlineData(true)]  // UTF-16BE
+    public void BothReaders_AcceptUtf16Bom(bool bigEndian)
+    {
+        WriteConfigurationUtf16Bom("""{ "Spool": { "QuotaBytes": "4194304" } }""", bigEndian);
+
+        Assert.Equal("4194304", ReadViaConfigurationSystem("Spool:QuotaBytes"));
+        Assert.Equal("4194304", ReadSpoolValue("Spool:QuotaBytes"));
+    }
+
+    /// <summary>
+    /// UTF-16 BOM 付きでも <see cref="YaguraConfigurationWriter.Read(string)"/> のトークンは
+    /// <see cref="ConfigurationVersionToken.FromFile(string)"/> と一致する。
+    /// </summary>
+    /// <remarks>
+    /// トークンはデコード前の生バイト列から計算しなければならない（UTF-8 BOM の
+    /// <see cref="ReadToken_MatchesFromFile_EvenWithUtf8Bom"/> と同じ理由——#344 / PR #353。
+    /// 楽観的競合検出はファイルの生内容どうしの照合であり、Read がデコード後の表現から計算すると
+    /// Save の <c>FromFile</c> 照合が常に競合と誤検知する）。
+    /// </remarks>
+    [Fact]
+    public void ReadToken_MatchesFromFile_EvenWithUtf16Bom()
+    {
+        WriteConfigurationUtf16Bom("""{ "Spool": { "QuotaBytes": "4194304" } }""", bigEndian: false);
+        var path = Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
+
+        var viaRead = YaguraConfigurationWriter.Read(_dataRoot).VersionToken;
+        var viaFile = ConfigurationVersionToken.FromFile(path);
+
+        Assert.Equal(viaFile, viaRead);
+    }
+
+    /// <summary>
+    /// BOM だけで中身のないファイルは、どちらの読み手も受理しない（JSON トークンが 1 つもない
+    /// 「読み取り・解析の失敗」——§1 の起動失敗分類。2026-07-20 実測で両読み手とも拒否を確認）。
+    /// </summary>
+    [Fact]
+    public void BothReaders_RejectBomOnlyFile()
+    {
+        File.WriteAllBytes(
+            Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName),
+            [0xEF, 0xBB, 0xBF]);
+
+        Assert.ThrowsAny<Exception>(() => ReadViaConfigurationSystem("Spool:QuotaBytes"));
+        Assert.ThrowsAny<Exception>(() => YaguraConfigurationWriter.Read(_dataRoot));
+    }
+
+    /// <summary>
+    /// <b>BOM のない</b> UTF-16 は、どちらの読み手も受理しない（BOM 自動判別の対象外——既定の
+    /// UTF-8 として解釈され解析失敗。2026-07-20 実測で両読み手とも拒否を確認）。受理範囲を
+    /// BOM 付きより広げていないことの固定。
+    /// </summary>
+    [Fact]
+    public void BothReaders_RejectUtf16WithoutBom()
+    {
+        File.WriteAllBytes(
+            Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName),
+            System.Text.Encoding.Unicode.GetBytes("""{ "Spool": { "QuotaBytes": "4194304" } }"""));
+
+        Assert.ThrowsAny<Exception>(() => ReadViaConfigurationSystem("Spool:QuotaBytes"));
+        Assert.ThrowsAny<Exception>(() => YaguraConfigurationWriter.Read(_dataRoot));
     }
 
     // ------------------------------------------------------------------
