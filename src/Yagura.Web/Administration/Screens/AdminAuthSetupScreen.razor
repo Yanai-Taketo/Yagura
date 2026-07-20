@@ -69,9 +69,10 @@ else
         <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
     }
 
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="ApplyAsync">
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
-    </MudButton>
+    </YaguraButton>
 
     @* 認証セッションの緊急全失効（ADR-0013 決定 2）。退職者・漏洩疑い時、または Windows 権限剥奪を
        即時反映したいときに、発行済みの全認証セッションを一括無効化する。世代番号バンプで実装され、

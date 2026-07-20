@@ -147,6 +147,15 @@ public static class UiText
     /// <summary>ブロック版コピー部品（YaguraCopyBlock）のボタン文言。</summary>
     public const string CopyBlockButton = "コピー";
 
+    // ---- ボタン（ui.md §3.1） ----
+
+    /// <summary>
+    /// ボタンのクリック処理から漏れた例外の共通表示形式。{0} に例外メッセージが入る。
+    /// 第一の受け皿は各画面の catch（画面固有の文言・誘導つき）であり、これは例外を
+    /// circuit エラーにしないための最後の受け皿（Issue #372）。
+    /// </summary>
+    public const string ButtonActionFailedFormat = "操作を完了できませんでした: {0}";
+
     // ---- 画面名・ナビゲーション（ui.md §4。M8-3） ----
 
     /// <summary>ダッシュボード画面名。</summary>

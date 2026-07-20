@@ -141,10 +141,11 @@ else
     }
 
     <MudText Typo="Typo.caption" Class="mt-4 d-block">@UiText.SourceSilencePendingChangesNote</MudText>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-1"
-               Disabled="@_saveInFlight" OnClick="ApplyAsync">
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372。
+       画面独自の _saveInFlight ガードは共通化に伴い撤去)。 *@
+    <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-1" OnClick="ApplyAsync">
         @UiText.SourceSilenceApplyButton
-    </MudButton>
+    </YaguraButton>
 }
 
 @code {
@@ -175,7 +176,6 @@ else
 
     private string? _errorMessage;
     private string? _savedSummary;
-    private bool _saveInFlight;
 
     /// <summary>候補一覧の取得件数（画面の選択肢として現実的な範囲。全量はウォッチリスト上限と同じ 1000）。</summary>
     private const int CandidateLimit = 200;
@@ -280,7 +280,6 @@ else
     {
         _errorMessage = null;
         _savedSummary = null;
-        _saveInFlight = true;
 
         try
         {
@@ -318,10 +317,6 @@ else
             // 楽観競合（別画面・手編集との同時変更）や設定ファイル全体の検証例外を circuit エラーに
             // しない——読める形で表示し、再読み込みで解消できるようにする。
             _errorMessage = $"保存できませんでした: {ex.Message}";
-        }
-        finally
-        {
-            _saveInFlight = false;
         }
     }
 

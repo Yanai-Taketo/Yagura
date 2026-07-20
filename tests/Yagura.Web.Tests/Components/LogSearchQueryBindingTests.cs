@@ -41,6 +41,10 @@ public sealed class LogSearchQueryBindingTests : IDisposable
     {
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
         _ctx.Services.AddMudServices();
+
+        // 検索ボタン（YaguraButton）が例外の受け皿（Issue #372）として注入する通知経路。
+        _ctx.Services.AddScoped<Yagura.Web.Components.Common.IYaguraNotifier,
+            Yagura.Web.Components.Common.YaguraSnackbarNotifier>();
         _ctx.Services.AddSingleton<ILogStore>(_store);
         _ctx.Services.AddSingleton<IYaguraSystemStatusReader>(new FakeStatusReader());
 

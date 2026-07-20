@@ -201,9 +201,10 @@ else
         </MudAlert>
     }
 
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="ApplyAsync">
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
-    </MudButton>
+    </YaguraButton>
 }
 
 @code {
