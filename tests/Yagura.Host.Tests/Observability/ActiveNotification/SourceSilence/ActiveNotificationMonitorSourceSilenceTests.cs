@@ -165,6 +165,55 @@ public sealed class ActiveNotificationMonitorSourceSilenceTests
     }
 
     // ------------------------------------------------------------------
+    // 証跡の内容（決定 3 の Detail。Issue #382）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateOnce_SilenceWarning_IncludesTheLastSeenWallClock()
+    {
+        // 1027 の Detail が約束する「最終受信時刻(壁時計表示)」(§4.3 の表)。
+        var harness = Create(withProbe: true, Entry("192.0.2.10", thresholdMinutes: 60));
+        harness.Tracker.RecordActivity(IPAddress.Parse("192.0.2.10"));
+
+        harness.Time.Advance(TimeSpan.FromMinutes(61));
+        await harness.Monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(harness.Collector.GetSnapshot(), r => r.Id.Id == 1027);
+        Assert.Contains("最終受信 2026-07-19 00:00:00", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_SilenceWarningWithoutRealActivity_MarksTheBaselineAsRearmOrigin()
+    {
+        // 実受信の記録がない(登録時点基準)エントリの基準時刻を「最終受信」と誤読させない。
+        var harness = Create(withProbe: true, Entry("192.0.2.10", thresholdMinutes: 60));
+
+        harness.Time.Advance(TimeSpan.FromMinutes(61));
+        await harness.Monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(harness.Collector.GetSnapshot(), r => r.Id.Id == 1027);
+        Assert.Contains("実受信の記録なし", record.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateOnce_BurstFromRearmBaselines_NotesTheOrigin_AndCapsTheEntryList()
+    {
+        // 1028 の Detail が約束する「起動後の再アーム起点の一斉発火かの別」と、イベントログの
+        // メッセージ長上限を考慮した件数上限つき列挙(Issue #382)。
+        var entries = Enumerable.Range(0, SourceSilenceConstants.BurstDetailMaxListedEntries + 5)
+            .Select(i => Entry($"192.0.2.{10 + i}", thresholdMinutes: 60))
+            .ToArray();
+        var harness = Create(withProbe: true, entries);
+
+        harness.Time.Advance(TimeSpan.FromMinutes(61));
+        await harness.Monitor.EvaluateOnceAsync();
+
+        var record = Assert.Single(harness.Collector.GetSnapshot(), r => r.Id.Id == 1028);
+        Assert.Contains("再アーム起点", record.Message);
+        Assert.Contains("ほか 5 件", record.Message);
+    }
+
+    // ------------------------------------------------------------------
     // ヘルパー
     // ------------------------------------------------------------------
 

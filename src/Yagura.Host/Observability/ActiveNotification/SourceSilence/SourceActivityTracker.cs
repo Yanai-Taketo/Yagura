@@ -60,6 +60,15 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         /// （seed 側はフラグを先に読む——この順序で「実績の引き戻し」を競合下でも防ぐ）。
         /// </summary>
         internal int HasObservedActivity;
+
+        /// <summary>
+        /// 現在の基準時刻が再アーム（登録時点・起動時刻・受信断回復）由来か（0/1。Issue #382）。
+        /// 1 の間、基準時刻は「実際に受信した時刻」ではない——1027 の最終受信時刻表示と
+        /// 1028 の「再アーム起点の一斉発火かの別」の判定材料（表示・記録専用。判定は従来どおり
+        /// 単調 tick の経過のみを見る）。実受信（<see cref="HasObservedActivity"/> と同じ書き手）と
+        /// DB 実績の起動時 seed で 0 になり、受信断回復の再アーム（<see cref="Seed"/>）で 1 に戻る。
+        /// </summary>
+        internal int BaselineIsRearmed = 1;
     }
 
     /// <inheritdoc />
@@ -74,6 +83,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         }
 
         Volatile.Write(ref slot.HasObservedActivity, 1);
+        Volatile.Write(ref slot.BaselineIsRearmed, 0);
         UpdateToMax(slot, _timeProvider.GetTimestamp());
     }
 
@@ -105,6 +115,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         }
 
         Volatile.Write(ref slot.HasObservedActivity, 1);
+        Volatile.Write(ref slot.BaselineIsRearmed, 0);
         UpdateToMax(slot, ToMonotonicTimestamp(observedAt));
     }
 
@@ -173,6 +184,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         var key = NormalizeAddress(address);
         if (_slots.TryGetValue(key, out var slot))
         {
+            Volatile.Write(ref slot.BaselineIsRearmed, 1);
             UpdateToMax(slot, ToMonotonicTimestamp(lastSeenAt));
         }
     }
@@ -208,6 +220,8 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
             var current = Interlocked.Read(ref slot.LastActivityTimestamp);
             if (Interlocked.CompareExchange(ref slot.LastActivityTimestamp, target, current) == current)
             {
+                // DB の実績で置き換えた——基準は「実際に受信した時刻」になった（Issue #382）。
+                Volatile.Write(ref slot.BaselineIsRearmed, 0);
                 return;
             }
 
@@ -219,7 +233,14 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
     /// <summary>
     /// 当該アドレスの最終受信からの経過時間を返す。ウォッチリスト外なら <see langword="null"/>。
     /// </summary>
-    internal TimeSpan? GetElapsedSinceLastActivity(IPAddress address)
+    internal TimeSpan? GetElapsedSinceLastActivity(IPAddress address) =>
+        GetActivityReading(address)?.Elapsed;
+
+    /// <summary>
+    /// 経過時間 + 基準の由来（再アーム起点か）を返す（Issue #382——1027 の最終受信時刻表示・
+    /// 1028 の「再アーム起点の一斉発火かの別」の入力）。ウォッチリスト外なら <see langword="null"/>。
+    /// </summary>
+    internal (TimeSpan Elapsed, bool BaselineIsRearmed)? GetActivityReading(IPAddress address)
     {
         var key = NormalizeAddress(address);
         if (!_slots.TryGetValue(key, out var slot))
@@ -228,7 +249,9 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         }
 
         var last = Interlocked.Read(ref slot.LastActivityTimestamp);
-        return _timeProvider.GetElapsedTime(last, _timeProvider.GetTimestamp());
+        return (
+            _timeProvider.GetElapsedTime(last, _timeProvider.GetTimestamp()),
+            Volatile.Read(ref slot.BaselineIsRearmed) != 0);
     }
 
     /// <summary>
