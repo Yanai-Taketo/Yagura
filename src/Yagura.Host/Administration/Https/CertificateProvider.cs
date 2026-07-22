@@ -4,8 +4,9 @@ using System.Security.Cryptography.X509Certificates;
 namespace Yagura.Host.Administration.Https;
 
 /// <summary>
-/// 管理リスナのリモート HTTPS（ADR-0010 Phase 2 決定 4）用証明書を、Windows 証明書ストア
-/// （ローカルコンピューター・<c>My</c>）から拇印で参照する。
+/// Windows 証明書ストア（ローカルコンピューター・<c>My</c>）から拇印で証明書を読み込む共有ロード実装。
+/// 管理リスナのリモート HTTPS（ADR-0010 Phase 2 決定 4）と TLS 受信（ADR-0019）の双方が同一の
+/// この実装を用いる（証明書ロードを二重実装しない。ゆえに型名は特定用途に寄せず中立とする）。
 /// </summary>
 /// <remarks>
 /// configuration.md §6（閲覧 UI の HTTPS）と同型の参照方式——PFX ファイルパス + パスワード方式は
@@ -13,7 +14,7 @@ namespace Yagura.Host.Administration.Https;
 /// インストールは行わない（利用者の持ち込みを基本とする——同 §6 の既存方針をそのまま踏襲）。
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public static class AdminCertificateProvider
+public static class CertificateProvider
 {
     /// <summary>
     /// 指定した拇印の証明書をローカルコンピューターの <c>My</c> ストアから読み込む。
@@ -22,7 +23,7 @@ public static class AdminCertificateProvider
     /// 正規化済み（大文字・16 進 40 桁）の拇印。<see cref="Yagura.Host.Configuration.YaguraConfigurationLoader"/>
     /// が既に形式検証済みの値を渡す想定。
     /// </param>
-    public static AdminCertificateLoadResult Load(string normalizedThumbprint)
+    public static CertificateLoadResult Load(string normalizedThumbprint)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(normalizedThumbprint);
 
@@ -34,7 +35,7 @@ public static class AdminCertificateProvider
         }
         catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or UnauthorizedAccessException)
         {
-            return AdminCertificateLoadResult.Failure(
+            return CertificateLoadResult.Failure(
                 $"証明書ストア（LocalMachine\\My）を開けませんでした: {ex.Message}");
         }
 
@@ -46,7 +47,7 @@ public static class AdminCertificateProvider
 
         if (matches.Count == 0)
         {
-            return AdminCertificateLoadResult.Failure(
+            return CertificateLoadResult.Failure(
                 $"拇印 {normalizedThumbprint} の証明書が LocalMachine\\My ストアに見つかりません。");
         }
 
@@ -54,7 +55,7 @@ public static class AdminCertificateProvider
 
         if (!certificate.HasPrivateKey)
         {
-            return AdminCertificateLoadResult.Failure(
+            return CertificateLoadResult.Failure(
                 $"拇印 {normalizedThumbprint} の証明書には秘密鍵がありません（またはこのアカウントから" +
                 "アクセスできません）。証明書の取り込み時に秘密鍵をエクスポート可能として取り込んだか確認してください。");
         }
@@ -62,16 +63,16 @@ public static class AdminCertificateProvider
         var now = DateTime.Now;
         var isExpired = now < certificate.NotBefore || now > certificate.NotAfter;
 
-        return AdminCertificateLoadResult.Success(certificate, isExpired);
+        return CertificateLoadResult.Success(certificate, isExpired);
     }
 }
 
 /// <summary>
-/// <see cref="AdminCertificateProvider.Load"/> の結果。
+/// <see cref="CertificateProvider.Load"/> の結果。
 /// </summary>
-public sealed class AdminCertificateLoadResult
+public sealed class CertificateLoadResult
 {
-    private AdminCertificateLoadResult(X509Certificate2? certificate, bool isExpired, string? failureReason)
+    private CertificateLoadResult(X509Certificate2? certificate, bool isExpired, string? failureReason)
     {
         Certificate = certificate;
         IsExpired = isExpired;
@@ -93,9 +94,9 @@ public sealed class AdminCertificateLoadResult
     /// <summary>証明書の取得自体（ストア参照・秘密鍵の存在確認）に成功したか。期限切れでも <see langword="true"/>。</summary>
     public bool Succeeded => Certificate is not null;
 
-    public static AdminCertificateLoadResult Success(X509Certificate2 certificate, bool isExpired) =>
+    public static CertificateLoadResult Success(X509Certificate2 certificate, bool isExpired) =>
         new(certificate, isExpired, failureReason: null);
 
-    public static AdminCertificateLoadResult Failure(string reason) =>
+    public static CertificateLoadResult Failure(string reason) =>
         new(certificate: null, isExpired: false, failureReason: reason);
 }

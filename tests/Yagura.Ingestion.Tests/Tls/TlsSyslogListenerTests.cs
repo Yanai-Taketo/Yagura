@@ -32,7 +32,7 @@ public sealed class TlsSyslogListenerTests
     /// <summary>
     /// テスト用の自己署名証明書を発行する（Windows 証明書ストアは経由しない——本テストは
     /// <see cref="TlsSyslogListener"/> 自体の TLS/フレーミング挙動を検証する単体テストであり、
-    /// ストア参照は Yagura.Host 側（AdminCertificateProvider の再利用）の管轄。別途 E2E で検証）。
+    /// ストア参照は Yagura.Host 側（CertificateProvider の再利用）の管轄。別途 E2E で検証）。
     /// </summary>
     /// <remarks>
     /// <b>エフェメラルキーのままではサーバロール認証に使えない（実機確認）</b>:

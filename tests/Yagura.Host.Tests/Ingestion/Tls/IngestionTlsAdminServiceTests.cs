@@ -54,7 +54,7 @@ public sealed class IngestionTlsAdminServiceTests : IDisposable
     public async Task ConfigureAsync_ExpiredCertificate_SavesWithWarning()
     {
         var service = CreateService(
-            loadCertificate: _ => AdminCertificateLoadResult.Success(CreateCertificate("CN=yagura-tls-expired"), isExpired: true));
+            loadCertificate: _ => CertificateLoadResult.Success(CreateCertificate("CN=yagura-tls-expired"), isExpired: true));
 
         var result = await service.ConfigureAsync(enabled: true, certificateThumbprint: ValidThumbprint, port: null);
 
@@ -111,7 +111,7 @@ public sealed class IngestionTlsAdminServiceTests : IDisposable
     public async Task ConfigureAsync_CertificateNotFound_ThrowsWithStartupFailureReason()
     {
         const string Reason = "指定された拇印の証明書が LocalMachine\\My に見つかりません。";
-        var service = CreateService(loadCertificate: _ => AdminCertificateLoadResult.Failure(Reason));
+        var service = CreateService(loadCertificate: _ => CertificateLoadResult.Failure(Reason));
 
         var ex = await Assert.ThrowsAsync<WizardValidationException>(
             () => service.ConfigureAsync(enabled: true, certificateThumbprint: ValidThumbprint, port: null));
@@ -251,14 +251,14 @@ public sealed class IngestionTlsAdminServiceTests : IDisposable
     private string ConfigurationFilePath => Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
 
     private IngestionTlsAdminService CreateService(
-        Func<string, AdminCertificateLoadResult>? loadCertificate = null,
+        Func<string, CertificateLoadResult>? loadCertificate = null,
         Func<X509Certificate2, bool>? hasServerAuthEku = null,
         Func<X509Certificate2, bool>? isPrivateKeyReadable = null)
     {
         return new IngestionTlsAdminService(
             _dataRoot,
             _audit,
-            loadCertificate ?? (_ => AdminCertificateLoadResult.Success(CreateCertificate("CN=yagura-tls-test"), isExpired: false)),
+            loadCertificate ?? (_ => CertificateLoadResult.Success(CreateCertificate("CN=yagura-tls-test"), isExpired: false)),
             hasServerAuthEku ?? (_ => true),
             isPrivateKeyReadable ?? (_ => true));
     }

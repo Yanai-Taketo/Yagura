@@ -99,7 +99,7 @@ public static class ActiveNotificationEventIds
     /// 管理リスナのリモート HTTPS 証明書の有効期限が接近している（ADR-0010 Phase 2 決定 4
     /// 「期限接近の事前警告は configuration.md §6 既存の能動通知がそのまま管理リスナ用証明書にも
     /// 適用される」の実体。閾値は
-    /// <see cref="ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow"/>——仮値
+    /// <see cref="ActiveNotificationConstants.CertificateExpiryWarningWindow"/>——仮値
     /// 30 日）。レベル: 警告。
     /// </summary>
     public static readonly EventId AdminHttpsCertificateExpiryApproaching =
@@ -123,7 +123,7 @@ public static class ActiveNotificationEventIds
     /// <summary>
     /// TLS 受信（<c>Ingestion:Tls:Enabled</c>。RFC 5425。opt-in。security.md §6。Issue #137）の
     /// 証明書の有効期限が接近している。閾値は <see cref="AdminHttpsCertificateExpiryApproaching"/>
-    /// と同じ <see cref="ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow"/>
+    /// と同じ <see cref="ActiveNotificationConstants.CertificateExpiryWarningWindow"/>
     /// （仮値 30 日）を流用する——TLS 受信・管理 UI HTTPS のいずれも「期限接近の事前警告」という
     /// 同じ目的の閾値であり、別の値を採用すべき設計上の根拠が無いため。レベル: 警告。
     /// </summary>
