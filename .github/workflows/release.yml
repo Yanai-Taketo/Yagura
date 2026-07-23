@@ -298,12 +298,16 @@ jobs:
   # (installer/sign/codesign-chain.pem)・WIF・リポジトリ変数・Environment が揃うまで未設定のままにし、
   # 現行の未署名リリース経路を壊さない。有効化前の通し検証手順は installer/sign/README.md 参照。
   # 署名は arch 非依存のため windows-latest で両アーキを署名する(arm64 MSI はクロス publish)。
+  #
+  # workflow_dispatch では publish_release の値によらず署名する: publish_release=false なら
+  # create-release が走らないため「公開せずに署名・署名検証まで試す」経路になる(README 第 2 段
+  # 手順 7)。Environment `release-signing` の承認ゲートは毎回かかるため、勝手に署名されることはない。
   sign:
     needs: [build, smoke-arm64, smoke-x64]
     if: |
       vars.YAGURA_SIGNING == 'enabled' &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true'))
+       github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: true
       matrix:
