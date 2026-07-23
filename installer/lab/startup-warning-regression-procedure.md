@@ -145,7 +145,7 @@ Get-WinEvent -ProviderName Yagura -MaxEvents 200 |
 
 #### 5. TLS 受信側でも同じ確認を行う（#345 の調査で判明した追加項目）
 
-`TryGrantReadAccess` は `Program.cs` から **2 箇所**（管理リモート HTTPS と **TLS 受信**）で呼ばれており、どちらも同じ経路で落ちていた。Issue #345 の本文は前者しか記載していないため、**TLS 受信側は未検証のまま**である。
+`TryGrantReadAccess` は `Program.cs` から **2 箇所**（管理リモート HTTPS と **TLS 受信**）で呼ばれており、どちらも同じ経路で落ちていた。Issue #345 の本文は前者しか記載していないため長く未検証だったが、**TLS 受信側は 2026-07-24 の lab 実機検証で確認済み**（下記「実測」）。
 
 ```json
 {
@@ -156,6 +156,13 @@ Get-WinEvent -ProviderName Yagura -MaxEvents 200 |
 ```
 
 再起動し、手順 4 と同様に**サービスが Running** であることと、`[ingestion-tls-private-key-grant-failed]` の警告を確認する。
+
+**実測（2026-07-24。lab: `WIN-DV7G9OMOF4U` = Windows Server 2025 `10.0.26100`・`yagura.test` DC・Yagura v0.5.0〈`main` 自ビルド〉・保存先 SQL Server 2022 Express）**:
+
+- 秘密鍵に `NT SERVICE\Yagura` の ACE が無い自己署名証明書（`CN=yagura-lab.local`。既定 CNG ACL = `CREATOR OWNER`/`SYSTEM`/`Administrators` のみ）を `Ingestion:Tls:CertificateThumbprint` に設定して再起動 → **サービスは `Running`**（SCM 7000/7009 の記録なし）。
+- Yagura プロバイダのイベントログに `[ingestion-tls-private-key-grant-failed]`（`Category: Yagura.Ingestion.Tls`。警告）が **1 件**記録され、理由「秘密鍵を開けなかったため…キー セットがありません」＋ `certlm.msc`（CF-D2）からの手動付与を案内。**起動失敗せず縮小継続**（security.md §2.5 の設計どおり）を確認。
+- 手順 6（`icacls … /grant "NT SERVICE\Yagura:(R)"` → 再起動）後、TCP 6514 の **TLS ハンドシェイクが成立**（`SslStream` クライアントで `protocol=Tls1.3`・`serverCertSubject=CN=yagura-lab.local`）。**この状態でも `[ingestion-tls-private-key-grant-failed]` は再び発火する**——付与処理自体（`WRITE_DAC`）はサービスアカウントに権限が無く失敗し続けるが、外部から付与した「読み取り」で TLS は成立する（本手順書「付随確認」の注記どおり）。
+- 検証後、TLS 受信構成を除去して STG 構成へ復元し、UDP 514 の受信継続を確認。
 
 #### 6. 付随確認: 権限を与えれば TLS ハンドシェイクが成立すること
 
