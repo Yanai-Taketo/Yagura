@@ -449,3 +449,30 @@ required_approving_review_count: 1
 | 13 | **KMS 署名操作の検知・アラート**（田中） | Cloud Audit Logs 上で、想定外のタイミング・principal・リポジトリからの署名操作にアラートを設定する。事後の帰属を「能動的な検知」に引き上げる |
 
 （初版の SignPath 固有の委任事項——署名要求タイムアウト・SignPath の GitHub フェデレーション確認——は、(A) を採らなかったため削除した。上記は本裁定 (C2) 後に採番し直したもので、旧番号との対応は本 PR のコメントに残す。）
+
+## 改訂履歴
+
+### 1. 2026-07-24（amendment）: 委任事項 9（署名済み MSI の SmartScreen 実挙動）の lab 検証結果
+
+**契機**: Issue #264 / 委任事項 9。署名済み MSI（訂正版証明書チェーンで署名・Actions run **30017908696** の `release-msi-signed-x64`）を実機で MOTW 付与のうえ実行し、SmartScreen の見え方を記録した。
+
+**環境**: `WIN-DV7G9OMOF4U`（Windows 11 系デスクトップ・`10.0.26100`）/ 2026-07-24。両 MSI に `Zone.Identifier`（ZoneId=3 = インターネット由来）を付与して実行。
+
+**署名の事前確認（プログラム検証）**: `Get-AuthenticodeSignature` で **`Status=Valid`**・**`Subject=CN=柳井建人, O=柳井建人, S=Yamaguchi, C=JP`**・拇印 **`36257D1DC06F7CDECA61B9727A88320DA24D27B6`**・**RFC 3161 タイムスタンプ有**（Sectigo Public Time Stamping Signer R37）を確認。証明書・署名は正常。
+
+**SmartScreen ダイアログ実挙動**（スクリーンショットは Issue #264 に添付）:
+
+| | 署名済み MSI | 未署名 MSI（v0.4.0 Release） |
+|---|---|---|
+| 見出し | 「Windows によって PC が保護されました」（`認識されないアプリ` = 評判蓄積前。**署名しても評判ゼロの間は警告自体は出る**——委任 9 の想定どおり） | 同左 |
+| **発行元** | **`JP, Yamaguchi, ???縺?I, ???縺?I`**（証明書 subject の DN が表示される＝**署名が認識されている**。未署名との判別点は成立） | **`不明な発行元`** |
+
+**判定**: 委任 9 の判定点（**発行元表示の有無で署名済み／未署名を判別できるか**）は**成立**——署名済みは発行元フィールドが populated（`JP, Yamaguchi` = C=JP・S=Yamaguchi）で、未署名の「不明な発行元」と明確に区別できる。
+
+**想定外の発見**: 証明書の **日本語部分（O=`柳井建人`・CN=`柳井建人`）が SmartScreen ダイアログ上で文字化けする**（`???縺?I` と表示。`縺` は UTF-8 バイト列を CP932 として解釈したときの典型的な化け方）。`Get-AuthenticodeSignature` では `柳井建人` と正しく取得できているため**証明書自体は正常**であり、これは **SmartScreen ダイアログが証明書 subject の非 ASCII 文字を誤エンコードで描画している**現象である。結果として、利用者が見るダイアログでは発行元が「**柳井建人**」と読める形では出ない（ASCII の `JP, Yamaguchi` は正常表示）。**UAC 昇格ダイアログの発行元表示は本検証では未採取**（SmartScreen で「実行しない」を選び導入自体は行わなかったため）。
+- **原因の実体確認（2026-07-24）**: 証明書 subject の `柳井建人`（O・CN）は **UTF8String（ASN.1 tag `0x0C`）** で符号化されている（`SignerCertificate.SubjectName.RawData` を実測——`柳井建人` の UTF-8 バイト列 `E6 9F B3 …` が UTF8String タグ + 長さ 0x0C で格納。BMPString〈tag 0x1E〉ではない）。`Get-AuthenticodeSignature`（.NET）は正しく `柳井建人` と復号するが、**日本語 Windows の SmartScreen ダイアログはこの UTF8String を ANSI コードページ（CP932）経路で描画するため化ける**（`縺` の化け方が UTF-8→CP932 誤解釈の典型）。**Yagura のコード側では修正できない**（証明書 subject の中身と SmartScreen の描画の問題であり、いずれも製品の管轄外）。
+- **裁定候補**: (i) 現状受容（判別点は満たすため v0.5.0 は進める）／**(ii) 証明書 subject をローマ字表記（例 `CN=YANAI Taketo`・`O=YANAI Taketo`）で再発行する——推奨**。日本語圏の発行者の多くがこの SmartScreen/UAC の非 ASCII 表示問題を避けるためローマ字で証明書を取得しており、個人 IV 証明書のため検証名のローマ字表記は一般に可能（Sectigo 手続き＝委任 A で指定）。ローマ字なら SmartScreen・UAC とも読める発行元名になる。／(iii) SmartScreen 側の既知の非 ASCII 表示制限として文書化のみ（署名の信頼シグナルを損なうため非推奨）。代替として「CA に BMPString 符号化を依頼」は、現代の CA が RFC 5280 準拠で UTF8String を既定とし符号化をこちらで選べず全ダイアログでの表示保証もないため確実でない。README の SmartScreen 節（署名後に更新予定。PR #412）で「発行元が『柳井建人』と表示される」旨を書く場合は、この文字化けと齟齬するため**表現に注意**が要る（→ この点は PR #412 のマージ時点で解消済み——README・docs/code-signing-policy.md とも「SmartScreen の青い画面では文字化けし得る・正確な発行元はプロパティ/UAC で確認」という注記込みの記述になっている）。
+
+**オーナー裁定（2026-07-24）: (i) 現状受容で確定**。理由: 本証明書は**マイナンバーカードによる本人確認（IV）で取得しており、検証名がカード記載の漢字氏名になる。マイナンバーカードにローマ字表記が無いため、ローマ字 subject の証明書は本人確認経路の制約上そもそも発行できない**（(ii) は選択肢として成立しない——将来「ローマ字にすればよい」の蒸し返しを防ぐため理由を明記する）。したがって v0.5.0 以降も漢字 subject のまま進める。**緩和と正しい発行者名の確認手段**: ①SmartScreen の「認識されないアプリ」警告自体は評判蓄積で解消していく（決定 1・本 amendment 上表の想定どおり——警告ダイアログが出なくなれば化けた発行元行も表に出なくなる）。②署名の真正性と正しい発行者名（`柳井建人`）は `Get-AuthenticodeSignature` およびファイルのプロパティ→デジタル署名の詳細で正しく確認できる（SmartScreen とは別の Unicode 対応経路。本 lab で `Get-AuthenticodeSignature` = `CN=柳井建人`・`Status=Valid` を実測）。README／SECURITY.md には「SmartScreen ダイアログ上の発行者名が一部の日本語 Windows で文字化けし得るが、署名は有効であり正しい発行者はファイルのデジタル署名詳細で確認できる」旨を注記するのが望ましい（利用者の不信を招かないため。**文言化済み**: PR #412〈マージ済み〉が README の SmartScreen 節と docs/code-signing-policy.md「既知の表示問題」節に同旨の注記を追加している）。
+
+**バージョン注記**: run 30017908696 の署名済み MSI は **ProductVersion 0.4.0**（0.5.0 ではない——版数 bump 前の run）。SmartScreen の発行元表示は版数に依存しないため本検証には支障ないが、v0.5.0 の署名付きリリース物として記録する場合は 0.5.0 を焼いた署名 run の指定が要る（オーナー確認事項）。
