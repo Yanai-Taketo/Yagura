@@ -23,7 +23,7 @@
     Company は MSI の Manufacturer、Copyright は NOTICE と一致させる。
   -->
   <PropertyGroup>
-    <YaguraVersion>0.4.0</YaguraVersion>
+    <YaguraVersion>0.5.0</YaguraVersion>
     <Version>$(YaguraVersion)</Version>
     <Product>Yagura</Product>
     <Company>Yagura Project</Company>
