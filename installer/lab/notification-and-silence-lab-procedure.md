@@ -1,7 +1,7 @@
 # 通知・途絶検知の lab 検証手順 — ADR-0017 / ADR-0018
 
-> **未実施**(2026-07-20 作成。Issue #393)。本手順は PR #366(メール通知)の受け入れ基準のうち実 SMTP サーバ・実機負荷を要して未実施のまま残った項目と、ADR-0018 受け入れ基準の「ホットパス追加コストの計測」を lab で実施するためのもの。
-> 実施したら結果を各 ADR の帰結・受け入れ基準へ記録し、本ファイル冒頭のこの注記を「実施済み(日付・環境)」へ書き換える。
+> **実施済み(2026-07-24。lab: `WIN-DV7G9OMOF4U` = Windows Server 2025 `10.0.26100`・`yagura.test` DC・Yagura v0.5.0〈`main` 自ビルド〉・保存先 SQL Server 2022 Express・SMTP は smtp4dev 3.15.0)**。2026-07-20 作成。Issue #393。本手順は PR #366(メール通知)の受け入れ基準のうち実 SMTP サーバ・実機負荷を要して未実施のまま残った項目と、ADR-0018 受け入れ基準の「ホットパス追加コストの計測」を lab で実施するためのもの。
+> 実測結果は [ADR-0017 改訂履歴 4](../../docs/adr/0017-email-notification.md)(A〜C)と [ADR-0018 改訂履歴 2](../../docs/adr/0018-source-silence-detection.md)(D)へ記録し、Issue #393 にも要約をコメントした。**実施上の差異(ヘッドレス lab)**: A〜C の設定は設定画面ではなく `yagura.json` 手編集で行った(設定画面 UI 経路・テスト送信ボタンは Blazor circuit のため別途 UI 確認とする)。C の平文不発生は `pktmon` が loopback を捕捉しないため、平文 SMTP サーバ自身のセッション記録(受信 SMTP コマンド列)を線上の証跡に用いた。
 
 **実施環境**: Yagura サービスがインストール済みの lab。A〜C には lab 内で自由に止められる SMTP サーバが必要(推奨: 開発用 SMTP サーバ——smtp4dev / Papercut SMTP 等——を lab 内の別ホストに立てる。STARTTLS を有効化できるものを選ぶこと)。D には負荷生成用に `tools/Yagura.Bench`(Windows 上でビルド済み)を使う。
 
