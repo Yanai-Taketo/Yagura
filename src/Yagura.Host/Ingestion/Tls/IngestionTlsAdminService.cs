@@ -17,7 +17,7 @@ namespace Yagura.Host.Ingestion.Tls;
 /// <remarks>
 /// <para>
 /// <b>管理リモート HTTPS 版（<see cref="AdminRemoteAccessAdminService"/>）の写しである</b>。
-/// 証明書の実ストア解決は同一コード <see cref="AdminCertificateProvider.Load"/> を、EKU 判定と
+/// 証明書の実ストア解決は同一コード <see cref="CertificateProvider.Load"/> を、EKU 判定と
 /// 秘密鍵の読取検証は <see cref="WindowsCertificateStoreReader"/> の internal ヘルパを共有する
 /// （ADR-0019 決定 1「列挙・検証の実装は共有し二重実装しない」）。
 /// </para>
@@ -30,7 +30,7 @@ namespace Yagura.Host.Ingestion.Tls;
 /// <b>期限切れは拒否せず警告して通す</b>。TLS 受信は期限切れでも受信を止めない（security.md §6）
 /// ——証明書を検証して接続を拒否するかは<b>送信側の判断</b>であり、受信側が先回りして止めると
 /// 「送信元がサイレントに脱落する」事故を製品自ら起こす。起動時の TLS 証明書解決も
-/// <see cref="AdminCertificateLoadResult.IsExpired"/> を判定に使っていない（<c>Program.cs</c>）ため、
+/// <see cref="CertificateLoadResult.IsExpired"/> を判定に使っていない（<c>Program.cs</c>）ため、
 /// 保存時に拒否すると<b>逆に</b>「UI では保存できないのに手編集なら動く」乖離になる
 /// （決定 2「UI 事前検証と起動時検証の乖離ゼロ」）。
 /// </description></item>
@@ -58,7 +58,7 @@ public sealed class IngestionTlsAdminService : IIngestionTlsAdminService
 
     private readonly string _dataRoot;
     private readonly IAuditRecorder _auditRecorder;
-    private readonly Func<string, AdminCertificateLoadResult> _loadCertificate;
+    private readonly Func<string, CertificateLoadResult> _loadCertificate;
     private readonly Func<X509Certificate2, bool> _hasServerAuthEku;
     private readonly Func<X509Certificate2, bool> _isPrivateKeyReadable;
     private readonly TimeProvider _timeProvider;
@@ -70,7 +70,7 @@ public sealed class IngestionTlsAdminService : IIngestionTlsAdminService
         : this(
             dataRoot,
             auditRecorder,
-            AdminCertificateProvider.Load,
+            CertificateProvider.Load,
             WindowsCertificateStoreReader.HasServerAuthEku,
             WindowsCertificateStoreReader.IsPrivateKeyReadable,
             timeProvider)
@@ -84,7 +84,7 @@ public sealed class IngestionTlsAdminService : IIngestionTlsAdminService
     internal IngestionTlsAdminService(
         string dataRoot,
         IAuditRecorder auditRecorder,
-        Func<string, AdminCertificateLoadResult> loadCertificate,
+        Func<string, CertificateLoadResult> loadCertificate,
         Func<X509Certificate2, bool> hasServerAuthEku,
         Func<X509Certificate2, bool> isPrivateKeyReadable,
         TimeProvider? timeProvider = null)

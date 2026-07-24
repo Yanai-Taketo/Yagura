@@ -172,9 +172,9 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
     [Fact]
     public async Task ConfigureAsync_CertificateLoadFailure_ThrowsWithLoadFailureReason()
     {
-        // 起動時 1013 と同一コード（AdminCertificateProvider.Load 相当）の失敗理由をそのまま表示する（D-6）。
+        // 起動時 1013 と同一コード（CertificateProvider.Load 相当）の失敗理由をそのまま表示する（D-6）。
         var service = CreateService(loadCertificate: _ =>
-            AdminCertificateLoadResult.Failure($"拇印 {ValidThumbprint} の証明書が LocalMachine\\My ストアに見つかりません。"));
+            CertificateLoadResult.Failure($"拇印 {ValidThumbprint} の証明書が LocalMachine\\My ストアに見つかりません。"));
 
         var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
             service.ConfigureAsync(
@@ -194,7 +194,7 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
         // IsExpired なら「未解決」として bind をスキップし縮小継続（1013）するため、事前検証が
         // 緑のまま通すと「保存は成功したのに再起動後に 1013」の乖離になる。
         var service = CreateService(loadCertificate: _ =>
-            AdminCertificateLoadResult.Success(CreateCertificate("CN=yagura-expired"), isExpired: true));
+            CertificateLoadResult.Success(CreateCertificate("CN=yagura-expired"), isExpired: true));
 
         var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
             service.ConfigureAsync(
@@ -362,7 +362,7 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
         var service = CreateService(loadCertificate: thumbprint =>
         {
             Seed(windowsAuth: "true");
-            return AdminCertificateLoadResult.Success(CreateCertificate("CN=yagura-conflict"), isExpired: false);
+            return CertificateLoadResult.Success(CreateCertificate("CN=yagura-conflict"), isExpired: false);
         });
 
         await Assert.ThrowsAsync<ConfigurationConflictException>(() =>
@@ -378,14 +378,14 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
     private string ConfigurationFilePath => Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
 
     private AdminRemoteAccessAdminService CreateService(
-        Func<string, AdminCertificateLoadResult>? loadCertificate = null,
+        Func<string, CertificateLoadResult>? loadCertificate = null,
         Func<X509Certificate2, bool>? hasServerAuthEku = null,
         Func<X509Certificate2, bool>? isPrivateKeyReadable = null)
     {
         return new AdminRemoteAccessAdminService(
             _dataRoot,
             _audit,
-            loadCertificate ?? (_ => AdminCertificateLoadResult.Success(CreateCertificate("CN=yagura-test"), isExpired: false)),
+            loadCertificate ?? (_ => CertificateLoadResult.Success(CreateCertificate("CN=yagura-test"), isExpired: false)),
             hasServerAuthEku ?? (_ => true),
             isPrivateKeyReadable ?? (_ => true));
     }

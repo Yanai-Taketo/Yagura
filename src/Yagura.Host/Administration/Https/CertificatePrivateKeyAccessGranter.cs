@@ -7,10 +7,12 @@ using System.Security.Principal;
 namespace Yagura.Host.Administration.Https;
 
 /// <summary>
-/// 管理リスナのリモート HTTPS 証明書（ADR-0010 Phase 2 決定 4）の秘密鍵読み取り権限を、
-/// サービスアカウントへ付与する。configuration.md §6 が確定済みの方式（証明書の選択時に、
-/// サービスアカウントへ当該証明書の秘密鍵の読み取り権限<b>のみ</b>を付与する——広い権限へ逃げない）
-/// をリモート管理 HTTPS 証明書にも適用する。
+/// サーバ証明書の秘密鍵読み取り権限をサービスアカウントへ付与する。configuration.md §6 が
+/// 確定済みの方式（証明書の選択時に、サービスアカウントへ当該証明書の秘密鍵の読み取り権限
+/// <b>のみ</b>を付与する——広い権限へ逃げない）を適用する。<b>用途は 1 つではない</b>
+/// （#359 で命名を中立化した）——<b>管理リスナのリモート HTTPS</b>（ADR-0010 Phase 2 決定 4）と
+/// <b>TLS 受信</b>（RFC 5425。security.md §6）の両証明書に対して、合成ルート（<c>Program</c>）が
+/// 同一の付与処理を呼ぶ。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -33,13 +35,13 @@ namespace Yagura.Host.Administration.Https;
 /// 呼び出し元（<c>Program</c>）は付与をベストエフォートとして扱い、失敗しても起動を妨げず
 /// 警告のみ残す設計である（security.md §2.5）。この設計が成立するには、本メソッドが
 /// 鍵へのアクセス不能・ACL 書き換え不可・鍵ファイル不在といった環境要因を
-/// <see cref="AdminCertificatePrivateKeyGrantResult"/> の失敗として返しきる必要がある。
+/// <see cref="CertificatePrivateKeyGrantResult"/> の失敗として返しきる必要がある。
 /// 特に<b>鍵ファイルパスの解決自体が秘密鍵を開くことを要する</b>点に注意（鶏と卵——
 /// 付与しようとしている権限を付与処理が必要とする）。
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public static class AdminCertificatePrivateKeyAccessGranter
+public static class CertificatePrivateKeyAccessGranter
 {
     /// <summary>
     /// 指定した証明書の秘密鍵に対する読み取り専用アクセスを <paramref name="accountName"/> へ付与する。
@@ -48,14 +50,14 @@ public static class AdminCertificatePrivateKeyAccessGranter
     /// <param name="accountName">
     /// 付与先アカウント（例: <c>NT SERVICE\Yagura</c>——ADR-0004 決定 4 の仮想サービスアカウント）。
     /// </param>
-    public static AdminCertificatePrivateKeyGrantResult TryGrantReadAccess(X509Certificate2 certificate, string accountName)
+    public static CertificatePrivateKeyGrantResult TryGrantReadAccess(X509Certificate2 certificate, string accountName)
     {
         ArgumentNullException.ThrowIfNull(certificate);
         ArgumentException.ThrowIfNullOrWhiteSpace(accountName);
 
         if (!certificate.HasPrivateKey)
         {
-            return AdminCertificatePrivateKeyGrantResult.Failure("証明書に秘密鍵がありません。");
+            return CertificatePrivateKeyGrantResult.Failure("証明書に秘密鍵がありません。");
         }
 
         // 鍵ファイルパスの解決は秘密鍵を開くため、「これから付与しようとしている権限」を要求する
@@ -73,7 +75,7 @@ public static class AdminCertificatePrivateKeyAccessGranter
         }
         catch (CryptographicException ex)
         {
-            return AdminCertificatePrivateKeyGrantResult.Failure(
+            return CertificatePrivateKeyGrantResult.Failure(
                 "秘密鍵を開けなかったため、権限付与先の鍵ファイルを特定できませんでした: " +
                 $"{ex.Message} " +
                 "現在の実行アカウントに秘密鍵への権限がない場合に起きます（付与しようとしている権限を" +
@@ -84,7 +86,7 @@ public static class AdminCertificatePrivateKeyAccessGranter
 
         if (keyFilePath is null)
         {
-            return AdminCertificatePrivateKeyGrantResult.Failure(
+            return CertificatePrivateKeyGrantResult.Failure(
                 "秘密鍵が CNG ソフトウェアキーストレージプロバイダー（ファイルベース）ではないため、" +
                 "自動での権限付与に対応していません（スマートカード・HSM・TPM 保護鍵等が該当します）。" +
                 "証明書スナップイン（certlm.msc）の「秘密キーの管理」から手動で権限を付与してください" +
@@ -93,7 +95,7 @@ public static class AdminCertificatePrivateKeyAccessGranter
 
         if (!File.Exists(keyFilePath))
         {
-            return AdminCertificatePrivateKeyGrantResult.Failure(
+            return CertificatePrivateKeyGrantResult.Failure(
                 $"秘密鍵ファイルが見つかりません（想定パス: {keyFilePath}）。証明書の取り込み方法を確認してください。");
         }
 
@@ -112,11 +114,11 @@ public static class AdminCertificatePrivateKeyAccessGranter
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IdentityNotMappedException or IOException)
         {
-            return AdminCertificatePrivateKeyGrantResult.Failure(
+            return CertificatePrivateKeyGrantResult.Failure(
                 $"秘密鍵ファイル {keyFilePath} への ACL 付与に失敗しました: {ex.Message}");
         }
 
-        return AdminCertificatePrivateKeyGrantResult.Success(keyFilePath);
+        return CertificatePrivateKeyGrantResult.Success(keyFilePath);
     }
 
     /// <summary>
@@ -157,10 +159,10 @@ public static class AdminCertificatePrivateKeyAccessGranter
     }
 }
 
-/// <summary><see cref="AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess"/> の結果。</summary>
-public sealed class AdminCertificatePrivateKeyGrantResult
+/// <summary><see cref="CertificatePrivateKeyAccessGranter.TryGrantReadAccess"/> の結果。</summary>
+public sealed class CertificatePrivateKeyGrantResult
 {
-    private AdminCertificatePrivateKeyGrantResult(bool succeeded, string? keyFilePath, string? failureReason)
+    private CertificatePrivateKeyGrantResult(bool succeeded, string? keyFilePath, string? failureReason)
     {
         Succeeded = succeeded;
         KeyFilePath = keyFilePath;
@@ -173,7 +175,7 @@ public sealed class AdminCertificatePrivateKeyGrantResult
 
     public string? FailureReason { get; }
 
-    public static AdminCertificatePrivateKeyGrantResult Success(string keyFilePath) => new(true, keyFilePath, null);
+    public static CertificatePrivateKeyGrantResult Success(string keyFilePath) => new(true, keyFilePath, null);
 
-    public static AdminCertificatePrivateKeyGrantResult Failure(string reason) => new(false, null, reason);
+    public static CertificatePrivateKeyGrantResult Failure(string reason) => new(false, null, reason);
 }

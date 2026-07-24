@@ -799,8 +799,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         var collector = new FakeLogCollector();
         FakeTimeProvider timeProvider = null!;
         var monitor = CreateMonitor(spool: null, collector, out timeProvider,
-            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
-                new AdminHttpsCertificateStatus(
+            adminHttpsCertificateProbe: new FakeCertificateStatusProbe(() =>
+                new CertificateStatus(
                     IsAvailable: true,
                     NotAfter: timeProvider.GetUtcNow().AddDays(365),
                     FailureReason: null)));
@@ -816,8 +816,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         var collector = new FakeLogCollector();
         FakeTimeProvider timeProvider = null!;
         var monitor = CreateMonitor(spool: null, collector, out timeProvider,
-            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
-                new AdminHttpsCertificateStatus(
+            adminHttpsCertificateProbe: new FakeCertificateStatusProbe(() =>
+                new CertificateStatus(
                     IsAvailable: true,
                     NotAfter: timeProvider.GetUtcNow().AddDays(10), // 閾値(仮値 30 日)以内
                     FailureReason: null)));
@@ -837,8 +837,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         var collector = new FakeLogCollector();
         FakeTimeProvider timeProvider = null!;
         var monitor = CreateMonitor(spool: null, collector, out timeProvider,
-            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
-                new AdminHttpsCertificateStatus(
+            adminHttpsCertificateProbe: new FakeCertificateStatusProbe(() =>
+                new CertificateStatus(
                     IsAvailable: true,
                     NotAfter: timeProvider.GetUtcNow().AddDays(-1), // 既に期限切れ
                     FailureReason: null)));
@@ -858,10 +858,10 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         FakeTimeProvider timeProvider = null!;
         var available = true;
         var monitor = CreateMonitor(spool: null, collector, out timeProvider,
-            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
+            adminHttpsCertificateProbe: new FakeCertificateStatusProbe(() =>
                 available
-                    ? new AdminHttpsCertificateStatus(true, timeProvider.GetUtcNow().AddDays(365), null)
-                    : new AdminHttpsCertificateStatus(false, default, "拇印 XXXX の証明書が LocalMachine\\My ストアに見つかりません。")));
+                    ? new CertificateStatus(true, timeProvider.GetUtcNow().AddDays(365), null)
+                    : new CertificateStatus(false, default, "拇印 XXXX の証明書が LocalMachine\\My ストアに見つかりません。")));
 
         await monitor.EvaluateOnceAsync();
         Assert.DoesNotContain(collector.GetSnapshot(), r => r.Id.Id is 1014 or 1015);
@@ -881,8 +881,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         var collector = new FakeLogCollector();
         FakeTimeProvider timeProvider = null!;
         var monitor = CreateMonitor(spool: null, collector, out timeProvider,
-            adminHttpsCertificateProbe: new FakeAdminHttpsCertificateStatusProbe(() =>
-                new AdminHttpsCertificateStatus(true, timeProvider.GetUtcNow().AddDays(10), null)));
+            adminHttpsCertificateProbe: new FakeCertificateStatusProbe(() =>
+                new CertificateStatus(true, timeProvider.GetUtcNow().AddDays(10), null)));
 
         await monitor.EvaluateOnceAsync();
         Assert.Single(collector.GetSnapshot(), r => r.Id.Id == 1014);
@@ -999,7 +999,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
         IMonitoredVolumeInfo? volumeInfo = null,
         IExpressCapacityChecker? expressChecker = null,
         SpoolSelfTestTracker? selfTestTracker = null,
-        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
+        ICertificateStatusProbe? adminHttpsCertificateProbe = null,
         Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null)
     {
         timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-09T00:00:00Z"));
@@ -1128,8 +1128,8 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
     /// 管理リスナのリモート HTTPS 証明書の状態プローブのフェイク（呼び出しごとに差し替え可能——
     /// 「健全 → ストアから削除」等の稼働中遷移を模す）。
     /// </summary>
-    private sealed class FakeAdminHttpsCertificateStatusProbe(Func<AdminHttpsCertificateStatus> behavior) : IAdminHttpsCertificateStatusProbe
+    private sealed class FakeCertificateStatusProbe(Func<CertificateStatus> behavior) : ICertificateStatusProbe
     {
-        public AdminHttpsCertificateStatus Check() => behavior();
+        public CertificateStatus Check() => behavior();
     }
 }

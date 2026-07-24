@@ -11,7 +11,7 @@ namespace Yagura.E2E.Tests;
 /// <para>
 /// <b>証明書をストアへ導入しないシナリオ</b>: 拇印としては正しい形式（16 進 40 桁）だが
 /// LocalMachine\My ストアに存在しない値を指定する。静的な設定検証（<c>YaguraConfigurationLoader</c>）は
-/// 通過するが、実際の証明書ストア参照（<c>AdminCertificateProvider.Load</c>）が失敗するため、
+/// 通過するが、実際の証明書ストア参照（<c>CertificateProvider.Load</c>）が失敗するため、
 /// <b>TLS 受信の bind エントリのみを開かずに縮小継続する</b>（起動時警告 1016）。平文 UDP/TCP 受信は
 /// 一切影響を受けない（ADR-0004 決定 3）。管理リスナのリモート HTTPS の同型シナリオ（1013。
 /// <c>AdminRemoteBindingRegressionTests</c>）と異なり、<b>ストアへ実証明書を導入する必要が無い</b>

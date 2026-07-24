@@ -35,7 +35,7 @@ namespace Yagura.Ingestion.Tls;
 /// </para>
 /// <para>
 /// <b>証明書の参照・期限切れ時の挙動</b>（security.md §6）: 証明書は
-/// <paramref name="certificateSelector"/>（<c>Yagura.Host.Administration.Https.AdminCertificateProvider</c>
+/// <paramref name="certificateSelector"/>（<c>Yagura.Host.Administration.Https.CertificateProvider</c>
 /// を Web UI の HTTPS と共有する形で Yagura.Host が結線する——本プロジェクトは Windows 証明書ストアに
 /// 依存しない）が返す <see cref="X509Certificate2"/> を毎回のハンドシェイクで提示する。
 /// <b>期限切れ・失効時もリスナは停止しない</b>——Web UI の HTTPS（Kestrel の
