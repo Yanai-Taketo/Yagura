@@ -206,9 +206,11 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 - **サービス実行アカウントの gMSA opt-in(ADR-0015・Issue #263)の検証マトリクス**
   (security.md SEC-14 の「CI で継続検知する範囲 / lab でしか検証できない項目」の明示):
   - **CI(installer-e2e。AD なしで検証できる範囲)**:
-    - `msi-service-account-table`: MSI テーブル照合(`Property` の `YAGURA_SERVICE_ACCOUNT`
-      既定値 = `NT SERVICE\Yagura`・`ServiceInstall.StartName` = `[YAGURA_SERVICE_ACCOUNT]` の
-      間接参照のまま・`ValidateYaguraServiceAccount` CA の存在)
+    - `msi-service-account-table`: MSI テーブル照合(`Property` の `YAGURA_SERVICE_ACCOUNT` は
+      **静的既定値を持たない**〔既定は `DefaultServiceAccount` CA が与える。#426 のコマンドライン
+      上書き対応で撤去〕・コマンドライン優先の `SaveCmdLineServiceAccount`/`RestoreCmdLineServiceAccount`
+      CA の存在・`ServiceInstall.StartName` = `[YAGURA_SERVICE_ACCOUNT]` の間接参照のまま・
+      `ValidateYaguraServiceAccount` CA の存在)
     - `service-account-evidence`: 既定インストール後の `Win32_Service.StartName` が仮想 SA で
       あること(間接参照化による既定経路の非退行)+ `service-account.ini` と
       `HKLM\SOFTWARE\Yagura\ServiceAccount`(remember property 記録)の書き込み
@@ -216,7 +218,9 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
       インストールが失敗し(fail-closed)、サービス・レジストリの残置がないこと
     - Host 側単体テスト: `ServiceAccountStartupInspectorTests`(転記 2024 の一回性・
       変化検出 2025 のレール)
-  - **AD lab の管轄(security.md SEC-14 (a)〜(f)。yagura.test DC。未実施)**:
+  - **AD lab の管轄(security.md SEC-14 (a)〜(f)。yagura.test DC。実施済み 2026-07-24——再現手順と実測は
+    [lab/gmsa-service-account-lab-procedure.md](lab/gmsa-service-account-lab-procedure.md)。
+    (a)/(c) は ADR-0015 改訂履歴 3、(b)(d)(e)(f) は改訂履歴 4)**:
     (a) gMSA 指定の新規インストール E2E(icacls 後追い付与の実出力記録を含む)
     (b) パスワードローテーション跨ぎの受信・DB 書き込み継続
     (c) DC 停止状態での再起動(1069 実挙動・SCM 回復設定の実効値の確定)
