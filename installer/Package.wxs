@@ -170,6 +170,54 @@
       アンインストール(REMOVE="ALL")は検証しない(残置値が読めなくても削除は妨げない)。
     -->
     <CustomAction Id="ValidateYaguraServiceAccount" Error="!(loc.ServiceAccountInvalidError)" />
+    <!-- ACL 後追い付与の CA 群は $(YaguraUtilCABinaryRef) を参照するため、その <?define?>
+         (下の WixShellExec セクション)より後に置く(WiX プリプロセッサは逐次処理——
+         define より前で参照すると WIX0150。CI installer-e2e の実ビルドで検出)。 -->
+
+
+    <!-- 完了画面(ExitDialog): 閲覧・管理 URL の案内テキスト + 「ブラウザで開く」チェックボックス
+         (WixUI 公式のカスタマイズ機構。docs.firegiant.com/wix/tools/wixext/wixui/
+         「Adding text or a checkbox to the completion dialog」、確認日 2026-07-06)。
+         案内文には両 URL を併記する(Issue #131。オーナー決定 2026-07-09「案A フル構成」の 3)。
+         案内テキスト用コントロールは WixToolset.UI.wixext 同梱 ExitDialog.wxs の
+         OptionalText(X=135 Y=110 Width=220 Height=80)を使う。 -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="!(loc.ExitDialogViewerText)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.ExitDialogLaunchCheckBox)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <!-- チェックボックス ON のとき既定ブラウザで閲覧 URL を開く。
+         WixShellExec は Util 拡張の custom action で、実装は ShellExecuteW にターゲットを
+         そのまま渡す(wixtoolset/wix v7.0.0 の src/ext/Util/ca/shellexecca.cpp を直接確認。
+         URL は OS のプロトコル関連付けで既定ブラウザが開く。確認日 2026-07-06)。
+
+         BinaryRef はアーキ別に存在する(WixToolset.Util.wixext は x86/x64/arm64 それぞれの
+         ネイティブ CA バイナリを Wix4UtilCA_X86 / Wix4UtilCA_X64 / Wix4UtilCA_A64 として
+         同梱する)。util:ServiceConfig・util:InternetShortcut・Firewall 拡張の CustomAction は
+         拡張の wixlib フラグメントが InstallerPlatform に応じて自動解決するが、本 CustomAction
+         は素の <CustomAction BinaryRef="..."> で自前記述しているため手動で解決する必要がある。
+         ADR-0009 決定4 の懸念(BinaryRef のアーキ依存内部参照名)はここに実在した——
+         ARM64 ビルド(-p:YaguraArch=arm64)を実ビルドし、WindowsInstaller COM で CustomAction
+         テーブルを照合したところ、拡張自動生成分はすべて Wix4UtilCA_A64/Wix5FWCA_A64 に
+         解決される一方、本行は x64 決め打ちのままだった(確認日 2026-07-10)。$(sys.BUILDARCH)
+         は WiX 標準のプリプロセッサ変数で、InstallerPlatform(-arch/-p:InstallerPlatform)と
+         連動して x86/x64/arm64 に解決される(docs.firegiant.com/wix/schema/wxsyntax/
+         preprocessorvariables/、確認日 2026-07-10)。 -->
+    <?if $(sys.BUILDARCH) = x86 ?>
+    <?define YaguraUtilCABinaryRef = Wix4UtilCA_X86 ?>
+    <?elseif $(sys.BUILDARCH) = x64 ?>
+    <?define YaguraUtilCABinaryRef = Wix4UtilCA_X64 ?>
+    <?elseif $(sys.BUILDARCH) = arm64 ?>
+    <?define YaguraUtilCABinaryRef = Wix4UtilCA_A64 ?>
+    <?else?>
+    <?error 未対応の sys.BUILDARCH です: $(sys.BUILDARCH) ?>
+    <?endif?>
+    <Property Id="WixShellExecTarget" Value="http://localhost:8514/" />
+    <CustomAction Id="LaunchYaguraViewer"
+                  BinaryRef="$(YaguraUtilCABinaryRef)"
+                  DllEntry="WixShellExec"
+                  Execute="immediate"
+                  Return="check"
+                  Impersonate="yes" />
 
     <!--
       gMSA 構成の ACL 後追い付与(ADR-0015 決定 4 / 改訂履歴 1 (iii) / security.md §5.2)。
@@ -233,50 +281,6 @@
       <Custom Action="GrantServiceAccountForwarderAcl" After="GrantServiceAccountDataRootAcl"
               Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
-
-    <!-- 完了画面(ExitDialog): 閲覧・管理 URL の案内テキスト + 「ブラウザで開く」チェックボックス
-         (WixUI 公式のカスタマイズ機構。docs.firegiant.com/wix/tools/wixext/wixui/
-         「Adding text or a checkbox to the completion dialog」、確認日 2026-07-06)。
-         案内文には両 URL を併記する(Issue #131。オーナー決定 2026-07-09「案A フル構成」の 3)。
-         案内テキスト用コントロールは WixToolset.UI.wixext 同梱 ExitDialog.wxs の
-         OptionalText(X=135 Y=110 Width=220 Height=80)を使う。 -->
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="!(loc.ExitDialogViewerText)" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.ExitDialogLaunchCheckBox)" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-
-    <!-- チェックボックス ON のとき既定ブラウザで閲覧 URL を開く。
-         WixShellExec は Util 拡張の custom action で、実装は ShellExecuteW にターゲットを
-         そのまま渡す(wixtoolset/wix v7.0.0 の src/ext/Util/ca/shellexecca.cpp を直接確認。
-         URL は OS のプロトコル関連付けで既定ブラウザが開く。確認日 2026-07-06)。
-
-         BinaryRef はアーキ別に存在する(WixToolset.Util.wixext は x86/x64/arm64 それぞれの
-         ネイティブ CA バイナリを Wix4UtilCA_X86 / Wix4UtilCA_X64 / Wix4UtilCA_A64 として
-         同梱する)。util:ServiceConfig・util:InternetShortcut・Firewall 拡張の CustomAction は
-         拡張の wixlib フラグメントが InstallerPlatform に応じて自動解決するが、本 CustomAction
-         は素の <CustomAction BinaryRef="..."> で自前記述しているため手動で解決する必要がある。
-         ADR-0009 決定4 の懸念(BinaryRef のアーキ依存内部参照名)はここに実在した——
-         ARM64 ビルド(-p:YaguraArch=arm64)を実ビルドし、WindowsInstaller COM で CustomAction
-         テーブルを照合したところ、拡張自動生成分はすべて Wix4UtilCA_A64/Wix5FWCA_A64 に
-         解決される一方、本行は x64 決め打ちのままだった(確認日 2026-07-10)。$(sys.BUILDARCH)
-         は WiX 標準のプリプロセッサ変数で、InstallerPlatform(-arch/-p:InstallerPlatform)と
-         連動して x86/x64/arm64 に解決される(docs.firegiant.com/wix/schema/wxsyntax/
-         preprocessorvariables/、確認日 2026-07-10)。 -->
-    <?if $(sys.BUILDARCH) = x86 ?>
-    <?define YaguraUtilCABinaryRef = Wix4UtilCA_X86 ?>
-    <?elseif $(sys.BUILDARCH) = x64 ?>
-    <?define YaguraUtilCABinaryRef = Wix4UtilCA_X64 ?>
-    <?elseif $(sys.BUILDARCH) = arm64 ?>
-    <?define YaguraUtilCABinaryRef = Wix4UtilCA_A64 ?>
-    <?else?>
-    <?error 未対応の sys.BUILDARCH です: $(sys.BUILDARCH) ?>
-    <?endif?>
-    <Property Id="WixShellExecTarget" Value="http://localhost:8514/" />
-    <CustomAction Id="LaunchYaguraViewer"
-                  BinaryRef="$(YaguraUtilCABinaryRef)"
-                  DllEntry="WixShellExec"
-                  Execute="immediate"
-                  Return="check"
-                  Impersonate="yes" />
 
     <!-- ダイアログ列: Welcome → License → InstallDir → Firewall → VerifyReady
          (WixUI_InstallDir を公式手順どおり複製し YaguraFirewallDlg を挿入。
