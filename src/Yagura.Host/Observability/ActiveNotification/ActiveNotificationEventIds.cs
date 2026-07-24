@@ -147,4 +147,27 @@ public static class ActiveNotificationEventIds
     /// 以上継続して発動している（ADR-0011 決定 6）。レベル: 警告。
     /// </summary>
     public static readonly EventId AdminAuthFailureDefenseEscalated = new(1019, "AdminAuthFailureDefenseEscalated");
+
+    /// <summary>
+    /// フォワーダ MSI 配置フォルダの ACL 乖離——アップロード機能（<c>Admin:ForwarderKit:MsiUpload:Enabled</c>）が
+    /// 無効なのに、サービス実行アカウントの書き込み ACE が残っている（閉じ忘れ。ADR-0020 決定 2・
+    /// 委任 7。Issue #283。#171 の教訓——意図した ACL と実 ACL の乖離は検出されるまで気づかれない）。
+    /// 起動時（Program の一回検査）と周期監視（<see cref="ActiveNotificationMonitor"/>）の両方から
+    /// 発火する。レベル: 警告。採番: 1000 番台の次の空き 1033（1032 は
+    /// <c>ConfigurationEventIds.ForwarderMsiUploadFailClosedStartupRejected</c> が使用）。
+    /// </summary>
+    public static readonly EventId ForwarderMsiFolderAclDrift = new(1033, "ForwarderMsiFolderAclDrift");
+
+    /// <summary>
+    /// フォワーダ MSI 配置フォルダの書き込み経路の開放が継続している——アップロード機能が有効で、
+    /// 書き込み ACE の存在が継続判定期間
+    /// （<see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationThreshold"/>。仮値 24 時間）
+    /// 以上連続して観測された（ADR-0020 決定 2・委任 7。Issue #283）。設定上は期待どおりの状態で
+    /// あり（常置運用は正当な選択）、「開いたままである」ことの定期リマインダとして専用の長い抑制窓
+    /// （<see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow"/>。仮値 7 日）で
+    /// 再表示する。レベル: <b>情報</b>（1029 に次ぐ 1000 番台の情報レベル——対応を要する異常ではなく
+    /// 状態の可視化のため。「使うときだけ開く」運用の閉じ忘れの主たる検出手段——再レビュー クリス指摘 1）。
+    /// </summary>
+    public static readonly EventId ForwarderMsiWritePathOpenContinuing =
+        new(1034, "ForwarderMsiWritePathOpenContinuing");
 }
