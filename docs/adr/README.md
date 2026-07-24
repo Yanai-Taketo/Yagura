@@ -23,7 +23,7 @@
 | [0005](0005-oss-packaging.md) | OSS 体裁 — README・貢献導線・脆弱性報告窓口 | accepted |
 | [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | accepted |
 | [0007](0007-reverse-dns-display.md) | 閲覧画面の送信元逆引き（PTR）ホスト名表示 | accepted |
-| [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | accepted |
+| [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | accepted（設計条件 9 の「手順は提供しない」無条件文は ADR-0020〔2026-07-24 起案〕により部分 supersession の対象） |
 | [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用） | accepted |
 | [0010](0010-admin-ui-authentication.md) | 管理 UI への認証追加（opt-in）とリモート管理の解禁 | accepted（決定 3 のロックアウト機構は ADR-0011、決定 3 の共存セッションモデルは ADR-0013 により superseded） |
 | [0011](0011-app-auth-failure-backoff.md) | アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定 3 の supersession） | accepted |
@@ -35,6 +35,7 @@
 | [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | accepted（改訂 1 = 2026-07-19: 委任 8 の実施結果と流量閾値を非公開とする理由の明文化。改訂 2 = 2026-07-20: 委任 10 の裁定——`[permanent-failure]` に 1030 を採番。決定は不変） |
 | [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | accepted（改訂 1 = 2026-07-19: 委任 1〜7 の実施結果を記録。決定は不変） |
 | [0019](0019-ingestion-tls-cert-ui.md) | TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用。Issue #276） | accepted |
+| [0020](0020-forwarder-msi-upload.md) | フォワーダ配布キット MSI の管理画面アップロード（管理 UI 認証有効時限定。ADR-0008 設計条件 9 の部分 supersession。Issue #283） | proposed |
 
 ## 起案予定
 
