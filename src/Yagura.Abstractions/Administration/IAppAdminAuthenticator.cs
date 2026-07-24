@@ -19,12 +19,16 @@ namespace Yagura.Abstractions.Administration;
 /// 閲覧リスナ側コンポーネントから参照してはならない）。
 /// </para>
 /// <para>
-/// <b>ADR-0011 決定 3・6 の応答統一</b>: <see cref="AppAuthenticationResult"/> は実在アカウントの
-/// バックオフ待機・非実在ユーザー名・IP レート制限拒否・グローバルトークンバケット涸渇のいずれでも
-/// 同一の <see cref="AppAuthenticationResult.Denied"/> を返す——呼び出し元は
-/// <see cref="AppAuthenticationOutcome.DenialLayer"/>（監査記録専用。利用者応答には出さない）で
-/// 原因を区別してはならない。利用者に見せてよいのは
-/// <see cref="AppAuthenticationOutcome.WaitSeconds"/> の数値（カウントダウン表示用）のみ。
+/// <b>ADR-0011 決定 3・6 の応答統一と決定 5.1 の意図的例外</b>: <see cref="AppAuthenticationResult"/> は
+/// 実在アカウントのバックオフ待機・非実在ユーザー名・IP レート制限拒否・グローバルトークンバケット
+/// 涸渇のいずれでも同一の <see cref="AppAuthenticationResult.Denied"/> を返す。アカウント実在性に
+/// 相関しうる層（<see cref="AdminAuthDenialLayer.Backoff"/>）と非実在ユーザー名は、呼び出し元が
+/// 応答をバイト単位で統一し、利用者応答で区別してはならない。一方
+/// <see cref="AdminAuthDenialLayer.IpRateLimit"/> / <see cref="AdminAuthDenialLayer.GlobalBucket"/> は
+/// 送信元 IP・プロセス全体の状態のみで判定し、ユーザー名の実在有無に依存しない（決定 4）ため、
+/// 決定 5.1・6 によりこの層に限り 429 + 有限 Retry-After +
+/// <see cref="AppAuthenticationOutcome.WaitSeconds"/> による待機表示で応答してよい
+/// （この層がクライアントから識別可能になるのは意図的であり、列挙シグナルにはならない）。
 /// </para>
 /// </remarks>
 public interface IAppAdminAuthenticator : IYaguraWriteService
@@ -58,15 +62,18 @@ public enum AppAuthenticationResult
 
     /// <summary>
     /// 拒否（ADR-0011 決定 3・6）: 実在アカウントのバックオフ待機・IP レート制限・グローバル
-    /// トークンバケット涸渇のいずれか。原因は <see cref="AppAuthenticationOutcome.DenialLayer"/>
-    /// （監査記録専用）でのみ区別する——利用者応答・UI 文言では区別しない。
+    /// トークンバケット涸渇のいずれか。原因は <see cref="AppAuthenticationOutcome.DenialLayer"/> を
+    /// 用いて監査記録で区別する。利用者応答はバックオフ層と非実在ユーザー名で統一し、レート制限層
+    /// （<see cref="AdminAuthDenialLayer.IpRateLimit"/> /
+    /// <see cref="AdminAuthDenialLayer.GlobalBucket"/>）のみ待機応答を返す（決定 5.1・6）。
     /// </summary>
     Denied,
 }
 
 /// <summary>
-/// <see cref="AppAuthenticationOutcome.DenialLayer"/> の値（ADR-0011 決定 9。監査記録専用——
-/// 利用者応答に出してはならない）。
+/// <see cref="AppAuthenticationOutcome.DenialLayer"/> の値（ADR-0011 決定 9）。監査記録が第一用途。
+/// 値そのものを利用者応答に出してはならないが、レート制限層（<see cref="IpRateLimit"/> /
+/// <see cref="GlobalBucket"/>）の待機応答分岐（決定 5.1）には用いる。
 /// </summary>
 public enum AdminAuthDenialLayer
 {
@@ -91,7 +98,8 @@ public enum AdminAuthDenialLayer
 /// トークンバケット層は「有限の Retry-After」を表す（両者は数値としては区別され得るが、これは
 /// ADR-0011 決定 3 が明示的に受け入れるタイミング非対称であり、応答種別・UI 文言自体は統一する）。
 /// </param>
-/// <param name="DenialLayer">拒否の主因層（監査記録専用。<see cref="IAppAdminAuthenticator"/> の remarks 参照）。</param>
+/// <param name="DenialLayer">拒否の主因層（用途は <see cref="AdminAuthDenialLayer"/> の doc と
+/// <see cref="IAppAdminAuthenticator"/> の remarks 参照）。</param>
 /// <param name="BackoffCapReached">
 /// <see cref="DenialLayer"/> が <see cref="AdminAuthDenialLayer.Backoff"/> の場合に、今回の試行が
 /// cap（上限遅延）下で行われたかどうか（監査記録専用。ADR-0011 決定 9 のイベント ID 3006 の
