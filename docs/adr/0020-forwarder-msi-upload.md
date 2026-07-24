@@ -1,6 +1,6 @@
 # ADR-0020: フォワーダ配布キット MSI の管理画面アップロード(管理 UI 認証有効時限定)
 
-- 状態: proposed
+- 状態: accepted(2026-07-24 マージ。ペルソナレビュー round 1 = 5 件・変更部分再レビュー round 2 = 3 件を PR #428 で実施)
 - 日付: 2026-07-24
 - 決定者: YANAI Taketo
 - 関連: [ADR-0008](0008-forwarder-kit-generation.md)(設計条件 9 の「手順は提供しない」無条件文 = 本 ADR の部分 supersession 対象)/ [ADR-0010](0010-admin-ui-authentication.md)(決定 1 の loopback 認証 opt-in・決定 9 の再起案指針)/ [ADR-0011](0011-app-auth-failure-backoff.md)・[ADR-0013](0013-admin-winauth-session.md)(認証基盤の実体)/ [ADR-0004](0004-security-model.md)(決定 5 ACL・決定 7 監査)/ [ADR-0015](0015-gmsa-service-account.md)(ACE 付与先の実行アカウント追随)/ [Issue #283](https://github.com/Yanai-Taketo/Yagura/issues/283)(再起案元。lab 実機棚卸しの記録を含む)/ Issue #130(初回提案。2026-07-09 クローズ)/ Issue #171(配置フォルダ ACL 乖離の教訓)/ PR #167(却下 draft と 5 ペルソナ指摘の保存先)/ [security.md](../design/security.md) §2.4・§2.5・§4.3・§5.1/ [利用者ガイド: Windows イベントログを Yagura へ転送する](../guides/forward-windows-eventlog.md)(手動配置手順)
