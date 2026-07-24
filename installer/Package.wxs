@@ -353,10 +353,10 @@
         NT SERVICE\Yagura のまま。gMSA 指定(DOMAIN\name$・パスワードなし)での成立は
         AD lab スパイクで実機確認済み(ADR-0015 改訂履歴 1 (i)。MSI ログに
         StartName=YAGURA\gmsaYagura$ で ServiceInstall が実行され、SCM が受理した)。
-        gMSA 構成では SeServiceLogonRight の事前付与が必須(付与しないとサービス起動が
-        エラー 1920 で失敗しインストールが 1603 でロールバックする——改訂履歴 1 (ii)。
-        付与は利用者ガイド docs/guides/gmsa-service-account.md の前提条件。付与主体の
-        最終確定は SEC-14 (f))。
+        SeServiceLogonRight は検証済みビルド 26100 では不要を実測確定(ADR-0015 改訂履歴 2・
+        Issue #422。スパイクの「必須・1920 ロールバック」は誤帰属の疑いで訂正済み)。
+        未検証ビルド向けの推奨と 1920/1603 時のトラブルシュートは利用者ガイド
+        docs/guides/gmsa-service-account.md §2.4。インストーラは付与しない。
       -->
       <ServiceInstall Id="YaguraService"
                       Name="Yagura"

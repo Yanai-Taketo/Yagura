@@ -45,7 +45,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | 責務 | 実装 |
 |---|---|
 | Windows サービス登録 | `ServiceInstall`(サービス名 `Yagura` = `Program.WindowsServiceName`)。実行アカウントはプロパティ間接参照 `Account="[YAGURA_SERVICE_ACCOUNT]"`(既定 `NT SERVICE\Yagura`)・自動起動・失敗時再起動(5 秒 × 3 回、`util:ServiceConfig`) |
-| サービス実行アカウントの gMSA opt-in(ADR-0015・Issue #263) | MSI プロパティ `YAGURA_SERVICE_ACCOUNT`(既定 `NT SERVICE\Yagura`)+ セットアップ画面の入力欄(`YaguraServiceAccountDlg`。パスワード欄なし)。fail-closed 検証(type 19 CA `ValidateYaguraServiceAccount`: 既定値または `DOMAIN\name$` 形式のみ受理。LocalSystem 等は対話・サイレントを問わず失敗)。remember property でアップグレード時に前回値を継承。gMSA 指定時のみ deferred CA(icacls)がデータルート `(M)`・forwarder `(R)` の ACL を後追い付与し、静的 SDDL の仮想 SA ACE と旧アカウント ACE を除去(security.md §5.2)。インストール記録はデータルート直下 `service-account.ini` + `HKLM\SOFTWARE\Yagura\ServiceAccount`。`SeServiceLogonRight` の事前付与は利用者側の前提条件([docs/guides/gmsa-service-account.md](../docs/guides/gmsa-service-account.md)) |
+| サービス実行アカウントの gMSA opt-in(ADR-0015・Issue #263) | MSI プロパティ `YAGURA_SERVICE_ACCOUNT`(既定 `NT SERVICE\Yagura`)+ セットアップ画面の入力欄(`YaguraServiceAccountDlg`。パスワード欄なし)。fail-closed 検証(type 19 CA `ValidateYaguraServiceAccount`: 既定値または `DOMAIN\name$` 形式のみ受理。LocalSystem 等は対話・サイレントを問わず失敗)。remember property でアップグレード時に前回値を継承。gMSA 指定時のみ deferred CA(icacls)がデータルート `(M)`・forwarder `(R)` の ACL を後追い付与し、静的 SDDL の仮想 SA ACE と旧アカウント ACE を除去(security.md §5.2)。インストール記録はデータルート直下 `service-account.ini` + `HKLM\SOFTWARE\Yagura\ServiceAccount`。`SeServiceLogonRight` は検証済みビルド 26100 では不要を実測確定(ADR-0015 改訂履歴 2・Issue #422)——未検証ビルド向けの推奨と 1920/1603 時のトラブルシュートを利用者ガイド([docs/guides/gmsa-service-account.md](../docs/guides/gmsa-service-account.md) §2.4)に記載し、インストーラは付与しない |
 | データルート作成 + ACL | `%ProgramData%\Yagura` を作成し、native `PermissionEx`(MsiLockPermissionsEx)の SDDL で「SYSTEM/Administrators = フル、サービスアカウント = 変更、継承無効化」を適用(security.md §5) |
 | フォワーダ MSI 配置フォルダ作成 + ACL | `%ProgramData%\Yagura\forwarder` を作成し、データルートとは独立した SDDL(`ForwarderFolder` コンポーネント)で「SYSTEM/Administrators = フル、サービスアカウント = **読み取りのみ**、継承無効化」を適用(ADR-0008 設計条件 9・security.md §5.1・Issue #171)。データルートの ACL をそのまま継承すると生じるサービスアカウントの書込可を明示的に断つ |
 | ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可 3 規則(WixToolset.Firewall.wixext)。**各規則のプロファイルは Domain + Private の複合に限定**(Public は含まない。`Profile="[YaguraFwProfile]"` のプロパティ間接参照でビットマスク整数 `3` = Domain\|Private を Firewall 拡張の custom action へ渡す。方式の根拠と制約は Firewall.wxs 冒頭コメント参照)。管理 8515 は loopback 専用のため規則を作らない |
@@ -223,4 +223,6 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
     (d) 既存データありのアカウント切替(ACL 付替の全域性・旧 ACE 除去・スプール drain・
         失敗時着地。`/remove:g *S-1-5-80-…` の SID 指定除去の成立確認を含む)
     (e) 監査証跡(2024/2025・秘密鍵付与先の実効アカウント追随)
-    (f) SeServiceLogonRight の付与主体の最終確定・gMSA への HTTP SPN 登録手順の確定
+    (f) gMSA への HTTP SPN 登録手順の確定・SeServiceLogonRight 要否のビルド差の記録
+        (26100 = 不要を実測確定済み〔2026-07-24 lab。Issue #422〕。1920 ロールバックの観測は
+        現行ビルドで成立不能のため受け入れ項目から除外——gMSA 固有の実失敗モードは (c) の 1069)
