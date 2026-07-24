@@ -3,7 +3,7 @@
 > **実施済み（2026-07-24。lab: DC `WIN-DV7G9OMOF4U` = Windows Server 2025 `10.0.26100`・`yagura.test` ドメイン、メンバー機 `DESKTOP-9MNR1CM` = Windows 10 Pro `10.0.26100`・保存先 SQL Server 2022 Express `SQLEXPRESS`・gMSA `YAGURA\gmsaYagura$`）**。
 > 結果は [security.md](../../docs/design/security.md) §5.2・§7 SEC-14 行、および [ADR-0015](../../docs/adr/0015-gmsa-service-account.md) 改訂履歴 3・4 に確定として記録済み。本手順書は再実施用に残す。
 >
-> **要点**: (a)〜(f) すべて実測。実施中に**インストーラのサイレントアカウント切替が無言 no-op になる欠陥（[#426](https://github.com/Yanai-Taketo/Yagura/issues/426)）を検出し、CLI 上書き対応（PR #427）で修正のうえ (d) を成立させた**。残るのは (e) 2009 の実発火（SEC-13 と同じ CNG 自己付与制約——実行アカウント種別に非依存）と、(f) の認可済み管理者 Kerberos による監査 2008 `scheme=windows` の E2E（ADR-0013 の Cookie/circuit 自動化の残件と重複）のみ。
+> **要点**: (a)〜(f) すべて実測。実施中に**インストーラのサイレントアカウント切替が無言 no-op になる欠陥（[#426](https://github.com/Yanai-Taketo/Yagura/issues/426)）を検出し、CLI 上書き対応（PR #427）で修正のうえ (d) を成立させた**。残るのは (f) の認可済み管理者 Kerberos による監査 2008 `scheme=windows` の E2E（ADR-0013 の Cookie/circuit 自動化の残件と重複）のみ——(e) 2009 の実発火は SEC-13 で確定済みの CNG 自己付与制約により構造的に成立せず（実行アカウント種別に非依存）、残項目に数えない（ADR-0015 改訂履歴 4・security.md SEC-14 行と同じ整理）。
 
 [ADR-0015](../../docs/adr/0015-gmsa-service-account.md) 決定 7 / [security.md](../../docs/design/security.md) §5.2・§7 SEC-14 / Issue #263 の lab 検証手順。設計の根拠は各設計書を参照し、本書は**再現手順と実測結果**に絞る。
 
