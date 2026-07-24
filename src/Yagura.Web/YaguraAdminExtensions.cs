@@ -114,11 +114,20 @@ public static class YaguraAdminExtensions
     /// <c>/admin/login/windows</c> エンドポイントの登録自体を省略する
     /// （<see cref="Administration.AdminAuthEndpoints.MapAdminAuthEndpoints"/> 参照）。
     /// </param>
+    /// <param name="forwarderMsiUploadEnabled">
+    /// フォワーダ MSI アップロード（<c>Admin:ForwarderKit:MsiUpload:Enabled</c>。ADR-0020 決定 1）の
+    /// 実効値。<see langword="false"/> の場合、アップロード関連エンドポイントの登録自体を省略する
+    /// （「エンドポイントの構造的非存在」——条件不成立の構成では拒否応答すら返す口が存在しない。
+    /// <see cref="Administration.ForwarderMsiUploadEndpoints"/> 参照）。<see langword="true"/> は
+    /// 起動時 fail-closed（1032）により <paramref name="adminAuthRequired"/> = <see langword="true"/> を
+    /// 含意する。
+    /// </param>
     public static IEndpointRouteBuilder MapYaguraAdmin(
         this IEndpointRouteBuilder endpoints,
         RazorComponentsEndpointConventionBuilder razorComponents,
         bool adminAuthRequired = false,
-        bool windowsAuthEnabled = false)
+        bool windowsAuthEnabled = false,
+        bool forwarderMsiUploadEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(razorComponents);
@@ -144,6 +153,14 @@ public static class YaguraAdminExtensions
 
         MapForwarderKitDownload(endpoints, adminAuthRequired);
         endpoints.MapAdminAuthEndpoints(windowsAuthEnabled);
+
+        if (forwarderMsiUploadEnabled)
+        {
+            // ADR-0020 決定 1: 機能有効時のみ登録（構造的非存在）。有効時は fail-closed（1032）が
+            // 認証 + RequireForLoopback の成立を保証しているため、エンドポイント側の認可
+            // （AdminPolicyName）は常にフルの認証判定になる。
+            endpoints.MapForwarderMsiUploadEndpoints();
+        }
 
         return endpoints;
     }

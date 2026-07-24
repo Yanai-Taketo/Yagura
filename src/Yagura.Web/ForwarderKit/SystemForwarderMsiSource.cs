@@ -100,30 +100,10 @@ public sealed class SystemForwarderMsiSource : IForwarderMsiSource
     /// ProductVersion 取得を最初に試みる本メソッドの存在そのもので満たす。
     /// </para>
     /// </remarks>
-    private static string? TryReadProductVersion(string filePath)
-    {
-        try
-        {
-            var versionBuffer = new System.Text.StringBuilder(64);
-            var versionSize = (uint)versionBuffer.Capacity;
-
-            var result = NativeMethods.MsiGetFileVersion(filePath, versionBuffer, ref versionSize, null, ref versionSize);
-
-            // ERROR_SUCCESS = 0。ERROR_MORE_DATA (234) 等の失敗はバージョン取得を諦め、
-            // ファイル名由来の版へフォールバックする（呼び出し側の責務）。
-            return result == 0 && versionBuffer.Length > 0 ? versionBuffer.ToString() : null;
-        }
-        catch (DllNotFoundException)
-        {
-            // msi.dll が存在しない実行環境（理論上は Windows には存在するが、テスト実行環境等の
-            // 予期しない構成を安全側で吸収する）。
-            return null;
-        }
-        catch (EntryPointNotFoundException)
-        {
-            return null;
-        }
-    }
+    private static string? TryReadProductVersion(string filePath) =>
+        // 実装は ForwarderMsiProductVersionReader へ一本化（ADR-0020 実装時の抽出。
+        // 検出側とアップロード側で版判定の読み取り経路を食い違わせない）。
+        ForwarderMsiProductVersionReader.TryRead(filePath);
 
     private static (string Sha256, long Length) ComputeSha256AndLength(string filePath)
     {
@@ -131,19 +111,5 @@ public sealed class SystemForwarderMsiSource : IForwarderMsiSource
         var hashBytes = SHA256.HashData(stream);
         var sha256 = Convert.ToHexStringLower(hashBytes);
         return (sha256, stream.Length);
-    }
-
-    /// <summary>
-    /// Windows Installer の <c>msi.dll</c> P/Invoke 宣言（<c>MsiGetFileVersion</c> のみ使用）。
-    /// </summary>
-    private static class NativeMethods
-    {
-        [System.Runtime.InteropServices.DllImport("msi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
-        public static extern uint MsiGetFileVersion(
-            string szFilePath,
-            System.Text.StringBuilder? lpVersionBuf,
-            ref uint pcchVersionBuf,
-            System.Text.StringBuilder? lpLangBuf,
-            ref uint pcchLangBuf);
     }
 }

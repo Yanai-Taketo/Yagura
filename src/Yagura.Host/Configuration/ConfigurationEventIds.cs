@@ -140,4 +140,17 @@ public static class ConfigurationEventIds
     /// </remarks>
     public static readonly EventId ConfigurationFileUnreadableStartupFailed =
         new(1024, "ConfigurationFileUnreadableStartupFailed");
+
+    /// <summary>
+    /// フォワーダ MSI アップロードの fail-closed 設定を拒否して起動を中止（ADR-0020 決定 1・委任 1）。
+    /// <c>Admin:ForwarderKit:MsiUpload:Enabled</c> が有効なのに、前提条件（管理 UI 認証の
+    /// いずれかが有効 + <c>Admin:Authentication:RequireForLoopback</c>）が満たされていない
+    /// 設定の起動時拒否。1011/1012 と同型の「起動失敗」分類。エラーメッセージには復旧に必要な
+    /// 具体の設定キーと値（<c>Admin:ForwarderKit:MsiUpload:Enabled を false に</c>）を含める
+    /// （手編集復旧の場面では UI の誘導が使えないため——ADR-0020 委任 1）。
+    /// 採番: 1000 番台の次の空き番号 1032（1025〜1029 はメール通知・途絶検知、1030〜1031 は
+    /// Persistence 側が使用済み）。
+    /// </summary>
+    public static readonly EventId ForwarderMsiUploadFailClosedStartupRejected =
+        new(1032, "ForwarderMsiUploadFailClosedStartupRejected");
 }
