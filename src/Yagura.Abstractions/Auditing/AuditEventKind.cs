@@ -314,4 +314,28 @@ public enum AuditEventKind
     /// 答えられない。値は秘密情報ではない）。
     /// </remarks>
     SourceSilenceWatchlistConfigured,
+
+    /// <summary>
+    /// 管理操作: サービス実行アカウントの構成の初回起動時転記（ADR-0015 決定 8。イベント ID 2024。
+    /// Issue #263。security.md §4.1・§4.3、configuration.md §4.4）。インストーラが書く構成記録
+    /// （<c>service-account.ini</c>——MSI プロパティ <c>YAGURA_SERVICE_ACCOUNT</c> の値）を
+    /// 初回起動時に 1 回だけイベントログへ転記する（2017 のインストーラ由来転記レールと同型。
+    /// 一回性はマーカーファイルで判定）。記録内容は構成された実行アカウント名（既定の仮想
+    /// サービスアカウント <c>NT SERVICE\Yagura</c> / gMSA <c>DOMAIN\name$</c>。gMSA 名は識別子で
+    /// あり秘密ではない）。起動時の自動転記のため <c>RemoteAddress</c>/<c>AuthenticationScheme</c>
+    /// は <see langword="null"/>。
+    /// </summary>
+    ServiceAccountTranscribed,
+
+    /// <summary>
+    /// 管理操作: サービス実行アカウントが前回起動時から変化した状態で起動した（ADR-0015 決定 8。
+    /// イベント ID 2025。Issue #263。security.md §4.1）。起動時に実効実行アカウント（プロセスが
+    /// 実際に動いている識別）を前回起動時の記録（<c>last-service-account.json</c>）と照合し、
+    /// 変化があれば旧・新のアカウント名を 1 件記録する——再インストール/アップグレードでの指定
+    /// 変更のほか、<b>製品外の <c>sc config</c> による切替も次回起動で必ず証跡化される</b>
+    /// （「いつからこの識別で動いているか」に監査で答える）。初回起動・記録欠損時は発火しない
+    /// （転記 2024 のみ）。2019 と同じ「変化検出」レール。起動時の自動照合のため
+    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// </summary>
+    ServiceAccountChangeDetected,
 }

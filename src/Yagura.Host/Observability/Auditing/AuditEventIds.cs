@@ -169,6 +169,21 @@ public static class AuditEventIds
     public static readonly EventId SourceSilenceWatchlistConfigured =
         new(2023, "SourceSilenceWatchlistConfigured");
 
+    /// <summary>
+    /// サービス実行アカウントの構成の初回起動時転記（ADR-0015 決定 8。Issue #263）。
+    /// インストーラ由来転記レール（<see cref="InstallationRecordTranscribed"/> = 2017 と同型）。
+    /// レベルは情報。
+    /// </summary>
+    public static readonly EventId ServiceAccountTranscribed =
+        new(2024, "ServiceAccountTranscribed");
+
+    /// <summary>
+    /// サービス実行アカウントが前回起動時から変化した状態で起動した（ADR-0015 決定 8。
+    /// Issue #263）。製品外の <c>sc config</c> 切替も次回起動で証跡化する。レベルは情報。
+    /// </summary>
+    public static readonly EventId ServiceAccountChangeDetected =
+        new(2025, "ServiceAccountChangeDetected");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

@@ -48,9 +48,13 @@ public static class Program
     public const string WindowsServiceName = "Yagura";
 
     /// <summary>
-    /// Yagura サービスの仮想サービスアカウント名（ADR-0004 決定 4。<c>NT SERVICE\&lt;ServiceName&gt;</c>
-    /// は Windows がサービス登録時に自動で認識する予約済みアカウント）。管理リスナのリモート HTTPS
-    /// 証明書の秘密鍵読み取り権限付与先（ADR-0010 Phase 2 決定 4）。
+    /// Yagura サービスの<b>既定の</b>仮想サービスアカウント名（ADR-0004 決定 4。
+    /// <c>NT SERVICE\&lt;ServiceName&gt;</c> は Windows がサービス登録時に自動で認識する予約済み
+    /// アカウント）。gMSA opt-in（ADR-0015。configuration.md §4.4）では実行アカウントが
+    /// <c>DOMAIN\name$</c> に変わるため、秘密鍵権限の付与先等の実行時の付与・照合は本定数ではなく
+    /// 実効実行アカウント（<see cref="Yagura.Host.Configuration.ServiceAccountStartupInspector.ResolveEffectiveAccountName"/>）
+    /// から導出する（security.md §5.2）。本定数はインストーラ既定値との対応（MSI プロパティ
+    /// <c>YAGURA_SERVICE_ACCOUNT</c> の既定）を表す。
     /// </summary>
     public const string YaguraServiceAccountName = $"NT SERVICE\\{WindowsServiceName}";
 
@@ -771,6 +775,14 @@ public static class Program
             sp.GetRequiredService<IAuditRecorder>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Firewall.FirewallStartupInspector>()));
 
+        // サービス実行アカウントの証跡化（ADR-0015 決定 8。Issue #263。security.md §4.1）:
+        // インストーラ構成記録の初回転記（2024）と実効実行アカウントの変化検出（2025）。
+        builder.Services.AddSingleton(sp => new ServiceAccountStartupInspector(
+            dataRoot,
+            sp.GetRequiredService<IAuditRecorder>(),
+            TimeProvider.System,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<ServiceAccountStartupInspector>()));
+
         // 設定ライブ再読み込み（configuration.md §3。CF-4 層1。Issue #262）。即時反映の口
         // （ImmediateConfigurationApplier）はここ（合成ルート）で各コンポーネントの更新メソッドを
         // 束ねる。ここに登録されていないキーの変更は「再起動待ち」として明示される（1020）。
@@ -1122,6 +1134,19 @@ public static class Program
             _ = startupConfigurationInspector.InspectAndRefreshSnapshotAsync(startupRawOptions, CancellationToken.None);
         }
 
+        // サービス実行アカウントの実効値（プロセスが実際に動いている Windows 識別）。証跡化
+        // （2024/2025）と、以降の秘密鍵権限の付与先（security.md §5.2「付与先を実行アカウントから
+        // 導出する」——gMSA opt-in で固定名 NT SERVICE\Yagura と実効値が乖離するため）に使う。
+        var effectiveServiceAccountName = ServiceAccountStartupInspector.ResolveEffectiveAccountName();
+
+        // サービス実行アカウントの構成転記（2024）と前回起動時からの変化検出（2025）
+        // （ADR-0015 決定 8。Issue #263）。失敗は起動を妨げない（Inspector 内で完結）。
+        {
+            var serviceAccountInspector = app.Services.GetRequiredService<ServiceAccountStartupInspector>();
+            _ = serviceAccountInspector.TranscribeInstallationRecordOnceAsync(CancellationToken.None);
+            _ = serviceAccountInspector.DetectAccountChangeAndRefreshAsync(effectiveServiceAccountName, CancellationToken.None);
+        }
+
         // bind 再試行（CF-6）による受信再開の記録（Issue #291）: 開けなかった区間を受信断の
         // システムイベント（downtime.listener-bind-retry）として残す。書き込みは他経路と同じ
         // 書き込みゲートで直列化する（Issue #151——再試行成功時は消費ループが既に動いている）。
@@ -1195,12 +1220,14 @@ public static class Program
         else if (adminHttpsCertificate is not null)
         {
             // 秘密鍵の読み取り権限をサービスアカウントへ付与する（configuration.md §6 の既存方式と
-            // 同型。付与は監査記録の対象——ADR-0010 Phase 2 決定 4）。ベストエフォート: 付与に
-            // 失敗しても HTTPS リスナ自体は（証明書が現在の実行アカウントから既に読める限り）
-            // 動作を継続できるため、起動は妨げない——警告のみ残す（CF-D2 の手動手順への誘導）。
+            // 同型。付与は監査記録の対象——ADR-0010 Phase 2 決定 4）。付与先は固定名ではなく
+            // 実効実行アカウント（gMSA opt-in——ADR-0015——で乖離する。security.md §5.2）。
+            // ベストエフォート: 付与に失敗しても HTTPS リスナ自体は（証明書が現在の実行アカウント
+            // から既に読める限り）動作を継続できるため、起動は妨げない——警告のみ残す
+            // （CF-D2 の手動手順への誘導）。
             var httpsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.Https");
             var grantResult = Yagura.Host.Administration.Https.AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess(
-                adminHttpsCertificate, YaguraServiceAccountName);
+                adminHttpsCertificate, effectiveServiceAccountName);
 
             var auditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
             if (grantResult.Succeeded)
@@ -1210,7 +1237,7 @@ public static class Program
                     Kind: AuditEventKind.AdminHttpsCertificatePrivateKeyAccessGranted,
                     RemoteAddress: null,
                     RemotePort: null,
-                    Detail: $"thumbprint={resolvedConfiguration.AdminHttpsCertificateThumbprint};account={YaguraServiceAccountName}"))
+                    Detail: $"thumbprint={resolvedConfiguration.AdminHttpsCertificateThumbprint};account={effectiveServiceAccountName}"))
                     .ConfigureAwait(false);
             }
             else
@@ -1220,7 +1247,7 @@ public static class Program
                     "{Account} へ自動付与できませんでした（理由: {Reason}）。サービスアカウントが証明書へ既存の権限で" +
                     "アクセスできない場合、リモート HTTPS の接続受付が失敗する可能性があります。証明書スナップイン" +
                     "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2）。",
-                    YaguraServiceAccountName,
+                    effectiveServiceAccountName,
                     grantResult.FailureReason);
             }
         }
@@ -1245,12 +1272,13 @@ public static class Program
         else if (ingestionTlsCertificate is not null)
         {
             // 秘密鍵の読み取り権限をサービスアカウントへ付与する（管理リスナのリモート HTTPS と
-            // 同型。付与は監査記録の対象——security.md §6）。ベストエフォート: 付与に失敗しても
-            // TLS 受信自体は（証明書が現在の実行アカウントから既に読める限り）動作を継続できるため、
-            // 起動は妨げない——警告のみ残す。
+            // 同型。付与は監査記録の対象——security.md §6。付与先は実効実行アカウント——
+            // security.md §5.2）。ベストエフォート: 付与に失敗しても TLS 受信自体は（証明書が
+            // 現在の実行アカウントから既に読める限り）動作を継続できるため、起動は妨げない——
+            // 警告のみ残す。
             var tlsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Ingestion.Tls");
             var ingestionTlsGrantResult = Yagura.Host.Administration.Https.AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess(
-                ingestionTlsCertificate, YaguraServiceAccountName);
+                ingestionTlsCertificate, effectiveServiceAccountName);
 
             var ingestionTlsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
             if (ingestionTlsGrantResult.Succeeded)
@@ -1260,7 +1288,7 @@ public static class Program
                     Kind: AuditEventKind.IngestionTlsCertificatePrivateKeyAccessGranted,
                     RemoteAddress: null,
                     RemotePort: null,
-                    Detail: $"thumbprint={resolvedConfiguration.IngestionTlsCertificateThumbprint};account={YaguraServiceAccountName}"))
+                    Detail: $"thumbprint={resolvedConfiguration.IngestionTlsCertificateThumbprint};account={effectiveServiceAccountName}"))
                     .ConfigureAwait(false);
             }
             else
@@ -1270,7 +1298,7 @@ public static class Program
                     "{Account} へ自動付与できませんでした（理由: {Reason}）。サービスアカウントが証明書へ既存の権限で" +
                     "アクセスできない場合、TLS 受信の接続受付が失敗する可能性があります。証明書スナップイン" +
                     "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2 と同型の手順）。",
-                    YaguraServiceAccountName,
+                    effectiveServiceAccountName,
                     ingestionTlsGrantResult.FailureReason);
             }
         }

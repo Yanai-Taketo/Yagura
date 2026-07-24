@@ -126,6 +126,55 @@
       <RegistrySearch Id="YaguraDesktopShortcutOptInSearch" Root="HKLM" Key="SOFTWARE\Yagura" Name="DesktopShortcutOptIn" Type="raw" />
     </Property>
 
+    <!-- サービス実行アカウント(ADR-0015 決定 2 / configuration.md §4.4。Issue #263)。
+         既定は仮想サービスアカウント NT SERVICE\Yagura(ADR-0004 決定 4)。AD 環境向けに
+         gMSA(DOMAIN\name$ 形式)を opt-in 指定できる。パスワードプロパティは設けない
+         (gMSA は空パスワードでのサービス登録が仕様——ADR-0015 改訂履歴 1 (i) の実機確認)。
+
+         "remember property" パターン(Issue #203。YAGURA_FIREWALL と同じ機構): アップグレード・
+         修復時はダイアログを経由しないため、対策なしだと既定値の仮想 SA へ黙って戻り、
+         リモート SQL 統合認証だけが静かに壊れる(ADR-0015 決定 2 が名指しする退行)。書き込み側は
+         下の ServiceAccountInstallRecord コンポーネント(無条件でインストール)。
+
+         検証は fail-closed(ADR-0015 決定 2): 受理する値は既定の仮想 SA または gMSA 形式のみ。
+         実装は下の ValidateYaguraServiceAccount(type 19 エラー CA)を参照。 -->
+    <Property Id="YAGURA_SERVICE_ACCOUNT" Value="NT SERVICE\Yagura" Secure="yes">
+      <RegistrySearch Id="YaguraServiceAccountSearch" Root="HKLM" Key="SOFTWARE\Yagura" Name="ServiceAccount" Type="raw" />
+    </Property>
+
+    <!-- 前回インストール時のサービス実行アカウント(アカウント切替時の旧 ACE 除去用——
+         security.md §5.2「アカウント切替時は旧アカウントの ACE を除去する」)。
+         YAGURA_SERVICE_ACCOUNT と同じレジストリ値を別プロパティへも読み込む——
+         YAGURA_SERVICE_ACCOUNT 側はコマンドライン指定(新しい値)で上書きされるため、
+         切替の「旧」の値はこちらにだけ残る。新規インストールでは未定義(旧 ACE 自体が
+         存在しないため除去は不要)。 -->
+    <Property Id="YAGURA_SERVICE_ACCOUNT_PREVIOUS" Secure="yes">
+      <RegistrySearch Id="YaguraServiceAccountPreviousSearch" Root="HKLM" Key="SOFTWARE\Yagura" Name="ServiceAccount" Type="raw" />
+    </Property>
+
+    <!--
+      サービス実行アカウントの fail-closed 検証(ADR-0015 決定 2 / configuration.md §4.4)。
+      受理する値は次の 2 形のみ。それ以外(LocalSystem 等の well-known、$ なしの一般アカウント、
+      空文字列指定 = プロパティ未定義)は対話・サイレントを問わずインストールを失敗させる
+      (警告付き続行は設けない):
+        - 既定の仮想サービスアカウント NT SERVICE\Yagura(大文字小文字は区別しない ~=)
+        - gMSA 形式 = 「\」を含み(><)かつ「$」で終わる(>>)——MSI 条件式の substring/suffix
+          演算子(learn.microsoft.com/windows/win32/msi/conditional-statement-syntax)
+      形式検証の限界(ADR-0015 決定 2): DOMAIN\name$ 形式ではコンピュータアカウント・sMSA を
+      AD へ照会せずに gMSA と判別できない——形式不正の混入はサービス起動失敗(1069 系)として
+      利用者ガイド(docs/guides/gmsa-service-account.md)の 3 段チェックリストへ合流する。
+
+      LaunchCondition ではなく type 19 エラー CA を使う理由: LaunchCondition は UI シーケンスの
+      先頭(利用者入力の前)にも評価されるため、セットアップ画面での入力値を検証できない。
+      InstallInitialize 直前の実行シーケンス CA なら UI 入力後・サイレントの双方で必ず通る。
+      アンインストール(REMOVE="ALL")は検証しない(残置値が読めなくても削除は妨げない)。
+    -->
+    <CustomAction Id="ValidateYaguraServiceAccount" Error="!(loc.ServiceAccountInvalidError)" />
+    <!-- ACL 後追い付与の CA 群は $(YaguraUtilCABinaryRef) を参照するため、その <?define?>
+         (下の WixShellExec セクション)より後に置く(WiX プリプロセッサは逐次処理——
+         define より前で参照すると WIX0150。CI installer-e2e の実ビルドで検出)。 -->
+
+
     <!-- 完了画面(ExitDialog): 閲覧・管理 URL の案内テキスト + 「ブラウザで開く」チェックボックス
          (WixUI 公式のカスタマイズ機構。docs.firegiant.com/wix/tools/wixext/wixui/
          「Adding text or a checkbox to the completion dialog」、確認日 2026-07-06)。
@@ -170,6 +219,69 @@
                   Return="check"
                   Impersonate="yes" />
 
+    <!--
+      gMSA 構成の ACL 後追い付与(ADR-0015 決定 4 / 改訂履歴 1 (iii) / security.md §5.2)。
+      静的 SDDL 埋め込み(PermissionEx = MsiLockPermissionsEx)はセキュリティ記述子をビルド時に
+      確定するため、ドメイン採番の gMSA SID には適用できない(lab 実証: gMSA で起動すると
+      データルートを開けず SQLite Error 14 でクラッシュ)。インストール時に実行アカウント名が
+      YAGURA_SERVICE_ACCOUNT プロパティとして既知のため、そのアカウント名で icacls の後追い
+      付与を行う(SID の事前解決は不要——icacls が名前解決する。security.md §5 の
+      「NT SERVICE\Yagura 形式でそのまま icacls /grant に渡せる」と同じ)。
+
+      構成(仮想 SA 構成では一切発動しない——既定の体験は不変):
+        - Grant*: gMSA へデータルート = 変更 (OI)(CI)(M) / フォワーダ = 読み取り (OI)(CI)(R) を
+          付与し、静的 SDDL が直前に張った仮想 SA の ACE(用のない残骸)を SID 指定で除去する
+          (仮想 SA SID はサービス名から決定的に導出され全マシン同一——DataRootFolder コメント)。
+          Return="check": 付与失敗(gMSA 名の解決不能 = DC 未到達等)のまま進めてもサービスは
+          起動できず終わるため fail-closed でロールバックさせる
+        - RemovePrevious*: アカウント切替(再インストール/アップグレード)時に旧アカウントの
+          ACE を除去する(security.md §5.2「権限の残骸を残さない」)。旧値は remember property の
+          レジストリ記録から YAGURA_SERVICE_ACCOUNT_PREVIOUS へ読み込む。MajorUpgrade では
+          PermissionEx の静的 SDDL 再適用(D:P で DACL 全置換)が先に旧 ACE を落とすため通常は
+          no-op だが、再適用が働かない経路の保険として明示除去する。Return="ignore":
+          旧 gMSA が AD から削除済みで名前解決できない場合に切替そのものを失敗させない
+          (ベストエフォート。残置は Host 側の起動時照合——ServiceAccountStartupInspector の
+          残置 ACE 警告——と lab 受け入れ (d) が可視化する)
+      スケジュール: InstallServices の後・StartServices の前(サービス初回起動の時点で正しい
+      ACL が確定している必要がある——lab 実証の SQLite Error 14 を再現させない)。deferred +
+      Impersonate="no"(elevated。ProgramData 直下の ACL 変更は昇格を要する)。
+      ロールバック CA は設けない: 付与済み ACE はデータルート(MSI 管理外)に残るが実害はなく、
+      次のインストールで冪等に再適用される。失敗時の着地状態の実機確認は SEC-14 (d)。
+      コマンドラインの "[YaguraDataRoot]." の末尾ドットは、ディレクトリプロパティが末尾 \ で
+      展開されて閉じ引用符をエスケープしてしまう Win32 引数解析の既知問題の回避。
+    -->
+    <SetProperty Id="GrantServiceAccountDataRootAcl" Sequence="execute" Before="GrantServiceAccountDataRootAcl"
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /grant &quot;[YAGURA_SERVICE_ACCOUNT]:(OI)(CI)(M)&quot; /remove:g *S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297" />
+    <CustomAction Id="GrantServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <SetProperty Id="GrantServiceAccountForwarderAcl" Sequence="execute" Before="GrantServiceAccountForwarderAcl"
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /grant &quot;[YAGURA_SERVICE_ACCOUNT]:(OI)(CI)(R)&quot; /remove:g *S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297" />
+    <CustomAction Id="GrantServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <SetProperty Id="RemovePreviousServiceAccountDataRootAcl" Sequence="execute" Before="RemovePreviousServiceAccountDataRootAcl"
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /remove &quot;[YAGURA_SERVICE_ACCOUNT_PREVIOUS]&quot;" />
+    <CustomAction Id="RemovePreviousServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <SetProperty Id="RemovePreviousServiceAccountForwarderAcl" Sequence="execute" Before="RemovePreviousServiceAccountForwarderAcl"
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /remove &quot;[YAGURA_SERVICE_ACCOUNT_PREVIOUS]&quot;" />
+    <CustomAction Id="RemovePreviousServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="ValidateYaguraServiceAccount" Before="InstallInitialize"
+              Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot; OR (YAGURA_SERVICE_ACCOUNT &gt;&lt; &quot;\&quot; AND YAGURA_SERVICE_ACCOUNT &gt;&gt; &quot;$&quot;)) AND NOT REMOVE~=&quot;ALL&quot;" />
+      <!-- 旧 ACE 除去 → 新アカウント付与の順(除去が新付与を巻き添えにしない)。いずれも
+           InstallServices と StartServices の間に入る(上のコメント参照)。 -->
+      <Custom Action="RemovePreviousServiceAccountDataRootAcl" After="InstallServices"
+              Condition="YAGURA_SERVICE_ACCOUNT_PREVIOUS AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=&quot;NT SERVICE\Yagura&quot;) AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=YAGURA_SERVICE_ACCOUNT) AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RemovePreviousServiceAccountForwarderAcl" After="RemovePreviousServiceAccountDataRootAcl"
+              Condition="YAGURA_SERVICE_ACCOUNT_PREVIOUS AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=&quot;NT SERVICE\Yagura&quot;) AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=YAGURA_SERVICE_ACCOUNT) AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="GrantServiceAccountDataRootAcl" After="RemovePreviousServiceAccountForwarderAcl"
+              Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="GrantServiceAccountForwarderAcl" After="GrantServiceAccountDataRootAcl"
+              Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
     <!-- ダイアログ列: Welcome → License → InstallDir → Firewall → VerifyReady
          (WixUI_InstallDir を公式手順どおり複製し YaguraFirewallDlg を挿入。
          WixUI_YaguraInstallDir.wxs 参照)。 -->
@@ -187,6 +299,7 @@
       <ComponentRef Id="AdminMenuShortcut" />
       <ComponentRef Id="ViewerDesktopShortcut" />
       <ComponentRef Id="DesktopShortcutInstallRecord" />
+      <ComponentRef Id="ServiceAccountInstallRecord" />
     </Feature>
   </Package>
 
@@ -234,8 +347,16 @@
         Windows サービス登録(ADR-0004 決定 4: 仮想サービスアカウント NT SERVICE\Yagura を
         既定とし LocalSystem では動かさない)。サービス名 "Yagura" は
         Program.WindowsServiceName 定数と一致させる(src/Yagura.Host/Program.cs)。
-        Account の指定形式(NT SERVICE\<サービス名>)が MSI の ServiceInstall 経由で
-        成立するかは実機依存のため M9-3 lab の検証項目とする。
+
+        Account はプロパティ間接参照(ADR-0015 決定 2。gMSA opt-in——configuration.md §4.4)。
+        [YaguraFwProfile] と同じ手法で、既定は YAGURA_SERVICE_ACCOUNT の既定値
+        NT SERVICE\Yagura のまま。gMSA 指定(DOMAIN\name$・パスワードなし)での成立は
+        AD lab スパイクで実機確認済み(ADR-0015 改訂履歴 1 (i)。MSI ログに
+        StartName=YAGURA\gmsaYagura$ で ServiceInstall が実行され、SCM が受理した)。
+        gMSA 構成では SeServiceLogonRight の事前付与が必須(付与しないとサービス起動が
+        エラー 1920 で失敗しインストールが 1603 でロールバックする——改訂履歴 1 (ii)。
+        付与は利用者ガイド docs/guides/gmsa-service-account.md の前提条件。付与主体の
+        最終確定は SEC-14 (f))。
       -->
       <ServiceInstall Id="YaguraService"
                       Name="Yagura"
@@ -244,7 +365,7 @@
                       Type="ownProcess"
                       Start="auto"
                       ErrorControl="normal"
-                      Account="NT SERVICE\Yagura"
+                      Account="[YAGURA_SERVICE_ACCOUNT]"
                       Vital="yes">
         <!--
           失敗時再起動ポリシー: 再起動時間 = ロス時間(architecture.md §1.2)のため、
@@ -440,6 +561,31 @@
     -->
     <Component Id="DesktopShortcutInstallRecord" Directory="YaguraDataRoot">
       <RegistryValue Root="HKLM" Key="SOFTWARE\Yagura" Name="DesktopShortcutOptIn" Type="string" Value="[YAGURA_DESKTOP_SHORTCUT]" KeyPath="yes" />
+    </Component>
+
+    <!--
+      サービス実行アカウントのインストール記録(ADR-0015 決定 2・8 / configuration.md §4.4。
+      Issue #263。常にインストール——FirewallInstallRecord と同じ設計判断):
+      - IniFile(service-account.ini): 人間可読な監査記録。Host が初回起動時に 1 回だけ
+        監査レール(2024。イベントログ併記込み)へ転記する
+        (ServiceAccountStartupInspector。firewall-rules.ini の 2017 転記と同型)
+      - RegistryValue(ServiceAccount): "remember property" の機械可読な記憶場所。
+        修復・アップグレード時に Package.wxs の RegistrySearch が読み戻し、指定漏れで
+        gMSA 構成が黙って仮想 SA へ戻る退行を塞ぐ(ADR-0015 決定 2)。あわせて
+        YAGURA_SERVICE_ACCOUNT_PREVIOUS(旧 ACE 除去用)の読み出し元にもなる
+      アンインストール時は他の MSI 管理値と同様に削除される(HKLM\SOFTWARE\Yagura キーは
+      最後の値の削除に伴い消える——DesktopShortcutInstallRecord のコメント参照)。
+    -->
+    <Component Id="ServiceAccountInstallRecord" Directory="YaguraDataRoot" Guid="A0558852-2724-4789-9896-843F05BA618E">
+      <CreateFolder />
+      <IniFile Id="ServiceAccountRecordAccount"
+               Action="addLine"
+               Directory="YaguraDataRoot"
+               Name="service-account.ini"
+               Section="Yagura.ServiceAccount"
+               Key="Account"
+               Value="[YAGURA_SERVICE_ACCOUNT]" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\Yagura" Name="ServiceAccount" Type="string" Value="[YAGURA_SERVICE_ACCOUNT]" KeyPath="yes" />
     </Component>
   </Fragment>
 

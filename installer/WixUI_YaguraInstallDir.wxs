@@ -9,8 +9,9 @@
 
   初回インストールのダイアログ列:
     WelcomeDlg → LicenseAgreementDlg → InstallDirDlg → YaguraFirewallDlg →
-    YaguraShortcutDlg → VerifyReadyDlg
-  メンテナンス列・パッチ列は原本のまま(YaguraFirewallDlg / YaguraShortcutDlg は初回のみ)。
+    YaguraShortcutDlg → YaguraServiceAccountDlg → VerifyReadyDlg
+  メンテナンス列・パッチ列は原本のまま(挿入 3 ダイアログは初回のみ。アップグレード・修復時の
+  YAGURA_SERVICE_ACCOUNT は remember property——Package.wxs——が前回値を継承する)。
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
     <?foreach WIXUIARCH in X86;X64;A64 ?>
@@ -47,6 +48,7 @@
             <DialogRef Id="UserExit" />
             <DialogRef Id="YaguraFirewallDlg" />
             <DialogRef Id="YaguraShortcutDlg" />
+            <DialogRef Id="YaguraServiceAccountDlg" />
 
             <!-- 完了画面: チェックボックス ON なら閲覧 URL を既定ブラウザで開いてから閉じる
                  (custom action は Package.wxs の LaunchYaguraViewer)。 -->
@@ -71,13 +73,19 @@
             <Publish Dialog="YaguraFirewallDlg" Control="Next" Event="NewDialog" Value="YaguraShortcutDlg" />
 
             <Publish Dialog="YaguraShortcutDlg" Control="Back" Event="NewDialog" Value="YaguraFirewallDlg" />
-            <Publish Dialog="YaguraShortcutDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+            <!-- 原本(VerifyReadyDlg へ直行)を YaguraServiceAccountDlg 経由に差し替え
+                 (ADR-0015 決定 2 のサービス実行アカウント入力欄。Issue #263)。既定値のまま
+                 Next で進めば従来と同じ構成になる——gMSA を使わない利用者の動線は実質不変。 -->
+            <Publish Dialog="YaguraShortcutDlg" Control="Next" Event="NewDialog" Value="YaguraServiceAccountDlg" />
+
+            <Publish Dialog="YaguraServiceAccountDlg" Control="Back" Event="NewDialog" Value="YaguraShortcutDlg" />
+            <Publish Dialog="YaguraServiceAccountDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
 
             <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" />
             <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" />
 
-            <!-- 原本では InstallDirDlg へ戻るところを YaguraShortcutDlg へ差し替え。 -->
-            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="YaguraShortcutDlg" Order="1" Condition="NOT Installed" />
+            <!-- 原本では InstallDirDlg へ戻るところを YaguraServiceAccountDlg へ差し替え。 -->
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="YaguraServiceAccountDlg" Order="1" Condition="NOT Installed" />
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
             <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
 

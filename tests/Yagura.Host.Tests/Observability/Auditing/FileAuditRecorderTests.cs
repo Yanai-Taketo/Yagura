@@ -268,6 +268,20 @@ public sealed class FileAuditRecorderTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Describe_MapsEveryAuditEventKind_WithoutFallback()
+    {
+        // ResolveEventId と同型の追随漏れ検証を Describe（イベントログ本文の日本語説明）にも課す。
+        // 実際に 2021〜2023（ADR-0017/0018 の設定変更・テスト送信・ウォッチリスト変更）が
+        // Describe の switch から漏れており、該当事象のイベントログ併記が TryWriteEventLog の
+        // 最終捕捉で毎回縮退していた（アプリ記録ファイル側は無事——Issue #263 実装時に発見・修正）。
+        foreach (var kind in Enum.GetValues<AuditEventKind>())
+        {
+            var description = AuditEventDescriptions.Describe(kind);
+            Assert.False(string.IsNullOrWhiteSpace(description));
+        }
+    }
+
     [Theory]
     [InlineData(AuditEventKind.AdminAuthBackoffCapReached, 3006)]
     [InlineData(AuditEventKind.AdminAuthRateLimited, 3007)]

@@ -7,6 +7,8 @@
     実 MSI で検証する。設定ファイルの手編集は一切行わない。
 
     実行手順(Full モード):
+      0. MSI テーブル照合(サービス実行アカウント——ADR-0015/Issue #263 の CI 継続検知:
+         YAGURA_SERVICE_ACCOUNT 既定値・ServiceInstall.StartName の間接参照・検証 CA の存在)
       1. MSI サイレントインストール(msiexec /i /qn。管理者権限が必要)
       2. Windows サービス "Yagura" が Running になるまで待機
       3. インストール状態の証拠採取(ファイアウォール規則 3 本 = 各系統 1 本・
@@ -24,6 +26,9 @@
          専用シーケンス): オプトアウト状態でインストール → プロパティ無指定で修復
          (msiexec /fa /qn。ARP の「修復」実行時と同じ入力条件)→ オプトアウトが
          既定値へ戻っていないことを確認 → アンインストール → HKLM キー消滅確認
+      8. サービス実行アカウントの fail-closed 検証(ADR-0015/Issue #263。主フローとは独立):
+         YAGURA_SERVICE_ACCOUNT=LocalSystem のサイレントインストールが失敗し(1603)、
+         サービス・レジストリの残置がないことを確認
 
     照合は必ず ASCII トークン(RunId)で行う。日本語本文の照合は en-US CI の
     コードページ(CP437)で文字化けして誤判定するため使用しない(旧リポジトリ PR #42 実障害)。
@@ -382,6 +387,54 @@ try {
         })
 
         # -------------------------------------------------------------------
+        # 0. MSI テーブル照合: サービス実行アカウント(ADR-0015 決定 7 の CI 継続検知範囲。
+        #    security.md SEC-14「MSI テーブル照合(プロパティ既定値・間接参照の展開)」)。
+        #    インストール前に MSI データベースを読み取り専用で開き、
+        #    - Property テーブルの YAGURA_SERVICE_ACCOUNT 既定値 = NT SERVICE\Yagura
+        #    - ServiceInstall テーブルの StartName = [YAGURA_SERVICE_ACCOUNT](間接参照のまま)
+        #    - CustomAction テーブルに ValidateYaguraServiceAccount(fail-closed 検証)が存在
+        #    を照合する(gMSA 実環境での成立は AD lab——SEC-14 (a)〜(f)——の管轄)。
+        # -------------------------------------------------------------------
+        if ($DryRun) {
+            Add-SkippedStep -Name 'msi-service-account-table' -Reason 'dry-run: would open the MSI database and verify YAGURA_SERVICE_ACCOUNT default / ServiceInstall.StartName indirection / validation CA'
+        }
+        else {
+            [void](Invoke-E2EStep -Name 'msi-service-account-table' -Action {
+                $msiFull = (Resolve-Path -Path $MsiPath).Path
+                $installer = New-Object -ComObject WindowsInstaller.Installer
+                try {
+                    # OpenDatabase(msiOpenDatabaseModeReadOnly = 0)。COM の遅延バインディングは
+                    # InvokeMember 経由で行う(PowerShell から WindowsInstaller COM を触る定石)。
+                    $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msiFull, 0))
+                    function Get-MsiSingleValue([object]$db, [string]$query) {
+                        $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @($query))
+                        $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+                        $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+                        if ($null -eq $record) { return $null }
+                        return $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, @(1))
+                    }
+
+                    $defaultValue = Get-MsiSingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'YAGURA_SERVICE_ACCOUNT'"
+                    if ($defaultValue -cne 'NT SERVICE\Yagura') {
+                        throw ('Property table: YAGURA_SERVICE_ACCOUNT default must be "NT SERVICE\Yagura", found: "{0}"' -f $defaultValue)
+                    }
+                    $startName = Get-MsiSingleValue $database "SELECT ``StartName`` FROM ``ServiceInstall``"
+                    if ($startName -cne '[YAGURA_SERVICE_ACCOUNT]') {
+                        throw ('ServiceInstall table: StartName must be the property indirection "[YAGURA_SERVICE_ACCOUNT]", found: "{0}"' -f $startName)
+                    }
+                    $validateCa = Get-MsiSingleValue $database "SELECT ``Action`` FROM ``CustomAction`` WHERE ``Action`` = 'ValidateYaguraServiceAccount'"
+                    if ($null -eq $validateCa) {
+                        throw 'CustomAction table: ValidateYaguraServiceAccount (fail-closed validation) not found'
+                    }
+                    return ('YAGURA_SERVICE_ACCOUNT default ok, StartName indirection ok, validation CA present')
+                }
+                finally {
+                    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($installer)
+                }
+            })
+        }
+
+        # -------------------------------------------------------------------
         # 1. サイレントインストール
         # -------------------------------------------------------------------
         if ($DryRun) {
@@ -425,6 +478,7 @@ try {
         if ($DryRun) {
             Add-SkippedStep -Name 'installed-state-evidence' -Reason 'dry-run: would record firewall rules (incl. Domain/Private profile check) / data root / firewall-rules.ini'
             Add-SkippedStep -Name 'shortcut-evidence' -Reason 'dry-run: would check start menu admin shortcut and desktop viewer shortcut'
+            Add-SkippedStep -Name 'service-account-evidence' -Reason 'dry-run: would assert service StartName is the default virtual service account and service-account.ini / registry record are written'
         }
         else {
             [void](Invoke-E2EStep -Name 'installed-state-evidence' -Action {
@@ -478,6 +532,33 @@ try {
                     throw ('desktop viewer shortcut does not target http://localhost:8514/: {0}' -f $script:PublicDesktopShortcut)
                 }
                 return ('start menu admin shortcut and desktop viewer shortcut present with expected URLs')
+            })
+
+            # サービス実行アカウント: 仮想 SA 経路の非退行(ADR-0015 決定 7 の CI 継続検知範囲。
+            # ServiceInstall/@Account のプロパティ間接参照化——Issue #263——で既定インストールの
+            # 実行アカウントが変わっていないことと、インストール記録(service-account.ini /
+            # HKLM の remember property 書き込み)を確認する。
+            [void](Invoke-E2EStep -Name 'service-account-evidence' -Action {
+                $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='Yagura'"
+                if ($null -eq $svc) {
+                    throw 'Win32_Service "Yagura" not found'
+                }
+                if ($svc.StartName -ne 'NT SERVICE\Yagura') {
+                    throw ('service StartName must be the default virtual service account "NT SERVICE\Yagura", found: "{0}"' -f $svc.StartName)
+                }
+                $iniPath = Join-Path $script:DataRoot 'service-account.ini'
+                if (-not (Test-Path -Path $iniPath)) {
+                    throw ('service-account.ini not found in data root: {0}' -f $iniPath)
+                }
+                $iniContent = Get-Content -Path $iniPath -Raw
+                if ($iniContent -notmatch [regex]::Escape('Account=NT SERVICE\Yagura')) {
+                    throw ('service-account.ini does not record the default account: {0}' -f $iniContent)
+                }
+                $recorded = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Yagura' -Name 'ServiceAccount' -ErrorAction SilentlyContinue).ServiceAccount
+                if ($recorded -ne 'NT SERVICE\Yagura') {
+                    throw ('HKLM\SOFTWARE\Yagura\ServiceAccount (remember property record) must be "NT SERVICE\Yagura", found: "{0}"' -f $recorded)
+                }
+                return ('service runs as NT SERVICE\Yagura; service-account.ini and registry record present')
             })
         }
 
@@ -770,6 +851,40 @@ try {
                     throw ('HKLM\SOFTWARE\Yagura still present after opt-out uninstall ({0} value(s): {1})' -f $values.Count, ($values -join '; '))
                 }
                 return 'HKLM\SOFTWARE\Yagura removed after opt-out uninstall'
+            })
+        }
+
+        # -------------------------------------------------------------------
+        # 8. サービス実行アカウントの fail-closed 検証(ADR-0015 決定 2 / configuration.md §4.4。
+        #    Issue #263。主フローとは独立した専用シーケンス):
+        #    不正な値(LocalSystem = ADR-0004 決定 4 が禁じる代表例)を指定したサイレント
+        #    インストールが、警告付き続行にならず失敗する(1603)ことと、失敗後に何も
+        #    インストールされていないことを確認する。AD なしで検証できる唯一の否定系であり、
+        #    gMSA 形式の肯定系は AD lab(security.md SEC-14 (a))の管轄。
+        # -------------------------------------------------------------------
+        if ($DryRun) {
+            Add-SkippedStep -Name 'service-account-reject-invalid' -Reason ('dry-run: would run msiexec /i "{0}" /qn YAGURA_SERVICE_ACCOUNT=LocalSystem and expect exit code 1603' -f $MsiPath)
+        }
+        else {
+            [void](Invoke-E2EStep -Name 'service-account-reject-invalid' -Action {
+                if ($null -ne (Get-YaguraService)) {
+                    throw ('service "{0}" already exists before invalid-account install; aborting to avoid polluting the verdict' -f $script:ServiceName)
+                }
+                $msiFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-invalid-account-install.log'
+                # Invoke-Msiexec は成功時に throw しない設計のためここでは使わない——
+                # 本ステップは「失敗すること」が期待値。
+                $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/i "{0}" /qn /norestart YAGURA_SERVICE_ACCOUNT=LocalSystem /l*v "{1}"' -f $msiFull, $msiLog) -Wait -PassThru
+                if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+                    throw ('install with YAGURA_SERVICE_ACCOUNT=LocalSystem unexpectedly succeeded (exit code {0}) - fail-closed validation (ValidateYaguraServiceAccount) did not fire' -f $proc.ExitCode)
+                }
+                if ($null -ne (Get-YaguraService)) {
+                    throw 'service "Yagura" exists after the rejected install - validation fired too late (must run before InstallInitialize)'
+                }
+                if (Test-Path -Path 'HKLM:\SOFTWARE\Yagura') {
+                    throw 'HKLM\SOFTWARE\Yagura exists after the rejected install - validation fired too late'
+                }
+                return ('install rejected as expected (msiexec exit code {0}, log: msiexec-invalid-account-install.log); no service, no registry residue' -f $proc.ExitCode)
             })
         }
     }
