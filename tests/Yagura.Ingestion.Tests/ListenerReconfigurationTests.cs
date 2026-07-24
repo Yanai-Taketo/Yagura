@@ -42,6 +42,50 @@ public sealed class ListenerReconfigurationTests : IAsyncLifetime
         return ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
     }
 
+    private static int GetFreeTcpPort()
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        try
+        {
+            return ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+        finally
+        {
+            probe.Stop();
+        }
+    }
+
+    /// <summary>
+    /// 空きポートを対象プロトコルの probe で採番して再構成し、bind 競合（RolledBack）なら
+    /// 別ポートを取り直して再試行する（Issue #420）。probe の解放から再 bind までの間に
+    /// 共有 CI ランナー上の他プロセスへポートを奪われる TOCTOU レースは排除できないため、
+    /// 「取られていたら取り直す」をテストの仕様にする（RolledBack へ倒れるプロダクトの挙動
+    /// 自体は正しい——検証したいのは競合のない新ポートへの再構成）。
+    /// </summary>
+    private static async Task<(int Port, ListenerReconfigurationResult Result)> ReconfigureToFreshPortAsync(
+        Func<int> acquireFreePort,
+        Func<int, Task<ListenerReconfigurationResult>> reconfigureAsync,
+        Func<ListenerReconfigurationResult, ListenerReconfigurationOutcome> targetOutcome)
+    {
+        const int maxAttempts = 5;
+        var port = 0;
+        ListenerReconfigurationResult result = null!;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            port = acquireFreePort();
+            result = await reconfigureAsync(port);
+            if (targetOutcome(result).Status != ListenerReconfigurationStatus.RolledBack)
+            {
+                break;
+            }
+        }
+
+        // 全 attempt が bind 競合だった場合も最後の結果を返し、呼び出し側の Assert に判定させる
+        // （5 連続競合はレースではなく実装退行の可能性が高く、その失敗は隠さない）。
+        return (port, result);
+    }
+
     private static async Task<T> PollUntilAsync<T>(Func<Task<T?>> probe, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -68,10 +112,12 @@ public sealed class ListenerReconfigurationTests : IAsyncLifetime
         await pipeline.StartListenerAsync();
         pipeline.StartConsumers();
 
-        var newPort = GetFreeUdpPort();
-        var result = await pipeline.ReconfigureListenersAsync(
-            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = newPort },
-            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 });
+        var (newPort, result) = await ReconfigureToFreshPortAsync(
+            GetFreeUdpPort,
+            port => pipeline.ReconfigureListenersAsync(
+                new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = port },
+                new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 }),
+            r => r.Udp);
 
         // TCP は options 不変のため触れられない（差分適用）。UDP は新ポートで再開し瞬断区間を報告する。
         Assert.Equal(ListenerReconfigurationStatus.NotChanged, result.Tcp.Status);
@@ -165,10 +211,14 @@ public sealed class ListenerReconfigurationTests : IAsyncLifetime
         await pipeline.StartListenerAsync();
         pipeline.StartConsumers();
 
-        var newPort = GetFreeUdpPort();
-        var result = await pipeline.ReconfigureListenersAsync(
-            new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
-            new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = newPort });
+        // 再構成先は対象プロトコル（TCP）の probe で採番する——UDP で空いていても TCP で
+        // 空いている保証はない（Issue #420 の原因 2）。
+        var (newPort, result) = await ReconfigureToFreshPortAsync(
+            GetFreeTcpPort,
+            port => pipeline.ReconfigureListenersAsync(
+                new UdpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+                new TcpSyslogListenerOptions { BindAddress = "127.0.0.1", Port = port }),
+            r => r.Tcp);
 
         Assert.Equal(ListenerReconfigurationStatus.Reconfigured, result.Tcp.Status);
         Assert.Equal(ListenerReconfigurationStatus.NotChanged, result.Udp.Status);
