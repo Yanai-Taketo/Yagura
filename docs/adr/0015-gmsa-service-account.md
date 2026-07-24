@@ -137,6 +137,8 @@ Executing op: ServiceInstall(Name=Yagura,...,StartName=YAGURA\gmsaYagura$,Passwo
 
 **実装要件**: gMSA 構成では `SeServiceLogonRight` の付与をガイドの前提条件（ローカルポリシー/GPO 手順）に含めるか、インストーラのカスタムアクションで付与する。付与しない限り**サービスは一度も起動できない**ため、これは任意の推奨ではなく必須手順である。
 
+> **訂正注記（2026-07-24。SEC-14 受け入れ検証の過程で判明）**: 上記 (ii) の「未付与だと 1920 で必ず失敗＝明示付与が必須」は、その後の AD lab 実機検証（**Windows Server 2025 / Windows 10 `10.0.26100`**、PR #419 の MSI）で**再現しなかった**。gold-standard 実測——`LsaEnumerateAccountRights` で gMSA の権利がゼロ、プロセストークンは真正の `DOMAIN\gmsaYagura$`、`SeServiceLogonRight` を**明示付与→明示除去しても**再起動でログオンが成立（7038/1069 なし）——により、**当該ビルドの SCM は gMSA の service logon に本権利を強制しない**ことが確定した（SCM の暗黙付与ではない＝除去後も LSA は権利ゼロ）。したがって本スパイクの 1920 の真因は logon right ではなく別要因（最有力候補: gMSA パスワード取得失敗——ホスト未認可・KDS 未伝播——を secedit 付与操作と時間的に取り違えた confound）である疑いが濃厚だが、**スパイク環境を再現できないため断定はしない**。ガイド §2.4 は本注記を反映し「必須」→「推奨（強制は環境依存）」へ更新済み。SEC-14 (f) の 1920 ロールバック観測は成立不能として再スコープした（証跡: [PR #419 コメント](https://github.com/Yanai-Taketo/Yagura/pull/419)。lab 実機検証 2026-07-24）。
+
 #### (iii) ACL 付与方式 → **SDDL 静的埋め込みは適用不可を実証。後追い付与が必須**
 
 決定 2 の「現行の SDDL 静的埋め込み（`PermissionEx`）はドメイン採番 SID の gMSA に適用できない」を実機で確証した。gMSA でサービスを起動すると、プロセスは起動するがアプリが**データルートを開けずクラッシュ**する:
