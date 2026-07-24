@@ -193,7 +193,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | 監査 | 監査記録の保持期間（SEC-2。security.md §4.2。実行時間帯は「保持期間」区分と共有） | 即時 |
 | 通知 | メール送信チャネルの有効/無効（opt-in）・差出人・宛先・SMTP 接続先（[ADR-0017](../adr/0017-email-notification.md)。Issue #350） | 即時（SMTP 接続は送信のたびに張るため、次回送信から新しい値が効く） |
 | 通知 | 送信元の途絶検知のウォッチリストと既定閾値（opt-in。[ADR-0018](../adr/0018-source-silence-detection.md)。Issue #351） | 即時（ウォッチリストの参照交換のみ） |
-| UI | 閲覧ポート・公開範囲（LAN / localhost）・管理ポート・HTTPS 証明書参照（opt-in。§6）・管理 UI 認証（opt-in。[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1）・管理リスナのリモートバインド + リモート HTTPS（opt-in。同 Phase 2） | リスナ再構成 |
+| UI | 閲覧ポート・公開範囲（LAN / localhost）・管理ポート・HTTPS 証明書参照（opt-in。§6）・管理 UI 認証（opt-in。[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1）・管理リスナのリモートバインド + リモート HTTPS（opt-in。同 Phase 2）・フォワーダ MSI の管理画面アップロード（opt-in。[ADR-0020](../adr/0020-forwarder-msi-upload.md)） | リスナ再構成 |
 | 通知 | イベントログ警告の有効範囲（architecture.md §4.6） | 即時 |
 
 **確定済みの詳細キー**（実装されたものから本表に記録する。2026-07-05 オーナー決定によりキー名の同期は本表で行う）:
@@ -225,6 +225,7 @@ Blazor Interactive Server の circuit は瞬断で失われ得る（ADR-0003 受
 | `Admin:Https:Enabled` | UI（同上） | 再起動（同上） | 縮小側で継続（既定 `false`。不正値は無効へ） |
 | `Admin:Https:CertificateThumbprint` | UI（同上） | 再起動（同上） | 縮小側で継続（SHA-1・16 進 40 桁として解釈できない値は未設定として扱う——空白・`-`・`:` 区切りは正規化して受理する）。**値が実際に証明書ストアで解決できるか（存在・秘密鍵アクセス可否・有効期間内か）は静的検証の対象外**——解決できない場合はリモート HTTPS bind エントリのみ縮小継続（起動時警告イベント ID 1013。§4.2） |
 | `Admin:Https:Port` | UI（同上） | 再起動（同上） | 既定値で継続（既定 **8516**。`Admin:HttpPort` とは独立のポート——同一ポートでの loopback 平文 + リモート HTTPS の共存は OS の bind 制約上不可能なため。§4.2） |
+| `Admin:ForwarderKit:MsiUpload:Enabled` | UI（フォワーダ MSI の管理画面アップロード。[ADR-0020](../adr/0020-forwarder-msi-upload.md) 決定 1。opt-in） | 再起動（アップロード関連エンドポイントの条件付き登録は `WebApplicationBuilder` 構築時に固定——無効構成では登録自体を省略する「構造的非存在」） | 縮小側で継続（既定 `false`。不正値は無効へ——書き込み系の管理機能を不正値で有効側へ落とさない）。**`true` かつ、認証（`Admin:Authentication:Windows:Enabled` / `Admin:Authentication:App:Enabled` のいずれも無効）または `Admin:Authentication:RequireForLoopback = false` の組み合わせは §1「起動失敗」として拒否する**（fail-closed 不変条件。ADR-0020 決定 1。security.md §5.1.1。イベント ID 1032——エラーメッセージに復旧手段〔本キーを `false` に戻す〕を明記）。有効化しても、配置フォルダへの書き込み ACE を管理者が明示付与するまで書き込みは成立しない（ADR-0020 決定 2） |
 | `Storage:SqliteFileName` | 永続化 | 再起動 | 既定値で継続 |
 | `Storage:Provider` | 永続化 | 再起動（provider 切替の正式な無瞬断手順は database.md §6.1。M5-3 時点はサービス再起動のみ） | 既定値で継続（`sqlite`/`sqlserver` 以外の値は既定の `sqlite` へ。M5-3） |
 | `Storage:SqlServer:ConnectionString` | 永続化 | 再起動 | 既定値で継続（値は DPAPI 暗号化表現 `dpapi:<Base64>`——ウィザード保存の常形——または平文を受理する（§2）。`Storage:Provider = sqlserver` かつ**本キー未設定**、または**暗号化表現の復号失敗**（改ざん・別マシンへの `yagura.json` コピー——DPAPI machine スコープのマシン束縛）の場合、起動失敗ではなく組み込み SQLite へ縮小 + 強い警告。設計判断: 受信を止めないことを優先——database.md §1「ログを失わない」原則の適用。M5-3・DPAPI 実装 2026-07-06。平文で SQL 認証資格情報を含む場合は受理しつつ強い警告——自動書き換えはしない（§2）） |

@@ -52,5 +52,6 @@ internal static class AuditAggregationDefaults
         AuditEventKind.AdminAuthBackoffCapReached,           // 3006
         AuditEventKind.AdminAuthorizationDenied,             // 3008
         AuditEventKind.ViewerAuthorizationDenied,            // 3009
+        AuditEventKind.ForwarderMsiUploadRejected,           // 3014（ADR-0020 決定 4——§4.4 の集約対象）
     };
 }

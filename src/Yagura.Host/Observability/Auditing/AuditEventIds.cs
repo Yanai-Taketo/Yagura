@@ -184,6 +184,18 @@ public static class AuditEventIds
     public static readonly EventId ServiceAccountChangeDetected =
         new(2025, "ServiceAccountChangeDetected");
 
+    /// <summary>
+    /// フォワーダ MSI を管理画面から配置（アップロード）した（ADR-0020 決定 3・4。Issue #283。
+    /// 配置経路 (b)）。レベルは情報。
+    /// </summary>
+    public static readonly EventId ForwarderMsiPlaced = new(2026, "ForwarderMsiPlaced");
+
+    /// <summary>
+    /// 配置済みのフォワーダ MSI を管理画面から削除した（ADR-0020 決定 3・4。Issue #283）。
+    /// 削除前の SHA256 を Detail に残す。レベルは情報。
+    /// </summary>
+    public static readonly EventId ForwarderMsiDeleted = new(2027, "ForwarderMsiDeleted");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
@@ -252,4 +264,10 @@ public static class AuditEventIds
     /// レベルは警告（監査の欠落可能性を既定の監視で拾えるようにする）。
     /// </summary>
     public static readonly EventId AuditChannelRecovered = new(3013, "AuditChannelRecovered");
+
+    /// <summary>
+    /// フォワーダ MSI のアップロード・削除の失敗/拒否（ADR-0020 決定 4。Issue #283。
+    /// ADR-0004 決定 7「拒否された試行も監査対象」）。レベルは警告。§4.4 の集約対象。
+    /// </summary>
+    public static readonly EventId ForwarderMsiUploadRejected = new(3014, "ForwarderMsiUploadRejected");
 }

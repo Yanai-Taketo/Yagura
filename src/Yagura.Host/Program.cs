@@ -618,6 +618,12 @@ public static class Program
                     resolvedConfiguration.IngestionTlsCertificateThumbprint!)
                 : null;
 
+        // フォワーダ MSI 配置フォルダ（ADR-0008 設計条件 9 / ADR-0020 配置経路 (b)）の実パス。
+        // 検出側（IForwarderMsiSource）・書き込み側（IForwarderMsiStore）・ACL 周期検出
+        // （ActiveNotificationMonitor）の三者で共有する。
+        var forwarderMsiFolderPath = Path.Combine(
+            dataRoot, Yagura.Web.ForwarderKit.ForwarderMsiConstraints.PlacementSubPath);
+
         builder.Services.AddSingleton(sp =>
         {
             var pipelineForMonitor = sp.GetRequiredService<IngestionPipeline>();
@@ -647,7 +653,16 @@ public static class Program
                 sourceActivitySeedQuery: ct => sp.GetRequiredService<ILogStore>().QuerySourceActivityAsync(
                     Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceConstants.MaxWatchlistEntries,
                     Yagura.Host.Observability.ActiveNotification.SourceSilence.SourceSilenceConstants.SeedQueryTimeout,
-                    ct));
+                    ct),
+                // ADR-0020 決定 2・委任 7: 配置フォルダの書き込み ACE の稼働中検出（二系統——
+                // 乖離警告 1033 / 開放継続通知 1034）。判定は ACL の読み取りのみ（実書き込み
+                // プローブを毎分打つと SACL 監査を汚染するため——ForwarderMsiFolderAclInspector 参照）。
+                // 非 Windows は null（判定不能 = 沈黙側）。
+                forwarderMsiFolderWritableProbe: () => OperatingSystem.IsWindows()
+                    ? Yagura.Host.Administration.ForwarderKitUpload.ForwarderMsiFolderAclInspector
+                        .IsWritableByCurrentIdentity(forwarderMsiFolderPath)
+                    : null,
+                forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled);
         });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
@@ -1097,8 +1112,18 @@ public static class Program
         // 注入する（architecture.md §1.1 の参照構造）。フォルダの作成・ACL 設定はインストーラ
         // （WiX）の領分であり、ここでは作成しない（無ければ未検出として扱う——実装 PR の判断）。
         builder.Services.AddSingleton<Yagura.Web.ForwarderKit.IForwarderMsiSource>(
-            _ => new Yagura.Web.ForwarderKit.SystemForwarderMsiSource(
-                Path.Combine(dataRoot, Yagura.Web.ForwarderKit.ForwarderMsiConstraints.PlacementSubPath)));
+            _ => new Yagura.Web.ForwarderKit.SystemForwarderMsiSource(forwarderMsiFolderPath));
+
+        // ADR-0020（配置経路 (b)）: 書き込み側 store と機能 opt-in の実効値。store は機能の
+        // 有効/無効に関わらず登録する（無効時は誰も呼ばない——エンドポイントは構造的に不在・
+        // 画面区画は表出しない）。ACL の変更は一切行わない（決定 2——書き込み経路の開放は
+        // OS 管理者の明示 ACE 付与のみ）。
+        builder.Services.AddSingleton<Yagura.Web.ForwarderKit.IForwarderMsiStore>(
+            _ => new Yagura.Web.ForwarderKit.SystemForwarderMsiStore(forwarderMsiFolderPath));
+        builder.Services.AddSingleton(new Yagura.Web.ForwarderKit.ForwarderMsiUploadRuntimeOptions(
+            resolvedConfiguration.AdminForwarderMsiUploadEnabled,
+            // ACE 付与コマンド案内の付与先（実効実行アカウントから導出——ADR-0020 決定 2・§5.2）。
+            ServiceAccountStartupInspector.ResolveEffectiveAccountName()));
 
         // 逆引きホスト名表示の設定（ADR-0007。Viewer:ReverseDns:Enabled——検証・縮小適用済みの
         // 値を Web 層へ渡す。AddYaguraWebViewer の TryAdd 既定（無効）より先に登録すること）。
@@ -1200,6 +1225,48 @@ public static class Program
                 "[spool-degraded-mode] スプール領域 {SpoolDirectory} を開けなかったため、スプールなし縮退運転で起動します。" +
                 "縮退中は Q2 溢れ・書き込み失敗分が破棄され、永続化失敗カウンタへ計上されます。",
                 resolvedConfiguration.SpoolDirectory);
+        }
+
+        // フォワーダ MSI アップロード（ADR-0020 決定 2・3）の起動時処理:
+        // ①孤児ステージングファイルの掃除（中断・プロセス停止の残骸。決定 3——起動時 + 新規
+        //   アップロード開始時の二点で掃除する）、
+        // ②ACL 乖離の起動時一回検査（決定 2——周期監視〔1 分後から〕に加えて起動直後にも一度
+        //   検査し、乖離警告 1033 の初回検出を最大 1 周期分早める。開放継続通知 1034 は
+        //   「継続」の観測を要するため周期監視のみが担う）。
+        // いずれも失敗は起動を妨げない。
+        {
+            var forwarderStartupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Startup");
+            try
+            {
+                var forwarderStore = app.Services.GetRequiredService<Yagura.Web.ForwarderKit.IForwarderMsiStore>();
+                var removedStaging = forwarderStore.CleanupStagingFiles();
+                if (removedStaging > 0)
+                {
+                    forwarderStartupLogger.LogInformation(
+                        "フォワーダ MSI 配置フォルダの孤児ステージングファイル {Count} 件を起動時に削除しました（ADR-0020 決定 3）。",
+                        removedStaging);
+                }
+            }
+            catch (Exception ex)
+            {
+                forwarderStartupLogger.LogWarning(ex, "フォワーダ MSI 配置フォルダの起動時掃除に失敗しました（起動は継続します）。");
+            }
+
+            if (!resolvedConfiguration.AdminForwarderMsiUploadEnabled && OperatingSystem.IsWindows())
+            {
+                var writable = Yagura.Host.Administration.ForwarderKitUpload.ForwarderMsiFolderAclInspector
+                    .IsWritableByCurrentIdentity(forwarderMsiFolderPath);
+                if (writable is true)
+                {
+                    forwarderStartupLogger.LogWarning(
+                        Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
+                        "[forwarder-msi-acl-drift] フォワーダ MSI 配置フォルダ {FolderPath} にサービス実行アカウントの" +
+                        "書き込み権限（ACE）が残っていますが、管理画面アップロード機能" +
+                        "（Admin:ForwarderKit:MsiUpload:Enabled）は無効です。機能の利用を終えた後の" +
+                        "ACE の撤去（閉じ忘れ）を確認してください（ADR-0020 決定 2。撤去手順は利用者ガイド参照）。",
+                        forwarderMsiFolderPath);
+                }
+            }
         }
 
         // 管理リスナのリモート HTTPS（ADR-0010 Phase 2 決定 4）: 証明書が解決できなかった場合の
@@ -1356,7 +1423,13 @@ public static class Program
         // (Phase 1 のみで RequireForLoopback も RemoteBinding も無効な既定構成)との切り分けのみ行う。
         var adminAuthorizationRequired =
             resolvedConfiguration.AdminAuthRequireForLoopback || resolvedConfiguration.AdminRemoteBindingEnabled;
-        app.MapYaguraAdmin(razorComponents, adminAuthorizationRequired, resolvedConfiguration.AdminWindowsAuthEnabled);
+        app.MapYaguraAdmin(
+            razorComponents,
+            adminAuthorizationRequired,
+            resolvedConfiguration.AdminWindowsAuthEnabled,
+            // ADR-0020 決定 1: 有効時のみアップロード関連エンドポイントが登録される（構造的非存在）。
+            // 有効は fail-closed（1032）により adminAuthorizationRequired = true を含意する。
+            resolvedConfiguration.AdminForwarderMsiUploadEnabled);
 
         // 管理者アカウントストアのスキーマ初期化（ADR-0010 Phase 1。ILogStore と同じ
         // 「受信開始（Kestrel の listen 開始）より前に初期化を終える」順序——

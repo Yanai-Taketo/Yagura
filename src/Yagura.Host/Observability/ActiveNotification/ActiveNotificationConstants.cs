@@ -90,4 +90,21 @@ public static class ActiveNotificationConstants
     /// （実測・実運用フィードバック未実施——他の M-16 系仮値と同じ扱い）。
     /// </summary>
     public static readonly TimeSpan CertificateExpiryWarningWindow = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// フォワーダ MSI 配置フォルダの「開放継続の通知」（EventId 1034。ADR-0020 決定 2）の
+    /// 継続判定期間（仮値 24 時間。確定は ADR-0020 委任 7）。書き込み ACE の存在がこの期間
+    /// 連続して観測されたときに通知を開始する——「使うときだけ開く」運用の 1 作業セッション
+    /// （付与 → アップロード → 撤去。長くても数時間）では発火せず、撤去忘れ・常置だけが対象に
+    /// なる釣り合いで選定（実測・実運用フィードバック未実施——他の仮値と同じ扱い）。
+    /// </summary>
+    public static readonly TimeSpan ForwarderMsiOpenContinuationThreshold = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// 「開放継続の通知」（EventId 1034）の専用抑制窓（仮値 7 日。確定は ADR-0020 委任 7）。
+    /// 既定の <see cref="SuppressionWindow"/>（15 分）を使うと常置運用を選んだ環境で毎 15 分の
+    /// 騒音になる——本通知は「開いたままである」ことの定期的なリマインダであり（情報レベル）、
+    /// 週次で目に入れば閉じ忘れの検出可能性として十分、という釣り合いで選定。
+    /// </summary>
+    public static readonly TimeSpan ForwarderMsiOpenContinuationSuppressionWindow = TimeSpan.FromDays(7);
 }

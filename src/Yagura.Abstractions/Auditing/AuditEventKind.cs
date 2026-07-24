@@ -338,4 +338,32 @@ public enum AuditEventKind
     /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     ServiceAccountChangeDetected,
+
+    /// <summary>
+    /// 管理操作: フォワーダ MSI を管理画面から配置（アップロード）した（ADR-0020 決定 3・4。
+    /// イベント ID 2026。Issue #283。配置経路 (b)）。ステージング → 検証 → 確認 → アトミック
+    /// リネームの全段を通過した確定時に 1 件記録する。記録内容（<c>Detail</c>）: アーキテクチャ・
+    /// 格納ファイル名・ProductVersion・SHA256・サイズ・officialHashMatch・
+    /// versionMismatchAcknowledged・置換時の旧 SHA256・loopback/リモートの別。
+    /// 本操作は認証必須構成でのみ実行可能なため（ADR-0020 決定 1 の fail-closed）、
+    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> には必ず値が入る。
+    /// </summary>
+    ForwarderMsiPlaced,
+
+    /// <summary>
+    /// 管理操作: 配置済みのフォワーダ MSI を管理画面から削除した（ADR-0020 決定 3・4。
+    /// イベント ID 2027。Issue #283）。削除は配置と同じ重みの操作として扱い、削除前の SHA256 を
+    /// <c>Detail</c> に残す。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> は
+    /// 2026 と同じく必ず値が入る。
+    /// </summary>
+    ForwarderMsiDeleted,
+
+    /// <summary>
+    /// 拒否・セキュリティ事象: フォワーダ MSI のアップロード・削除の失敗/拒否
+    /// （ADR-0020 決定 4。イベント ID 3014。Issue #283。ADR-0004 決定 7「拒否された試行も
+    /// 監査対象」）。検証失敗（サイズ超過・ProductVersion 読み取り失敗・多重状態）・
+    /// 二段階確認の拒否（利用者の中止）・書き込み失敗・排他拒否・確認不整合（TOCTOU ガード）を
+    /// <c>Detail</c> の理由種別で区別して記録する。§4.4 の集約対象。
+    /// </summary>
+    ForwarderMsiUploadRejected,
 }

@@ -2,9 +2,18 @@
 @namespace Yagura.Web.Administration.Screens
 @layout AdminScreenLayout
 @using Yagura.Web.ForwarderKit
+@using Yagura.Web.Administration
+@using Yagura.Web.Circuits
 @inject INicCandidateSource NicCandidateSource
 @inject IForwarderMsiSource MsiSource
 @inject NavigationManager Navigation
+@inject ForwarderMsiUploadRuntimeOptions UploadOptions
+@inject AdminAuthenticationRuntimeOptions AuthOptions
+@inject IForwarderMsiStore MsiStore
+@inject IForwarderMsiPlacementService PlacementService
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 
 @*
     フォワーダ配布キット生成画面（ADR-0008。管理リスナ帰属はレイアウトが担う）。
@@ -202,6 +211,145 @@
 </MudPaper>
 
 <MudPaper Elevation="1" Class="pa-4 mt-4">
+    <MudText Typo="Typo.h6">@UiText.ForwarderMsiUploadSectionTitle</MudText>
+
+    @if (!UploadOptions.Enabled)
+    {
+        @* 条件不成立時は機能を表出させない。ただし沈黙にしない（ADR-0020 決定 1）——
+           どの条件が欠けているかと手動配置ガイドへの導線を示す。 *@
+        <MudText Typo="Typo.body2" Class="mt-2">@UiText.ForwarderMsiUploadDisabledTitle</MudText>
+        <MudText Typo="Typo.caption" Class="mt-1">@UiText.ForwarderMsiUploadDisabledIntro</MudText>
+        <ul>
+            <li>
+                @UiText.ForwarderMsiUploadConditionAuth
+                @if (AuthOptions.WindowsAuthEnabled || AuthOptions.AppAuthEnabled)
+                {
+                    <MudText Typo="Typo.caption" Inline="true" Class="ml-1">（設定済み）</MudText>
+                }
+            </li>
+            <li>
+                @UiText.ForwarderMsiUploadConditionRequireForLoopback
+                @if (AuthOptions.RequireAuthentication)
+                {
+                    <MudText Typo="Typo.caption" Inline="true" Class="ml-1">（設定済み）</MudText>
+                }
+                else
+                {
+                    @* 条件 (ii) の代償の提示（ADR-0020 決定 1——復旧経路のトレードオフを
+                       知らずに輸入させない。ブレークグラス強推奨込み）。 *@
+                    <MudText Typo="Typo.caption" Color="Color.Warning" role="alert" Class="d-block mt-1">
+                        @UiText.ForwarderMsiUploadConditionRequireForLoopbackCost
+                    </MudText>
+                }
+            </li>
+            <li>@UiText.ForwarderMsiUploadConditionOptIn</li>
+        </ul>
+        <MudText Typo="Typo.caption">@UiText.ForwarderMsiUploadDisabledManualGuide</MudText>
+    }
+    else if (_writeAccess?.CanWrite != true)
+    {
+        @* 機能は有効だが書き込み経路が未開放（ACE 未付与。ADR-0020 決定 2）——ここも沈黙に
+           しない。付与コマンドをコピー可能な形で示す。未開放の間はアップロード・削除の両方が
+           実行不能（削除も「変更」権限を要するため——同決定）。 *@
+        <MudText Typo="Typo.body2" Class="mt-2">@UiText.ForwarderMsiUploadNotWritableTitle</MudText>
+        <MudText Typo="Typo.caption" Class="mt-1">@UiText.ForwarderMsiUploadNotWritableIntro</MudText>
+        <MudText Class="yagura-monospace mt-1">
+            @string.Format(UiText.ForwarderMsiUploadGrantCommandFormat, MsiStore.FolderPath, UploadOptions.ServiceAccountName ?? "NT SERVICE\\Yagura")
+        </MudText>
+    }
+    else
+    {
+        @* 開放状態の常時表示（ADR-0020 決定 2——画面を開くたびに「開いている」ことが目に入る。
+           閉じ忘れの検出可能性の一部）。 *@
+        <MudText Typo="Typo.caption" Color="Color.Warning" role="status" Class="mt-2">
+            @UiText.ForwarderMsiUploadWritePathOpenNotice
+        </MudText>
+
+        @if (_uploadNotice is not null)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Success" role="status" Class="mt-2">@_uploadNotice</MudText>
+        }
+
+        @if (_uploadError is not null)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Error" role="alert" Class="mt-2">@_uploadError</MudText>
+        }
+
+        @if (_stagedUpload is null)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.ForwarderMsiUploadFileLabel</MudText>
+            <input type="file" accept=".msi" @ref="_fileInput" disabled="@_uploadInProgress" />
+            <div class="mt-2">
+                <YaguraButton Role="YaguraButtonRole.Normal" OnClick="UploadAsync" Disabled="@_uploadInProgress">
+                    @UiText.ForwarderMsiUploadButton
+                </YaguraButton>
+            </div>
+            @if (_uploadInProgress)
+            {
+                <MudText Typo="Typo.caption" role="status">@UiText.ForwarderMsiUploadInProgress</MudText>
+            }
+
+            @if (_msiLookup!.State == ForwarderMsiLookupState.Single && !_deleteConfirming)
+            {
+                <div class="mt-3">
+                    <YaguraButton Role="YaguraButtonRole.Normal" OnClick="BeginDelete">@UiText.ForwarderMsiDeleteButton</YaguraButton>
+                </div>
+            }
+
+            @if (_deleteConfirming && _msiLookup!.State == ForwarderMsiLookupState.Single)
+            {
+                @* 削除は配置と同じ重み——常に二段階確認（ADR-0020 決定 3。配置側の「不一致時のみ」
+                   とは異なる無条件適用）。第一段 = 本パネル（削除前 SHA256 の提示 + 確認チェック）、
+                   第二段 = Destructive ボタン内蔵の確認ダイアログ（ui.md §3.1——破壊的操作は
+                   確認なしで実行できない構造）。 *@
+                <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.ForwarderMsiDeleteConfirmTitle</MudText>
+                <MudText Typo="Typo.caption">
+                    @string.Format(UiText.ForwarderMsiDeleteConfirmDetailFormat, _msiLookup.Details!.FileName, _msiLookup.Details!.Sha256)
+                </MudText>
+                <YaguraCheckboxField Label="@UiText.ForwarderMsiDeleteAcknowledge" @bind-Value="_deleteAcknowledged" />
+                <div class="mt-2">
+                    <YaguraButton Role="YaguraButtonRole.Destructive"
+                                  ConfirmTitle="@UiText.ForwarderMsiDeleteConfirmTitle"
+                                  ConfirmSummary="@string.Format(UiText.ForwarderMsiDeleteConfirmDetailFormat, _msiLookup.Details!.FileName, _msiLookup.Details!.Sha256)"
+                                  OnClick="ConfirmDeleteAsync">@UiText.ForwarderMsiDeleteConfirmButton</YaguraButton>
+                    <YaguraButton Role="YaguraButtonRole.Normal" OnClick="CancelDelete">@UiText.ForwarderMsiDeleteCancelButton</YaguraButton>
+                </div>
+            }
+        }
+        else
+        {
+            @* stage → commit の二段階（ADR-0020 決定 3）: サーバが計算した SHA256・版・公式ハッシュ
+               照合の結果を確認してから確定する。まだ配置は確定していない。 *@
+            <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.ForwarderMsiUploadConfirmTitle</MudText>
+            <MudText Typo="Typo.caption">@UiText.ForwarderMsiUploadConfirmIntro</MudText>
+            <MudText Typo="Typo.caption" Class="mt-1">@string.Format(UiText.ForwarderMsiUploadConfirmFileNameFormat, _stagedUpload.FinalFileName)</MudText>
+            <MudText Typo="Typo.caption">@string.Format(UiText.ForwarderKitMsiDetectedVersionFormat, _stagedUpload.ProductVersion)</MudText>
+            <MudText Typo="Typo.caption">@string.Format(UiText.ForwarderKitMsiSha256Format, _stagedUpload.Sha256)</MudText>
+            <MudText Typo="Typo.caption">@StagedOfficialHashMatchText()</MudText>
+
+            @if (_stagedUpload.ExistingFileName is not null)
+            {
+                <MudText Color="Color.Warning" role="alert" Class="mt-2">@UiText.ForwarderMsiUploadReplaceWarningTitle</MudText>
+                <MudText Typo="Typo.caption">@string.Format(UiText.ForwarderMsiUploadReplaceOldSha256Format, _stagedUpload.ExistingSha256)</MudText>
+                <MudText Typo="Typo.caption">@string.Format(UiText.ForwarderMsiUploadReplaceNewSha256Format, _stagedUpload.Sha256)</MudText>
+                <YaguraCheckboxField Label="@UiText.ForwarderMsiUploadReplaceAcknowledge" @bind-Value="_replaceAcknowledged" />
+            }
+
+            @if (!IsStagedOfficialHashMatch())
+            {
+                <MudText Color="Color.Warning" role="alert" Class="mt-2">@UiText.ForwarderMsiUploadHashMismatchWarning</MudText>
+                <YaguraCheckboxField Label="@UiText.ForwarderMsiUploadHashMismatchAcknowledge" @bind-Value="_uploadVersionMismatchAcknowledged" />
+            }
+
+            <div class="mt-2">
+                <YaguraButton Role="YaguraButtonRole.Normal" OnClick="CommitUploadAsync">@UiText.ForwarderMsiUploadCommitButton</YaguraButton>
+                <YaguraButton Role="YaguraButtonRole.Normal" OnClick="CancelUploadAsync">@UiText.ForwarderMsiUploadCancelButton</YaguraButton>
+            </div>
+        }
+    }
+</MudPaper>
+
+<MudPaper Elevation="1" Class="pa-4 mt-4">
     @if (_errorText is not null)
     {
         <MudText Class="mb-2" Color="Color.Error" role="alert">@_errorText</MudText>
@@ -236,10 +384,31 @@
     private string? _effectiveVersion;
     private bool _versionMismatch;
 
+    // ---- MSI アップロード（ADR-0020。配置経路 (b)。Issue #283） ----
+    private ForwarderMsiWriteAccess? _writeAccess;
+    private ElementReference _fileInput;
+    private IJSObjectReference? _uploadModule;
+    private bool _uploadInProgress;
+    private string? _uploadError;
+    private string? _uploadNotice;
+    private StagedUploadInfo? _stagedUpload;
+    private bool _replaceAcknowledged;
+    private bool _uploadVersionMismatchAcknowledged;
+    private bool _deleteConfirming;
+    private bool _deleteAcknowledged;
+
     protected override void OnInitialized()
     {
         _candidates = NicCandidateSource.GetCandidates();
         RefreshMsiLookup();
+
+        if (UploadOptions.Enabled)
+        {
+            // 書き込み可否の実挙動検出（ADR-0020 決定 2・委任 2）。画面表示のたびに 1 回——
+            // 周期の ACL 監視（1033/1034）とは別に、利用者が今まさに操作できるかを実書き込み
+            // プローブで確かめる（頻度が低いため SACL 汚染の懸念は周期監視と異なり許容）。
+            _writeAccess = MsiStore.CheckWriteAccess();
+        }
     }
 
     /// <summary>
@@ -412,4 +581,224 @@
 
         return channels;
     }
+
+    // ---- MSI アップロード（ADR-0020 決定 3）: stage（JS fetch → 専用エンドポイント）→
+    //      確認 → commit（circuit → IForwarderMsiPlacementService）の二段階 ----
+
+    /// <summary>
+    /// stage 応答（サーバが計算した検証結果）。JS interop の JSON（camelCase）から復元する。
+    /// </summary>
+    private sealed record StagedUploadInfo(
+        string? Error,
+        string? StagingToken,
+        string? FinalFileName,
+        string? ProductVersion,
+        string? Sha256,
+        long Length,
+        string? OfficialHashMatch,
+        bool VersionMismatch,
+        string? ExistingFileName,
+        string? ExistingSha256);
+
+    private sealed record UploadPrecheckResult(bool Ok, string? Error, long? Size);
+
+    private sealed record UploadStageEnvelope(int Status, bool Ok, StagedUploadInfo? Body);
+
+    private async Task<IJSObjectReference> GetUploadModuleAsync() =>
+        _uploadModule ??= await JS.InvokeAsync<IJSObjectReference>(
+            "import", "./_content/Yagura.Web/js/forwarder-msi-upload.js");
+
+    private async Task UploadAsync()
+    {
+        _uploadError = null;
+        _uploadNotice = null;
+
+        var module = await GetUploadModuleAsync();
+
+        // 送信前のクライアント側サイズ検査（ADR-0020 決定 3——超過はサーバへ送らずに分かる）。
+        var precheck = await module.InvokeAsync<UploadPrecheckResult>(
+            "precheck", _fileInput, ForwarderMsiUploadConstraints.MaxUploadBytes);
+        if (!precheck.Ok)
+        {
+            _uploadError = precheck.Error == "no-file"
+                ? UiText.ForwarderMsiUploadNoFileSelected
+                : string.Format(
+                    UiText.ForwarderMsiUploadFileTooLargeFormat,
+                    ForwarderMsiUploadConstraints.MaxUploadBytes / (1024 * 1024));
+            return;
+        }
+
+        _uploadInProgress = true;
+        try
+        {
+            var envelope = await module.InvokeAsync<UploadStageEnvelope>(
+                "stage", _fileInput, ArchitectureQueryValue());
+
+            if (!envelope.Ok || envelope.Body?.StagingToken is null)
+            {
+                _uploadError = MapStageError(envelope.Body?.Error, envelope.Status);
+                return;
+            }
+
+            _stagedUpload = envelope.Body;
+            _replaceAcknowledged = false;
+            _uploadVersionMismatchAcknowledged = false;
+        }
+        finally
+        {
+            _uploadInProgress = false;
+        }
+    }
+
+    private async Task CommitUploadAsync()
+    {
+        if (_stagedUpload?.StagingToken is null)
+        {
+            return;
+        }
+
+        _uploadError = null;
+
+        // クライアント側の早期検証（サーバ側——store.Commit——の最終防御と同じ条件）。
+        if (!IsStagedOfficialHashMatch() && !_uploadVersionMismatchAcknowledged)
+        {
+            _uploadError = UiText.ForwarderMsiUploadErrorNotAcknowledged;
+            return;
+        }
+
+        if (_stagedUpload.ExistingFileName is not null && !_replaceAcknowledged)
+        {
+            _uploadError = UiText.ForwarderMsiUploadErrorNotAcknowledged;
+            return;
+        }
+
+        var result = await PlacementService.CommitAsync(
+            _stagedUpload.StagingToken,
+            _uploadVersionMismatchAcknowledged,
+            _replaceAcknowledged,
+            _selectedArchitecture,
+            await ResolveOperatorContextAsync());
+
+        if (!result.Success)
+        {
+            _uploadError = result.Error switch
+            {
+                ForwarderMsiCommitError.VersionMismatchNotAcknowledged => UiText.ForwarderMsiUploadErrorNotAcknowledged,
+                ForwarderMsiCommitError.ReplaceNotAcknowledged => UiText.ForwarderMsiUploadErrorNotAcknowledged,
+                ForwarderMsiCommitError.FolderStateChanged => UiText.ForwarderMsiUploadErrorStateChanged,
+                ForwarderMsiCommitError.WriteFailed => UiText.ForwarderMsiUploadErrorWriteFailed,
+                _ => UiText.ForwarderMsiUploadErrorGeneric,
+            };
+            if (result.Error is ForwarderMsiCommitError.UnknownStagingToken or ForwarderMsiCommitError.FolderStateChanged)
+            {
+                _stagedUpload = null;
+            }
+
+            return;
+        }
+
+        _stagedUpload = null;
+        _uploadNotice = UiText.ForwarderMsiUploadCommitted;
+        // 配置の確定で検出結果が変わる——同梱チェックの持ち越しもリセットする（アーキ切替と同じ判断）。
+        _includeMsi = false;
+        _versionMismatchAcknowledged = false;
+        RefreshMsiLookup();
+    }
+
+    private async Task CancelUploadAsync()
+    {
+        if (_stagedUpload?.StagingToken is null)
+        {
+            return;
+        }
+
+        await PlacementService.DiscardAsync(
+            _stagedUpload.StagingToken, _selectedArchitecture, await ResolveOperatorContextAsync());
+        _stagedUpload = null;
+    }
+
+    private void BeginDelete()
+    {
+        _deleteConfirming = true;
+        _deleteAcknowledged = false;
+        _uploadNotice = null;
+        _uploadError = null;
+    }
+
+    private void CancelDelete()
+    {
+        _deleteConfirming = false;
+        _deleteAcknowledged = false;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_msiLookup?.State != ForwarderMsiLookupState.Single)
+        {
+            return;
+        }
+
+        if (!_deleteAcknowledged)
+        {
+            _uploadError = UiText.ForwarderMsiUploadErrorNotAcknowledged;
+            return;
+        }
+
+        var result = await PlacementService.DeleteAsync(
+            _selectedArchitecture, _msiLookup.Details!.Sha256, await ResolveOperatorContextAsync());
+
+        if (!result.Success)
+        {
+            _uploadError = result.Error switch
+            {
+                ForwarderMsiDeleteError.Sha256Mismatch => UiText.ForwarderMsiDeleteErrorMismatch,
+                ForwarderMsiDeleteError.MultipleExistingFiles => UiText.ForwarderMsiUploadErrorMultipleExisting,
+                ForwarderMsiDeleteError.WriteFailed => UiText.ForwarderMsiUploadErrorWriteFailed,
+                _ => UiText.ForwarderMsiUploadErrorGeneric,
+            };
+        }
+        else
+        {
+            _uploadNotice = UiText.ForwarderMsiDeleted;
+            _includeMsi = false;
+            _versionMismatchAcknowledged = false;
+        }
+
+        _deleteConfirming = false;
+        _deleteAcknowledged = false;
+        RefreshMsiLookup();
+    }
+
+    private async Task<ForwarderMsiOperatorContext> ResolveOperatorContextAsync()
+    {
+        var (scheme, principal) = AuditActorResolver.Resolve(
+            (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+        return new ForwarderMsiOperatorContext(
+            CircuitContext.RemoteAddress, CircuitContext.IsLoopbackListener, scheme, principal);
+    }
+
+    private string ArchitectureQueryValue() =>
+        _selectedArchitecture == ForwarderMsiArchitecture.WinArm64 ? "arm64" : "x64";
+
+    private bool IsStagedOfficialHashMatch() =>
+        string.Equals(_stagedUpload?.OfficialHashMatch, nameof(OfficialHashMatchResult.Match), StringComparison.OrdinalIgnoreCase);
+
+    private string StagedOfficialHashMatchText() => _stagedUpload?.OfficialHashMatch switch
+    {
+        nameof(OfficialHashMatchResult.Match) => UiText.ForwarderKitMsiOfficialHashMatch,
+        nameof(OfficialHashMatchResult.Mismatch) => UiText.ForwarderKitMsiOfficialHashMismatch,
+        _ => UiText.ForwarderKitMsiOfficialHashUnverified,
+    };
+
+    private static string MapStageError(string? error, int status) => error switch
+    {
+        "another-upload-in-progress" => UiText.ForwarderMsiUploadErrorBusy,
+        "declared-length-exceeds-limit" or "stream-exceeds-limit" => UiText.ForwarderMsiUploadErrorTooLarge,
+        "insufficient-disk-space" => UiText.ForwarderMsiUploadErrorDiskSpace,
+        "write-failed" => UiText.ForwarderMsiUploadErrorWriteFailed,
+        "product-version-unreadable" or "product-version-invalid" => UiText.ForwarderMsiUploadErrorVersionUnreadable,
+        "multiple-existing-files" => UiText.ForwarderMsiUploadErrorMultipleExisting,
+        "no-file" => UiText.ForwarderMsiUploadNoFileSelected,
+        _ => UiText.ForwarderMsiUploadErrorGeneric,
+    };
 }

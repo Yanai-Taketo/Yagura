@@ -212,4 +212,18 @@ public sealed record ResolvedYaguraConfiguration(
     /// 「監視しない」（未設定・空リスト・全エントリが不正のいずれも含む——区別は警告一覧側に現れる）。
     /// </summary>
     internal ResolvedSourceSilence? SourceSilence { get; init; }
+
+    /// <summary>
+    /// フォワーダ MSI の管理画面アップロード（配置経路 (b)。ADR-0020 決定 1。opt-in）の実効値
+    /// （既定 <c>false</c>）。<c>true</c> の組み合わせは、管理 UI 認証（<see cref="AdminWindowsAuthEnabled"/>/
+    /// <see cref="AdminAppAuthEnabled"/> のいずれか）と <see cref="AdminAuthRequireForLoopback"/> の
+    /// 両方が有効であることを <see cref="YaguraConfigurationLoader.Load"/> が fail-closed（1032）で
+    /// 検証済みのため、この記録に到達する時点では常に「管理リスナに無認証の到達経路が存在しない」
+    /// 構成が成立している（アップロード操作の監査に認証済み利用者名が必ず入る——ADR-0020 の中核前提）。
+    /// </summary>
+    /// <remarks>
+    /// 位置パラメータではなく init プロパティにしているのは、opt-in の後付け機能であり
+    /// 既定値（無効）が自然に定まるため（<see cref="EmailNotification"/> と同じ判断）。
+    /// </remarks>
+    public bool AdminForwarderMsiUploadEnabled { get; init; }
 }

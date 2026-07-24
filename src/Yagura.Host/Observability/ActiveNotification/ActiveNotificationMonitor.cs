@@ -100,7 +100,9 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null,
         SourceSilence.SourceSilenceDetector? sourceSilenceDetector = null,
         Func<Yagura.Ingestion.ListenerAvailabilitySnapshot>? listenerAvailabilityProbe = null,
-        Func<CancellationToken, Task<IReadOnlyList<Yagura.Storage.SourceActivity>>>? sourceActivitySeedQuery = null)
+        Func<CancellationToken, Task<IReadOnlyList<Yagura.Storage.SourceActivity>>>? sourceActivitySeedQuery = null,
+        Func<bool?>? forwarderMsiFolderWritableProbe = null,
+        bool forwarderMsiUploadEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -119,7 +121,30 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _sourceSilenceDetector = sourceSilenceDetector;
         _listenerAvailabilityProbe = listenerAvailabilityProbe;
         _sourceActivitySeedQuery = sourceActivitySeedQuery;
+        _forwarderMsiFolderWritableProbe = forwarderMsiFolderWritableProbe;
+        _forwarderMsiUploadEnabled = forwarderMsiUploadEnabled;
     }
+
+    /// <summary>
+    /// フォワーダ MSI 配置フォルダの書き込み ACE 検出の問い合わせ口（ADR-0020 決定 2・委任 7）。
+    /// 戻り値: <see langword="true"/> = 実効実行アカウントに書き込み ACE がある（開放中）/
+    /// <see langword="false"/> = ない（既定の読み取り専用）/ <see langword="null"/> = 判定不能
+    /// （非 Windows・ACL 読み取り失敗——安全側で何も通知しない）。実体は ACL の読み取りのみで
+    /// 判定する（周期の実書き込みプローブは SACL 監査を毎分汚染するため採らない——
+    /// <c>ForwarderMsiFolderAclInspector</c> 参照）。未注入（<see langword="null"/>。テスト等）の
+    /// 間は何もしない。
+    /// </summary>
+    private readonly Func<bool?>? _forwarderMsiFolderWritableProbe;
+
+    /// <summary>
+    /// アップロード機能 opt-in（<c>Admin:ForwarderKit:MsiUpload:Enabled</c>）の実効値。
+    /// 検出の二系統（ADR-0020 決定 2）の分岐に使う——無効 + ACE 残存 = 乖離警告（1033）/
+    /// 有効 + ACE 存在の継続 = 開放継続の通知（1034）。
+    /// </summary>
+    private readonly bool _forwarderMsiUploadEnabled;
+
+    /// <summary>開放（書き込み ACE あり）を最初に観測した時刻（開放継続の通知——1034——の起点）。</summary>
+    private DateTimeOffset? _forwarderMsiOpenSince;
 
     /// <summary>
     /// 起動時 seed の照会口（ADR-0018 決定 3。Issue #381。<c>ILogStore.QuerySourceActivityAsync</c> を
@@ -289,7 +314,72 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateIngestionTlsCertificate();
         EvaluateAdminAuthFailureDefense();
         EvaluateSourceSilence();
+        EvaluateForwarderMsiFolderAcl();
         PruneStaleNotificationSuppression();
+    }
+
+    /// <summary>
+    /// フォワーダ MSI 配置フォルダの書き込み ACE の稼働中検出（ADR-0020 決定 2・委任 7。
+    /// Issue #283）。本製品は再起動 = 受信断のため長期間再起動されず、起動時のみの検証では
+    /// 閉じ忘れが数ヶ月単位で沈黙する——周期監視で二系統を検出する:
+    /// ①<b>乖離警告（1033）</b>: opt-in 無効なのに書き込み ACE が残っている（閉じ忘れ。#171 の
+    /// 教訓——意図した ACL と実 ACL の乖離は検出されるまで気づかれない）。
+    /// ②<b>開放継続の通知（1034）</b>: opt-in 有効で書き込み ACE の存在が継続している
+    /// （推奨運用「使うときだけ開く」の閉じ忘れの主たる発生様式。継続判定
+    /// <see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationThreshold"/>・
+    /// 専用の抑制窓 <see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow"/>
+    /// ——常置運用を選んだ環境で騒音にならない釣り合い。いずれも仮値・確定は ADR-0020 委任 7）。
+    /// </summary>
+    private void EvaluateForwarderMsiFolderAcl()
+    {
+        if (_forwarderMsiFolderWritableProbe is null)
+        {
+            return;
+        }
+
+        var writable = _forwarderMsiFolderWritableProbe();
+        if (writable is not true)
+        {
+            // 未開放（既定）・判定不能（非 Windows / ACL 読み取り失敗——安全側で沈黙）。
+            _forwarderMsiOpenSince = null;
+            return;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+
+        if (!_forwarderMsiUploadEnabled)
+        {
+            _forwarderMsiOpenSince = null;
+            NotifyIfDue("forwarder-msi-acl-drift", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
+                    "[forwarder-msi-acl-drift] フォワーダ MSI 配置フォルダにサービス実行アカウントの" +
+                    "書き込み権限（ACE）が残っていますが、管理画面アップロード機能" +
+                    "（Admin:ForwarderKit:MsiUpload:Enabled）は無効です。機能の利用を終えた後の" +
+                    "ACE の撤去（閉じ忘れ）を確認してください（ADR-0020 決定 2。撤去手順は利用者ガイド参照）。" +
+                    "撤去されるまで、Web プロセスの侵害が全端末配布 MSI の差し替えに波及し得る状態が" +
+                    "続きます。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        _forwarderMsiOpenSince ??= now;
+        var openDuration = now - _forwarderMsiOpenSince.Value;
+        if (openDuration >= ActiveNotificationConstants.ForwarderMsiOpenContinuationThreshold)
+        {
+            NotifyIfDue(
+                "forwarder-msi-open-continuation",
+                ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow,
+                () => _logger.LogInformation(
+                    ActiveNotificationEventIds.ForwarderMsiWritePathOpenContinuing,
+                    "[forwarder-msi-open-continuation] フォワーダ MSI 配置フォルダの書き込み経路が" +
+                    "開放されたまま {OpenDays:F1} 日継続しています（アップロード機能は有効——設定上は" +
+                    "期待どおりの状態です）。常置運用を選んでいる場合はこの通知は確認のみで構いません。" +
+                    "「使うときだけ開く」運用の場合は ACE の撤去忘れを確認してください（ADR-0020 決定 2）。" +
+                    "本通知は {SuppressionWindow} ごとに再表示されます。",
+                    openDuration.TotalDays,
+                    ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow));
+        }
     }
 
     /// <summary>
@@ -979,12 +1069,19 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 以内に既に発火していれば抑制する（<c>PersistenceWriter.ShouldEmitPermanentFailureWarning</c>
     /// と同じ設計。連発の抑制。architecture.md §4.6）。
     /// </summary>
-    private void NotifyIfDue(string triggerKey, Action emit)
+    private void NotifyIfDue(string triggerKey, Action emit) =>
+        NotifyIfDue(triggerKey, ActiveNotificationConstants.SuppressionWindow, emit);
+
+    /// <summary>
+    /// 抑制窓を個別指定するオーバーロード（開放継続の通知——1034——のように、既定の 15 分より
+    /// 大幅に長い間隔で再表示するトリガ向け。ADR-0020 委任 7）。
+    /// </summary>
+    private void NotifyIfDue(string triggerKey, TimeSpan suppressionWindow, Action emit)
     {
         var now = _timeProvider.GetUtcNow();
 
         if (_lastNotifiedAt.TryGetValue(triggerKey, out var lastAt) &&
-            now - lastAt < ActiveNotificationConstants.SuppressionWindow)
+            now - lastAt < suppressionWindow)
         {
             return;
         }
