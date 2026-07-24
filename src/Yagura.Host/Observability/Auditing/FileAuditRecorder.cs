@@ -298,6 +298,8 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.EmailNotificationConfigured => AuditEventIds.EmailNotificationConfigured,
         AuditEventKind.EmailNotificationTestSent => AuditEventIds.EmailNotificationTestSent,
         AuditEventKind.SourceSilenceWatchlistConfigured => AuditEventIds.SourceSilenceWatchlistConfigured,
+        AuditEventKind.ServiceAccountTranscribed => AuditEventIds.ServiceAccountTranscribed,
+        AuditEventKind.ServiceAccountChangeDetected => AuditEventIds.ServiceAccountChangeDetected,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

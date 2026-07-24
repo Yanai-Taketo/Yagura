@@ -65,6 +65,16 @@ internal static class AuditEventDescriptions
         AuditEventKind.AuditChannelRecovered => "監査チャネル復旧・障害中事象を書き戻し",
         AuditEventKind.StartupConfigurationChangeDetected => "前回稼働時から設定ファイルが変更された状態で起動",
         AuditEventKind.IngestionTlsCertificateConfigured => "TLS 受信の証明書設定を変更",
+        // 2021〜2023 は Issue #350/#351 実装時に本対応表への追随が漏れており、該当事象の
+        // イベントログ併記が Describe の例外（→ TryWriteEventLog の最終捕捉）で毎回縮退していた
+        // （アプリ記録ファイル側は無事）。Issue #263 実装時に発見し、Describe の網羅を
+        // ResolveEventId と同じ機械検証（Describe_MapsEveryAuditEventKind_WithoutFallback）の
+        // 対象に加えて再発を塞いだ。
+        AuditEventKind.EmailNotificationConfigured => "メール通知の設定を変更",
+        AuditEventKind.EmailNotificationTestSent => "メール通知のテスト送信を実行",
+        AuditEventKind.SourceSilenceWatchlistConfigured => "途絶検知のウォッチリストを変更",
+        AuditEventKind.ServiceAccountTranscribed => "サービス実行アカウントの構成を転記",
+        AuditEventKind.ServiceAccountChangeDetected => "サービス実行アカウントが前回起動時から変化",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

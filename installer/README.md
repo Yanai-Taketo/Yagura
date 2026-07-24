@@ -44,7 +44,8 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 
 | 責務 | 実装 |
 |---|---|
-| Windows サービス登録 | `ServiceInstall`(サービス名 `Yagura` = `Program.WindowsServiceName`)。仮想サービスアカウント `NT SERVICE\Yagura`・自動起動・失敗時再起動(5 秒 × 3 回、`util:ServiceConfig`) |
+| Windows サービス登録 | `ServiceInstall`(サービス名 `Yagura` = `Program.WindowsServiceName`)。実行アカウントはプロパティ間接参照 `Account="[YAGURA_SERVICE_ACCOUNT]"`(既定 `NT SERVICE\Yagura`)・自動起動・失敗時再起動(5 秒 × 3 回、`util:ServiceConfig`) |
+| サービス実行アカウントの gMSA opt-in(ADR-0015・Issue #263) | MSI プロパティ `YAGURA_SERVICE_ACCOUNT`(既定 `NT SERVICE\Yagura`)+ セットアップ画面の入力欄(`YaguraServiceAccountDlg`。パスワード欄なし)。fail-closed 検証(type 19 CA `ValidateYaguraServiceAccount`: 既定値または `DOMAIN\name$` 形式のみ受理。LocalSystem 等は対話・サイレントを問わず失敗)。remember property でアップグレード時に前回値を継承。gMSA 指定時のみ deferred CA(icacls)がデータルート `(M)`・forwarder `(R)` の ACL を後追い付与し、静的 SDDL の仮想 SA ACE と旧アカウント ACE を除去(security.md §5.2)。インストール記録はデータルート直下 `service-account.ini` + `HKLM\SOFTWARE\Yagura\ServiceAccount`。`SeServiceLogonRight` の事前付与は利用者側の前提条件([docs/guides/gmsa-service-account.md](../docs/guides/gmsa-service-account.md)) |
 | データルート作成 + ACL | `%ProgramData%\Yagura` を作成し、native `PermissionEx`(MsiLockPermissionsEx)の SDDL で「SYSTEM/Administrators = フル、サービスアカウント = 変更、継承無効化」を適用(security.md §5) |
 | フォワーダ MSI 配置フォルダ作成 + ACL | `%ProgramData%\Yagura\forwarder` を作成し、データルートとは独立した SDDL(`ForwarderFolder` コンポーネント)で「SYSTEM/Administrators = フル、サービスアカウント = **読み取りのみ**、継承無効化」を適用(ADR-0008 設計条件 9・security.md §5.1・Issue #171)。データルートの ACL をそのまま継承すると生じるサービスアカウントの書込可を明示的に断つ |
 | ファイアウォール規則 | `Yagura Syslog (UDP 514)` / `Yagura Syslog (TCP 514)` / `Yagura Viewer (TCP 8514)` の受信許可 3 規則(WixToolset.Firewall.wixext)。**各規則のプロファイルは Domain + Private の複合に限定**(Public は含まない。`Profile="[YaguraFwProfile]"` のプロパティ間接参照でビットマスク整数 `3` = Domain\|Private を Firewall 拡張の custom action へ渡す。方式の根拠と制約は Firewall.wxs 冒頭コメント参照)。管理 8515 は loopback 専用のため規則を作らない |
@@ -202,3 +203,24 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
     要求範囲(オプトアウトが修復で失われない)外であり、対応する CMDLINE 退避カスタム
     アクションは導入しない。将来「明示指定で記憶値を上書きしたい」要望が出た際の設計負債として
     ここに記録する(Package.wxs のコメントにも同旨を記載)
+- **サービス実行アカウントの gMSA opt-in(ADR-0015・Issue #263)の検証マトリクス**
+  (security.md SEC-14 の「CI で継続検知する範囲 / lab でしか検証できない項目」の明示):
+  - **CI(installer-e2e。AD なしで検証できる範囲)**:
+    - `msi-service-account-table`: MSI テーブル照合(`Property` の `YAGURA_SERVICE_ACCOUNT`
+      既定値 = `NT SERVICE\Yagura`・`ServiceInstall.StartName` = `[YAGURA_SERVICE_ACCOUNT]` の
+      間接参照のまま・`ValidateYaguraServiceAccount` CA の存在)
+    - `service-account-evidence`: 既定インストール後の `Win32_Service.StartName` が仮想 SA で
+      あること(間接参照化による既定経路の非退行)+ `service-account.ini` と
+      `HKLM\SOFTWARE\Yagura\ServiceAccount`(remember property 記録)の書き込み
+    - `service-account-reject-invalid`: `YAGURA_SERVICE_ACCOUNT=LocalSystem` のサイレント
+      インストールが失敗し(fail-closed)、サービス・レジストリの残置がないこと
+    - Host 側単体テスト: `ServiceAccountStartupInspectorTests`(転記 2024 の一回性・
+      変化検出 2025 のレール)
+  - **AD lab の管轄(security.md SEC-14 (a)〜(f)。yagura.test DC。未実施)**:
+    (a) gMSA 指定の新規インストール E2E(icacls 後追い付与の実出力記録を含む)
+    (b) パスワードローテーション跨ぎの受信・DB 書き込み継続
+    (c) DC 停止状態での再起動(1069 実挙動・SCM 回復設定の実効値の確定)
+    (d) 既存データありのアカウント切替(ACL 付替の全域性・旧 ACE 除去・スプール drain・
+        失敗時着地。`/remove:g *S-1-5-80-…` の SID 指定除去の成立確認を含む)
+    (e) 監査証跡(2024/2025・秘密鍵付与先の実効アカウント追随)
+    (f) SeServiceLogonRight の付与主体の最終確定・gMSA への HTTP SPN 登録手順の確定
