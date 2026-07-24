@@ -136,7 +136,10 @@ public sealed class ForwarderKitScreenRenderTests
 
     private static Task<string> RenderAsync(
         INicCandidateSource nicCandidateSource,
-        IForwarderMsiSource? forwarderMsiSource = null) =>
+        IForwarderMsiSource? forwarderMsiSource = null,
+        Yagura.Web.ForwarderKit.ForwarderMsiUploadRuntimeOptions? uploadOptions = null,
+        Yagura.Web.Administration.AdminAuthenticationRuntimeOptions? authOptions = null,
+        IForwarderMsiStore? forwarderMsiStore = null) =>
         CommonComponentRenderHarness.RenderAsync<ForwarderKitScreen>(
             configureServices: services =>
             {
@@ -144,6 +147,16 @@ public sealed class ForwarderKitScreenRenderTests
                 services.AddSingleton(forwarderMsiSource ?? new FakeForwarderMsiSource(
                     @"C:\ProgramData\Yagura\forwarder",
                     ForwarderMsiLookup.NotFound()));
+
+                // ADR-0020（MSI アップロード）: 既定は機能無効の構成で描画する（既定 false は
+                // 本番の既定と同じ——アップロード区画は「無効の理由 + 手動配置ガイド導線」を表示する）。
+                services.AddSingleton(uploadOptions ?? new Yagura.Web.ForwarderKit.ForwarderMsiUploadRuntimeOptions(false));
+                services.AddSingleton(authOptions ?? new Yagura.Web.Administration.AdminAuthenticationRuntimeOptions(
+                    RequireAuthentication: false, WindowsAuthEnabled: false, AppAuthEnabled: false));
+                services.AddSingleton(forwarderMsiStore ?? new FakeForwarderMsiStore());
+                services.AddSingleton<Yagura.Web.Administration.IForwarderMsiPlacementService>(
+                    new FakeForwarderMsiPlacementService());
+                services.AddSingleton(new Yagura.Web.Circuits.YaguraCircuitContext());
             });
 
     private sealed class FakeNicCandidateSource(IReadOnlyList<NicCandidate> candidates) : INicCandidateSource
@@ -156,5 +169,47 @@ public sealed class ForwarderKitScreenRenderTests
         public string FolderPath => folderPath;
 
         public ForwarderMsiLookup Lookup(ForwarderMsiArchitecture architecture) => lookup;
+    }
+
+    private sealed class FakeForwarderMsiStore : IForwarderMsiStore
+    {
+        public ForwarderMsiWriteAccess WriteAccess { get; set; } = new(false, "test");
+
+        public string FolderPath => @"C:\ProgramData\Yagura\forwarder";
+
+        public ForwarderMsiWriteAccess CheckWriteAccess() => WriteAccess;
+
+        public int CleanupStagingFiles() => 0;
+
+        public Task<ForwarderMsiStageResult> StageAsync(
+            ForwarderMsiArchitecture architecture, Stream content, long? declaredLength, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+
+        public ForwarderMsiCommitResult Commit(string stagingToken, bool versionMismatchAcknowledged, bool replaceAcknowledged) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+
+        public ForwarderMsiDiscardResult Discard(string stagingToken) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+
+        public ForwarderMsiDeleteResult Delete(ForwarderMsiArchitecture architecture, string expectedSha256) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+    }
+
+    private sealed class FakeForwarderMsiPlacementService : Yagura.Web.Administration.IForwarderMsiPlacementService
+    {
+        public Task<ForwarderMsiCommitResult> CommitAsync(
+            string stagingToken, bool versionMismatchAcknowledged, bool replaceAcknowledged,
+            ForwarderMsiArchitecture architecture, Yagura.Web.Administration.ForwarderMsiOperatorContext operatorContext) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+
+        public Task<ForwarderMsiDiscardResult> DiscardAsync(
+            string stagingToken, ForwarderMsiArchitecture architecture,
+            Yagura.Web.Administration.ForwarderMsiOperatorContext operatorContext) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+
+        public Task<ForwarderMsiDeleteResult> DeleteAsync(
+            ForwarderMsiArchitecture architecture, string expectedSha256,
+            Yagura.Web.Administration.ForwarderMsiOperatorContext operatorContext) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
     }
 }

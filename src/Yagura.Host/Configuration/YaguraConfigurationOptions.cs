@@ -251,6 +251,30 @@ public sealed class YaguraConfigurationOptions
         /// </summary>
         public HttpsOptions? Https { get; set; }
 
+        /// <summary>フォワーダ配布キット関連の管理機能設定（ADR-0020）。</summary>
+        public ForwarderKitOptions? ForwarderKit { get; set; }
+
+        public sealed class ForwarderKitOptions
+        {
+            /// <summary>MSI の管理画面アップロード（配置経路 (b)。ADR-0020 決定 1）。</summary>
+            public MsiUploadOptions? MsiUpload { get; set; }
+
+            public sealed class MsiUploadOptions
+            {
+                /// <summary>
+                /// アップロード機能の opt-in（既定 <c>false</c>）。<c>true</c> かつ
+                /// 「管理 UI 認証（<see cref="AuthenticationOptions.WindowsOptions.Enabled"/> /
+                /// <see cref="AuthenticationOptions.AppOptions.Enabled"/> のいずれか）+
+                /// <see cref="AuthenticationOptions.RequireForLoopback"/>」が揃っていない組み合わせは
+                /// fail-closed で起動を拒否する（ADR-0020 決定 1。
+                /// <see cref="YaguraConfigurationLoader"/> 参照）。有効化しても、配置フォルダへの
+                /// 書き込み ACE を管理者が明示付与するまで書き込みは物理的に成立しない
+                /// （ADR-0020 決定 2——Yagura 自身は ACL を変更しない）。
+                /// </summary>
+                public string? Enabled { get; set; }
+            }
+        }
+
         public sealed class RemoteBindingOptions
         {
             /// <summary>

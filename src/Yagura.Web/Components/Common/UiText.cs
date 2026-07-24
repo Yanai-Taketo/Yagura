@@ -1697,6 +1697,150 @@ public static class UiText
     public const string ForwarderKitErrorMsiVersionMismatchNotAcknowledged =
         "MSI の版が検証済み版と異なります。同梱するには確認チェックを入れてください。";
 
+    // ---- フォワーダ MSI アップロード（ADR-0020。配置経路 (b)。Issue #283） ----
+
+    public const string ForwarderMsiUploadSectionTitle = "MSI のアップロード（管理画面から配置）";
+
+    /// <summary>機能が無効な構成での案内（沈黙にしない——ADR-0020 決定 1）。</summary>
+    public const string ForwarderMsiUploadDisabledTitle =
+        "管理画面からの MSI アップロードは、この構成では無効です。";
+
+    public const string ForwarderMsiUploadDisabledIntro =
+        "有効化には次の設定がすべて必要です（管理リスナに認証なしで到達できる経路が残っている間は、"
+        + "全端末に配布される MSI の書き込み口を開けないためです）:";
+
+    public const string ForwarderMsiUploadConditionAuth =
+        "管理 UI 認証の有効化（Windows 統合認証またはアプリ独自 ID/パスワード）";
+
+    public const string ForwarderMsiUploadConditionRequireForLoopback =
+        "サーバ上のブラウザから開く場合にもログインを求める設定（Admin:Authentication:RequireForLoopback）";
+
+    /// <summary>条件 (ii) の代償の提示（ADR-0020 決定 1——知らずに交換させない）。</summary>
+    public const string ForwarderMsiUploadConditionRequireForLoopbackCost =
+        "注意: この設定を有効化すると、認証手段がすべて使えなくなった場合の復旧は「設定ファイルの手編集 + "
+        + "サービス再起動（= その間の syslog 受信断）」になります。有効化する前に、Windows 統合認証とは別に"
+        + "アプリ独自の管理者アカウントを最低 1 つ作成しておくこと（非常口）を強く推奨します。";
+
+    public const string ForwarderMsiUploadConditionOptIn =
+        "アップロード機能そのものの有効化（Admin:ForwarderKit:MsiUpload:Enabled）";
+
+    public const string ForwarderMsiUploadDisabledManualGuide =
+        "この構成のままでも、サーバのファイルシステムへの手動配置（利用者ガイド参照）で MSI 同梱を利用できます。";
+
+    /// <summary>書き込み経路が未開放（ACE 未付与）のときの案内（ADR-0020 決定 2——ここも沈黙にしない）。</summary>
+    public const string ForwarderMsiUploadNotWritableTitle =
+        "アップロード機能は有効ですが、書き込み経路がまだ開放されていません。";
+
+    public const string ForwarderMsiUploadNotWritableIntro =
+        "Yagura は自分では配置フォルダの権限を変更しません。OS の管理者が次のコマンドで、サービス実行"
+        + "アカウントに配置フォルダ限定の書き込み権限を付与すると、アップロード（および削除）が使えるように"
+        + "なります（撤去も自由です。手順の詳細・撤去コマンド・OS 監査（SACL）の推奨設定は利用者ガイド参照）:";
+
+    /// <summary>{0} = 配置フォルダのフルパス、{1} = サービス実行アカウント名。</summary>
+    public const string ForwarderMsiUploadGrantCommandFormat =
+        "icacls \"{0}\" /grant \"{1}:(OI)(CI)(M)\"";
+
+    /// <summary>開放状態の常時表示（ADR-0020 決定 2——閉じ忘れの検出可能性を画面でも支える）。</summary>
+    public const string ForwarderMsiUploadWritePathOpenNotice =
+        "書き込み経路が開放されています（サービス実行アカウントが配置フォルダへ書き込めます）。"
+        + "「使うときだけ開く」運用の場合は、作業後に権限の撤去を忘れないでください。";
+
+    public const string ForwarderMsiUploadFileLabel = "アップロードする MSI ファイル";
+
+    public const string ForwarderMsiUploadButton = "アップロードして内容を確認";
+
+    /// <summary>{0} = 上限（MiB）。</summary>
+    public const string ForwarderMsiUploadFileTooLargeFormat =
+        "選択されたファイルはサイズ上限（{0} MiB）を超えています。送信は行いませんでした。";
+
+    public const string ForwarderMsiUploadNoFileSelected = "ファイルが選択されていません。";
+
+    public const string ForwarderMsiUploadInProgress = "アップロード中です…";
+
+    // ---- 確認（stage → commit の二段階。ADR-0020 決定 3） ----
+
+    public const string ForwarderMsiUploadConfirmTitle = "配置内容の確認";
+
+    public const string ForwarderMsiUploadConfirmIntro =
+        "まだ配置は確定していません。内容を確認し、「配置を確定」を押すと配布キット生成の対象になります。";
+
+    /// <summary>{0} = 格納ファイル名（ProductVersion から Yagura が生成）。</summary>
+    public const string ForwarderMsiUploadConfirmFileNameFormat = "格納ファイル名: {0}";
+
+    public const string ForwarderMsiUploadReplaceWarningTitle =
+        "同じアーキテクチャの MSI が既に配置されています。確定すると置き換えられます。";
+
+    /// <summary>{0} = 既存（置換される側）の SHA256。</summary>
+    public const string ForwarderMsiUploadReplaceOldSha256Format = "現在の SHA256（置換される側）: {0}";
+
+    /// <summary>{0} = 新しくアップロードした側の SHA256。</summary>
+    public const string ForwarderMsiUploadReplaceNewSha256Format = "新しい SHA256（アップロードした側）: {0}";
+
+    public const string ForwarderMsiUploadReplaceAcknowledge = "既存の MSI を置き換えることを確認しました";
+
+    /// <summary>公式ハッシュ不一致（未知の版を含む）の二段階確認（ADR-0020 決定 3）。</summary>
+    public const string ForwarderMsiUploadHashMismatchWarning =
+        "このファイルは、Yagura が検証済みとして把握している公式配布の SHA256 と一致しません。"
+        + "改ざんされたファイル・誤ったバージョン・未検証のビルドの可能性があります。"
+        + "自分が信頼できる入手元（公式配布ページ）からダウンロードしたことを確認したうえで進めてください。";
+
+    public const string ForwarderMsiUploadHashMismatchAcknowledge =
+        "公式配布の SHA256 と一致しないことを理解したうえで配置します";
+
+    public const string ForwarderMsiUploadCommitButton = "配置を確定";
+
+    public const string ForwarderMsiUploadCancelButton = "中止（アップロードを破棄）";
+
+    public const string ForwarderMsiUploadCommitted = "MSI を配置しました。上の検出結果に反映されています。";
+
+    // ---- 削除（ADR-0020 決定 3——常に二段階確認） ----
+
+    public const string ForwarderMsiDeleteButton = "配置済み MSI を削除";
+
+    public const string ForwarderMsiDeleteConfirmTitle = "配置済み MSI の削除の確認";
+
+    /// <summary>{0} = ファイル名、{1} = SHA256。</summary>
+    public const string ForwarderMsiDeleteConfirmDetailFormat =
+        "削除対象: {0}（SHA256: {1}）。削除すると、この MSI は配布キット生成の同梱対象から外れます。";
+
+    public const string ForwarderMsiDeleteAcknowledge = "この MSI を削除することを確認しました";
+
+    public const string ForwarderMsiDeleteConfirmButton = "削除を確定";
+
+    public const string ForwarderMsiDeleteCancelButton = "やめる";
+
+    public const string ForwarderMsiDeleted = "配置済み MSI を削除しました。";
+
+    // ---- エラー（アップロード/削除の失敗。理由は監査 3014 に構造化して残る） ----
+
+    public const string ForwarderMsiUploadErrorGeneric =
+        "アップロードに失敗しました。詳細は監査記録・イベントログを確認してください。";
+
+    public const string ForwarderMsiUploadErrorBusy =
+        "別のアップロードが進行中です。完了を待ってからやり直してください。";
+
+    public const string ForwarderMsiUploadErrorTooLarge = "ファイルがサイズ上限を超えています。";
+
+    public const string ForwarderMsiUploadErrorDiskSpace =
+        "配置先ボリュームの空き容量が不足しています（受信用の空きを確保するため受け付けませんでした）。";
+
+    public const string ForwarderMsiUploadErrorWriteFailed =
+        "書き込みに失敗しました。書き込み経路（権限の付与状態）を確認してください。";
+
+    public const string ForwarderMsiUploadErrorVersionUnreadable =
+        "MSI から版（ProductVersion）を読み取れませんでした。ファイルが MSI 形式であること・破損していないことを確認してください。";
+
+    public const string ForwarderMsiUploadErrorMultipleExisting =
+        "配置フォルダに同じアーキテクチャの MSI が複数あります。先に手動で 1 つに整理してください。";
+
+    public const string ForwarderMsiUploadErrorStateChanged =
+        "確認を表示してから配置フォルダの状態が変わりました。安全のため確定を中止しました。最初からやり直してください。";
+
+    public const string ForwarderMsiUploadErrorNotAcknowledged = "確認チェックが入っていません。";
+
+    public const string ForwarderMsiDeleteErrorMismatch =
+        "確認を表示してからファイルが変わりました。安全のため削除を中止しました。画面を更新してやり直してください。";
+
     // ---- メール通知（ADR-0017。Issue #350） ----
 
     public const string EmailNotificationTitle = "メール通知";
