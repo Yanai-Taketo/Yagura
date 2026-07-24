@@ -11,8 +11,8 @@ namespace Yagura.Host.Ingestion.Tls;
 /// <para>
 /// <b>証明書ストア参照ロジックの共有</b>: 参照方式は Web UI の HTTPS・管理リスナのリモート
 /// HTTPS と同型（security.md §6「参照方式は Web UI の HTTPS と同型」）——本クラスは
-/// <see cref="AdminCertificateProvider.Load"/> をそのまま呼ぶ（TLS 受信専用の証明書ロード実装を
-/// 別途持たない。重複実装を避ける）。契約（<see cref="IAdminHttpsCertificateStatusProbe"/>）も
+/// <see cref="CertificateProvider.Load"/> をそのまま呼ぶ（TLS 受信専用の証明書ロード実装を
+/// 別途持たない。重複実装を避ける）。契約（<see cref="ICertificateStatusProbe"/>）も
 /// 管理リスナ側と共有する——「証明書ストアから拇印で 1 件解決し、現在の有効/期限を返す」という
 /// 形は両者で同一であり、TLS 受信専用の別インターフェースを新設する理由が無い。
 /// </para>
@@ -24,7 +24,7 @@ namespace Yagura.Host.Ingestion.Tls;
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public sealed class StoreIngestionTlsCertificateStatusProbe : IAdminHttpsCertificateStatusProbe
+public sealed class StoreIngestionTlsCertificateStatusProbe : ICertificateStatusProbe
 {
     private readonly string _normalizedThumbprint;
 
@@ -37,19 +37,19 @@ public sealed class StoreIngestionTlsCertificateStatusProbe : IAdminHttpsCertifi
         _normalizedThumbprint = normalizedThumbprint;
     }
 
-    public AdminHttpsCertificateStatus Check()
+    public CertificateStatus Check()
     {
-        var result = AdminCertificateProvider.Load(_normalizedThumbprint);
+        var result = CertificateProvider.Load(_normalizedThumbprint);
 
         if (!result.Succeeded)
         {
-            return new AdminHttpsCertificateStatus(
+            return new CertificateStatus(
                 IsAvailable: false,
                 NotAfter: default,
                 FailureReason: result.FailureReason);
         }
 
-        return new AdminHttpsCertificateStatus(
+        return new CertificateStatus(
             IsAvailable: true,
             NotAfter: new DateTimeOffset(result.Certificate!.NotAfter),
             FailureReason: null);

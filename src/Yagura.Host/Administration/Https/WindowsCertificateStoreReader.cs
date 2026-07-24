@@ -8,12 +8,12 @@ namespace Yagura.Host.Administration.Https;
 /// <summary>
 /// <see cref="ICertificateStoreReader"/> の Windows 実体（ADR-0012 決定 2）。
 /// <c>LocalMachine\My</c> を <c>OpenFlags.ReadOnly</c> で開いて全件を走査し、serverAuth EKU +
-/// 秘密鍵ありの証明書を最小フィールドの DTO で返す。<see cref="AdminCertificateProvider"/> と同層。
+/// 秘密鍵ありの証明書を最小フィールドの DTO で返す。<see cref="CertificateProvider"/> と同層。
 /// </summary>
 /// <remarks>
 /// 列挙は BCL の <see cref="X509Store"/>／<see cref="X509Certificate2"/> のみで完結し、新規 NuGet
 /// 依存を追加しない（ADR-0012 検討した選択肢 (D)）。秘密鍵 ACL 付与
-/// （<see cref="AdminCertificatePrivateKeyAccessGranter"/>）は本クラスからは呼ばない——lab 実測で
+/// （<see cref="CertificatePrivateKeyAccessGranter"/>）は本クラスからは呼ばない——lab 実測で
 /// サービスアカウントには付与権限（WRITE_DAC）がないと確定したため、UI は読取検証と誘導に留める
 /// （ADR-0012 決定 3 = (b)）。<see cref="IsPrivateKeyReadable"/> の読取検証は現在の実行アカウント
 /// （= サービスアカウント <c>NT SERVICE\Yagura</c>）の視点で行われる。

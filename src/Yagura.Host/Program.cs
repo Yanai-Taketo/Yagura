@@ -235,7 +235,7 @@ public static class Program
 
         if (listenerBindEntries.Any(e => e.RequiresHttps))
         {
-            var certificateLoadResult = Yagura.Host.Administration.Https.AdminCertificateProvider.Load(
+            var certificateLoadResult = Yagura.Host.Administration.Https.CertificateProvider.Load(
                 resolvedConfiguration.AdminHttpsCertificateThumbprint!);
 
             if (!certificateLoadResult.Succeeded)
@@ -255,7 +255,7 @@ public static class Program
         }
 
         // TLS 受信（RFC 5425。opt-in・既定無効。security.md §6。Issue #137）: 証明書ストア参照は
-        // 管理リスナのリモート HTTPS（上記）と同一の実装（AdminCertificateProvider.Load）を再利用
+        // 管理リスナのリモート HTTPS（上記）と同一の実装（CertificateProvider.Load）を再利用
         // する——設定キーは独立（Ingestion:Tls:*）だが、参照方式（Windows 証明書ストア・拇印指定）
         // は共有し、重複実装しない（security.md §6「参照方式は Web UI の HTTPS と同型」）。
         // <b>管理 HTTPS との非対称</b>: 管理 HTTPS は IsExpired を「未解決」として扱い bind を
@@ -276,7 +276,7 @@ public static class Program
             }
             else
             {
-                var ingestionTlsCertificateLoadResult = Yagura.Host.Administration.Https.AdminCertificateProvider.Load(
+                var ingestionTlsCertificateLoadResult = Yagura.Host.Administration.Https.CertificateProvider.Load(
                     resolvedConfiguration.IngestionTlsCertificateThumbprint);
 
                 if (!ingestionTlsCertificateLoadResult.Succeeded)
@@ -602,7 +602,7 @@ public static class Program
         // 有効な場合（= 起動時に証明書を解決できた場合）にのみ結線する——起動時に解決できず
         // 縮小継続した構成は 1013 が既に報告済みで、再起動なしに bind が有効化されることもない
         // ため周期監視の対象にしない（EvaluateAdminHttpsCertificate の doc コメント参照）。
-        Yagura.Host.Observability.ActiveNotification.IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe =
+        Yagura.Host.Observability.ActiveNotification.ICertificateStatusProbe? adminHttpsCertificateProbe =
             adminHttpsCertificate is not null
                 ? new Yagura.Host.Administration.Https.StoreAdminHttpsCertificateStatusProbe(
                     resolvedConfiguration.AdminHttpsCertificateThumbprint!)
@@ -612,7 +612,7 @@ public static class Program
         // 使用不能検知 = 1018）。証明書が実際に解決できて TLS 受信が有効な場合にのみ結線する——
         // 上記 adminHttpsCertificateProbe と同じ「起動時に解決できず縮小継続した構成は重複監視
         // しない」判断（EvaluateIngestionTlsCertificate の doc コメント参照）。
-        Yagura.Host.Observability.ActiveNotification.IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe =
+        Yagura.Host.Observability.ActiveNotification.ICertificateStatusProbe? ingestionTlsCertificateProbe =
             ingestionTlsCertificate is not null
                 ? new Yagura.Host.Ingestion.Tls.StoreIngestionTlsCertificateStatusProbe(
                     resolvedConfiguration.IngestionTlsCertificateThumbprint!)
@@ -1226,7 +1226,7 @@ public static class Program
             // から既に読める限り）動作を継続できるため、起動は妨げない——警告のみ残す
             // （CF-D2 の手動手順への誘導）。
             var httpsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.Https");
-            var grantResult = Yagura.Host.Administration.Https.AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess(
+            var grantResult = Yagura.Host.Administration.Https.CertificatePrivateKeyAccessGranter.TryGrantReadAccess(
                 adminHttpsCertificate, effectiveServiceAccountName);
 
             var auditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
@@ -1277,7 +1277,7 @@ public static class Program
             // 現在の実行アカウントから既に読める限り）動作を継続できるため、起動は妨げない——
             // 警告のみ残す。
             var tlsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Ingestion.Tls");
-            var ingestionTlsGrantResult = Yagura.Host.Administration.Https.AdminCertificatePrivateKeyAccessGranter.TryGrantReadAccess(
+            var ingestionTlsGrantResult = Yagura.Host.Administration.Https.CertificatePrivateKeyAccessGranter.TryGrantReadAccess(
                 ingestionTlsCertificate, effectiveServiceAccountName);
 
             var ingestionTlsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();

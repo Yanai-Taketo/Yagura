@@ -66,8 +66,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly IMonitoredVolumeInfo _volumeInfo;
     private readonly IExpressCapacityChecker _expressChecker;
     private readonly SpoolSelfTestTracker? _selfTestTracker;
-    private readonly IAdminHttpsCertificateStatusProbe? _adminHttpsCertificateProbe;
-    private readonly IAdminHttpsCertificateStatusProbe? _ingestionTlsCertificateProbe;
+    private readonly ICertificateStatusProbe? _adminHttpsCertificateProbe;
+    private readonly ICertificateStatusProbe? _ingestionTlsCertificateProbe;
     private readonly Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? _adminAuthFailureDefense;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
@@ -95,8 +95,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         TimeProvider? timeProvider = null,
         ILogger<ActiveNotificationMonitor>? logger = null,
         SpoolSelfTestTracker? selfTestTracker = null,
-        IAdminHttpsCertificateStatusProbe? adminHttpsCertificateProbe = null,
-        IAdminHttpsCertificateStatusProbe? ingestionTlsCertificateProbe = null,
+        ICertificateStatusProbe? adminHttpsCertificateProbe = null,
+        ICertificateStatusProbe? ingestionTlsCertificateProbe = null,
         Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? adminAuthFailureDefense = null,
         SourceSilence.SourceSilenceDetector? sourceSilenceDetector = null,
         Func<Yagura.Ingestion.ListenerAvailabilitySnapshot>? listenerAvailabilityProbe = null,
@@ -519,7 +519,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// <summary>
     /// 管理リスナのリモート HTTPS 証明書の期限接近・稼働中の使用不能を検知する
     /// （ADR-0010 Phase 2 決定 4。PR #224 レビュー指摘 #2・#3 への対応。
-    /// <see cref="IAdminHttpsCertificateStatusProbe"/> の remarks 参照）。
+    /// <see cref="ICertificateStatusProbe"/> の remarks 参照）。
     /// リモートバインド opt-in が無効・起動時に証明書を解決できず縮小継続した構成
     /// （プローブ未注入 = <see langword="null"/>）では何もしない——後者は起動時警告
     /// （EventId 1013）が既に一度報告しており、再起動なしに bind が有効化されることもないため、
@@ -570,7 +570,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         var remaining = status.NotAfter - now;
-        if (remaining <= ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow)
+        if (remaining <= ActiveNotificationConstants.CertificateExpiryWarningWindow)
         {
             NotifyIfDue("admin-https-certificate-expiry-approaching", () =>
                 _logger.LogWarning(
@@ -582,7 +582,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.NotAfter,
                     remaining.TotalDays,
-                    ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow,
+                    ActiveNotificationConstants.CertificateExpiryWarningWindow,
                     ActiveNotificationConstants.SuppressionWindow));
         }
     }
@@ -644,7 +644,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         var remaining = status.NotAfter - now;
-        if (remaining <= ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow)
+        if (remaining <= ActiveNotificationConstants.CertificateExpiryWarningWindow)
         {
             NotifyIfDue("ingestion-tls-certificate-expiry-approaching", () =>
                 _logger.LogWarning(
@@ -656,7 +656,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.NotAfter,
                     remaining.TotalDays,
-                    ActiveNotificationConstants.AdminHttpsCertificateExpiryWarningWindow,
+                    ActiveNotificationConstants.CertificateExpiryWarningWindow,
                     ActiveNotificationConstants.SuppressionWindow));
         }
     }

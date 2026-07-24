@@ -81,11 +81,13 @@ public static class ActiveNotificationConstants
     public static readonly TimeSpan SelfTestTimeout = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// 管理リスナのリモート HTTPS 証明書（ADR-0010 Phase 2 決定 4）の有効期限接近を警告し始める
-    /// 残余期間（暫定値: 30 日）。商用 CA・社内 CA の一般的な更新リードタイム（申請〜発行〜
+    /// サーバ証明書の有効期限接近を警告し始める残余期間（暫定値: 30 日）。管理リスナのリモート
+    /// HTTPS（ADR-0010 Phase 2 決定 4。EventId 1014）と TLS 受信（security.md §6。EventId 1017）の
+    /// 両用途で共有する（#359 で命名を中立化した——同じ目的の閾値であり、用途別の値を採用すべき
+    /// 設計上の根拠が無い）。商用 CA・社内 CA の一般的な更新リードタイム（申請〜発行〜
     /// 差し替えに数日〜数週間）を吸収でき、かつ「まだ 1 か月ある」段階からの警告が抑制窓
     /// （<see cref="SuppressionWindow"/>）により 15 分に 1 回に留まることを踏まえた選定
     /// （実測・実運用フィードバック未実施——他の M-16 系仮値と同じ扱い）。
     /// </summary>
-    public static readonly TimeSpan AdminHttpsCertificateExpiryWarningWindow = TimeSpan.FromDays(30);
+    public static readonly TimeSpan CertificateExpiryWarningWindow = TimeSpan.FromDays(30);
 }

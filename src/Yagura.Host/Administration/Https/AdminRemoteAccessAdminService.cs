@@ -25,8 +25,8 @@ namespace Yagura.Host.Administration.Https;
 /// <para>
 /// <b>証明書検証の乖離ゼロ（ADR-0012 決定 4 = D-6）</b>: 拇印の実ストア解決は起動時
 /// （<c>Program.cs</c> の管理リスナ bind 前評価 = イベント ID 1013 経路）と同一コード
-/// <see cref="AdminCertificateProvider.Load"/> へ寄せる。<b>期限切れは拒否する</b>——起動時評価は
-/// <see cref="AdminCertificateLoadResult.Succeeded"/> でも <see cref="AdminCertificateLoadResult.IsExpired"/>
+/// <see cref="CertificateProvider.Load"/> へ寄せる。<b>期限切れは拒否する</b>——起動時評価は
+/// <see cref="CertificateLoadResult.Succeeded"/> でも <see cref="CertificateLoadResult.IsExpired"/>
 /// なら証明書を「未解決」として扱い、リモート HTTPS の bind エントリを開かずに縮小継続（1013）する
 /// （<c>Program.cs</c> の <c>adminHttpsCertificateUnavailableReason</c> への分岐——TLS 受信の
 /// 「期限切れでも受け入れる」非対称とは異なる）ため、期限切れを警告付きで通すと「事前検証が緑なのに
@@ -56,7 +56,7 @@ public sealed class AdminRemoteAccessAdminService : IAdminRemoteAccessAdminServi
 
     private readonly string _dataRoot;
     private readonly IAuditRecorder _auditRecorder;
-    private readonly Func<string, AdminCertificateLoadResult> _loadCertificate;
+    private readonly Func<string, CertificateLoadResult> _loadCertificate;
     private readonly Func<X509Certificate2, bool> _hasServerAuthEku;
     private readonly Func<X509Certificate2, bool> _isPrivateKeyReadable;
     private readonly TimeProvider _timeProvider;
@@ -68,7 +68,7 @@ public sealed class AdminRemoteAccessAdminService : IAdminRemoteAccessAdminServi
         : this(
             dataRoot,
             auditRecorder,
-            AdminCertificateProvider.Load,
+            CertificateProvider.Load,
             WindowsCertificateStoreReader.HasServerAuthEku,
             WindowsCertificateStoreReader.IsPrivateKeyReadable,
             timeProvider)
@@ -79,12 +79,12 @@ public sealed class AdminRemoteAccessAdminService : IAdminRemoteAccessAdminServi
     /// 証明書検証部分を差し替え可能にするテスト用コンストラクタ（ADR-0012 決定 5:
     /// 実マシンの証明書ストアに依存する部分を偽実装で決定的に検証する。実ストア接触は
     /// 統合／E2E に限定する）。公開コンストラクタは起動時検証と同一の実物
-    /// （<see cref="AdminCertificateProvider.Load"/> ほか）を既定として束ねる。
+    /// （<see cref="CertificateProvider.Load"/> ほか）を既定として束ねる。
     /// </summary>
     internal AdminRemoteAccessAdminService(
         string dataRoot,
         IAuditRecorder auditRecorder,
-        Func<string, AdminCertificateLoadResult> loadCertificate,
+        Func<string, CertificateLoadResult> loadCertificate,
         Func<X509Certificate2, bool> hasServerAuthEku,
         Func<X509Certificate2, bool> isPrivateKeyReadable,
         TimeProvider? timeProvider = null)

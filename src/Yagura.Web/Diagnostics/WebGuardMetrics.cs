@@ -29,6 +29,14 @@ namespace Yagura.Web.Diagnostics;
 /// <item><c>yagura.web.audit.buffer_dropped</c>: 監査チャネル障害中のメモリ内保持が上限に達し、
 /// 縮退で破棄した事象の件数（SEC-10。security.md §4.2。Issue #269）。復旧サマリ（3013）が
 /// 書けないままプロセスが落ちても件数が観測に残るよう、ライブの計器としても計上する。</item>
+/// <item><c>yagura.web.circuit.origin_rejected</c>: 同一サイト以外からの circuit 確立試行の
+/// 拒否件数（origin 検証。security.md §2.1「拒否は計測する」。
+/// <see cref="Circuits.CircuitGuardMiddleware"/> が発火）。</item>
+/// <item><c>yagura.web.circuit.limit_rejected</c>: circuit 数上限による新規接続の拒否件数
+/// （security.md §2.2「拒否はカウンタに計上する」。SEC-1 仮値。
+/// <see cref="Circuits.CircuitGuardMiddleware"/> が発火）。</item>
+/// <item><c>yagura.web.circuit.idle_reclaimed</c>: 無操作 circuit の回収件数（security.md §2.2。
+/// SEC-8 仮値。<see cref="Circuits.CircuitIdleReclaimService"/> が発火）。</item>
 /// </list>
 /// </para>
 /// </remarks>
