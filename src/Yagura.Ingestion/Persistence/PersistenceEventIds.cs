@@ -43,7 +43,7 @@ public static class PersistenceEventIds
     /// （実効実行アカウント名）と失敗種別（DC 起因 / SQL Server 起因の一次切り分け）**を残す
     /// ——同一例外で 1030 と二重警告にしない（抑制窓も 1030 と共有する。
     /// <see cref="PersistenceWriter"/> 参照）。分類根拠は SEC-14 (a)/(c) の AD lab 実測
-    /// （2026-07-24。ADR-0015 改訂履歴 2）。
+    /// （2026-07-24。ADR-0015 改訂履歴 3）。
     /// </remarks>
     public static readonly EventId IntegratedAuthConnectionFailed = new(1031, "IntegratedAuthConnectionFailed");
 }

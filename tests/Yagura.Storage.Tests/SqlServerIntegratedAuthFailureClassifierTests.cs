@@ -12,7 +12,7 @@ namespace Yagura.Storage.Tests;
 /// <see cref="Microsoft.Data.SqlClient.SqlException"/> は公開コンストラクタを持たずテストから
 /// 生成できないため、番号 + 内側例外による分類コアを直接検証する
 /// （<c>SqlConnectionFailureClassifierTests</c> と同じ方式）。番号と失敗形の対応は SEC-14 (a)/(c)
-/// の AD lab 実測（2026-07-24。ADR-0015 改訂履歴 2）で確認済み。
+/// の AD lab 実測（2026-07-24。ADR-0015 改訂履歴 3）で確認済み。
 /// </remarks>
 public sealed class SqlServerIntegratedAuthFailureClassifierTests
 {
@@ -53,7 +53,7 @@ public sealed class SqlServerIntegratedAuthFailureClassifierTests
         Assert.Equal(IntegratedAuthFailureOrigin.DomainController, classified.Value.Origin);
         Assert.Contains("DC 起因", classified.Value.Description);
         // SEC_E コードは状況により異なり得るため個別コードで分岐しないが、事後調査のため
-        // 本文へ転写する（ADR-0015 改訂履歴 2 の決定）。
+        // 本文へ転写する（ADR-0015 改訂履歴 3 の決定）。
         Assert.Contains("0x80090303", classified.Value.Description);
     }
 

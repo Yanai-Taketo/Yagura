@@ -66,7 +66,7 @@ internal static class SqlServerFailureClassifier
     private const byte SoftwareOrHardwareErrorSeverityThreshold = 17;
 
     // SSPI コンテキスト生成失敗等のクライアント側失敗で SqlException.Number に入る値
-    // （SEC-14 (a)/(c) の AD lab 実測 2026-07-24。ADR-0015 改訂履歴 2——DC 停止中の新規接続は
+    // （SEC-14 (a)/(c) の AD lab 実測 2026-07-24。ADR-0015 改訂履歴 3——DC 停止中の新規接続は
     // Number=0, Severity=20 "Cannot generate SSPI context" + 内側 Win32Exception で即時失敗した）。
     private const int SspiClientSideError = 0;
 
@@ -129,7 +129,7 @@ internal static class SqlServerFailureClassifier
     /// </summary>
     /// <remarks>
     /// 分類根拠は SEC-14 (a)/(c) の AD lab 実測（2026-07-24。Windows Server 2025 DC〔yagura.test〕/
-    /// SQL Server 2022 CU12 / Microsoft.Data.SqlClient 5.2.2 / gMSA。ADR-0015 改訂履歴 2）:
+    /// SQL Server 2022 CU12 / Microsoft.Data.SqlClient 5.2.2 / gMSA。ADR-0015 改訂履歴 3）:
     /// ログイン未作成 = Number 18456 / Severity 14、DB 権限なし = Number 4060 / Severity 11、
     /// DC 停止中の新規接続 = Number 0 / Severity 20「Cannot generate SSPI context」+ 内側
     /// Win32Exception（実測は SEC_E_TARGET_UNKNOWN 0x80090303）で即時失敗（1〜2 秒。接続
