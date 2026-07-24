@@ -43,7 +43,7 @@
   <String Id="YaguraServiceAccountDlgDescription" Value="Yagura サービスを実行するアカウントを指定します。" />
   <String Id="YaguraServiceAccountDlgDefaultNote" Value="通常は既定のまま変更する必要はありません。既定の仮想サービスアカウント(NT SERVICE\Yagura)は、ドメイン参加の有無にかかわらず追加準備なしで動作します。" />
   <String Id="YaguraServiceAccountDlgAccountLabel" Value="実行アカウント:" />
-  <String Id="YaguraServiceAccountDlgGmsaNote" Value="Active Directory 環境でグループ管理サービスアカウント(gMSA)を使う場合のみ、DOMAIN\name$ 形式で指定します(パスワードは不要です)。指定できるのは既定値または gMSA 形式のみで、LocalSystem などは指定できません。gMSA を指定する場合は、事前に AD 側で gMSA の作成とこのコンピューターへの取得許可、およびローカルセキュリティポリシーでの「サービスとしてログオン」権利の付与が必要です。前提条件と手順の詳細はドキュメント(docs/guides/gmsa-service-account.md)を参照してください。サイレントインストールでは msiexec のプロパティ YAGURA_SERVICE_ACCOUNT で指定できます。" />
+  <String Id="YaguraServiceAccountDlgGmsaNote" Value="Active Directory 環境でグループ管理サービスアカウント(gMSA)を使う場合のみ、DOMAIN\name$ 形式で指定します(パスワードは不要です)。指定できるのは既定値または gMSA 形式のみで、LocalSystem などは指定できません。gMSA を指定する場合は、事前に AD 側で gMSA の作成とこのコンピューターへの取得許可が必要です(あわせて「サービスとしてログオン」権利の付与を推奨します)。前提条件と手順の詳細はドキュメント(docs/guides/gmsa-service-account.md)を参照してください。サイレントインストールでは msiexec のプロパティ YAGURA_SERVICE_ACCOUNT で指定できます。" />
   <!-- fail-closed 検証のエラー(Package.wxs の ValidateYaguraServiceAccount。type 19 CA)。 -->
   <String Id="ServiceAccountInvalidError" Value="サービス実行アカウントの指定が不正です: [YAGURA_SERVICE_ACCOUNT]。指定できるのは既定の仮想サービスアカウント(NT SERVICE\Yagura)または gMSA(DOMAIN\name$ 形式)のみです。LocalSystem などの well-known アカウントや通常のユーザーアカウントは指定できません。詳細はドキュメント(docs/guides/gmsa-service-account.md)を参照してください。" />
 
