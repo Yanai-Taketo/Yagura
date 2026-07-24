@@ -33,4 +33,17 @@ public static class PersistenceEventIds
     /// 恒久失敗）も示さないため、採番して直接通知の対象にする——委任 10 の裁定。
     /// </remarks>
     public static readonly EventId PermanentWriteFailure = new(1030, "PermanentWriteFailure");
+
+    /// <summary>
+    /// 稼働中の Windows 統合認証での DB 接続失敗によりバッチ書き込みが失敗した
+    /// （ADR-0015 決定 5 の観測性要件。database.md §6.1。Issue #418）。レベル: エラー。
+    /// </summary>
+    /// <remarks>
+    /// 統合認証の接続失敗と分類できた恒久障害では、1030 の代わりに本 ID で**実行主体
+    /// （実効実行アカウント名）と失敗種別（DC 起因 / SQL Server 起因の一次切り分け）**を残す
+    /// ——同一例外で 1030 と二重警告にしない（抑制窓も 1030 と共有する。
+    /// <see cref="PersistenceWriter"/> 参照）。分類根拠は SEC-14 (a)/(c) の AD lab 実測
+    /// （2026-07-24。ADR-0015 改訂履歴 3）。
+    /// </remarks>
+    public static readonly EventId IntegratedAuthConnectionFailed = new(1031, "IntegratedAuthConnectionFailed");
 }

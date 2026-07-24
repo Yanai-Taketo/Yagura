@@ -1,4 +1,5 @@
-﻿using Microsoft.Data.SqlClient;
+﻿using System.ComponentModel;
+using Microsoft.Data.SqlClient;
 
 namespace Yagura.Storage.SqlServer;
 
@@ -64,6 +65,11 @@ internal static class SqlServerFailureClassifier
     // SqlException 公式ドキュメント Remarks の Severity 境界（確認日 2026-07-05）。
     private const byte SoftwareOrHardwareErrorSeverityThreshold = 17;
 
+    // SSPI コンテキスト生成失敗等のクライアント側失敗で SqlException.Number に入る値
+    // （SEC-14 (a)/(c) の AD lab 実測 2026-07-24。ADR-0015 改訂履歴 3——DC 停止中の新規接続は
+    // Number=0, Severity=20 "Cannot generate SSPI context" + 内側 Win32Exception で即時失敗した）。
+    private const int SspiClientSideError = 0;
+
     public static LogStoreFailureKind Classify(SqlException exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
@@ -89,7 +95,10 @@ internal static class SqlServerFailureClassifier
         return exception.Number is PermissionDenied or LoginFailed or CannotOpenDatabase;
     }
 
-    public static LogStoreWriteException ToLogStoreWriteException(this SqlException exception, string operationDescription)
+    public static LogStoreWriteException ToLogStoreWriteException(
+        this SqlException exception,
+        string operationDescription,
+        bool integratedAuthentication = false)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
@@ -104,6 +113,85 @@ internal static class SqlServerFailureClassifier
                 $"{operationDescription}: 恒久的な障害により失敗しました (SqlErrorNumber={exception.Number}, Severity={exception.Class})。",
         };
 
-        return new LogStoreWriteException(failureKind, message, exception);
+        return new LogStoreWriteException(
+            failureKind,
+            message,
+            exception,
+            integratedAuthentication ? ClassifyIntegratedAuthConnectionFailure(exception) : null);
     }
+
+    /// <summary>
+    /// Windows 統合認証での接続失敗の一次切り分け（DC 起因 / SQL Server 起因。イベントログ
+    /// 警告 1031 の材料——ADR-0015 決定 5 の観測性要件。database.md §6.1。Issue #418）。
+    /// 分類できない失敗は <see langword="null"/>（発火点は従来どおり 1030 で扱う——誤分類を
+    /// 断定するより生の失敗情報に留める安全側。<c>SqlConnectionFailureClassifier</c> の
+    /// Unclassified と同じ判断）。
+    /// </summary>
+    /// <remarks>
+    /// 分類根拠は SEC-14 (a)/(c) の AD lab 実測（2026-07-24。Windows Server 2025 DC〔yagura.test〕/
+    /// SQL Server 2022 CU12 / Microsoft.Data.SqlClient 5.2.2 / gMSA。ADR-0015 改訂履歴 3）:
+    /// ログイン未作成 = Number 18456 / Severity 14、DB 権限なし = Number 4060 / Severity 11、
+    /// DC 停止中の新規接続 = Number 0 / Severity 20「Cannot generate SSPI context」+ 内側
+    /// Win32Exception（実測は SEC_E_TARGET_UNKNOWN 0x80090303）で即時失敗（1〜2 秒。接続
+    /// タイムアウトではない）。SSPI 失敗の SEC_E コードは状況により異なり得るため、DC 起因の
+    /// 判定は「Number=0 かつ内側に Win32Exception」の形とし、実測した個別コードに限定しない
+    /// （コードは説明文へ転写して事後調査の材料にする）。
+    /// </remarks>
+    public static IntegratedAuthConnectionFailure? ClassifyIntegratedAuthConnectionFailure(SqlException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return ClassifyIntegratedAuthFailureCore(exception.Number, exception.InnerException) is { } classified
+            ? new IntegratedAuthConnectionFailure(classified.Origin, classified.Description, ResolveCurrentAccountName())
+            : null;
+    }
+
+    /// <summary>
+    /// エラー番号 + 内側例外による分類コア（<see cref="SqlException"/> は公開コンストラクタを
+    /// 持たずテストから生成できないため、判定部を分離して単体テストの対象にする——
+    /// <c>SqlConnectionFailureClassifier.ClassifySqlErrorNumber</c> と同じ方式）。
+    /// </summary>
+    internal static (IntegratedAuthFailureOrigin Origin, string Description)? ClassifyIntegratedAuthFailureCore(
+        int sqlErrorNumber,
+        Exception? innerException)
+    {
+        switch (sqlErrorNumber)
+        {
+            case LoginFailed:
+                return (IntegratedAuthFailureOrigin.SqlServer,
+                    "失敗種別: SQL Server 起因——ログイン失敗（Login failed。SqlErrorNumber=18456）。実行アカウントのログイン未作成が典型（CREATE LOGIN の要否を確認する）");
+            case CannotOpenDatabase:
+                return (IntegratedAuthFailureOrigin.SqlServer,
+                    "失敗種別: SQL Server 起因——データベースを開けない（Cannot open database。SqlErrorNumber=4060）。データベース不在または実行アカウントの接続権限不足");
+            case SspiClientSideError when FindWin32Exception(innerException) is { } win32:
+                return (IntegratedAuthFailureOrigin.DomainController,
+                    $"失敗種別: DC 起因——SSPI コンテキスト生成失敗（SqlErrorNumber=0, Win32=0x{win32.NativeErrorCode:X8}）。DC 到達不能・SPN 解決不能等（DC への到達性と gMSA の状態を確認する）");
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>内側例外の連鎖から最初の <see cref="Win32Exception"/> を探す（SSPI 失敗の SEC_E コードはここに現れる——lab 実測 2026-07-24）。</summary>
+    private static Win32Exception? FindWin32Exception(Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is Win32Exception win32)
+            {
+                return win32;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 実行主体（実効実行アカウント名。SQL Server 側にこの名前で見える——database.md §6.1）。
+    /// <c>ServiceAccountStartupInspector.ResolveEffectiveAccountName</c> と同じ導出。非 Windows
+    /// 分岐は CA1416 ガード（本製品は Windows 専用——ADR-0001。テスト実行環境向け）。
+    /// </summary>
+    private static string ResolveCurrentAccountName() =>
+        OperatingSystem.IsWindows()
+            ? System.Security.Principal.WindowsIdentity.GetCurrent().Name
+            : Environment.UserName;
 }

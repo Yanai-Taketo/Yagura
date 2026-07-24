@@ -144,6 +144,81 @@ public sealed class PersistenceWriterSpoolWriteFailedNotificationTests : IDispos
         spool!.Dispose();
     }
 
+    [Fact]
+    public async Task IntegratedAuthPermanentFailure_WarnsWithEventId1031_InsteadOf1030_AndSharesTheSuppressionWindow()
+    {
+        // ADR-0015 決定 5（Issue #418）: Windows 統合認証の接続失敗と分類できた恒久障害は、
+        // 実行主体と失敗種別を含む 1031 を出し、同一例外で 1030 と二重警告にしない。
+        // 抑制窓は 1030 と共有する（単一の窓が両 ID を律速する）。
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        Assert.NotNull(spool);
+
+        var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        using var metrics = new IngestionMetrics();
+        var logCollector = new FakeLogCollector();
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.Parse("2026-07-24T00:00:00Z"));
+
+        var integratedAuthFailure = new IntegratedAuthConnectionFailure(
+            IntegratedAuthFailureOrigin.DomainController,
+            "失敗種別: DC 起因——SSPI コンテキスト生成失敗（SqlErrorNumber=0, Win32=0x80090303）",
+            @"YAGURA\svc-yagura$");
+
+        var writer = new PersistenceWriter(
+            q2.Reader,
+            new AlwaysThrowingLogStore(integratedAuthFailure),
+            spool,
+            metrics,
+            new FakeLogger<PersistenceWriter>(logCollector),
+            capacityExhaustionHandler: null,
+            timeProvider: timeProvider);
+
+        using var stoppingCts = new CancellationTokenSource();
+        var runTask = Task.Run(() => writer.RunAsync(stoppingCts.Token));
+
+        await q2.Writer.WriteAsync(CreateRecord("integrated-auth-first"));
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!logCollector.GetSnapshot().Any(r => r.Message.Contains("[integrated-auth-failure]")) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        var record = Assert.Single(logCollector.GetSnapshot(), r => r.Message.Contains("[integrated-auth-failure]"));
+        Assert.Equal(1031, record.Id.Id);
+        // 実行主体と失敗種別（database.md §6.1 が要求する 2 要素）が本文に含まれる。
+        Assert.Contains(@"YAGURA\svc-yagura$", record.Message);
+        Assert.Contains("DC 起因", record.Message);
+        // 同一例外で 1030 は出ない（二重警告の排除）。
+        Assert.DoesNotContain(logCollector.GetSnapshot(), r => r.Id.Id == 1030);
+
+        // 抑制窓（仮値 5 分）内の 2 件目は 1031 も抑制される（1030 と共有する単一の窓）。
+        await q2.Writer.WriteAsync(CreateRecord("integrated-auth-second"));
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        Assert.Equal(1, logCollector.GetSnapshot().Count(r => r.Id.Id == 1031));
+
+        // 窓明け後は再度警告される。
+        timeProvider.Advance(TimeSpan.FromMinutes(6));
+        await q2.Writer.WriteAsync(CreateRecord("integrated-auth-third"));
+
+        deadline = DateTime.UtcNow.AddSeconds(10);
+        while (logCollector.GetSnapshot().Count(r => r.Id.Id == 1031) < 2 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(2, logCollector.GetSnapshot().Count(r => r.Id.Id == 1031));
+
+        stoppingCts.Cancel();
+        await runTask;
+        spool!.Dispose();
+    }
+
     /// <summary>ログスナップショットが指定件数（EventId 1005）に達するまで条件ポーリングで待つ。</summary>
     private static async Task WaitForLogCountAsync(FakeLogCollector collector, int expectedCount)
     {
@@ -164,13 +239,21 @@ public sealed class PersistenceWriterSpoolWriteFailedNotificationTests : IDispos
         Severity: 5,
         Message: message);
 
-    /// <summary>常に <see cref="LogStoreFailureKind.Permanent"/> で失敗する ILogStore スタブ（退避を必ず誘発する）。</summary>
-    private sealed class AlwaysThrowingLogStore : ILogStore
+    /// <summary>
+    /// 常に <see cref="LogStoreFailureKind.Permanent"/> で失敗する ILogStore スタブ（退避を必ず
+    /// 誘発する）。統合認証の接続失敗詳細（Issue #418——1031 の材料）を指定した場合は
+    /// <see cref="LogStoreWriteException.IntegratedAuthFailure"/> に載せて投げる。
+    /// </summary>
+    private sealed class AlwaysThrowingLogStore(IntegratedAuthConnectionFailure? integratedAuthFailure = null) : ILogStore
     {
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default) =>
-            throw new LogStoreWriteException(LogStoreFailureKind.Permanent, "simulated permanent disk error");
+            throw new LogStoreWriteException(
+                LogStoreFailureKind.Permanent,
+                "simulated permanent disk error",
+                new InvalidOperationException("simulated inner failure"),
+                integratedAuthFailure);
 
         public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(
             int limit,

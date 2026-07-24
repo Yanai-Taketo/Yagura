@@ -79,6 +79,12 @@ internal static class EmailNotificationAllowlist
 
             // --- 恒久障害による書き込み失敗の開始（ADR-0017 委任 10 の裁定。発火点は LogError） ---
             [PersistenceEventIds.PermanentWriteFailure.Id] = Severity.Error,                        // 1030
+
+            // --- 稼働中の Windows 統合認証での DB 接続失敗（ADR-0015 決定 5。Issue #418）。
+            //     統合認証起因の恒久障害では 1030 の代わりに発火するため、1030 と同じ重大度で
+            //     登録しないと gMSA 構成の夜間 DC 断（「書き込みが止まる」導火線——
+            //     database.md §6.1）がメールに乗らなくなる ---
+            [PersistenceEventIds.IntegratedAuthConnectionFailed.Id] = Severity.Error,               // 1031
         };
 
     /// <summary>本表に登録済みのすべてのイベント ID。テスト・網羅性検証用。</summary>
