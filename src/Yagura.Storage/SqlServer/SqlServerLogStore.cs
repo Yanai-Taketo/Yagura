@@ -65,6 +65,10 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
 
     private readonly string _connectionString;
 
+    // Windows 統合認証の接続か（イベントログ警告 1031 の分類は統合認証の接続に限って行う——
+    // ADR-0015 決定 5。Issue #418。SQL 認証の 18456/4060 は統合認証の切り分け対象ではない）。
+    private readonly bool _integratedAuthentication;
+
     /// <summary>
     /// 指定した接続文字列で <see cref="SqlServerLogStore"/> を構築する。
     /// </summary>
@@ -77,6 +81,24 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         _connectionString = connectionString;
+        _integratedAuthentication = UsesIntegratedAuthentication(connectionString);
+    }
+
+    /// <summary>
+    /// 接続文字列が Windows 統合認証か。パース不能な接続文字列はどのみち接続時に失敗して
+    /// 通常の恒久障害経路（1030）に乗るため、ここでは偽へ倒すだけにする（構築時に投げない——
+    /// 本コンストラクタは従来から接続文字列の妥当性検証を責務にしていない）。
+    /// </summary>
+    private static bool UsesIntegratedAuthentication(string connectionString)
+    {
+        try
+        {
+            return new SqlConnectionStringBuilder(connectionString).IntegratedSecurity;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -659,7 +681,11 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
         }
         catch (SqlException ex)
         {
-            throw ex.ToLogStoreWriteException($"ログレコードのバッチ書き込み ({records.Count} 件)");
+            // 統合認証フラグを渡すのは本経路のみ: 1031 の発火点（PersistenceWriter——恒久障害の
+            // 抑制窓を持つ場所）が消費するのは WriteBatchAsync の失敗だけであり、閲覧系の失敗に
+            // 分類を付けても読み手がいない（Issue #418）。
+            throw ex.ToLogStoreWriteException(
+                $"ログレコードのバッチ書き込み ({records.Count} 件)", _integratedAuthentication);
         }
     }
 

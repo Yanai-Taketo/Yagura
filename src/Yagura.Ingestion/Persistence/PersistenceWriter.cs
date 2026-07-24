@@ -338,15 +338,35 @@ public sealed class PersistenceWriter
                     // 抑制する」）。
                     if (ShouldEmitPermanentFailureWarning())
                     {
-                        // EventId 1030（ADR-0017 委任 10。Issue #369）: 採番なし（= 0）のままだと
-                        // メール通知プロバイダが構造的に捕捉できず、イベントログの機械照合もできない。
-                        _logger.LogError(
-                            PersistenceEventIds.PermanentWriteFailure,
-                            ex,
-                            "[permanent-failure] 恒久障害によりバッチ書き込みが失敗したため {Count} 件をスプールへ退避する" +
-                            "（設定・スキーマ・権限を確認すること。同種の警告は {SuppressionWindow} の間は再表示を抑制する）。",
-                            batch.Count,
-                            PermanentFailureWarningSuppressionWindow);
+                        if (ex.IntegratedAuthFailure is { } integratedAuthFailure)
+                        {
+                            // EventId 1031（ADR-0015 決定 5。Issue #418）: Windows 統合認証の接続失敗と
+                            // 分類できた恒久障害は、実行主体と失敗種別（DC 起因 / SQL Server 起因の
+                            // 一次切り分け——SEC-14 lab 実測を根拠とする分類。database.md §6.1）を含む
+                            // 専用 ID で出し、同一例外で 1030 と二重警告にしない（抑制窓は 1030 と共有
+                            // ——ShouldEmitPermanentFailureWarning の単一の窓が両 ID を律速する）。
+                            _logger.LogError(
+                                PersistenceEventIds.IntegratedAuthConnectionFailed,
+                                ex,
+                                "[integrated-auth-failure] Windows 統合認証での DB 接続に失敗したため {Count} 件をスプールへ退避する" +
+                                "（実行主体: {AccountName}。{FailureDescription}。同種の警告は {SuppressionWindow} の間は再表示を抑制する）。",
+                                batch.Count,
+                                integratedAuthFailure.AccountName,
+                                integratedAuthFailure.Description,
+                                PermanentFailureWarningSuppressionWindow);
+                        }
+                        else
+                        {
+                            // EventId 1030（ADR-0017 委任 10。Issue #369）: 採番なし（= 0）のままだと
+                            // メール通知プロバイダが構造的に捕捉できず、イベントログの機械照合もできない。
+                            _logger.LogError(
+                                PersistenceEventIds.PermanentWriteFailure,
+                                ex,
+                                "[permanent-failure] 恒久障害によりバッチ書き込みが失敗したため {Count} 件をスプールへ退避する" +
+                                "（設定・スキーマ・権限を確認すること。同種の警告は {SuppressionWindow} の間は再表示を抑制する）。",
+                                batch.Count,
+                                PermanentFailureWarningSuppressionWindow);
+                        }
                     }
 
                     break;
