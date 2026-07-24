@@ -136,9 +136,29 @@
          リモート SQL 統合認証だけが静かに壊れる(ADR-0015 決定 2 が名指しする退行)。書き込み側は
          下の ServiceAccountInstallRecord コンポーネント(無条件でインストール)。
 
+         【コマンドライン上書きの両立(Issue #426)】YAGURA_FIREWALL 等と異なり、本プロパティは
+         サイレント(/qn)でのアカウント切替——例
+         `msiexec /i ... /qn YAGURA_SERVICE_ACCOUNT=DOMAIN\gmsa$`——を SEC-14 (d) が要求する。
+         素の remember property だと AppSearch が RegistrySearch の記憶値でコマンドライン指定値を
+         上書きし、切替が無言で no-op になる(msiexec は成功で終わるのにアカウントは変わらない。
+         RobMensching 記事が指摘する追加の落とし穴。#203 では YAGURA_FIREWALL について範囲外と
+         していたが、本プロパティでは切替が必須のため対応する)。そこで RobMensching の
+         「コマンドライン優先」拡張を採る(type 51 SetProperty の 3 段。下の
+         SaveCmdLineServiceAccount / RestoreCmdLineServiceAccount / DefaultServiceAccount):
+           (1) AppSearch の前に指定値を YaguraServiceAccountCmdline へ退避
+           (2) AppSearch(記憶値で上書き)の後に、退避があれば復元(記憶値より優先)
+           (3) 指定も記憶値も無ければ既定 NT SERVICE\Yagura を与える
+         優先順位は コマンドライン > 記憶値(前回インストール) > 既定(仮想 SA)。UI インストールでは
+         YaguraServiceAccountDlg が AppSearch より後にプロパティを設定するため従来どおり利用者入力が
+         勝つ。回帰は SEC-14 (d) の lab 手順(サイレント切替の実測)で検出する。
+
          検証は fail-closed(ADR-0015 決定 2): 受理する値は既定の仮想 SA または gMSA 形式のみ。
          実装は下の ValidateYaguraServiceAccount(type 19 エラー CA)を参照。 -->
-    <Property Id="YAGURA_SERVICE_ACCOUNT" Value="NT SERVICE\Yagura" Secure="yes">
+    <!-- 既定値(@Value)は意図的に置かない(Issue #426): 既定を持つと「コマンドライン指定」と
+         「既定値のまま」を AppSearch が区別できず、RegistrySearch の記憶値がコマンドライン指定を
+         上書きしてしまう(切替が無言で no-op になる)。既定 NT SERVICE\Yagura は下の
+         DefaultServiceAccount CA が「コマンドライン指定も記憶値も無い」ときにだけ与える。 -->
+    <Property Id="YAGURA_SERVICE_ACCOUNT" Secure="yes">
       <RegistrySearch Id="YaguraServiceAccountSearch" Root="HKLM" Key="SOFTWARE\Yagura" Name="ServiceAccount" Type="raw" />
     </Property>
 
@@ -170,6 +190,13 @@
       アンインストール(REMOVE="ALL")は検証しない(残置値が読めなくても削除は妨げない)。
     -->
     <CustomAction Id="ValidateYaguraServiceAccount" Error="!(loc.ServiceAccountInvalidError)" />
+    <!-- コマンドライン優先の remember property(Issue #426。上の YAGURA_SERVICE_ACCOUNT の
+         コメント参照)。type 51 SetProperty の 3 段——退避 → 復元 → 既定。シーケンス配線は
+         InstallUISequence / InstallExecuteSequence の双方(サイレントは UI シーケンスを
+         経由しないため execute 側が要る。UI インストールは AppSearch が UI 側で一度だけ走る)。 -->
+    <CustomAction Id="SaveCmdLineServiceAccount" Property="YaguraServiceAccountCmdline" Value="[YAGURA_SERVICE_ACCOUNT]" />
+    <CustomAction Id="RestoreCmdLineServiceAccount" Property="YAGURA_SERVICE_ACCOUNT" Value="[YaguraServiceAccountCmdline]" />
+    <CustomAction Id="DefaultServiceAccount" Property="YAGURA_SERVICE_ACCOUNT" Value="NT SERVICE\Yagura" />
     <!-- ACL 後追い付与の CA 群は $(YaguraUtilCABinaryRef) を参照するため、その <?define?>
          (下の WixShellExec セクション)より後に置く(WiX プリプロセッサは逐次処理——
          define より前で参照すると WIX0150。CI installer-e2e の実ビルドで検出)。 -->
@@ -267,7 +294,18 @@
     <CustomAction Id="RemovePreviousServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="deferred" Impersonate="no" Return="ignore" />
 
+    <!-- コマンドライン優先の remember property(Issue #426): AppSearch を挟んで退避→復元→既定。
+         UI インストールは AppSearch が UI シーケンスで一度だけ走るため UI 側にも同じ 3 段を置く。 -->
+    <InstallUISequence>
+      <Custom Action="SaveCmdLineServiceAccount" Before="AppSearch" Condition="YAGURA_SERVICE_ACCOUNT" />
+      <Custom Action="RestoreCmdLineServiceAccount" After="AppSearch" Condition="YaguraServiceAccountCmdline" />
+      <Custom Action="DefaultServiceAccount" After="RestoreCmdLineServiceAccount" Condition="NOT YAGURA_SERVICE_ACCOUNT" />
+    </InstallUISequence>
+
     <InstallExecuteSequence>
+      <Custom Action="SaveCmdLineServiceAccount" Before="AppSearch" Condition="YAGURA_SERVICE_ACCOUNT" />
+      <Custom Action="RestoreCmdLineServiceAccount" After="AppSearch" Condition="YaguraServiceAccountCmdline" />
+      <Custom Action="DefaultServiceAccount" After="RestoreCmdLineServiceAccount" Condition="NOT YAGURA_SERVICE_ACCOUNT" />
       <Custom Action="ValidateYaguraServiceAccount" Before="InstallInitialize"
               Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot; OR (YAGURA_SERVICE_ACCOUNT &gt;&lt; &quot;\&quot; AND YAGURA_SERVICE_ACCOUNT &gt;&gt; &quot;$&quot;)) AND NOT REMOVE~=&quot;ALL&quot;" />
       <!-- 旧 ACE 除去 → 新アカウント付与の順(除去が新付与を巻き添えにしない)。いずれも

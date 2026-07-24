@@ -396,7 +396,7 @@ try {
         #    を照合する(gMSA 実環境での成立は AD lab——SEC-14 (a)〜(f)——の管轄)。
         # -------------------------------------------------------------------
         if ($DryRun) {
-            Add-SkippedStep -Name 'msi-service-account-table' -Reason 'dry-run: would open the MSI database and verify YAGURA_SERVICE_ACCOUNT default / ServiceInstall.StartName indirection / validation CA'
+            Add-SkippedStep -Name 'msi-service-account-table' -Reason 'dry-run: would open the MSI database and verify YAGURA_SERVICE_ACCOUNT has no static default + DefaultServiceAccount/Save+RestoreCmdLine CAs (#426) / ServiceInstall.StartName indirection / validation CA'
         }
         else {
             [void](Invoke-E2EStep -Name 'msi-service-account-table' -Action {
@@ -414,9 +414,25 @@ try {
                         return $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, @(1))
                     }
 
+                    # 既定値は Property テーブルではなく DefaultServiceAccount CA が与える(Issue #426 の
+                    # CLI 上書き対応)。Property/@Value を撤去したため Property テーブルの既定は空でなければ
+                    # ならない——既定を持つとコマンドライン指定と既定を AppSearch が区別できず、記憶値が
+                    # コマンドライン指定を上書きしてサイレント切替が無言 no-op になる欠陥(#426)を招く。
                     $defaultValue = Get-MsiSingleValue $database "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'YAGURA_SERVICE_ACCOUNT'"
-                    if ($defaultValue -cne 'NT SERVICE\Yagura') {
-                        throw ('Property table: YAGURA_SERVICE_ACCOUNT default must be "NT SERVICE\Yagura", found: "{0}"' -f $defaultValue)
+                    if (-not [string]::IsNullOrEmpty($defaultValue)) {
+                        throw ('Property table: YAGURA_SERVICE_ACCOUNT は静的既定値を持ってはならない(既定は DefaultServiceAccount CA が与える。#426)。found: "{0}"' -f $defaultValue)
+                    }
+                    # 既定 "NT SERVICE\Yagura" は DefaultServiceAccount CA(type 51 SetProperty の Target)が与える。
+                    $defaultCaTarget = Get-MsiSingleValue $database "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'DefaultServiceAccount'"
+                    if ($defaultCaTarget -cne 'NT SERVICE\Yagura') {
+                        throw ('CustomAction DefaultServiceAccount は既定 "NT SERVICE\Yagura" を設定しなければならない。found: "{0}"' -f $defaultCaTarget)
+                    }
+                    # コマンドライン優先(#426)の退避/復元 CA が存在すること(AppSearch の記憶値上書きを打ち消す)。
+                    foreach ($ca in @('SaveCmdLineServiceAccount', 'RestoreCmdLineServiceAccount')) {
+                        $found = Get-MsiSingleValue $database ("SELECT ``Action`` FROM ``CustomAction`` WHERE ``Action`` = '{0}'" -f $ca)
+                        if ($null -eq $found) {
+                            throw ("CustomAction table: {0}(コマンドライン優先 remember property。#426)が見つからない" -f $ca)
+                        }
                     }
                     $startName = Get-MsiSingleValue $database "SELECT ``StartName`` FROM ``ServiceInstall``"
                     if ($startName -cne '[YAGURA_SERVICE_ACCOUNT]') {
@@ -426,7 +442,7 @@ try {
                     if ($null -eq $validateCa) {
                         throw 'CustomAction table: ValidateYaguraServiceAccount (fail-closed validation) not found'
                     }
-                    return ('YAGURA_SERVICE_ACCOUNT default ok, StartName indirection ok, validation CA present')
+                    return ('YAGURA_SERVICE_ACCOUNT 既定は DefaultServiceAccount CA・CLI 上書き CA(#426)・StartName 間接参照・検証 CA すべて確認')
                 }
                 finally {
                     [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($installer)
