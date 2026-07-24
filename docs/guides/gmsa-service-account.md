@@ -187,7 +187,7 @@ setspn -L EXAMPLE\gmsaYagura$
 
 `-S` は登録前に重複を自動チェックするため、二重 SPN（Kerberos 認証が壊れる典型原因）を作りません。FQDN と短縮名の双方を登録するのは、ブラウザがどちらの名前でアクセスしても Kerberos チケットが gMSA の鍵で発行されるようにするためです（登録しないと KDC はホスト名を `HOST/<ホスト名>`＝コンピューターアカウントに解決し、gMSA で動くサービスがチケットを復号できず SSO が NTLM へ後退します）。
 
-> 本 lab では上記の登録・重複事前確認（`setspn -Q` で未登録 → `setspn -S` で FQDN・短縮名とも登録成立 → `setspn -L` で確認）を実測済みです。**SPN 未登録時に Kerberos SSO が NTLM へ後退し、登録で回復する end-to-end（監査 2008 の `scheme=windows`・`klist` の `HTTP/<FQDN>` チケット）の実測は残項目**です（security.md SEC-14 (f)）。
+> 本 lab では上記の登録・重複事前確認（`setspn -Q` で未登録 → `setspn -S` で FQDN・短縮名とも登録成立 → `setspn -L` で確認）を実測済みです。**登録後、別マシンからホスト名でアクセスすると Kerberos SSO が成立する**ことも確認しました——`WWW-Authenticate: Negotiate` が Kerberos SPNEGO トークンを返し、アクセス元の `klist` に `HTTP/<FQDN> @ <REALM>` のサービスチケットが入ります（KDC が gMSA の鍵でチケットを発行する）。**同一マシンからのアクセスは NTLM へ後退**します（Windows の同一ホスト向け既定挙動）。残るのは認可された管理者 ID による監査 2008（`scheme=windows`）の end-to-end のみです（security.md SEC-14 (f)）。
 
 ## 9. 監査証跡
 
