@@ -13,4 +13,10 @@ namespace Yagura.Web.ForwarderKit;
 /// 欠けているかを <c>AdminAuthenticationRuntimeOptions</c> から導出して案内する（決定 1
 /// 「沈黙にしない」）。
 /// </param>
-public sealed record ForwarderMsiUploadRuntimeOptions(bool Enabled);
+/// <param name="ServiceAccountName">
+/// サービスの実効実行アカウント名（既定 <c>NT SERVICE\Yagura</c> / gMSA 構成では
+/// <c>DOMAIN\name$</c>）。画面が ACE 付与コマンド（<c>icacls ... /grant "アカウント:(OI)(CI)(M)"</c>）を
+/// コピー可能な形で案内するために使う（付与先は実効実行アカウントから導出する——ADR-0020
+/// 決定 2・security.md §5.2 の原則）。
+/// </param>
+public sealed record ForwarderMsiUploadRuntimeOptions(bool Enabled, string? ServiceAccountName = null);

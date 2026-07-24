@@ -137,10 +137,13 @@ public sealed class ViewerEndpointAllowlistTests
         RegexOptions.Compiled);
 
     /// <summary>
-    /// Yagura.Web 自身の静的アセット（M8-2 で追加）の制約付き許可パターン。対象は 2 ファイルのみ:
+    /// Yagura.Web 自身の静的アセット（M8-2 で追加）の制約付き許可パターン。対象は 3 ファイルのみ:
     /// 共通コンポーネントの内部スタイル（css/yagura-components.css。ui.md §2.1「独自の CSS 変数の
     /// 併設は共通コンポーネントの実装内部に限る」の実装位置）と、ステール警告の自律監視 JS
-    /// （js/stale-guard.js。ui.md §5.2 が設計上確定した ADR-0003 決定 1 の例外）。
+    /// （js/stale-guard.js。ui.md §5.2 が設計上確定した ADR-0003 決定 1 の例外）、および
+    /// フォワーダ MSI アップロードの fetch 送信 JS（js/forwarder-msi-upload.js。ADR-0020 決定 3——
+    /// アップロード本文を SignalR circuit に載せないための専用モジュール。静的アセットの配信自体は
+    /// 読み取り専用で、アップロードエンドポイント——管理リスナ限定・認可必須——とは別物）。
     /// フィンガープリント・圧縮変種を許容する理由は <see cref="MudBlazorStaticAssetRoutePattern"/> と同じ。
     /// これ以外の自前アセットを追加する PR は、本パターン（と本コメント）の更新を同じ PR に含める。
     /// </summary>
@@ -156,7 +159,8 @@ public sealed class ViewerEndpointAllowlistTests
     /// </remarks>
     private static readonly Regex YaguraWebStaticAssetRoutePattern = new(
         "^(_content/Yagura\\.Web/)?css/yagura-components(\\.[0-9a-z]+)?\\.css(\\.(gz|br))?$" +
-        "|^(_content/Yagura\\.Web/)?js/stale-guard(\\.[0-9a-z]+)?\\.js(\\.(gz|br))?$",
+        "|^(_content/Yagura\\.Web/)?js/stale-guard(\\.[0-9a-z]+)?\\.js(\\.(gz|br))?$" +
+        "|^(_content/Yagura\\.Web/)?js/forwarder-msi-upload(\\.[0-9a-z]+)?\\.js(\\.(gz|br))?$",
         RegexOptions.Compiled);
 
     [Fact]

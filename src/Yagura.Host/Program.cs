@@ -1121,7 +1121,9 @@ public static class Program
         builder.Services.AddSingleton<Yagura.Web.ForwarderKit.IForwarderMsiStore>(
             _ => new Yagura.Web.ForwarderKit.SystemForwarderMsiStore(forwarderMsiFolderPath));
         builder.Services.AddSingleton(new Yagura.Web.ForwarderKit.ForwarderMsiUploadRuntimeOptions(
-            resolvedConfiguration.AdminForwarderMsiUploadEnabled));
+            resolvedConfiguration.AdminForwarderMsiUploadEnabled,
+            // ACE 付与コマンド案内の付与先（実効実行アカウントから導出——ADR-0020 決定 2・§5.2）。
+            ServiceAccountStartupInspector.ResolveEffectiveAccountName()));
 
         // 逆引きホスト名表示の設定（ADR-0007。Viewer:ReverseDns:Enabled——検証・縮小適用済みの
         // 値を Web 層へ渡す。AddYaguraWebViewer の TryAdd 既定（無効）より先に登録すること）。

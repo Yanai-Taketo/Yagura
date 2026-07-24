@@ -97,6 +97,13 @@ internal static class YaguraConfigurationOptionsCloner
                     CertificateThumbprint = source.Admin.Https.CertificateThumbprint,
                     Port = source.Admin.Https.Port,
                 },
+                ForwarderKit = source.Admin.ForwarderKit is null ? null : new YaguraConfigurationOptions.AdminOptions.ForwarderKitOptions
+                {
+                    MsiUpload = source.Admin.ForwarderKit.MsiUpload is null ? null : new YaguraConfigurationOptions.AdminOptions.ForwarderKitOptions.MsiUploadOptions
+                    {
+                        Enabled = source.Admin.ForwarderKit.MsiUpload.Enabled,
+                    },
+                },
             },
             Storage = source.Storage is null ? null : new YaguraConfigurationOptions.StorageOptions
             {

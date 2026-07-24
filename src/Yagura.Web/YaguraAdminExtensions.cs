@@ -67,6 +67,10 @@ public static class YaguraAdminExtensions
 
         services.AddSingleton<ICircuitManagementService, Administration.CircuitManagementService>();
         services.TryAddSingleton<INicCandidateSource, SystemNicCandidateSource>();
+        // フォワーダ MSI 配置の確定・破棄・削除 + 監査（ADR-0020 決定 3・4。circuit 発の操作——
+        // ICircuitManagementService と同じ役割分担）。IForwarderMsiStore の実体は配置フォルダの
+        // 実パスを知る Host 側が結線する。
+        services.AddSingleton<Administration.IForwarderMsiPlacementService, Administration.ForwarderMsiPlacementService>();
 
         return services;
     }
