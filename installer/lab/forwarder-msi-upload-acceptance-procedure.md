@@ -1,10 +1,12 @@
 # フォワーダ MSI アップロードの受け入れ lab 検証手順 — ADR-0020 決定 5 lab ①〜④
 
-> **未実施**（2026-07-24 作成）。本手順は [ADR-0020](../../docs/adr/0020-forwarder-msi-upload.md)
-> 決定 5 が受け入れ条件とする lab 実機 4 項目（実装 = PR #431。Issue #283）を消化するためのもの。
-> 実施したら結果を Issue #283 へコメントし、実測値（icacls 出力・イベントログ・監査記録）を
-> security.md §5.1.1 へ反映する PR を起こす。本ファイル冒頭のこの注記も
-> 「実施済み（日付・環境）」へ書き換えること。
+> **部分実施済み（2026-07-25。lab: メンバー機 `DESKTOP-9MNR1CM`〔Windows 10 `10.0.26100`〕・
+> gMSA `YAGURA\gmsaYagura$`・保存先 SQL Server 2022 Express・`main` post-#431 の自ビルド 0.5.3）**。
+> 結果は [Issue #283](https://github.com/Yanai-Taketo/Yagura/issues/283) にコメント、確定分は
+> [security.md](../../docs/design/security.md) §5.1.1・[ADR-0020](../../docs/adr/0020-forwarder-msi-upload.md)
+> 委任 7 に反映済み。
+> - **実測済み**: P-1 fail-closed（成立。ただし 1032 がサービス構成で Windows イベントログに出ない=[#433](https://github.com/Yanai-Taketo/Yagura/issues/433) で追跡）／ ①の ACL 機構（非波及・撤去復帰）／ ③-1・③-2（1033 稼働中・起動時）／ ④切替レール（手動 ACE も除去=安全側。委任 7 確定）
+> - **残（ヘッドレス制約）**: ②アップロード E2E 9 ケース（管理 UI 対話ログインを要する）・①の UI 表示部分・③-3（1034=24 時間待ち）。実施できる ready 環境は整備済み（`C:\YaguraLab\READY-432-remaining-verification.md`。検証用 MSI 2 版〔5.0.8・4.0.14〕配置済み）
 
 **実施環境**: AD lab（`yagura.test`）。Yagura は **PR #431 マージ後のビルド**（または v0.5.1 以降の
 リリース MSI）をインストール済みであること。項目①の gMSA 側・項目④には gMSA
