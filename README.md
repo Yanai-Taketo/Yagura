@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/Yanai-Taketo/Yagura)
 ![License](https://img.shields.io/github/license/Yanai-Taketo/Yagura)
 
-> **English**: Yagura is a Windows-native open-source syslog server. Install the MSI, point your network devices at UDP/TCP 514, and open the built-in web viewer — no configuration files, no extra database setup, no Linux VM, no license fees. It runs as a Windows service with an embedded SQLite store out of the box and can later be promoted to SQL Server through a built-in wizard. Windows Event Log forwarding is covered by a bundled Fluent Bit kit, and the admin UI can generate a pre-configured kit (ZIP) pointing at your server. v0.4 is released for evaluation on trusted networks; it is not yet recommended for production (the v1.0 criteria are defined in [ADR-0006](docs/adr/0006-v1-release-criteria.md), in Japanese). Documentation is Japanese-first. License: Apache-2.0.
+> **English**: Yagura is a Windows-native open-source syslog server. Install the MSI, point your network devices at UDP/TCP 514, and open the built-in web viewer — no configuration files, no extra database setup, no Linux VM, no license fees. It runs as a Windows service with an embedded SQLite store out of the box and can later be promoted to SQL Server through a built-in wizard. Windows Event Log forwarding is covered by a bundled Fluent Bit kit, and the admin UI can generate a pre-configured kit (ZIP) pointing at your server. v0.5 is released for evaluation on trusted networks; it is not yet recommended for production (the v1.0 criteria are defined in [ADR-0006](docs/adr/0006-v1-release-criteria.md), in Japanese). Documentation is Japanese-first. License: Apache-2.0.
 
 **Windows ネイティブな OSS syslog 集約サーバ——インストール直後、設定なしで受信・閲覧が始まります。**
 
@@ -21,9 +21,9 @@ Windows 環境での syslog 集約には空白地帯があります。商用製�
 
 対象は中小企業の Windows 管理者（ひとり情シスを含む）です。目的・スコープの詳細は [ADR-0001](docs/adr/0001-project-founding.md) を参照してください。
 
-## v0.4 の位置づけ
+## v0.5 の位置づけ
 
-**v0.4 は評価・試用向けのリリースです。本番利用はまだ推奨していません。**
+**v0.5 は評価・試用向けのリリースです。本番利用はまだ推奨していません。**
 
 v1.0（本番利用を推奨できる版）は、[ADR-0006](docs/adr/0006-v1-release-criteria.md) が定める公開基準——独立した 2 環境以上での連続 30 日以上の実運用実績、opt-in セキュリティ強化（TLS 受信・HTTPS・AD 認証）の提供完了など——をすべて満たしてから公開します。基準は先に固定してあり、達成しやすい形に動かしません。
 
@@ -35,7 +35,7 @@ v1.0 公開基準のひとつ「独立 2 環境 × 連続 30 日の実運用」�
 - 実機器由来のトラフィックを複数送信元から継続的に受信できる環境が対象です。SQL Server 構成の環境は特に歓迎します
 - ご連絡は GitHub の [Issues](https://github.com/Yanai-Taketo/Yagura/issues) / [Discussions](https://github.com/Yanai-Taketo/Yagura/discussions) へ。開始時に簡単な報告様式（開始報告 + 完了報告の 2〜3 回を想定）をお渡しします
 
-## できること（v0.4）
+## できること（v0.5）
 
 以下はすべて実装済みの機能です（予定機能は書いていません）。
 
@@ -75,7 +75,7 @@ Yagura は受信・永続化・Web UI を **単一の Windows サービスプロ
    │ ブラウザ（http://<サーバ名>:8514/）
 ```
 
-「ログを失わない設計」（[できること（v0.4）](#できることv04)を参照）は、このパイプラインの各段に組み込まれています。プロセス内の境界・信頼性機構・受信パイプラインの詳細は [docs/design/architecture.md](docs/design/architecture.md) を参照してください。
+「ログを失わない設計」（[できること（v0.5）](#できることv05)を参照）は、このパイプラインの各段に組み込まれています。プロセス内の境界・信頼性機構・受信パイプラインの詳細は [docs/design/architecture.md](docs/design/architecture.md) を参照してください。
 
 ## スクリーンショット
 
@@ -137,7 +137,7 @@ Windows イベントログの転送元となる収集対象端末（Fluent Bit �
 
 ## セキュリティの前提（必ずお読みください）
 
-v0.4 の既定構成は、**管理された社内ネットワーク（信頼ネットワーク）での利用を前提**としています。
+v0.5 の既定構成は、**管理された社内ネットワーク（信頼ネットワーク）での利用を前提**としています。
 
 - 既定の受信は**平文**です（UDP/TCP 514）。syslog over TLS 受信（TCP 6514・RFC 5425）を opt-in で有効化できます——証明書は Windows 証明書ストア参照方式で、相互 TLS（送信元のクライアント証明書認証）は対象外です
 - 閲覧 UI は**既定では認証なし**で LAN に公開されます（読み取りのみ。公開範囲は localhost に縮小できます）。opt-in で **Windows 統合認証 + AD グループによる「閲覧」「管理」役割のマッピング**を有効化でき、機微なログの閲覧を AD グループで絞れます（v0.4.0。[ADR-0010](docs/adr/0010-admin-ui-authentication.md) Phase 4）
