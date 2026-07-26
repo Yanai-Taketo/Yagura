@@ -317,4 +317,20 @@ public sealed class CommonComponentRenderTests
                 [nameof(YaguraButton.ChildContent)] = CommonComponentRenderHarness.Text("削除する"),
             }));
     }
+
+    [Fact]
+    public async Task Button_Destructive_WithPartialConfirmParameters_Throws()
+    {
+        // Issue #457 の実際の形: 3 引数のうち ConfirmActionLabel だけを落とした「部分指定」。
+        // 上のテストは全欠落のみを見ていたため、この形は素通りしていた（呼び出し側の欠落を
+        // 全 .razor で検出する横断テストは DestructiveButtonContractTests）。
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CommonComponentRenderHarness.RenderAsync<YaguraButton>(new()
+            {
+                [nameof(YaguraButton.Role)] = YaguraButtonRole.Destructive,
+                [nameof(YaguraButton.ConfirmTitle)] = "削除の確認",
+                [nameof(YaguraButton.ConfirmSummary)] = "この操作は取り消せません。",
+                [nameof(YaguraButton.ChildContent)] = CommonComponentRenderHarness.Text("削除する"),
+            }));
+    }
 }
