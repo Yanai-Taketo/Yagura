@@ -718,7 +718,10 @@ public static class Program
                 viewerHttpsCertificateProbe: viewerHttpsCertificateProbe,
                 // 1033 の本文へ載せる撤去先（Issue #465）。データルートは既定以外にも置けるため、
                 // パスが無いと運用者が撤去先を特定できない。
-                forwarderMsiFolderPath: forwarderMsiFolderPath);
+                forwarderMsiFolderPath: forwarderMsiFolderPath,
+                // ADR-0023 決定 1: 保存先のスキーマ初期化は起動経路ではなく監視ループで行う
+                // （起動は完了を待たない。失敗しても受信は継続し、復旧すると自動回復する）。
+                storageInitialization: sp.GetRequiredService<Yagura.Host.Storage.StorageInitializationCoordinator>());
         });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
@@ -1041,7 +1044,14 @@ public static class Program
         // 状態保持はプロセス内シングルトン——AppAdminAuthenticationService（ログイン判定）と
         // ActiveNotificationMonitor（能動通知への昇格。決定 6）の両方が同一インスタンスを参照する。
         builder.Services.AddSingleton<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>();
-        builder.Services.AddSingleton<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>();
+        builder.Services.AddSingleton(sp =>
+            new Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService(
+                sp.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>(),
+                sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense>(),
+                timeProvider: null,
+                // ADR-0023 決定 1: 保存先が到達不能な間、アプリ独自認証は「一時的に利用不能」として
+                // 拒否する（資格情報の誤りとは区別する）。判定材料は監視ループが更新する。
+                sp.GetRequiredService<Yagura.Web.Administration.StorageAvailabilityState>()));
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAppAdminAuthenticator>(
             sp => sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>());
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminAuthenticationAdminService>(sp =>
@@ -1057,6 +1067,16 @@ public static class Program
         // フォワーダ MSI アップロード opt-in のトグル（ADR-0021 決定 4 = 委任 2）。設定ファイルの
         // 手編集を GUI へ移す（残るターミナル操作は ACE 付与のみ）。切替時点検で既存アプリ
         // アカウントの情報を提示するため IAdminAccountStore を参照する。
+        // ADR-0023 決定 1: 保存先の初期化を起動経路の外で行い、失敗しても起動を止めない。
+        // 縮退状態（アプリ独自認証の利用可否）は StorageAvailabilityState で認証・画面・通知が共有する。
+        builder.Services.AddSingleton<Yagura.Web.Administration.StorageAvailabilityState>();
+        builder.Services.AddSingleton(sp => new Yagura.Host.Storage.StorageInitializationCoordinator(
+            sp.GetRequiredService<ILogStore>(),
+            sp.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>(),
+            sp.GetRequiredService<Yagura.Web.Administration.StorageAvailabilityState>(),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Storage.Initialization")));
+
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService>(sp =>
             new Yagura.Host.Administration.ForwarderKit.ForwarderMsiUploadAdminService(
                 dataRoot,
@@ -1568,12 +1588,19 @@ public static class Program
             // 有効は fail-closed（1032）により adminAuthorizationRequired = true を含意する。
             resolvedConfiguration.AdminForwarderMsiUploadEnabled);
 
-        // 管理者アカウントストアのスキーマ初期化（ADR-0010 Phase 1。ILogStore と同じ
-        // 「受信開始（Kestrel の listen 開始）より前に初期化を終える」順序——
-        // IngestionHostedService.StartAsync が listen 開始前に必ず待たれる（上記コメント参照）
-        // のと同じ理由で、ここ（app.RunAsync() 呼び出し前）で同期的に完了させる。
+        // 管理者アカウントストア・ログストアのスキーマ初期化は**ここでは行わない**
+        // （ADR-0023 決定 1。Issue #466）: 従来はこの位置で adminAccountStore.InitializeAsync() を
+        // try/catch なしで待っており、保存先が SQL Server で到達不能だと SqlException が
+        // 未処理例外となりプロセスが即死していた——受信パイプラインは同じ障害でスプールへ
+        // 正しく縮退するのに、初期化だけが縮退せず「DB 障害中は再起動できない」状態を作っていた。
+        // また当時のコメントは順序の理由を「ILogStore と同じ」と記していたが、ILogStore の初期化は
+        // architecture.md §1.2 手順 3 = 受信開始の**後**であり、この理由づけ自体が齟齬していた。
+        //
+        // 初期化は StorageInitializationCoordinator が周期監視の経路で行う（起動は完了を待たない）。
+        // 接続に上限を課すだけでは足りない——初期化は DDL + スキーマ移行であり、移行コマンドは
+        // CommandTimeout = 0（無制限。DB-10 の実測が根拠）のため、起動経路に残せば SCM の
+        // 起動待ち（30 秒）を破りうる。
         var adminAccountStore = app.Services.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>();
-        await adminAccountStore.InitializeAsync().ConfigureAwait(false);
 
         // 自己ロックアウトの footgun に対する起動時警告（RequireForLoopback=true +
         // App 認証のみ有効 + アカウント未作成だと、GUI へ到達する手段が一切なくなる）。
@@ -1583,15 +1610,35 @@ public static class Program
             resolvedConfiguration.AdminAppAuthEnabled &&
             !resolvedConfiguration.AdminWindowsAuthEnabled)
         {
-            var hasAnyAccount = await adminAccountStore.HasAnyAccountAsync().ConfigureAwait(false);
-            if (!hasAnyAccount)
+            var lockoutLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.SelfLockout");
+            try
             {
-                var lockoutLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.SelfLockout");
+                // 保存先が到達不能ならこの照会も失敗する（ADR-0023 決定 1）。警告を出せないだけで
+                // 起動は止めない——縮退そのものは能動通知（1039）が別途可視化する。
+                //
+                // 天井（決定 1・リサの質問 2）: 起動シーケンス中の保存先接続試行は合計 10 秒を
+                // 超えない。スキーマ初期化を起動経路の外へ出した後、起動経路に残る保存先アクセスは
+                // この照会だけなので、ここに天井を掛ければ合計上限が満たされる。接続文字列側の
+                // Connect Timeout に頼らないのは、provider や既定値によって実効値が変わるため。
+                using var lockoutProbeCts = new CancellationTokenSource(
+                    Yagura.Host.Storage.StorageInitializationCoordinator.StartupProbeCeiling);
+                var hasAnyAccount = await adminAccountStore
+                    .HasAnyAccountAsync(lockoutProbeCts.Token).ConfigureAwait(false);
+                if (!hasAnyAccount)
+                {
+                    lockoutLogger.LogWarning(
+                        "[admin-self-lockout-risk] loopback 認証が必須（Admin:Authentication:RequireForLoopback=true）で、" +
+                        "アプリ独自認証のみが有効（Windows 認証は無効）ですが、管理者アカウントが1件も作成されていないため、" +
+                        "管理 UI へログインする手段がありません。復旧するには設定ファイルで " +
+                        "Admin:Authentication:RequireForLoopback を false に変更してから再起動してください。");
+                }
+            }
+            catch (Exception ex)
+            {
                 lockoutLogger.LogWarning(
-                    "[admin-self-lockout-risk] loopback 認証が必須（Admin:Authentication:RequireForLoopback=true）で、" +
-                    "アプリ独自認証のみが有効（Windows 認証は無効）ですが、管理者アカウントが1件も作成されていないため、" +
-                    "管理 UI へログインする手段がありません。復旧するには設定ファイルで " +
-                    "Admin:Authentication:RequireForLoopback を false に変更してから再起動してください。");
+                    ex,
+                    "自己ロックアウトの起動時点検で管理者アカウントを照会できませんでした" +
+                    "（保存先が到達不能な可能性があります）。起動は継続します（ADR-0023 決定 1）。");
             }
         }
 

@@ -382,4 +382,13 @@ public enum AuditEventKind
     /// <c>Detail</c> の理由種別で区別して記録する。§4.4 の集約対象。
     /// </summary>
     ForwarderMsiUploadRejected,
+
+    /// <summary>
+    /// 保存先（アカウント台帳）が到達不能なため、アプリ独自認証のログイン要求を「一時的に
+    /// 利用できない」として拒否した（ADR-0023 決定 1。イベント ID 3015）。
+    /// **3004（ログイン失敗）へ相乗りさせない**——資格情報の検証に到達していない事象であり、
+    /// 混ぜると security.md §4.3 の意味凍結に反するため。縮退の開始・回復は運用状態として
+    /// 1000 番台（1039/1040）が担い、本 ID は個々の拒否試行を記録する。
+    /// </summary>
+    AdminAccountStoreUnavailableRejected,
 }

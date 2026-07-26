@@ -305,6 +305,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.ForwarderMsiPlaced => AuditEventIds.ForwarderMsiPlaced,
         AuditEventKind.ForwarderMsiDeleted => AuditEventIds.ForwarderMsiDeleted,
         AuditEventKind.ForwarderMsiUploadRejected => AuditEventIds.ForwarderMsiUploadRejected,
+        AuditEventKind.AdminAccountStoreUnavailableRejected => AuditEventIds.AdminAccountStoreUnavailableRejected,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

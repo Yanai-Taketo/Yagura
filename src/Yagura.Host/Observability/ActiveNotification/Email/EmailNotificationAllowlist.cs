@@ -89,6 +89,13 @@ internal static class EmailNotificationAllowlist
             //     登録しないと gMSA 構成の夜間 DC 断（「書き込みが止まる」導火線——
             //     database.md §6.1）がメールに乗らなくなる ---
             [PersistenceEventIds.IntegratedAuthConnectionFailed.Id] = Severity.Error,               // 1031
+
+            // --- 保存先のスキーマ初期化失敗による縮退（ADR-0023 決定 1。Issue #466）。
+            //     起動を止めずに縮退させる決定の成立条件が「縮退が必ず見えること」であり、
+            //     管理画面の常設バナーだけでは「管理画面を開くまで気づかない」——夜間に
+            //     ログイン手段が失われたまま放置される経路をメールで塞ぐ。回復側（1040）は
+            //     対象外: 復帰は対応を要する事象ではない（1029〔途絶からの復帰〕と同じ判断） ---
+            [ActiveNotificationEventIds.AdminAccountStoreUnavailable.Id] = Severity.Warning,        // 1039
         };
 
     /// <summary>本表に登録済みのすべてのイベント ID。テスト・網羅性検証用。</summary>

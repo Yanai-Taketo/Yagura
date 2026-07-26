@@ -289,4 +289,7 @@ public static class AuditEventIds
     /// ADR-0004 決定 7「拒否された試行も監査対象」）。レベルは警告。§4.4 の集約対象。
     /// </summary>
     public static readonly EventId ForwarderMsiUploadRejected = new(3014, "ForwarderMsiUploadRejected");
+
+    /// <summary>保存先到達不能によるアプリ独自認証ログインの拒否（ADR-0023 決定 1）。</summary>
+    public static readonly EventId AdminAccountStoreUnavailableRejected = new(3015, "AdminAccountStoreUnavailableRejected");
 }

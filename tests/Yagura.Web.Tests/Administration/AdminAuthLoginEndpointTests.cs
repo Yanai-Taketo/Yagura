@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.Web.Components.Common;
 using Yagura.Web.Tests.ArchitectureTests;
 
 namespace Yagura.Web.Tests.Administration;
@@ -290,6 +291,66 @@ public sealed class AdminAuthLoginEndpointTests
         Assert.Contains("action=\"/admin/login/app\"", html);
         Assert.Contains("name=\"username\"", html);
         Assert.Contains("name=\"password\"", html);
+    }
+
+    [Fact]
+    public async Task AppLogin_StoreUnavailable_RedirectsWithDistinctError_AndRecordsDedicatedAudit()
+    {
+        // ADR-0023 決定 1: 保存先到達不能による一時的な利用不能は、資格情報の誤り（error=1）と
+        // **区別して**返す。同じ文言に丸めると、利用者はパスワードを忘れたと思い込みリセットを
+        // 試み、それも失敗して混乱する（ペルソナレビュー 佐藤の指摘）。アカウントの実在有無には
+        // 依存しないサーバ側の状態であり、列挙耐性（ADR-0011 決定 3）は損なわない。
+        var audit = new RecordingAuditRecorder();
+        var authenticator = new FakeAppAuthenticator(
+            new AppAuthenticationOutcome(
+                AppAuthenticationResult.StoreUnavailable, "admin1", null, AdminAuthDenialLayer.None));
+
+        await using var harness = await ViewerHostHarness.StartAsync(
+            appAuthEnabled: true, appAuthenticator: authenticator, auditRecorder: audit);
+
+        using var client = CreateClient(harness);
+        var (token, _) = await FetchLoginFormAsync(client);
+
+        var response = await PostLoginAsync(client, token, "admin1", "correct-password");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/admin/login?error=store-unavailable", response.Headers.Location?.ToString());
+
+        // 3004（ログイン失敗）へ相乗りさせない——資格情報の検証に到達していない事象を混ぜると
+        // security.md §4.3 の意味凍結に反する。専用の 3015 に記録する。
+        var rejected = Assert.Single(
+            audit.Recorded, e => e.Kind == AuditEventKind.AdminAccountStoreUnavailableRejected);
+        Assert.Contains("username=admin1", rejected.Detail);
+        Assert.DoesNotContain(audit.Recorded, e => e.Kind == AuditEventKind.AppAuthenticationLoginFailed);
+        Assert.DoesNotContain(audit.Recorded, e => e.Kind == AuditEventKind.AdminLoginSucceeded);
+
+        // 保存先名・例外文字列は応答にも監査 Detail にも出さない（round 2 田中の指摘 2）。
+        Assert.DoesNotContain("Sql", rejected.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LoginScreen_WithStoreUnavailableError_ShowsTheTemporaryUnavailabilityMessage()
+    {
+        // 画面側: 汎用エラー文言（列挙耐性のための単一文言）に紛れ込ませず、専用の文言を出す。
+        var authenticator = new FakeAppAuthenticator(
+            new AppAuthenticationOutcome(
+                AppAuthenticationResult.StoreUnavailable, "admin1", null, AdminAuthDenialLayer.None));
+
+        await using var harness = await ViewerHostHarness.StartAsync(
+            appAuthEnabled: true, appAuthenticator: authenticator);
+
+        using var client = CreateClient(harness);
+
+        // 静的 SSR の出力は非 ASCII を数値文字参照へエスケープするため、文言の照合前に復号する。
+        var degradedHtml = WebUtility.HtmlDecode(await client.GetStringAsync("/admin/login?error=store-unavailable"));
+        Assert.Contains(UiText.AdminLoginStoreUnavailable, degradedHtml);
+        Assert.DoesNotContain(UiText.AdminLoginError, degradedHtml);
+
+        // 通常の失敗（error=1）は従来どおり汎用文言のまま——縮退用の文言が漏れ出さないこと
+        // （漏れると「保存先は健全だがパスワードが違う」場合まで別扱いに見え、列挙の手掛かりになる）。
+        var genericHtml = WebUtility.HtmlDecode(await client.GetStringAsync("/admin/login?error=1"));
+        Assert.Contains(UiText.AdminLoginError, genericHtml);
+        Assert.DoesNotContain(UiText.AdminLoginStoreUnavailable, genericHtml);
     }
 
     private static HttpClient CreateClient(ViewerHostHarness harness)

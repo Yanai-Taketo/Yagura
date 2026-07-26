@@ -60,16 +60,23 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
     private readonly AdminAuthFailureDefense _defense;
     private readonly TimeProvider _timeProvider;
 
+    /// <summary>
+    /// 保存先（アカウント台帳）の利用可否（ADR-0023 決定 1）。未注入の間は常に利用可能として扱う。
+    /// </summary>
+    private readonly Yagura.Web.Administration.StorageAvailabilityState? _storageAvailability;
+
     public AppAdminAuthenticationService(
         IAdminAccountStore store,
         AdminAuthFailureDefense? defense = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Yagura.Web.Administration.StorageAvailabilityState? storageAvailability = null)
     {
         ArgumentNullException.ThrowIfNull(store);
 
         _store = store;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _defense = defense ?? new AdminAuthFailureDefense(_timeProvider);
+        _storageAvailability = storageAvailability;
     }
 
     /// <summary>ログイン試行を検証する（成功/失敗いずれも列挙耐性を伴う。ADR-0011 決定 2〜4）。</summary>
@@ -86,6 +93,24 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
         {
             return new AppAuthenticationOutcome(
                 AppAuthenticationResult.Denied, username, CeilingSeconds(ipDecision.RetryAfter), AdminAuthDenialLayer.IpRateLimit);
+        }
+
+        // 評価順序 ①.5 保存先の縮退（ADR-0023 決定 1）。**位置が仕様である**:
+        // - ①の**後**: リモート発の縮退応答を IP レート制限のカウント対象にする（①は判定と同時に
+        //   カウントを進めるため、ここへ来た時点で計上済み）。無認証・無制限に叩ける
+        //   「保存先の死活オラクル」を作らないための措置（round 2 田中の指摘 2）。
+        //   loopback は ADR-0011 決定 4 のとおり①の対象外であり、復旧オペレータは妨げられない
+        // - ②の**前**: グローバルトークンバケットは消費しない（据え置きが要件）
+        // - アカウント照会（FindByUsernameAsync）の**前**: 実在・非実在を問わず一律に同じ応答を
+        //   返す。ここを照会の後に置くと ADR-0011 決定 3 が閉じた per-name オラクルを縮退時だけ
+        //   再開することになる（田中の指摘 2）
+        // - `_defense.RecordFailure` を**呼ばない**: 資格情報の検証に到達していないため n を進めない
+        //   （攻撃でバックオフを積み上げ、復旧後の正規管理者を巻き込む経路も塞ぐ）
+        if (_storageAvailability is { IsAdminAccountStoreAvailable: false })
+        {
+            // 応答には保存先名・例外文字列・再試行時刻を含めない（同指摘）。
+            return new AppAuthenticationOutcome(
+                AppAuthenticationResult.StoreUnavailable, username, null, AdminAuthDenialLayer.None);
         }
 
         // 評価順序 ②グローバルトークンバケット（決定 2・4・5.1）。

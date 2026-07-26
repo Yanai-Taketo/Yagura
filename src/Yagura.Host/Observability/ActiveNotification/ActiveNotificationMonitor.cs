@@ -105,7 +105,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         Func<bool?>? forwarderMsiFolderWritableProbe = null,
         bool forwarderMsiUploadEnabled = false,
         ICertificateStatusProbe? viewerHttpsCertificateProbe = null,
-        string? forwarderMsiFolderPath = null)
+        string? forwarderMsiFolderPath = null,
+        Yagura.Host.Storage.StorageInitializationCoordinator? storageInitialization = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -128,7 +129,20 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _forwarderMsiUploadEnabled = forwarderMsiUploadEnabled;
         _viewerHttpsCertificateProbe = viewerHttpsCertificateProbe;
         _forwarderMsiFolderPath = forwarderMsiFolderPath;
+        _storageInitialization = storageInitialization;
     }
+
+    /// <summary>
+    /// 保存先のスキーマ初期化の実行主体（ADR-0023 決定 1）。未注入（テスト等）の間は
+    /// 初期化・縮退通知を行わない。
+    /// </summary>
+    private readonly Yagura.Host.Storage.StorageInitializationCoordinator? _storageInitialization;
+
+    /// <summary>初回評価かどうか（起動直後の 1 回だけ負のキャッシュを無視する）。</summary>
+    private bool _storageInitializationAttempted;
+
+    /// <summary>縮退を最初に観測した時刻（回復通知で「縮退していた窓」を示すために保持する）。</summary>
+    private DateTimeOffset? _storageDegradedSince;
 
     /// <summary>
     /// フォワーダ MSI 配置フォルダのフルパス（1033 の本文に載せる撤去先。Issue #465）。
@@ -269,6 +283,30 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     private async Task RunAsync(CancellationToken stoppingToken)
     {
+        // 保存先のスキーマ初期化だけは周期の頭を待たずに 1 回試みる（ADR-0023 決定 1）。
+        // ループは Delay を先に置く構造のため、ここを省くと**健全な環境でも初期化が 1 周期
+        // （1 分）遅れる**——その間はアプリ独自認証が使えず、受信ログもスプールへ退避してしまい、
+        // 「起動を初期化の完了で待たない」ための変更が新しい縮退窓を作ることになる。
+        // 他の評価を一緒に前倒ししないのは、それらが起動直後の状態で判定されることを前提に
+        // していないため（seed 未完了・カウンタ未蓄積の段階での誤検知を避ける）。
+        try
+        {
+            await EvaluateStorageInitializationAsync(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ActiveNotificationEventIds.EvaluationFailed,
+                ex,
+                "[active-notification-evaluation-failed] 保存先の初回スキーマ初期化評価で例外が発生しました。" +
+                "監視ループは継続し、次周期（{PollInterval} 後）に再試行します。",
+                ActiveNotificationConstants.PollInterval);
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -328,7 +366,89 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateAdminAuthFailureDefense();
         EvaluateSourceSilence();
         EvaluateForwarderMsiFolderAcl();
+        await EvaluateStorageInitializationAsync(cancellationToken).ConfigureAwait(false);
         PruneStaleNotificationSuppression();
+    }
+
+    /// <summary>
+    /// 保存先のスキーマ初期化の実行と、縮退・回復の通知（ADR-0023 決定 1。Issue #466）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>初期化をここで行う理由</b>: 起動シーケンスに置くと、保存先が到達不能なときに未処理例外で
+    /// プロセスが落ちるか、SCM の起動待ち（30 秒）を超えて 1920 → 1603 になる（Issue #466 の実測）。
+    /// 起動は初期化の完了を待たず、**回復契機は本メソッド（周期監視）のみ**とする——「利用時
+    /// （ログイン要求）」を契機にすると、未認証の要求で任意に保存先への接続試行を誘発できてしまう
+    /// （ADR-0023 決定 1。田中・クリスの指摘）。
+    /// </para>
+    /// <para>
+    /// 単一実行・失敗の負のキャッシュは <see cref="StorageInitializationCoordinator"/> が担う。
+    /// 本メソッドは結果を通知へ変換するだけで、例外は投げない（監視ループを初期化失敗で止めない）。
+    /// </para>
+    /// </remarks>
+    private async Task EvaluateStorageInitializationAsync(CancellationToken cancellationToken)
+    {
+        if (_storageInitialization is null)
+        {
+            return;
+        }
+
+        var wasDegraded = _storageDegradedSince is not null;
+
+        // 初回評価（起動直後）は負のキャッシュを無視する——健全な環境で初期化が最大 1 周期
+        // 遅れないようにするため。
+        var initialized = await _storageInitialization
+            .TryInitializeAsync(force: !_storageInitializationAttempted, cancellationToken).ConfigureAwait(false);
+        _storageInitializationAttempted = true;
+
+        var now = _timeProvider.GetUtcNow();
+
+        if (!initialized)
+        {
+            _storageDegradedSince ??= now;
+
+            // 影響範囲を文面に出す（片方だけ落ちる場合がある——同じ DB でも権限や既存スキーマの
+            // 差で分かれる）。運用者が取るべき行動が違うため、一括の「初期化に失敗」で丸めない:
+            // アカウントストアなら認証の縮退、ログストアならスプール残量の監視が要る。
+            var affected = (_storageInitialization.IsAdminAccountStoreInitialized,
+                            _storageInitialization.IsLogStoreInitialized) switch
+            {
+                (false, false) => "アプリ独自 ID/パスワード認証が一時的に利用できず、受信ログの保存も" +
+                    "止まっています（受信自体は継続し、ログはスプールへ退避しています——" +
+                    "スプール容量を超えると失われるため、残量に注意してください）",
+                (false, true) => "アプリ独自 ID/パスワード認証が一時的に利用できません" +
+                    "（受信・閲覧・Windows 統合認証は継続しています）",
+                _ => "受信ログの保存が止まっています（受信自体は継続し、ログはスプールへ退避して" +
+                    "います——スプール容量を超えると失われるため、残量に注意してください。" +
+                    "アプリ独自 ID/パスワード認証は継続しています）",
+            };
+
+            NotifyIfDue("admin-account-store-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.AdminAccountStoreUnavailable,
+                    "[admin-account-store-unavailable] 保存先のスキーマ初期化に失敗しているため、" +
+                    "{AffectedScope}。保存先が復旧すると自動的に回復します——運用者の操作は不要です" +
+                    "（ADR-0023 決定 1）。復旧しない場合は保存先（Storage:Provider の設定先）の死活と" +
+                    "到達性を確認してください。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    affected,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        if (wasDegraded)
+        {
+            var degradedFor = now - _storageDegradedSince!.Value;
+            _storageDegradedSince = null;
+            // 回復は抑制窓の対象にしない（1 度だけ発火する事象であり、縮退していた窓を
+            // 事後に確定するための対になる記録——ADR-0023 決定 1 の監査要件と同じ趣旨）。
+            _logger.LogInformation(
+                ActiveNotificationEventIds.AdminAccountStoreRecovered,
+                "[admin-account-store-recovered] 保存先が復旧し、ログの保存とアプリ独自 ID/パスワード認証が" +
+                "利用可能に戻りました（縮退していた時間: {DegradedFor}）。復旧のために設定を緩めた" +
+                "場合（例: Admin:Authentication:RequireForLoopback を false にした）は、元に戻すことを" +
+                "検討してください。",
+                degradedFor);
+        }
     }
 
     /// <summary>

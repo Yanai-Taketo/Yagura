@@ -186,9 +186,13 @@ public sealed class IngestionHostedService : IHostedService
             }
         }
 
-        // 手順 3（§1.2）: DB provider を初期化する。完了までの間は Q1・Q2 が緩衝になる
-        // （スプールへの退避は M4。M2 時点は Q2 の容量とバックプレッシャで持ちこたえる）。
-        await _logStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        // 手順 3（§1.2）: DB provider の初期化は **StorageInitializationCoordinator へ委ねる**
+        // （ADR-0023 決定 1。Issue #466）。従来はここで try/catch なしに待っており、保存先が
+        // 到達不能だと SqlException が StartAsync を貫いて Generic Host が起動を中止していた——
+        // リスナは既に開いているのに消費ループ以降が一切始まらないため実質全滅であり、さらに
+        // 回復契機である周期監視（下の _activeNotificationMonitor.Start()）にも到達しなかった。
+        // 初期化は監視ループの初回評価で行い、失敗しても受信は継続する（書き込みはスプールへ
+        // 退避される——§1.2 の縮退運転）。
 
         _pipeline.StartConsumers();
         _logger.LogInformation("受信パイプラインの消費ループ（解析・永続化）を開始しました。");

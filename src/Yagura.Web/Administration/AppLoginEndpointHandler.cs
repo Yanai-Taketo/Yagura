@@ -111,8 +111,28 @@ internal static class AppLoginEndpointHandler
                 context.Response.Redirect($"{loginPath}?error=1");
                 return;
 
+            case AppAuthenticationResult.StoreUnavailable:
+                // ADR-0023 決定 1: 保存先が到達不能でアプリ独自認証が一時的に使えない。
+                // **InvalidCredentials と同じ扱いにしない**——資格情報の誤りと読み違えた利用者が
+                // パスワードリセットを試み、それも失敗して混乱するため（佐藤の指摘）。
+                // 監査も 3004（ログイン失敗）へ相乗りさせない（資格情報の検証に到達していない事象を
+                // 混ぜると security.md §4.3 の意味凍結に反する）——専用の 3015 に記録する。
+                await auditRecorder.RecordAsync(new AuditEvent(
+                    OccurredAt: now,
+                    Kind: AuditEventKind.AdminAccountStoreUnavailableRejected,
+                    RemoteAddress: context.Connection.RemoteIpAddress?.ToString(),
+                    RemotePort: context.Connection.RemotePort,
+                    AttemptedPath: context.Request.Path,
+                    ReachedListenerPort: context.Connection.LocalPort,
+                    // 試行されたユーザー名は残す（誰が困ったかの追跡）。保存先名・例外文字列は
+                    // 応答にも監査 Detail にも出さない（round 2 田中の指摘 2）。
+                    Detail: $"username={outcome.Username}"),
+                    CancellationToken.None).ConfigureAwait(false);
+
+                context.Response.Redirect($"{loginPath}?error=store-unavailable");
+                return;
+
             case AppAuthenticationResult.InvalidCredentials:
-            default:
                 // 失敗理由の種別は監査記録にのみ残し、利用者への応答では区別しない（ユーザー列挙耐性——
                 // ADR-0010 決定 3・security.md §4.3）。バックオフ層と完全に同一の Location を返す。
                 await auditRecorder.RecordAsync(new AuditEvent(
@@ -126,7 +146,16 @@ internal static class AppLoginEndpointHandler
                     context.RequestAborted).ConfigureAwait(false);
                 context.Response.Redirect($"{loginPath}?error=1");
                 return;
+
+            // default 節は置かない（ADR-0023 決定 1 の実装時に判明した落とし穴）: 以前は
+            // `case InvalidCredentials: default:` と同居しており、AppAuthenticationResult へ
+            // 新しい値を足しても**コンパイルは通り、黙って 3004 として記録される**状態だった。
+            // 網羅を外したことで、将来の追加はここでコンパイルエラーになる。
         }
+
+        throw new InvalidOperationException(
+            $"未処理の {nameof(AppAuthenticationResult)}: {outcome.Result}（列挙値の追加時は本 switch に " +
+            "明示の case を足すこと——監査 ID の相乗りを防ぐため default 節は置かない）。");
     }
 
     /// <summary>
