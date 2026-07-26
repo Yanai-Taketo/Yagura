@@ -101,6 +101,9 @@ public static class YaguraWebViewerExtensions
         // Host は解決済みの値を AddSingleton で後勝ちに上書きする（MainLayout の circuit 層 viewer ガード・
         // ViewerLoginScreen がこの型を DI 要求するため、閲覧認証を有効化しない構成でも解決できるよう既定を置く）。
         services.TryAddSingleton(Administration.ViewerAuthenticationRuntimeOptions.Disabled);
+        // 閲覧 HTTPS の縮小継続状態（ADR-0022 決定 2 可視化③）。Host（Program）が起動時判定で
+        // 上書き登録する——未登録のテストハーネス・単体レンダリングでは「縮小継続なし」を既定とする。
+        services.TryAddSingleton(Administration.ViewerHttpsRuntimeState.Normal);
 
         return services;
     }

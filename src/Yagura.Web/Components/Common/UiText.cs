@@ -1445,6 +1445,21 @@ public static class UiText
     /// <summary>メール通知設定へのリンクテキスト。</summary>
     public const string ViewerHttpsEmailSettingsLinkText = "メール通知の設定へ";
 
+    /// <summary>
+    /// 管理ホームの常設バナー: 閲覧リスナが縮小継続で停止中（{0} = 理由。ADR-0022 決定 2 可視化③）。
+    /// </summary>
+    public const string AdminHomeViewerHttpsSuppressedFormat =
+        "閲覧リスナ（閲覧 UI）は証明書の問題で停止しています（平文 HTTP へは落としていません）。理由: {0} " +
+        "復旧（証明書の差し替え、または HTTPS の無効化）はこの管理画面から行えます: ";
+
+    /// <summary>
+    /// 閲覧 UI の事前告知バナー: HTTPS への切替が保存済み・再起動待ち（ADR-0022 決定 6）。
+    /// </summary>
+    public const string ViewerHttpsPendingSwitchBanner =
+        "お知らせ: この閲覧画面の URL は、次回のサービス再起動後に https:// に変わります（現在の http:// の" +
+        "URL・ブックマークは開けなくなります）。新しい URL は管理者にご確認のうえ、ブックマークの更新を" +
+        "お願いします。";
+
     // ---- 初期セットアップウィザード（configuration.md §3〜§7。M8-4 骨格） ----
 
     /// <summary>ステップ: 受信設定。</summary>

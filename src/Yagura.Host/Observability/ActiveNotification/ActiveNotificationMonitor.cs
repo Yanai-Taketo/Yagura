@@ -68,6 +68,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly SpoolSelfTestTracker? _selfTestTracker;
     private readonly ICertificateStatusProbe? _adminHttpsCertificateProbe;
     private readonly ICertificateStatusProbe? _ingestionTlsCertificateProbe;
+    private readonly ICertificateStatusProbe? _viewerHttpsCertificateProbe;
     private readonly Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense? _adminAuthFailureDefense;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
@@ -102,7 +103,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         Func<Yagura.Ingestion.ListenerAvailabilitySnapshot>? listenerAvailabilityProbe = null,
         Func<CancellationToken, Task<IReadOnlyList<Yagura.Storage.SourceActivity>>>? sourceActivitySeedQuery = null,
         Func<bool?>? forwarderMsiFolderWritableProbe = null,
-        bool forwarderMsiUploadEnabled = false)
+        bool forwarderMsiUploadEnabled = false,
+        ICertificateStatusProbe? viewerHttpsCertificateProbe = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -123,6 +125,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _sourceActivitySeedQuery = sourceActivitySeedQuery;
         _forwarderMsiFolderWritableProbe = forwarderMsiFolderWritableProbe;
         _forwarderMsiUploadEnabled = forwarderMsiUploadEnabled;
+        _viewerHttpsCertificateProbe = viewerHttpsCertificateProbe;
     }
 
     /// <summary>
@@ -312,6 +315,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         await EvaluateSpoolSelfTestAsync(cancellationToken).ConfigureAwait(false);
         EvaluateAdminHttpsCertificate();
         EvaluateIngestionTlsCertificate();
+        EvaluateViewerHttpsCertificate();
         EvaluateAdminAuthFailureDefense();
         EvaluateSourceSilence();
         EvaluateForwarderMsiFolderAcl();
@@ -743,6 +747,83 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "（期限: {NotAfter}、残り {RemainingDays:F1} 日、警告閾値: {WarningWindow}）。期限切れに" +
                     "なっても TLS 受信リスナは止まりません（security.md §6）が、送信側の検証ポリシー次第で" +
                     "ハンドシェイクが拒否され始める可能性があります。証明書の更新を計画してください。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.NotAfter,
+                    remaining.TotalDays,
+                    ActiveNotificationConstants.CertificateExpiryWarningWindow,
+                    ActiveNotificationConstants.SuppressionWindow));
+        }
+    }
+
+    /// <summary>
+    /// 閲覧 UI HTTPS（ADR-0022。opt-in）証明書の期限接近（1036）・稼働中の使用不能（1037）を
+    /// 検知する（決定 2 可視化①・決定 7——期限接近通知の第 3 用途）。閲覧 HTTPS が無効・起動時に
+    /// 証明書を解決できず縮小継続した構成（プローブ未注入）では何もしない
+    /// （<see cref="EvaluateAdminHttpsCertificate"/> と同じ「重複警告の抑制」判断——起動時警告
+    /// 1035 が既に一度報告済みで、再起動なしに閲覧 HTTPS が有効化されることもない）。
+    /// </summary>
+    /// <remarks>
+    /// 挙動は管理 UI HTTPS（<see cref="EvaluateAdminHttpsCertificate"/>）と同型——期限切れ中は
+    /// <c>ServerCertificateSelector</c> が新規 TLS ハンドシェイクを拒否している（平文へは落ちない。
+    /// 決定 2）。異なるのは影響面の説明（LAN からの閲覧が止まる・サーバ上の閲覧と復旧は管理画面
+    /// から可能）と、<b>更新手順への参照を文言に含める</b>こと（決定 7——長寿命自己署名の運用では
+    /// 次に触るのが数年後の「手順を忘れた自分」になるため）。
+    /// </remarks>
+    private void EvaluateViewerHttpsCertificate()
+    {
+        if (_viewerHttpsCertificateProbe is null)
+        {
+            return;
+        }
+
+        var status = _viewerHttpsCertificateProbe.Check();
+        var now = _timeProvider.GetUtcNow();
+
+        if (!status.IsAvailable)
+        {
+            NotifyIfDue("viewer-https-certificate-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.ViewerHttpsCertificateUnavailableWhileRunning,
+                    "[viewer-https-certificate-unavailable-while-running] 閲覧 UI の HTTPS 証明書が" +
+                    "使用できなくなりました（理由: {Reason}）。LAN のブラウザからの閲覧（新規接続）は" +
+                    "できなくなっています（平文 HTTP へは落としません——ADR-0022 決定 2）。" +
+                    "syslog 受信・保存・管理画面は影響を受けません。証明書の差し替え・HTTPS の無効化は" +
+                    "サーバ上の管理画面（閲覧 UI の HTTPS 設定）から実行でき、反映にはサービス再起動が" +
+                    "必要です。更新手順は利用者ガイド（operations.md の閲覧 HTTPS 証明書の項）を参照して" +
+                    "ください。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.FailureReason,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        if (now > status.NotAfter)
+        {
+            NotifyIfDue("viewer-https-certificate-unavailable", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.ViewerHttpsCertificateUnavailableWhileRunning,
+                    "[viewer-https-certificate-unavailable-while-running] 閲覧 UI の HTTPS 証明書の" +
+                    "有効期限（{NotAfter}）が切れました。LAN のブラウザからの閲覧（新規 TLS ハンドシェイク）は" +
+                    "拒否されています（平文 HTTP へは落としません——ADR-0022 決定 2）。" +
+                    "syslog 受信・保存・管理画面は影響を受けません。証明書を更新してサービスを再起動して" +
+                    "ください（手順は利用者ガイド〔operations.md の閲覧 HTTPS 証明書の項〕参照）。" +
+                    "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    status.NotAfter,
+                    ActiveNotificationConstants.SuppressionWindow));
+            return;
+        }
+
+        var remaining = status.NotAfter - now;
+        if (remaining <= ActiveNotificationConstants.CertificateExpiryWarningWindow)
+        {
+            NotifyIfDue("viewer-https-certificate-expiry-approaching", () =>
+                _logger.LogWarning(
+                    ActiveNotificationEventIds.ViewerHttpsCertificateExpiryApproaching,
+                    "[viewer-https-certificate-expiry-approaching] 閲覧 UI の HTTPS 証明書の有効期限が" +
+                    "接近しています（期限: {NotAfter}、残り {RemainingDays:F1} 日、警告閾値: {WarningWindow}）。" +
+                    "期限切れになると LAN のブラウザからの閲覧ができなくなります（平文 HTTP へは落とさず、" +
+                    "syslog 受信は継続します）。証明書の更新を計画してください——更新は「新しい証明書の" +
+                    "取り込み → 管理画面（閲覧 UI の HTTPS 設定）で再選択 → サービス再起動」の順です" +
+                    "（手順は利用者ガイド〔operations.md の閲覧 HTTPS 証明書の項〕参照）。" +
                     "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.NotAfter,
                     remaining.TotalDays,

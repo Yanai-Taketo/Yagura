@@ -2,6 +2,7 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Http
+@using Microsoft.Extensions.DependencyInjection
 @using Yagura.Web.Administration
 @inject IJSRuntime JSRuntime
 @inject ILogStore LogStore
@@ -9,6 +10,7 @@
 @inject Yagura.Web.Circuits.YaguraCircuitContext CircuitContext
 @inject ViewerAuthenticationRuntimeOptions ViewerAuthOptions
 @inject NavigationManager Navigation
+@inject IServiceProvider ServiceProvider
 @implements IAsyncDisposable
 
 @*
@@ -96,6 +98,15 @@
     *@
     <MudMainContent>
         <div class="pa-4">
+            @if (_showHttpsSwitchBanner)
+            {
+                @* 閲覧 HTTPS への切替の事前告知（ADR-0022 決定 6。Issue #455 段階 ③）:
+                   Viewer:Https:Enabled=true が保存済み・再起動待ちの間だけ、まだ平文で稼働中の
+                   閲覧 UI 自身に表示する——8514 同一ポート切替の断絶コストを負担する閲覧者本人に
+                   届く唯一の window（ペルソナレビュー——クリス——の指摘）。再起動待ちキー機構
+                   （#286）の状態参照のみで成立し、新しい機構は作らない。 *@
+                <MudAlert Severity="Severity.Info" Class="mb-4">@UiText.ViewerHttpsPendingSwitchBanner</MudAlert>
+            }
             @*
                 全画面共通の状態帯（ui.md §5.1「ダッシュボード最上部（および全画面の状態帯）」）。
                 「稼働中」はポートの待ち受けを意味し、ログが現に届いていることは意味しないため、
@@ -176,6 +187,42 @@
         // 初期表示（prerender を含む）で状態帯を組み立てる。以後は定期更新
         // （OnAfterRenderAsync で開始——prerender では動かない）。
         await RefreshStatusBandAsync();
+        await EvaluateHttpsSwitchBannerAsync();
+    }
+
+    private bool _showHttpsSwitchBanner;
+
+    /// <summary>
+    /// 閲覧 HTTPS への切替の事前告知バナー（ADR-0022 決定 6）の表示判定。条件 =
+    /// 「Viewer:Https:Enabled が再起動待ちキーに含まれる」かつ「永続値で有効」——つまり
+    /// 「次の再起動で URL が https:// に変わることが確定している」状態。拇印のみの変更
+    /// （URL は変わらない）では出さない。サービスは任意解決（GetService）にする——閲覧専用の
+    /// テストハーネスは管理系サービスを登録しないため、未登録では黙って非表示に倒す。
+    /// </summary>
+    private async Task EvaluateHttpsSwitchBannerAsync()
+    {
+        try
+        {
+            var reloadService = ServiceProvider.GetService<Yagura.Abstractions.Administration.IConfigurationReloadService>();
+            var viewerHttpsService = ServiceProvider.GetService<Yagura.Abstractions.Administration.IViewerHttpsAdminService>();
+            if (reloadService is null || viewerHttpsService is null)
+            {
+                return;
+            }
+
+            var pendingKeys = reloadService.GetPendingRestartKeys();
+            if (!pendingKeys.Any(k => string.Equals(k.Key, "Viewer:Https:Enabled", StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var status = await viewerHttpsService.GetStatusAsync();
+            _showHttpsSwitchBanner = status.Enabled;
+        }
+        catch (Exception)
+        {
+            // 告知バナーは付帯機能——判定の失敗で閲覧自体を壊さない（黙って非表示）。
+        }
     }
 
     protected override async Task OnParametersSetAsync()
