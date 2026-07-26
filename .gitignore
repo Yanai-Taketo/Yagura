@@ -481,3 +481,6 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 .claude/launch.json
+
+# installer E2E の既定出力先(Invoke-YaguraInstallerE2E.ps1 -OutputDir 省略時)
+installer/e2e/results/
