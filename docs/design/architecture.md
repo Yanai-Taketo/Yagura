@@ -68,7 +68,7 @@ MSI 同梱の要否判定に必要な「配置フォルダ（データルート�
 - 契約: `Yagura.Web.ForwarderKit.IForwarderMsiSource`（配置フォルダの列挙・単一検出時の詳細取得）。実体 `SystemForwarderMsiSource` は判別可能な型 `ForwarderMsiLookup`（`NotFound` / `Multiple` / `Single`）を返す
 - 結線: `Yagura.Host.Program` が `Path.Combine(dataRoot, ForwarderMsiConstraints.PlacementSubPath)` で実パスを組み立て、`SystemForwarderMsiSource` へ渡して DI 登録する（`AddYaguraAdmin` 内ではなく `Program.cs` で明示登録——`INicCandidateSource` の `TryAddSingleton` 既定とは異なる）
 - 判定の分離: ファイル名パターン一致・版解決（ProductVersion 優先・ファイル名補助）・公式 SHA256 照合は `ForwarderMsiFilter`（純粋関数）に切り出し、列挙 I/O（`SystemForwarderMsiSource`）から独立してテストできるようにする（`NicCandidateFilter` / `SystemNicCandidateSource` と同じ設計）
-- MSI の版取得: `msi.dll` の `MsiGetFileVersion`（P/Invoke 1 関数）で MSI 自身の ProductVersion を取得する。`MsiOpenDatabase` 系のハンドル管理を避けるための選択。取得不能時はファイル名から抽出した版を補助的に使う
+- MSI の版取得: `msi.dll` の `MsiOpenDatabase`（読み取り専用）+ Property テーブル参照（`SELECT Value FROM Property WHERE Property='ProductVersion'`）で MSI 自身の ProductVersion を取得する（`ForwarderMsiProductVersionReader`。検出側・アップロード側の共用実装）。`MsiGetFileVersion` は使わない——同 API の読み取り対象はファイルバージョンリソースであり、MSI パッケージに対しては `ERROR_FILE_INVALID` (1006) を返すことが実機で確定している（Issue #436）。取得不能時はファイル名から抽出した版を補助的に使う（検出側のみ。アップロード側は拒否——ADR-0020 決定 3）
 - 同梱時の ZIP 組み立て: `ForwarderKitBuilder.Build` が MSI バイト列をメモリ上で読み込み ZIP に封入する（設計条件 7 のディスク非使用原則を維持）。`GENERATED.txt` の `Kit-SHA256`（ZIP 全体のハッシュ）は自己参照を避けるため「`GENERATED.txt` を含まない全エントリのハッシュ」と定義し、2 段階（仮組み立て → ハッシュ算出 → `GENERATED.txt` を追加した本組み立て）で算出する
 
 ### 1.6 フォワーダ MSI のアーキ別検出（ADR-0009 決定7・委任 #4）
