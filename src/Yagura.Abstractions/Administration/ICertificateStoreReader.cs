@@ -7,7 +7,7 @@ namespace Yagura.Abstractions.Administration;
 /// <remarks>
 /// <para>
 /// <b>用途は 1 つではない</b>（ADR-0019 委任 3 で命名を中立化した）。同一の列挙結果を、
-/// 目的の異なる 2 つの証明書設定画面が共有する:
+/// 目的の異なる 3 つの証明書設定画面が共有する:
 /// </para>
 /// <list type="bullet">
 /// <item><description>
@@ -17,6 +17,11 @@ namespace Yagura.Abstractions.Administration;
 /// <item><description>
 /// <b>TLS 受信</b>（<c>Ingestion:Tls:CertificateThumbprint</c>。RFC 5425。ADR-0019）——
 /// 送信元機器 → Yagura の syslog 受信用。
+/// </description></item>
+/// <item><description>
+/// <b>閲覧 UI の HTTPS</b>（<c>Viewer:Https:CertificateThumbprint</c>。ADR-0022 決定 3——
+/// 3 例目の再利用）——LAN のブラウザ → Yagura の閲覧用。SAN 助言検査（決定 4）は本契約の
+/// フィールドを増やさず、選択後の拇印による個別読み出しで行う（ADR-0022 委任 8 の確定）。
 /// </description></item>
 /// </list>
 /// <para>

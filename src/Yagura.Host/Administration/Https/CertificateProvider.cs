@@ -9,12 +9,13 @@ namespace Yagura.Host.Administration.Https;
 /// <remarks>
 /// <para>
 /// <b>用途は 1 つではない</b>（#359 で命名を中立化した）。同一の解決ロジックを、目的の異なる
-/// 2 つの TLS 面が共有する: <b>管理リスナのリモート HTTPS</b>（ADR-0010 Phase 2 決定 4）と
-/// <b>TLS 受信</b>（RFC 5425。security.md §6「参照方式は Web UI の HTTPS と同型」——受信側専用の
-/// 証明書ロード実装を別途持たず、二重実装しない）。
+/// 3 つの TLS 面が共有する: <b>管理リスナのリモート HTTPS</b>（ADR-0010 Phase 2 決定 4）・
+/// <b>TLS 受信</b>（RFC 5425。security.md §6「参照方式は Web UI の HTTPS と同型」）・
+/// <b>閲覧 UI の HTTPS</b>（ADR-0022 決定 3——3 例目の再利用。面ごとの専用ロード実装を持たず、
+/// 多重実装しない）。
 /// </para>
 /// <para>
-/// configuration.md §6（閲覧 UI の HTTPS）と同型の参照方式——PFX ファイルパス + パスワード方式は
+/// configuration.md §6（閲覧 UI の HTTPS）の参照方式——PFX ファイルパス + パスワード方式は
 /// 採らない（ファイルとパスワードの管理という新しい漏洩面を作らない）。証明書の生成支援・
 /// インストールは行わない（利用者の持ち込みを基本とする——同 §6 の既存方針をそのまま踏襲）。
 /// </para>

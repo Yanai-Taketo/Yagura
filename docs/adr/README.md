@@ -37,7 +37,7 @@
 | [0019](0019-ingestion-tls-cert-ui.md) | TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用。Issue #276） | accepted |
 | [0020](0020-forwarder-msi-upload.md) | フォワーダ配布キット MSI の管理画面アップロード（管理 UI 認証有効時限定。ADR-0008 設計条件 9 の部分 supersession。Issue #283） | accepted（決定 1 の有効化条件 (ii)〔RequireForLoopback 必須〕は ADR-0021〔accepted 2026-07-26〕により部分的に superseded） |
 | [0021](0021-msi-upload-operation-auth.md) | フォワーダ MSI アップロードの前提条件の変更 — RequireForLoopback 必須からアップロード操作単位の実認証必須へ（ADR-0020 決定 1 (ii) の部分 supersession。Issue #440） | accepted |
-| [0022](0022-viewer-https.md) | 閲覧 UI の HTTPS 化（opt-in。8514 同一ポート切替。ADR-0004 決定 3 の予告・ADR-0006 基準 1 の最終残件。Discussion #449） | accepted |
+| [0022](0022-viewer-https.md) | 閲覧 UI の HTTPS 化（opt-in。8514 同一ポート切替。ADR-0004 決定 3 の予告・ADR-0006 基準 1 の最終残件。Discussion #449） | accepted（改訂 1 = 2026-07-26: 委任 1〜8 の実施結果を記録〔採番 1035〜1038・2028・2029、CF-D2 = operations.md §9、ブラウザ実機検証は lab 手順書へ〕。決定は不変） |
 
 ## 起案予定
 
