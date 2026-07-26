@@ -394,7 +394,7 @@ else
             CultureInfo.InvariantCulture,
             UiText.SourceSilenceCandidateItemFormat,
             candidate.Address,
-            candidate.LastReceivedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+            YaguraTimeFormatter.FormatLocal(candidate.LastReceivedAt),
             candidate.RecordCount);
 
         return candidate.AlreadyRegistered ? text + UiText.SourceSilenceCandidateRegisteredSuffix : text;

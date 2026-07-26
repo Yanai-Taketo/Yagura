@@ -70,4 +70,46 @@ public sealed class YaguraTimeFormatterTests
             YaguraTimeFormatter.FormatLocal(instantAsUtc, timeZone),
             YaguraTimeFormatter.FormatLocal(sameInstantWithOffset, timeZone));
     }
+
+    [Fact]
+    public void FormatLocal_JstAccountInventoryTimestamp_ShowsLocalWallClock_NotUtc()
+    {
+        // Issue #462 の発端そのもの: アカウント点検の最終ログイン `2026-07-26T06:18:26Z` を
+        // JST のサーバで表示すると **15:18:26** でなければならない。UTC 生表記（06:18）だと
+        // 「心当たりのないアカウントか」を判断する材料が 9 時間ずれて読める。
+        var jst = TimeZoneInfo.CreateCustomTimeZone("Test+09", TimeSpan.FromHours(9), "Test+09", "Test+09");
+        var lastLogin = new DateTimeOffset(2026, 7, 26, 6, 18, 26, TimeSpan.Zero);
+
+        var formatted = YaguraTimeFormatter.FormatLocal(lastLogin, jst);
+
+        Assert.Equal("2026-07-26 15:18:26 (UTC+09:00)", formatted);
+        Assert.DoesNotContain("06:18", formatted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FormatLocalDateRange_ShowsBothDatesAndASingleOffset()
+    {
+        // 証明書の有効期間は「何日から何日まで」で読む値。日付だけを出しつつ、
+        // タイムゾーンは範囲全体に 1 つだけ添える（両端に付けると冗長）。
+        var jst = TimeZoneInfo.CreateCustomTimeZone("Test+09", TimeSpan.FromHours(9), "Test+09", "Test+09");
+        var from = new DateTimeOffset(2026, 7, 4, 0, 0, 0, TimeSpan.Zero);
+        var to = new DateTimeOffset(2031, 7, 3, 15, 0, 0, TimeSpan.Zero);
+
+        var formatted = YaguraTimeFormatter.FormatLocalDateRange(from, to, jst);
+
+        Assert.Equal("2026-07-04 〜 2031-07-04 (UTC+09:00)", formatted);
+    }
+
+    [Fact]
+    public void FormatLocalDateRange_LocalisesTheDateItself_NotJustTheClock()
+    {
+        // 日付だけの表示でもタイムゾーンの明示が要る理由: 同じ瞬間でも日付が 1 日ずれる。
+        // UTC で 2026-07-04 23:30 は JST では翌 05 日である。
+        var jst = TimeZoneInfo.CreateCustomTimeZone("Test+09", TimeSpan.FromHours(9), "Test+09", "Test+09");
+        var utcLateEvening = new DateTimeOffset(2026, 7, 4, 23, 30, 0, TimeSpan.Zero);
+
+        var formatted = YaguraTimeFormatter.FormatLocalDateRange(utcLateEvening, utcLateEvening, jst);
+
+        Assert.StartsWith("2026-07-05 〜 2026-07-05", formatted, StringComparison.Ordinal);
+    }
 }
