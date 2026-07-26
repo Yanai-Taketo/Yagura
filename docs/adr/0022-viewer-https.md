@@ -1,6 +1,6 @@
 # ADR-0022: 閲覧 UI の HTTPS 化（opt-in。8514 同一ポート切替。ADR-0006 基準 1 の最終残件）
 
-- 状態: proposed
+- 状態: accepted（2026-07-26。PR #451 マージ）
 - 日付: 2026-07-26
 - 決定者: YANAI Taketo
 - 関連: [ADR-0004](0004-security-model.md) 決定 3（opt-in 強化 3 点の予告）/ [ADR-0006](0006-v1-release-criteria.md) 基準 1 / [ADR-0010](0010-admin-ui-authentication.md)（決定 4 = loopback 管理面は HTTPS 対象外・Phase 4 = 閲覧 UI 認証）/ [ADR-0012](0012-admin-https-cert-ui.md)・[ADR-0019](0019-ingestion-tls-cert-ui.md)（証明書選択 UI——本 ADR は 3 回目の再利用）/ [configuration.md](../design/configuration.md) §6（閲覧 HTTPS 証明書の確定済み設計）・§4.2・§8 / [security.md](../design/security.md) / Discussion #449（オーナー裁定 2026-07-26）
