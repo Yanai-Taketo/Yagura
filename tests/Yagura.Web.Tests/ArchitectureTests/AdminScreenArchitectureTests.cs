@@ -79,6 +79,7 @@ public sealed class AdminScreenArchitectureTests
             typeof(IPromotionWizardService),
             typeof(ICircuitManagementService),
             typeof(IAdminRemoteAccessAdminService),
+            typeof(IForwarderMsiUploadAdminService),
         };
 
         Assert.All(contracts, contract =>

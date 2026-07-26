@@ -1729,6 +1729,44 @@ public static class UiText
 
     public const string ForwarderMsiUploadSignInLinkLabel = "サインイン画面を開く";
 
+    // ---- opt-in の有効化・無効化トグル（ADR-0021 決定 4 = 委任 2） ----
+
+    public const string ForwarderMsiUploadEnableSectionTitle = "アップロード機能を有効にする";
+
+    /// <summary>反映に再起動（= 受信断の窓 1 回）が要ることを隠さない（ADR-0021 決定 4）。</summary>
+    public const string ForwarderMsiUploadEnableRestartNotice =
+        "この設定の反映にはサービスの再起動が必要です（再起動の間は syslog を受信できません）。"
+        + "有効化しても、配置フォルダへの書き込み権限を付与するまでアップロードは実行できません。";
+
+    public const string ForwarderMsiUploadEnableSignInRequired =
+        "この設定の変更にはサインインが必要です（MSI の書き込み口を出現させる操作のため、"
+        + "アップロード操作と同じ扱いです）。";
+
+    /// <summary>切替時点検（ADR-0021 決定 1 の事前仕込み対処）。</summary>
+    public const string ForwarderMsiUploadEnableInventoryTitle =
+        "有効化の前に、既存のアプリ独自認証アカウントを確認してください:";
+
+    /// <summary>{0} = ユーザー名、{1} = 作成時刻、{2} = 最終変更時刻。</summary>
+    public const string ForwarderMsiUploadEnableInventoryDetailFormat =
+        "ユーザー名: {0} / 作成: {1} / 最終変更: {2}";
+
+    public const string ForwarderMsiUploadEnableInventoryTimestampUnknown = "不明";
+
+    public const string ForwarderMsiUploadEnableInventoryAcknowledge =
+        "このアカウントが自分（または信頼できる管理者）が作成したものであることを確認しました";
+
+    public const string ForwarderMsiUploadEnableButton = "アップロード機能を有効にする";
+
+    public const string ForwarderMsiUploadDisableButton = "アップロード機能を無効にする";
+
+    public const string ForwarderMsiUploadEnabledSaved =
+        "アップロード機能を有効にしました。反映にはサービスの再起動が必要です。";
+
+    public const string ForwarderMsiUploadDisabledSaved =
+        "アップロード機能を無効にしました。反映にはサービスの再起動が必要です。";
+
+    public const string ForwarderMsiUploadSettingNoChange = "設定は変更されていません。";
+
     public const string ForwarderMsiUploadDisabledManualGuide =
         "この構成のままでも、サーバのファイルシステムへの手動配置（利用者ガイド参照）で MSI 同梱を利用できます。";
 

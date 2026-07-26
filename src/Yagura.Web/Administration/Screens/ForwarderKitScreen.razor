@@ -11,6 +11,8 @@
 @inject AdminAuthenticationRuntimeOptions AuthOptions
 @inject IForwarderMsiStore MsiStore
 @inject IForwarderMsiPlacementService PlacementService
+@inject Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService UploadSettingService
+@inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject IJSRuntime JS
@@ -232,6 +234,49 @@
             <li>@UiText.ForwarderMsiUploadConditionOptIn</li>
         </ul>
         <MudText Typo="Typo.caption">@UiText.ForwarderMsiUploadDisabledManualGuide</MudText>
+
+        @* opt-in の有効化トグル（ADR-0021 決定 4 = 委任 2。設定ファイル手編集を GUI へ移す）。
+           トグル自体の認可はアップロード操作と同格——未サインインでは操作させない。 *@
+        @if (!_operationAuthenticated)
+        {
+            <MudText Typo="Typo.caption" Class="mt-3">@UiText.ForwarderMsiUploadEnableSignInRequired</MudText>
+            <div class="mt-1">
+                <MudLink Href="@AdminAuthenticationExtensions.LoginPath">@UiText.ForwarderMsiUploadSignInLinkLabel</MudLink>
+            </div>
+        }
+        else if (AuthOptions.WindowsAuthEnabled || AuthOptions.AppAuthEnabled)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.ForwarderMsiUploadEnableSectionTitle</MudText>
+            <MudText Typo="Typo.caption">@UiText.ForwarderMsiUploadEnableRestartNotice</MudText>
+
+            @if (_uploadSetting?.HasAppAccount == true)
+            {
+                @* 切替時点検（ADR-0021 決定 1 の事前仕込み対処）: opt-in が無効な間は無認証
+                   loopback からアカウントを作成できるため、有効化の時点で既存アカウントを提示し
+                   確認を求める。時刻が不明（スキーマ v3 より前の行）なら「不明」と表示する。 *@
+                <MudText Typo="Typo.caption" Class="mt-2">@UiText.ForwarderMsiUploadEnableInventoryTitle</MudText>
+                <MudText Typo="Typo.caption">
+                    @string.Format(
+                        UiText.ForwarderMsiUploadEnableInventoryDetailFormat,
+                        _uploadSetting.AppAccountUsername,
+                        FormatInventoryTimestamp(_uploadSetting.AppAccountCreatedAtUtc),
+                        FormatInventoryTimestamp(_uploadSetting.AppAccountUpdatedAtUtc))
+                </MudText>
+                <YaguraCheckboxField Label="@UiText.ForwarderMsiUploadEnableInventoryAcknowledge"
+                                     @bind-Value="_enableInventoryAcknowledged" />
+            }
+
+            @if (_settingError is not null)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Error" role="alert" Class="mt-2">@_settingError</MudText>
+            }
+
+            <div class="mt-2">
+                <YaguraButton Role="YaguraButtonRole.Normal" OnClick="EnableUploadAsync" Disabled="@_settingInProgress">
+                    @UiText.ForwarderMsiUploadEnableButton
+                </YaguraButton>
+            </div>
+        }
     }
     else if (!_operationAuthenticated)
     {
@@ -262,6 +307,18 @@
         <MudText Typo="Typo.caption" Color="Color.Warning" role="status" Class="mt-2">
             @UiText.ForwarderMsiUploadWritePathOpenNotice
         </MudText>
+
+        @* 無効化の動線（有効化と対称。ADR-0021 委任 2。無効化に切替時点検は要らない——
+           書き込み口を閉じる方向の操作のため）。 *@
+        @if (_settingError is not null)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Error" role="alert" Class="mt-2">@_settingError</MudText>
+        }
+        <div class="mt-2">
+            <YaguraButton Role="YaguraButtonRole.Normal" OnClick="DisableUploadAsync" Disabled="@_settingInProgress">
+                @UiText.ForwarderMsiUploadDisableButton
+            </YaguraButton>
+        </div>
 
         @if (_uploadNotice is not null)
         {
@@ -396,30 +453,87 @@
     private bool _deleteAcknowledged;
     private bool _operationAuthenticated;
 
+    // ---- opt-in トグル（ADR-0021 決定 4 = 委任 2） ----
+    private Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus? _uploadSetting;
+    private bool _enableInventoryAcknowledged;
+    private bool _settingInProgress;
+    private string? _settingError;
+
     protected override async Task OnInitializedAsync()
     {
         _candidates = NicCandidateSource.GetCandidates();
         RefreshMsiLookup();
 
-        if (UploadOptions.Enabled)
-        {
-            // アップロード系操作の専用認可（ADR-0021 決定 1）。判定は HTTP 側ポリシーと同じ
-            // 単一実装（IsForwarderMsiUploadOperationAllowed）——UI の出し分けと実行可否
-            // （ForwarderMsiPlacementService の最終防衛線・stage エンドポイントの 401）を
-            // 食い違わせない。
-            _operationAuthenticated = AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(
-                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+        // アップロード系操作の専用認可（ADR-0021 決定 1・4）。判定は HTTP 側ポリシーと同じ
+        // 単一実装（IsForwarderMsiUploadOperationAllowed）——UI の出し分けと実行可否
+        // （ForwarderMsiPlacementService の最終防衛線・stage エンドポイントの 401・
+        // opt-in トグルサービス）を食い違わせない。機能が無効な構成でもトグルの認可判定に
+        // 使うため、UploadOptions.Enabled に依らず評価する。
+        _operationAuthenticated = AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(
+            (await AuthStateProvider.GetAuthenticationStateAsync()).User);
 
-            // 書き込み可否の実挙動検出（ADR-0020 決定 2・委任 2）。画面表示のたびに 1 回——
-            // 周期の ACL 監視（1033/1034）とは別に、利用者が今まさに操作できるかを実書き込み
-            // プローブで確かめる（頻度が低いため SACL 汚染の懸念は周期監視と異なり許容）。
-            // 未サインイン時は省略する（操作 UI を出さないため。プローブの SACL 痕跡も残さない）。
-            if (_operationAuthenticated)
-            {
-                _writeAccess = MsiStore.CheckWriteAccess();
-            }
+        _uploadSetting = await UploadSettingService.GetStatusAsync();
+
+        // 書き込み可否の実挙動検出（ADR-0020 決定 2・委任 2）。画面表示のたびに 1 回——
+        // 周期の ACL 監視（1033/1034）とは別に、利用者が今まさに操作できるかを実書き込み
+        // プローブで確かめる（頻度が低いため SACL 汚染の懸念は周期監視と異なり許容）。
+        // 未サインイン時は省略する（操作 UI を出さないため。プローブの SACL 痕跡も残さない）。
+        if (UploadOptions.Enabled && _operationAuthenticated)
+        {
+            _writeAccess = MsiStore.CheckWriteAccess();
         }
     }
+
+    /// <summary>opt-in を有効化する（ADR-0021 委任 2。切替時点検の確認込み）。</summary>
+    private async Task EnableUploadAsync() => await ConfigureUploadSettingAsync(enabled: true);
+
+    /// <summary>opt-in を無効化する（切替時点検は要らない——書き込み口を閉じる方向のため）。</summary>
+    private async Task DisableUploadAsync() => await ConfigureUploadSettingAsync(enabled: false);
+
+    private async Task ConfigureUploadSettingAsync(bool enabled)
+    {
+        _settingError = null;
+        _settingInProgress = true;
+        try
+        {
+            var user = (await AuthStateProvider.GetAuthenticationStateAsync()).User;
+            var (scheme, principal) = AuditActorResolver.Resolve(user);
+
+            var result = await UploadSettingService.ConfigureAsync(
+                enabled,
+                _enableInventoryAcknowledged,
+                CircuitContext.RemoteAddress,
+                scheme,
+                principal,
+                AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(user));
+
+            _uploadSetting = result.Status;
+
+            if (!result.Changed)
+            {
+                Notifier.NotifyInfo(UiText.ForwarderMsiUploadSettingNoChange);
+                return;
+            }
+
+            // 反映は再起動（構造的非存在の判定が起動時固定。ADR-0021 決定 4——受信断の窓を隠さない）。
+            Notifier.NotifyOk(enabled
+                ? UiText.ForwarderMsiUploadEnabledSaved
+                : UiText.ForwarderMsiUploadDisabledSaved);
+        }
+        catch (Yagura.Abstractions.Administration.WizardValidationException ex)
+        {
+            _settingError = ex.Message;
+        }
+        finally
+        {
+            _settingInProgress = false;
+        }
+    }
+
+    private static string FormatInventoryTimestamp(DateTimeOffset? value) =>
+        value is { } at
+            ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            : UiText.ForwarderMsiUploadEnableInventoryTimestampUnknown;
 
     /// <summary>
     /// 選択中のアーキテクチャで <see cref="IForwarderMsiSource.Lookup(ForwarderMsiArchitecture)"/>

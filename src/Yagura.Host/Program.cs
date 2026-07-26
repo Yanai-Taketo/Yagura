@@ -998,6 +998,15 @@ public static class Program
                 // 認証設定・アプリアカウントの変更に実認証を要求する。
                 forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled));
 
+        // フォワーダ MSI アップロード opt-in のトグル（ADR-0021 決定 4 = 委任 2）。設定ファイルの
+        // 手編集を GUI へ移す（残るターミナル操作は ACE 付与のみ）。切替時点検で既存アプリ
+        // アカウントの情報を提示するため IAdminAccountStore を参照する。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService>(sp =>
+            new Yagura.Host.Administration.ForwarderKit.ForwarderMsiUploadAdminService(
+                dataRoot,
+                sp.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>(),
+                sp.GetRequiredService<IAuditRecorder>()));
+
         // 管理リモート HTTPS 証明書の選択 UI 用の read-only 列挙（ADR-0012 決定 2）。副作用なし・
         // 依存なし（LocalMachine\My を ReadOnly で開くだけ）。実体は Windows 専用（他の Store* 型と
         // 同様、合成ルートで直接 new する）。

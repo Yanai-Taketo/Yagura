@@ -150,7 +150,9 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
         ValidatePasswordPolicy(password);
 
         var hash = Hasher.HashPassword(new AdminAccountHashSubject(), password);
-        await _store.UpsertAsync(username, hash, cancellationToken).ConfigureAwait(false);
+        // 作成・変更時刻はストアではなく呼び出し側の時刻源で決める（ADR-0021 決定 1 の切替時点検が
+        // 使う値。RecordSuccessfulLoginAsync と同じ流儀）。
+        await _store.UpsertAsync(username, hash, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

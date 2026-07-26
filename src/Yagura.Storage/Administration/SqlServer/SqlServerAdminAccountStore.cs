@@ -13,8 +13,13 @@ namespace Yagura.Storage.Administration.SqlServer;
 /// </remarks>
 public sealed class SqlServerAdminAccountStore : IAdminAccountStore
 {
-    /// <summary><see cref="Sqlite.SqliteAdminAccountStore.CurrentSchemaVersion"/> と同じ意味の版数。</summary>
-    internal const int CurrentSchemaVersion = 2;
+    /// <summary>
+    /// <see cref="Sqlite.SqliteAdminAccountStore.CurrentSchemaVersion"/> と同じ意味の版数
+    /// （<b>両者は常に同じ値を保つこと</b>——片方だけ上げると片 provider だけ移行が走る）。
+    /// v2 = ロックアウト 2 列の削除（ADR-0011 決定 8）、v3 = <c>CreatedAtUtc</c>/<c>UpdatedAtUtc</c>
+    /// の追加（ADR-0021 決定 1 の切替時点検）。
+    /// </summary>
+    internal const int CurrentSchemaVersion = 3;
 
     private readonly string _connectionString;
 
@@ -26,11 +31,10 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
     }
 
     /// <summary>
-    /// スキーマを初期化する（冪等）。新規データベースは v2 形状（<c>FailedAttemptCount</c>/
-    /// <c>LockoutUntilUtc</c> なし）で直接作成する。PR #217 以前の v1 形状から
-    /// アップグレードする既存データベースには削除マイグレーションを適用する（ADR-0011 決定 8。
-    /// 委任事項 2。<see cref="Sqlite.SqliteAdminAccountStore.InitializeAsync"/> と同じ判定方式——
-    /// 版管理表の不在を「新規」と「無版数の v1」のどちらとも解釈し得るため、
+    /// スキーマを初期化する（冪等）。新規データベースは最新形状（v3）で直接作成し、既存
+    /// データベースには記録済み版から現行版までの移行ステップを順に適用する
+    /// （<see cref="ApplyMigrationsAsync"/>。<see cref="Sqlite.SqliteAdminAccountStore.InitializeAsync"/> と
+    /// 同じ判定方式——版管理表の不在を「新規」と「無版数の v1」のどちらとも解釈し得るため、
     /// <c>dbo.AdminAccounts</c> の実在有無で区別する）。
     /// </summary>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -50,7 +54,9 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
                         UsernameNormalized NVARCHAR(256) NOT NULL PRIMARY KEY,
                         Username NVARCHAR(256) NOT NULL,
                         PasswordHash NVARCHAR(512) NOT NULL,
-                        LastLoginAtUtc DATETIME2(7) NULL
+                        LastLoginAtUtc DATETIME2(7) NULL,
+                        CreatedAtUtc DATETIME2(7) NULL,
+                        UpdatedAtUtc DATETIME2(7) NULL
                     );
                 END
 
@@ -67,16 +73,31 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
 
         var recordedVersion = await ReadSchemaVersionAsync(connection, cancellationToken).ConfigureAwait(false);
 
-        if (recordedVersion is null && adminAccountsExistedBefore)
-        {
-            await DropLegacyLockoutColumnsAsync(connection, cancellationToken).ConfigureAwait(false);
-        }
-        else if (recordedVersion is { } version && version < CurrentSchemaVersion)
+        // 版表なし + 表が既存 = バージョン管理導入前（v1 相当）。版表なし + 表も新規 = 上の DDL が
+        // 最新形状で作ったため移行不要。
+        var fromVersion = recordedVersion ?? (adminAccountsExistedBefore ? 1 : CurrentSchemaVersion);
+
+        await ApplyMigrationsAsync(connection, fromVersion, cancellationToken).ConfigureAwait(false);
+
+        // 版の記録は全ステップ成功後に 1 回（先に上げて失敗すると未適用の移行が永久にスキップされる）。
+        await RecordSchemaVersionAsync(connection, CurrentSchemaVersion, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 記録済み版から現行版までの移行ステップを昇順に適用する（各ステップは実在確認により冪等。
+    /// <see cref="Sqlite.SqliteAdminAccountStore"/> と同じ構造・同じ順序を保つこと）。
+    /// </summary>
+    private static async Task ApplyMigrationsAsync(SqlConnection connection, int fromVersion, CancellationToken cancellationToken)
+    {
+        if (fromVersion < 2)
         {
             await DropLegacyLockoutColumnsAsync(connection, cancellationToken).ConfigureAwait(false);
         }
 
-        await RecordSchemaVersionAsync(connection, CurrentSchemaVersion, cancellationToken).ConfigureAwait(false);
+        if (fromVersion < 3)
+        {
+            await AddAccountTimestampColumnsAsync(connection, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static async Task<bool> ObjectExistsAsync(SqlConnection connection, string objectName, string objectType, CancellationToken cancellationToken)
@@ -154,6 +175,30 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         }
     }
 
+    /// <summary>
+    /// v2 → v3 移行（ADR-0021 決定 1）: <c>CreatedAtUtc</c>/<c>UpdatedAtUtc</c> 列を追加する。
+    /// <b>既存行はバックフィルしない</b>（NULL = 不明。理由は
+    /// <see cref="Sqlite.SqliteAdminAccountStore"/> の同名メソッド参照）。**既定制約は付けない**——
+    /// v1 → v2 で <c>DF_AdminAccounts_FailedAttemptCount</c> の先行削除が必要になった教訓
+    /// （既定制約付きの列は制約を残したまま DROP COLUMN できない）を繰り返さないため。
+    /// <c>COL_LENGTH</c> の実在確認により再実行に対して冪等。
+    /// </summary>
+    private static async Task AddAccountTimestampColumnsAsync(SqlConnection connection, CancellationToken cancellationToken)
+    {
+        foreach (var columnName in new[] { "CreatedAtUtc", "UpdatedAtUtc" })
+        {
+            await using var addColumn = connection.CreateCommand();
+            addColumn.CommandText =
+                $"""
+                IF COL_LENGTH('dbo.AdminAccounts', '{columnName}') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.AdminAccounts ADD {columnName} DATETIME2(7) NULL;
+                END
+                """;
+            await addColumn.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async Task<bool> HasAnyAccountAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new SqlConnection(_connectionString);
@@ -171,7 +216,8 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT TOP (1) Username, PasswordHash, LastLoginAtUtc FROM dbo.AdminAccounts;";
+        command.CommandText =
+            "SELECT TOP (1) Username, PasswordHash, LastLoginAtUtc, CreatedAtUtc, UpdatedAtUtc FROM dbo.AdminAccounts;";
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -191,7 +237,8 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
 
         await using var command = connection.CreateCommand();
         command.CommandText =
-            "SELECT Username, PasswordHash, LastLoginAtUtc FROM dbo.AdminAccounts WHERE UsernameNormalized = @normalized;";
+            "SELECT Username, PasswordHash, LastLoginAtUtc, CreatedAtUtc, UpdatedAtUtc FROM dbo.AdminAccounts " +
+            "WHERE UsernameNormalized = @normalized;";
         command.Parameters.AddWithValue("@normalized", Normalize(username));
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -206,9 +253,15 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
     private static AdminAccountRecord ReadRecord(SqlDataReader reader) => new(
         Username: reader.GetString(0),
         PasswordHash: reader.GetString(1),
-        LastLoginAtUtc: reader.IsDBNull(2) ? null : new DateTimeOffset(reader.GetDateTime(2), TimeSpan.Zero));
+        LastLoginAtUtc: ReadTimestamp(reader, 2),
+        CreatedAtUtc: ReadTimestamp(reader, 3),
+        UpdatedAtUtc: ReadTimestamp(reader, 4));
 
-    public async Task UpsertAsync(string username, string passwordHash, CancellationToken cancellationToken = default)
+    private static DateTimeOffset? ReadTimestamp(SqlDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : new DateTimeOffset(reader.GetDateTime(ordinal), TimeSpan.Zero);
+
+    public async Task UpsertAsync(
+        string username, string passwordHash, DateTimeOffset atUtc, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
         ArgumentException.ThrowIfNullOrWhiteSpace(passwordHash);
@@ -217,6 +270,7 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
+        // 新規は作成時刻・更新時刻の両方、既存の更新は更新時刻のみ（SQLite 実装と同じ意味論）。
         command.CommandText =
             """
             MERGE dbo.AdminAccounts AS target
@@ -224,13 +278,15 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
             ON target.UsernameNormalized = source.UsernameNormalized
             WHEN MATCHED THEN UPDATE SET
                 Username = @username,
-                PasswordHash = @hash
-            WHEN NOT MATCHED THEN INSERT (UsernameNormalized, Username, PasswordHash, LastLoginAtUtc)
-                VALUES (@normalized, @username, @hash, NULL);
+                PasswordHash = @hash,
+                UpdatedAtUtc = @at
+            WHEN NOT MATCHED THEN INSERT (UsernameNormalized, Username, PasswordHash, LastLoginAtUtc, CreatedAtUtc, UpdatedAtUtc)
+                VALUES (@normalized, @username, @hash, NULL, @at, @at);
             """;
         command.Parameters.AddWithValue("@normalized", Normalize(username));
         command.Parameters.AddWithValue("@username", username);
         command.Parameters.AddWithValue("@hash", passwordHash);
+        command.Parameters.AddWithValue("@at", atUtc.UtcDateTime);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

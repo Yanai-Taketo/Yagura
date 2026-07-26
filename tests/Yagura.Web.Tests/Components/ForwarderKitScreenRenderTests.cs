@@ -139,7 +139,8 @@ public sealed class ForwarderKitScreenRenderTests
         IForwarderMsiSource? forwarderMsiSource = null,
         Yagura.Web.ForwarderKit.ForwarderMsiUploadRuntimeOptions? uploadOptions = null,
         Yagura.Web.Administration.AdminAuthenticationRuntimeOptions? authOptions = null,
-        IForwarderMsiStore? forwarderMsiStore = null) =>
+        IForwarderMsiStore? forwarderMsiStore = null,
+        Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus? uploadSettingStatus = null) =>
         CommonComponentRenderHarness.RenderAsync<ForwarderKitScreen>(
             configureServices: services =>
             {
@@ -156,6 +157,9 @@ public sealed class ForwarderKitScreenRenderTests
                 services.AddSingleton(forwarderMsiStore ?? new FakeForwarderMsiStore());
                 services.AddSingleton<Yagura.Web.Administration.IForwarderMsiPlacementService>(
                     new FakeForwarderMsiPlacementService());
+                // ADR-0021 委任 2: opt-in トグルの状態表示（機能が無効な構成でも読む）。
+                services.AddSingleton<Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService>(
+                    new FakeForwarderMsiUploadAdminService(uploadSettingStatus));
                 services.AddSingleton(new Yagura.Web.Circuits.YaguraCircuitContext());
             });
 
@@ -192,6 +196,34 @@ public sealed class ForwarderKitScreenRenderTests
             throw new NotSupportedException("初期描画テストでは呼ばれない。");
 
         public ForwarderMsiDeleteResult Delete(ForwarderMsiArchitecture architecture, string expectedSha256) =>
+            throw new NotSupportedException("初期描画テストでは呼ばれない。");
+    }
+
+    private sealed class FakeForwarderMsiUploadAdminService(
+        Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus? status)
+        : Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService
+    {
+        private readonly Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus _status =
+            status ?? new Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus(
+                Enabled: false,
+                WindowsAuthEnabled: false,
+                AppAuthEnabled: false,
+                HasAppAccount: false,
+                AppAccountUsername: null,
+                AppAccountCreatedAtUtc: null,
+                AppAccountUpdatedAtUtc: null);
+
+        public Task<Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus> GetStatusAsync(
+            CancellationToken cancellationToken = default) => Task.FromResult(_status);
+
+        public Task<Yagura.Abstractions.Administration.ForwarderMsiUploadSettingResult> ConfigureAsync(
+            bool enabled,
+            bool accountInventoryAcknowledged = false,
+            string? operatorAddress = null,
+            string? operatorScheme = null,
+            string? operatorPrincipal = null,
+            bool operatorIsUploadOperationAuthenticated = false,
+            CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("初期描画テストでは呼ばれない。");
     }
 
