@@ -9,10 +9,12 @@ namespace Yagura.E2E.Tests;
 /// <c>Yagura.Host.Tests.Configuration.ForwarderMsiUploadConfigurationTests</c>）。
 /// </summary>
 /// <remarks>
-/// <c>Admin:ForwarderKit:MsiUpload:Enabled = true</c> かつ前提条件（管理 UI 認証のいずれか +
-/// <c>Admin:Authentication:RequireForLoopback</c>）が欠けた設定は、起動失敗（EventId 1032）として
-/// 拒否される。エラーメッセージには復旧に必要な具体の設定キーと値（<c>false に戻す</c>）が
-/// 含まれる（委任 1——手編集復旧の場面では UI の誘導が使えないため）。
+/// <c>Admin:ForwarderKit:MsiUpload:Enabled = true</c> かつ前提条件（管理 UI 認証のいずれかが
+/// 有効——ADR-0021 決定 2 で <c>RequireForLoopback</c> の必須化は撤廃）が欠けた設定は、
+/// 起動失敗（EventId 1032）として拒否される。エラーメッセージには復旧に必要な具体の設定キーと
+/// 値（<c>false に戻す</c>）が含まれる（委任 1——手編集復旧の場面では UI の誘導が使えないため）。
+/// 逆に、認証構成済み + RequireForLoopback 無しの構成は ADR-0021 以降は正当な有効化構成であり、
+/// 起動が成立することも実プロセスで固定する（旧 (ii) 検証の削除の回帰防止）。
 /// </remarks>
 public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
 {
@@ -50,9 +52,13 @@ public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
     }
 
     [Fact]
-    public async Task MsiUploadEnabled_WithoutRequireForLoopback_ProcessExitsNonZero_WithGuidanceMessage()
+    public async Task MsiUploadEnabled_WithAuthButWithoutRequireForLoopback_StartsListening()
     {
-        var (exitCode, output) = await RunHostProcessToExitAsync("""
+        // ADR-0021 決定 2: 認証方式が構成済みなら RequireForLoopback = false（既定）でも
+        // 有効化できる——旧仕様（ADR-0020 決定 1 (ii)）では 1032 起動拒否だった構成が
+        // 起動に至ることを実プロセスで固定する（無認証 loopback からの到達遮断は
+        // アップロード操作単位の専用認可ポリシーが担うため、構成レベルでは拒否しない）。
+        var output = await RunHostProcessUntilListeningAsync("""
             {
               "Admin": {
                 "Authentication": { "App": { "Enabled": "true" } },
@@ -61,30 +67,94 @@ public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
             }
             """);
 
-        Assert.NotEqual(0, exitCode);
-
-        // 「なぜ起動しないか・何を直せばよいか」の誘導（ADR-0020 決定 1・委任 1——復旧に必要な
-        // 具体の設定キーを明記する。再レビュー鈴木指摘）。
-        Assert.Contains("Admin:Authentication:RequireForLoopback", output, StringComparison.Ordinal);
-        Assert.Contains("Admin:ForwarderKit:MsiUpload:Enabled", output, StringComparison.Ordinal);
-
-        // イベント ID 1032（ConfigurationEventIds.ForwarderMsiUploadFailClosedStartupRejected）。
-        Assert.Contains("[1032]", output, StringComparison.Ordinal);
+        Assert.Contains("Now listening on:", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("[1032]", output, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task MsiUploadEnabled_WithoutAnyPrecondition_NeverStartsListening()
+    public async Task MsiUploadEnabled_WithoutAnyAuthMethod_ProcessExitsNonZero_WithGuidanceMessage()
     {
-        var (_, output) = await RunHostProcessToExitAsync("""
+        var (exitCode, output) = await RunHostProcessToExitAsync("""
             {
               "Admin": { "ForwarderKit": { "MsiUpload": { "Enabled": "true" } } }
             }
             """);
 
+        Assert.NotEqual(0, exitCode);
         Assert.DoesNotContain("Now listening on:", output, StringComparison.Ordinal);
+
+        // 「なぜ起動しないか・何を直せばよいか」の誘導（ADR-0020 委任 1——復旧に必要な
+        // 具体の設定キーを明記する）。前提条件は認証方式のみ（ADR-0021 決定 2）——
+        // RequireForLoopback はメッセージに現れない。
+        Assert.Contains("Admin:Authentication:Windows:Enabled", output, StringComparison.Ordinal);
+        Assert.Contains("Admin:ForwarderKit:MsiUpload:Enabled", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("Admin:Authentication:RequireForLoopback", output, StringComparison.Ordinal);
+
+        // イベント ID 1032（ConfigurationEventIds.ForwarderMsiUploadFailClosedStartupRejected）。
+        Assert.Contains("[1032]", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 起動が成立する（listen 開始まで到達する）ことを検証するための起動ヘルパー。listen 開始を
+    /// 観測したらプロセスを停止する。fail-closed で即終了した場合は出力全文を含めて失敗させる。
+    /// </summary>
+    private async Task<string> RunHostProcessUntilListeningAsync(string configJson)
+    {
+        var (process, output, gate) = StartHostProcess(configJson);
+
+        var deadline = DateTime.UtcNow + ExitTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (gate)
+            {
+                if (output.ToString().Contains("Now listening on:", StringComparison.Ordinal))
+                {
+                    return output.ToString();
+                }
+            }
+
+            if (process.HasExited)
+            {
+                lock (gate)
+                {
+                    throw new Xunit.Sdk.XunitException(
+                        $"起動の成立を期待したが、プロセスが exit code {process.ExitCode} で終了した。出力:\n{output}");
+                }
+            }
+
+            await Task.Delay(200);
+        }
+
+        lock (gate)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"{ExitTimeout} 以内に listen 開始を観測できなかった。出力:\n{output}");
+        }
     }
 
     private async Task<(int ExitCode, string Output)> RunHostProcessToExitAsync(string configJson)
+    {
+        var (process, output, gate) = StartHostProcess(configJson);
+
+        using var cts = new CancellationTokenSource(ExitTimeout);
+        try
+        {
+            await process.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"fail-closed 拒否を期待したが、プロセスが {ExitTimeout} 以内に終了しなかった " +
+                $"(listen を開始したまま起動し続けている可能性がある)。出力:\n{output}");
+        }
+
+        lock (gate)
+        {
+            return (process.ExitCode, output.ToString());
+        }
+    }
+
+    private (Process Process, StringBuilder Output, object Gate) StartHostProcess(string configJson)
     {
         var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-msiupload-failclosed-{Guid.NewGuid():N}");
         _dataRoots.Add(dataRoot);
@@ -135,21 +205,6 @@ public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        using var cts = new CancellationTokenSource(ExitTimeout);
-        try
-        {
-            await process.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            throw new Xunit.Sdk.XunitException(
-                $"fail-closed 拒否を期待したが、プロセスが {ExitTimeout} 以内に終了しなかった " +
-                $"(listen を開始したまま起動し続けている可能性がある)。出力:\n{output}");
-        }
-
-        lock (gate)
-        {
-            return (process.ExitCode, output.ToString());
-        }
+        return (process, output, gate);
     }
 }

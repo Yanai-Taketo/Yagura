@@ -188,6 +188,20 @@ public static class AdminAuthenticationExtensions
     public const string AdminPolicyName = "YaguraAdminAccess";
 
     /// <summary>
+    /// フォワーダ MSI アップロード系操作（stage・antiforgery トークン配布）に必要な認可ポリシー名
+    /// （ADR-0021 決定 1）。<see cref="AdminPolicyName"/> と異なり
+    /// **無認証 loopback の暗黙プリンシパルを通さない**——実際にサインインした管理セッション
+    /// （<see cref="IsAdminSessionAuthenticated"/>）のみを許可する。loopback 到達主体の集合は
+    /// 「このホストでコードを実行できる者」と一致し（Issue #283 実測）、サービスの書込 ACE を
+    /// 踏み台にした「非管理者ローカルプロセス → 全端末配布 MSI の差し替え」という権限昇格経路を
+    /// 開けないため、書き込み口につながる操作は到達性でなく実認証で判定する。
+    /// circuit 側の操作（commit/discard/delete）は同じ判定
+    /// （<see cref="IsForwarderMsiUploadOperationAllowed"/>）を <c>ForwarderKitScreen</c> と
+    /// <c>ForwarderMsiPlacementService</c> が共有する（HTTP 側とロジックを食い違わせない）。
+    /// </summary>
+    public const string ForwarderMsiUploadPolicyName = "YaguraForwarderMsiUploadAccess";
+
+    /// <summary>
     /// 閲覧 UI 到達に必要な認可ポリシー名（ADR-0010 Phase 4 決定 7）。閲覧リスナ（8514）経由・および
     /// リモート管理 HTTPS ポート（ADR-0010 Phase 2）経由の要求に実効化し、閲覧セッション
     /// （<see cref="ViewerSessionClaimType"/>）または管理セッション（<see cref="AdminSessionClaimType"/>。
@@ -403,6 +417,11 @@ public static class AdminAuthenticationExtensions
             .AddPolicy(AdminPolicyName, policy => policy.RequireAssertion(context =>
                 IsAdminSessionAuthenticated(context.User) ||
                 IsUnauthenticatedLoopbackBypassAllowed(context)))
+            // フォワーダ MSI アップロード系操作の専用ポリシー（ADR-0021 決定 1）: 暗黙 loopback
+            // バイパス条項を持たない——loopback 経由でも実際のサインインを要求する。
+            // 判定は IsForwarderMsiUploadOperationAllowed（circuit 側と共有する単一実装）。
+            .AddPolicy(ForwarderMsiUploadPolicyName, policy => policy.RequireAssertion(context =>
+                IsForwarderMsiUploadOperationAllowed(context.User)))
             // 閲覧認可（ADR-0010 Phase 4 決定 7）。閲覧リスナ帰属ポート経由の要求にのみ実効化し、
             // 管理 ⊇ 閲覧で管理・閲覧いずれのセッションも通す。本ポリシーは閲覧認証有効時のみ
             // 閲覧ルートへ付与される（MapYaguraWebViewer 参照）ため、assertion 自体は「有効か」を
@@ -464,6 +483,24 @@ public static class AdminAuthenticationExtensions
         ArgumentNullException.ThrowIfNull(user);
         return (user.Identity?.IsAuthenticated ?? false) && user.HasClaim(c => c.Type == AdminSessionClaimType);
     }
+
+    /// <summary>
+    /// フォワーダ MSI アップロード系操作（stage/commit/discard/delete・antiforgery 配布、および
+    /// ADR-0021 決定 1 の資格情報発行口——アップロード機能有効時の認証設定変更・アプリアカウント
+    /// 作成/変更）が許可されるプリンシパルかどうか（ADR-0021 決定 1）。
+    /// </summary>
+    /// <remarks>
+    /// 実体は「実際にサインインした管理セッション」（<see cref="IsAdminSessionAuthenticated"/>）
+    /// そのものだが、専用の名前を与えて単一実装を明示する——HTTP 側
+    /// （<see cref="ForwarderMsiUploadPolicyName"/> の assertion）と circuit 側
+    /// （<c>ForwarderKitScreen</c>・<c>AdminAuthSetupScreen</c>）が同じ関数を呼ぶことで、
+    /// 判定の食い違い（例: 片側だけ閲覧セッションを誤って通す）を構造的に防ぐ。
+    /// 閲覧セッション（<see cref="IsViewerSessionAuthenticated"/>）は<b>通さない</b>——
+    /// 書き込み口につながる操作は管理役割のみ。無認証 loopback の暗黙プリンシパルも通さない
+    /// （loopback バイパスは <see cref="AdminPolicyName"/> の管轄であり本判定には存在しない）。
+    /// </remarks>
+    public static bool IsForwarderMsiUploadOperationAllowed(ClaimsPrincipal user) =>
+        IsAdminSessionAuthenticated(user);
 
     /// <summary>
     /// 認証成立後の<b>閲覧</b>セッション（<see cref="ViewerSessionClaimType"/> クレームを持つ認証済み Cookie）か

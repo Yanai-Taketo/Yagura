@@ -159,8 +159,8 @@ else
         try
         {
             // 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者を導出して監査へ渡す。
-            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
-                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+            var user = (await AuthStateProvider.GetAuthenticationStateAsync()).User;
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(user);
 
             _status = await AuthAdminService.ConfigureAsync(
                 _windowsEnabled,
@@ -171,7 +171,10 @@ else
                 string.IsNullOrWhiteSpace(_newPassword) ? null : _newPassword,
                 CircuitContext.RemoteAddress,
                 operatorScheme,
-                operatorPrincipal);
+                operatorPrincipal,
+                // 資格情報発行口の統制（ADR-0021 決定 1）: アップロード機能有効時、本画面の
+                // 変更にも実認証を要求する。判定は HTTP 側ポリシーと同じ単一実装。
+                AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(user));
 
             _newPassword = string.Empty;
             ApplyStatusToFields(_status);

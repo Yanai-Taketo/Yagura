@@ -993,7 +993,10 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>(),
                 sp.GetRequiredService<Yagura.Host.Administration.AdminAuthentication.AppAdminAuthenticationService>(),
-                sp.GetRequiredService<IAuditRecorder>()));
+                sp.GetRequiredService<IAuditRecorder>(),
+                // 資格情報発行口の統制（ADR-0021 決定 1）: アップロード機能が有効な稼働構成では、
+                // 認証設定・アプリアカウントの変更に実認証を要求する。
+                forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled));
 
         // 管理リモート HTTPS 証明書の選択 UI 用の read-only 列挙（ADR-0012 決定 2）。副作用なし・
         // 依存なし（LocalMachine\My を ReadOnly で開くだけ）。実体は Windows 専用（他の Store* 型と

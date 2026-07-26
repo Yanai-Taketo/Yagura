@@ -266,6 +266,104 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         Assert.False(status.AppAuthEnabled);
     }
 
+    // ---- 資格情報発行口の統制（ADR-0021 決定 1。フォワーダ MSI アップロード有効時） ----
+
+    [Fact]
+    public async Task ConfigureAsync_MsiUploadEnabledRuntime_UnauthenticatedOperator_ThrowsValidationException()
+    {
+        // 無認証 loopback でアプリアカウントを自己発行 → その資格情報で「実認証」→ アップロード
+        // 専用ポリシー通過、というブートストラップ迂回の否定（ADR-0021 決定 1・委任 1 の
+        // 回帰テスト④に対応する UI 層の最終防衛線）。
+        var service = new AdminAuthenticationAdminService(
+            _dataRoot, _accountStore, _appAuthService, _audit, forwarderMsiUploadEnabled: true);
+
+        var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
+            service.ConfigureAsync(
+                windowsAuthEnabled: false,
+                kerberosOnly: false,
+                appAuthEnabled: true,
+                requireForLoopback: false,
+                newAppUsername: "self-issued",
+                newAppPassword: "correct-horse-battery-staple",
+                operatorIsUploadOperationAuthenticated: false));
+
+        Assert.Contains("サインインが必要", exception.Message);
+        // アカウントは作成されていない（検証は SetAccountAsync より先に走る）。
+        Assert.False(await _accountStore.HasAnyAccountAsync());
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_MsiUploadEnabledRuntime_AuthenticatedOperator_Succeeds()
+    {
+        var service = new AdminAuthenticationAdminService(
+            _dataRoot, _accountStore, _appAuthService, _audit, forwarderMsiUploadEnabled: true);
+
+        var status = await service.ConfigureAsync(
+            windowsAuthEnabled: false,
+            kerberosOnly: false,
+            appAuthEnabled: true,
+            requireForLoopback: false,
+            newAppUsername: "admin1",
+            newAppPassword: "correct-horse-battery-staple",
+            operatorScheme: "app",
+            operatorPrincipal: "app:admin0",
+            operatorIsUploadOperationAuthenticated: true);
+
+        Assert.True(status.AppAuthEnabled);
+        Assert.True(status.HasAppAccount);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_MsiUploadDisabledRuntime_UnauthenticatedOperator_Succeeds()
+    {
+        // 機能無効の構成では従来どおり（ADR-0010 決定 3 の bootstrap 設計は不変——
+        // 既定構成の loopback 中セットアップを壊さない）。既定 ctor は forwarderMsiUploadEnabled=false。
+        var status = await _service.ConfigureAsync(
+            windowsAuthEnabled: false,
+            kerberosOnly: false,
+            appAuthEnabled: true,
+            requireForLoopback: false,
+            newAppUsername: "admin1",
+            newAppPassword: "correct-horse-battery-staple",
+            operatorIsUploadOperationAuthenticated: false);
+
+        Assert.True(status.AppAuthEnabled);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_MsiUploadEnabledInFile_DisableAllAuthMethods_ThrowsValidationException()
+    {
+        // fail-closed（UI）の対称防御（ADR-0021 決定 2）: (iii) が設定ファイル上有効なまま
+        // 認証方式を両方無効にすると次回起動が 1032 で拒否される——その状態に陥る変更を
+        // 書き込み前に拒否する（RemoteBinding の 1012 型防御と同型）。
+        SeedMsiUploadEnabled(true);
+        var service = new AdminAuthenticationAdminService(
+            _dataRoot, _accountStore, _appAuthService, _audit, forwarderMsiUploadEnabled: true);
+
+        var exception = await Assert.ThrowsAsync<WizardValidationException>(() =>
+            service.ConfigureAsync(
+                windowsAuthEnabled: false,
+                kerberosOnly: false,
+                appAuthEnabled: false,
+                requireForLoopback: false,
+                newAppUsername: null,
+                newAppPassword: null,
+                operatorIsUploadOperationAuthenticated: true));
+
+        Assert.Contains("先にアップロード機能を無効化", exception.Message);
+    }
+
+    private void SeedMsiUploadEnabled(bool enabled)
+    {
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        var options = snapshot.Options;
+        options.Admin ??= new YaguraConfigurationOptions.AdminOptions();
+        options.Admin.ForwarderKit ??= new YaguraConfigurationOptions.AdminOptions.ForwarderKitOptions();
+        options.Admin.ForwarderKit.MsiUpload ??= new YaguraConfigurationOptions.AdminOptions.ForwarderKitOptions.MsiUploadOptions();
+        options.Admin.ForwarderKit.MsiUpload.Enabled = enabled.ToString();
+        YaguraConfigurationWriter.Save(_dataRoot, options, snapshot.VersionToken);
+    }
+
     private void SeedRemoteBindingEnabled(bool enabled)
     {
         var snapshot = YaguraConfigurationWriter.Read(_dataRoot);

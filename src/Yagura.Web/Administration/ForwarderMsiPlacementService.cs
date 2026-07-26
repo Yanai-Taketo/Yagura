@@ -35,18 +35,28 @@ public interface IForwarderMsiPlacementService
 /// <summary>
 /// circuit 上の操作者情報（画面が <c>YaguraCircuitContext</c> と
 /// <c>YaguraCircuitAuthenticationStateProvider</c> から解決して渡す——<c>AdminRemoteAccessScreen</c> と
-/// 同じパターン）。本機能の前提条件（ADR-0020 決定 1——全経路認証必須）により
-/// <paramref name="Scheme"/>/<paramref name="Principal"/> には実運用で必ず値が入る。
+/// 同じパターン）。
 /// </summary>
 /// <param name="RemoteAddress">circuit 確立時の接続元アドレス。</param>
 /// <param name="IsLoopback">loopback 束縛ポート経由か（<see langword="null"/> = 帰属不明）。</param>
 /// <param name="Scheme">認証方式（<c>windows</c>/<c>app</c>）。</param>
 /// <param name="Principal">認証済み利用者名。</param>
+/// <param name="OperationAuthenticated">
+/// アップロード系操作の専用認可判定
+/// （<see cref="AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed"/>——実認証済みの
+/// 管理セッションのみ true。ADR-0021 決定 1）を通過しているか。画面が circuit の
+/// <c>ClaimsPrincipal</c> に対して HTTP 側と同じ単一実装で判定した結果を渡す。
+/// <see cref="Principal"/> の非 null では代用できない——<c>AuditActorResolver</c> は閲覧セッション
+/// でも操作者名を解決するが、閲覧セッションに書き込み口の操作は許可されない。
+/// <see langword="false"/> の操作は <see cref="ForwarderMsiPlacementService"/> が実行せずに拒否し、
+/// 監査 3014（<c>reason=operation-auth-required</c>）へ記録する。
+/// </param>
 public sealed record ForwarderMsiOperatorContext(
     string? RemoteAddress,
     bool? IsLoopback,
     string? Scheme,
-    string? Principal);
+    string? Principal,
+    bool OperationAuthenticated = false);
 
 /// <inheritdoc cref="IForwarderMsiPlacementService"/>
 internal sealed class ForwarderMsiPlacementService : IForwarderMsiPlacementService
@@ -69,6 +79,16 @@ internal sealed class ForwarderMsiPlacementService : IForwarderMsiPlacementServi
         ForwarderMsiArchitecture architecture,
         ForwarderMsiOperatorContext operatorContext)
     {
+        if (!operatorContext.OperationAuthenticated)
+        {
+            // ADR-0021 決定 1: 実認証済みの管理セッション以外は書き込み口の操作を実行しない
+            // （画面は未サインイン時に操作 UI 自体を出さないが、ここは最終防衛線——UI の
+            // 出し分けと実行可否の判定を食い違わせない）。拒否は監査に残す（「拒否が見えること」）。
+            await RecordRejectionAsync(
+                "commit", architecture, "operation-auth-required", operatorContext).ConfigureAwait(false);
+            return ForwarderMsiCommitResult.Failed(ForwarderMsiCommitError.OperationNotAuthenticated);
+        }
+
         var result = _store.Commit(stagingToken, versionMismatchAcknowledged, replaceAcknowledged);
         if (result.Success)
         {
@@ -99,6 +119,15 @@ internal sealed class ForwarderMsiPlacementService : IForwarderMsiPlacementServi
         ForwarderMsiArchitecture architecture,
         ForwarderMsiOperatorContext operatorContext)
     {
+        if (!operatorContext.OperationAuthenticated)
+        {
+            // 破棄も専用判定の対象（ADR-0021 決定 1 の対象操作に discard を含む——他者の
+            // ステージングを未認証主体が破棄できてよい理由はない）。
+            await RecordRejectionAsync(
+                "discard", architecture, "operation-auth-required", operatorContext).ConfigureAwait(false);
+            return new ForwarderMsiDiscardResult(false);
+        }
+
         var result = _store.Discard(stagingToken);
         if (result.Found)
         {
@@ -118,6 +147,13 @@ internal sealed class ForwarderMsiPlacementService : IForwarderMsiPlacementServi
         string expectedSha256,
         ForwarderMsiOperatorContext operatorContext)
     {
+        if (!operatorContext.OperationAuthenticated)
+        {
+            await RecordRejectionAsync(
+                "delete", architecture, "operation-auth-required", operatorContext).ConfigureAwait(false);
+            return new ForwarderMsiDeleteResult(false, ForwarderMsiDeleteError.OperationNotAuthenticated);
+        }
+
         var result = _store.Delete(architecture, expectedSha256);
         if (result.Success)
         {
@@ -178,6 +214,7 @@ internal sealed class ForwarderMsiPlacementService : IForwarderMsiPlacementServi
         ForwarderMsiCommitError.ReplaceNotAcknowledged => "replace-not-acknowledged",
         ForwarderMsiCommitError.FolderStateChanged => "folder-state-changed",
         ForwarderMsiCommitError.WriteFailed => "write-failed",
+        ForwarderMsiCommitError.OperationNotAuthenticated => "operation-auth-required",
         _ => "unknown",
     };
 
@@ -187,6 +224,7 @@ internal sealed class ForwarderMsiPlacementService : IForwarderMsiPlacementServi
         ForwarderMsiDeleteError.MultipleExistingFiles => "multiple-existing-files",
         ForwarderMsiDeleteError.Sha256Mismatch => "sha256-mismatch",
         ForwarderMsiDeleteError.WriteFailed => "write-failed",
+        ForwarderMsiDeleteError.OperationNotAuthenticated => "operation-auth-required",
         _ => "unknown",
     };
 }

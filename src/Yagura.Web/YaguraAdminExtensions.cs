@@ -71,6 +71,11 @@ public static class YaguraAdminExtensions
         // ICircuitManagementService と同じ役割分担）。IForwarderMsiStore の実体は配置フォルダの
         // 実パスを知る Host 側が結線する。
         services.AddSingleton<Administration.IForwarderMsiPlacementService, Administration.ForwarderMsiPlacementService>();
+        // アップロード専用ポリシーの認可拒否を監査 3014 へ記録する（ADR-0021 決定 1「拒否が
+        // 見えること」）。既定の IAuthorizationMiddlewareResultHandler を置き換えるが、対象
+        // マーカーの無いエンドポイントは既定実装へ素通しするため他の認可挙動は変わらない。
+        services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationMiddlewareResultHandler,
+            Administration.ForwarderMsiUploadAuthorizationAuditHandler>();
 
         return services;
     }
@@ -122,9 +127,9 @@ public static class YaguraAdminExtensions
     /// フォワーダ MSI アップロード（<c>Admin:ForwarderKit:MsiUpload:Enabled</c>。ADR-0020 決定 1）の
     /// 実効値。<see langword="false"/> の場合、アップロード関連エンドポイントの登録自体を省略する
     /// （「エンドポイントの構造的非存在」——条件不成立の構成では拒否応答すら返す口が存在しない。
-    /// <see cref="Administration.ForwarderMsiUploadEndpoints"/> 参照）。<see langword="true"/> は
-    /// 起動時 fail-closed（1032）により <paramref name="adminAuthRequired"/> = <see langword="true"/> を
-    /// 含意する。
+    /// <see cref="Administration.ForwarderMsiUploadEndpoints"/> 参照）。ADR-0021 決定 2 により
+    /// <paramref name="adminAuthRequired"/> とは独立——アップロード系エンドポイントは
+    /// 専用ポリシー（暗黙 loopback バイパスなし）を自身で宣言する。
     /// </param>
     public static IEndpointRouteBuilder MapYaguraAdmin(
         this IEndpointRouteBuilder endpoints,
@@ -160,9 +165,11 @@ public static class YaguraAdminExtensions
 
         if (forwarderMsiUploadEnabled)
         {
-            // ADR-0020 決定 1: 機能有効時のみ登録（構造的非存在）。有効時は fail-closed（1032）が
-            // 認証 + RequireForLoopback の成立を保証しているため、エンドポイント側の認可
-            // （AdminPolicyName）は常にフルの認証判定になる。
+            // ADR-0020 決定 1: 機能有効時のみ登録（構造的非存在）。認可は ADR-0021 決定 1 の
+            // 専用ポリシー（ForwarderMsiUploadPolicyName——暗黙 loopback バイパスなし。実際に
+            // サインインした管理セッションのみ）を各エンドポイントが自身で宣言する。
+            // adminAuthRequired（RequireForLoopback 由来）には依存しない——既定の loopback
+            // 無認証構成でも、アップロード系操作だけは実認証を要求する。
             endpoints.MapForwarderMsiUploadEndpoints();
         }
 

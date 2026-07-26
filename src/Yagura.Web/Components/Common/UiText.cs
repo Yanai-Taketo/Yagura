@@ -1706,23 +1706,28 @@ public static class UiText
         "管理画面からの MSI アップロードは、この構成では無効です。";
 
     public const string ForwarderMsiUploadDisabledIntro =
-        "有効化には次の設定がすべて必要です（管理リスナに認証なしで到達できる経路が残っている間は、"
-        + "全端末に配布される MSI の書き込み口を開けないためです）:";
+        "有効化には次の設定がすべて必要です（全端末に配布される MSI の書き込み口につながる操作のため、"
+        + "実際にサインインした管理者だけが実行できます——サインインの手段が構成されていない構成では"
+        + "有効化できません）:";
 
     public const string ForwarderMsiUploadConditionAuth =
         "管理 UI 認証の有効化（Windows 統合認証またはアプリ独自 ID/パスワード）";
 
-    public const string ForwarderMsiUploadConditionRequireForLoopback =
-        "サーバ上のブラウザから開く場合にもログインを求める設定（Admin:Authentication:RequireForLoopback）";
-
-    /// <summary>条件 (ii) の代償の提示（ADR-0020 決定 1——知らずに交換させない）。</summary>
-    public const string ForwarderMsiUploadConditionRequireForLoopbackCost =
-        "注意: この設定を有効化すると、認証手段がすべて使えなくなった場合の復旧は「設定ファイルの手編集 + "
-        + "サービス再起動（= その間の syslog 受信断）」になります。有効化する前に、Windows 統合認証とは別に"
-        + "アプリ独自の管理者アカウントを最低 1 つ作成しておくこと（非常口）を強く推奨します。";
-
     public const string ForwarderMsiUploadConditionOptIn =
         "アップロード機能そのものの有効化（Admin:ForwarderKit:MsiUpload:Enabled）";
+
+    // ---- アップロード操作単位の実認証（ADR-0021 決定 1） ----
+
+    public const string ForwarderMsiUploadSignInRequiredTitle =
+        "MSI のアップロード・削除の操作には、サインインが必要です。";
+
+    /// <summary>「なぜこの操作だけ認証が要るか」の平易な説明（ADR-0021 決定 2・委任 1）。</summary>
+    public const string ForwarderMsiUploadSignInRequiredExplanation =
+        "この画面の他の機能はサーバ上のブラウザからそのまま使えますが、ここに配置した MSI は"
+        + "全端末に配布されるため、アップロード・削除だけは「誰が行ったか」を記録できるよう、"
+        + "サインインした管理者に限定しています（故障ではありません）。";
+
+    public const string ForwarderMsiUploadSignInLinkLabel = "サインイン画面を開く";
 
     public const string ForwarderMsiUploadDisabledManualGuide =
         "この構成のままでも、サーバのファイルシステムへの手動配置（利用者ガイド参照）で MSI 同梱を利用できます。";
@@ -1840,6 +1845,11 @@ public static class UiText
 
     public const string ForwarderMsiDeleteErrorMismatch =
         "確認を表示してからファイルが変わりました。安全のため削除を中止しました。画面を更新してやり直してください。";
+
+    /// <summary>専用認可の拒否（ADR-0021 決定 1。未サインイン・サインイン切れ）。</summary>
+    public const string ForwarderMsiUploadErrorAuthenticationRequired =
+        "この操作にはサインインが必要です（サインインの有効期限が切れた場合を含みます）。"
+        + "サインインし直してから、最初からやり直してください。";
 
     // ---- メール通知（ADR-0017。Issue #350） ----
 

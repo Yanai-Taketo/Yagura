@@ -331,37 +331,28 @@ public static class YaguraConfigurationLoader
         var adminForwarderMsiUploadEnabled = ResolveSecurityFlag(
             options.Admin?.ForwarderKit?.MsiUpload?.Enabled, "Admin:ForwarderKit:MsiUpload:Enabled", warnings);
 
-        // --- fail-closed 不変条件（ADR-0020 決定 1。1011/1012 と同型の「起動失敗」分類）。
-        //     アップロード機能は「管理リスナに無認証の到達経路が存在しない」構成
-        //     （= 認証方式が最低 1 つ有効 かつ RequireForLoopback 有効。リモート経由は §2.5 により
-        //     常に認証必須）でのみ有効化を許す——この前提が崩れると、配置操作の監査に認証済み
-        //     利用者名が入らない経路（PR #167 の却下理由 2 = 身元保証の構造的不成立）が復活する
-        //     ため、縮小継続ではなく起動そのものを止める。エラーメッセージには復旧に必要な
+        // --- fail-closed 不変条件（ADR-0020 決定 1 の条件 (ii) は ADR-0021 により撤廃——
+        //     前提条件は「認証方式が最低 1 つ有効」のみ。1011/1012 と同型の「起動失敗」分類）。
+        //     無認証 loopback からの到達遮断はリスナ全体（RequireForLoopback）ではなく
+        //     アップロード操作単位の専用認可ポリシー（実際にサインインした管理セッションのみ。
+        //     ForwarderMsiUploadPolicyName）が担う。サインインの手段が存在しない構成で
+        //     有効化すると誰も操作を通過できず、かつ書き込み口の存在だけが残るため、
+        //     縮小継続ではなく起動そのものを止める。エラーメッセージには復旧に必要な
         //     具体の設定キーと値を明記する（手編集復旧の場面では UI の誘導が使えない——
         //     ADR-0020 委任 1） ---
         if (adminForwarderMsiUploadEnabled)
         {
             var authenticationConfigured = adminWindowsAuthEnabled || adminAppAuthEnabled;
-            if (!authenticationConfigured || !adminAuthRequireForLoopback)
+            if (!authenticationConfigured)
             {
-                var missing = new List<string>();
-                if (!authenticationConfigured)
-                {
-                    missing.Add("認証方式（Admin:Authentication:Windows:Enabled または Admin:Authentication:App:Enabled）");
-                }
-
-                if (!adminAuthRequireForLoopback)
-                {
-                    missing.Add("loopback 認証 opt-in（Admin:Authentication:RequireForLoopback = true）");
-                }
-
                 throw new ConfigurationValidationException(
-                    "Admin:ForwarderKit:MsiUpload:Enabled が有効ですが、次の前提条件が満たされていません: " +
-                    string.Join(" / ", missing) + "。" +
-                    "この組み合わせのまま起動すると、管理リスナに無認証の到達経路が残ったまま" +
-                    "「全端末に配布される MSI」の書き込み口が有効化されてしまいます" +
-                    "（ADR-0020 決定 1 の fail-closed 不変条件）。上記の前提条件をすべて満たすか、" +
-                    "Admin:ForwarderKit:MsiUpload:Enabled を false に戻してから再起動してください。",
+                    "Admin:ForwarderKit:MsiUpload:Enabled が有効ですが、前提条件が満たされていません: " +
+                    "認証方式（Admin:Authentication:Windows:Enabled または Admin:Authentication:App:Enabled）" +
+                    "の少なくとも一方を有効にしてください。" +
+                    "アップロード・削除の操作は実際にサインインした管理者に限定されるため" +
+                    "（ADR-0021 決定 1）、サインインの手段が構成されていない構成では機能を有効化できません。" +
+                    "認証方式を有効化するか、Admin:ForwarderKit:MsiUpload:Enabled を false に戻してから" +
+                    "再起動してください。",
                     ConfigurationEventIds.ForwarderMsiUploadFailClosedStartupRejected);
             }
         }
