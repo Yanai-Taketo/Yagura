@@ -104,7 +104,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         Func<CancellationToken, Task<IReadOnlyList<Yagura.Storage.SourceActivity>>>? sourceActivitySeedQuery = null,
         Func<bool?>? forwarderMsiFolderWritableProbe = null,
         bool forwarderMsiUploadEnabled = false,
-        ICertificateStatusProbe? viewerHttpsCertificateProbe = null)
+        ICertificateStatusProbe? viewerHttpsCertificateProbe = null,
+        string? forwarderMsiFolderPath = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -126,7 +127,15 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _forwarderMsiFolderWritableProbe = forwarderMsiFolderWritableProbe;
         _forwarderMsiUploadEnabled = forwarderMsiUploadEnabled;
         _viewerHttpsCertificateProbe = viewerHttpsCertificateProbe;
+        _forwarderMsiFolderPath = forwarderMsiFolderPath;
     }
+
+    /// <summary>
+    /// フォワーダ MSI 配置フォルダのフルパス（1033 の本文に載せる撤去先。Issue #465）。
+    /// データルートは <c>YAGURA_DATAROOT</c> で既定以外にも置けるため、本文にパスが無いと
+    /// 運用者が撤去先を特定できない。
+    /// </summary>
+    private readonly string? _forwarderMsiFolderPath;
 
     /// <summary>
     /// フォワーダ MSI 配置フォルダの書き込み ACE 検出の問い合わせ口（ADR-0020 決定 2・委任 7）。
@@ -334,6 +343,28 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 専用の抑制窓 <see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow"/>
     /// ——常置運用を選んだ環境で騒音にならない釣り合い。いずれも仮値・確定は ADR-0020 委任 7）。
     /// </summary>
+    /// <remarks>
+    /// <b>起動時の一回検査も本メソッドが担う</b>（<see cref="EvaluateForwarderMsiFolderAclAtStartup"/>。
+    /// Issue #465）: 以前は <c>Program.cs</c> が独自の <c>LogWarning</c> で 1033 を直接発火して
+    /// おり、抑制記録（<c>_lastNotifiedAt</c>）を更新しないため**再起動のたびに「起動直後 + その
+    /// 約 60 秒後」の 2 連発**が必ず起きていた（メール通知構成では 1 回の再起動で 2 通）。
+    /// 発火点を本メソッドへ一本化することで、抑制の記録点が単一になり二重化が構造的に消える。
+    /// 本文も 1 つに統一する（旧 2 経路は配置パスと危険性説明を非対称に持ち合っていた）。
+    /// </remarks>
+    /// <summary>
+    /// 起動時の一回検査（ADR-0020 決定 2——周期監視〔最短でも 1 周期後〕に加えて起動直後にも
+    /// 一度検査し、乖離警告 1033 の初回検出を最大 1 周期分早める）。<c>Program.cs</c> が
+    /// アプリ起動後に 1 回だけ呼ぶ。
+    /// </summary>
+    /// <remarks>
+    /// 周期評価と<b>同じ発火経路</b>（<see cref="EvaluateForwarderMsiFolderAcl"/> →
+    /// <c>NotifyIfDue</c>）を通ることが要点（Issue #465）——抑制記録を共有するため、
+    /// 起動直後に発火した場合は続く周期評価が抑制窓で正しく沈黙する。開放継続の通知（1034）は
+    /// 「継続」の観測を要するため起動時には成立しない（<c>_forwarderMsiOpenSince</c> の
+    /// 起点が置かれるだけ）。
+    /// </remarks>
+    public void EvaluateForwarderMsiFolderAclAtStartup() => EvaluateForwarderMsiFolderAcl();
+
     private void EvaluateForwarderMsiFolderAcl()
     {
         if (_forwarderMsiFolderWritableProbe is null)
@@ -357,12 +388,16 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
             NotifyIfDue("forwarder-msi-acl-drift", () =>
                 _logger.LogWarning(
                     ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
-                    "[forwarder-msi-acl-drift] フォワーダ MSI 配置フォルダにサービス実行アカウントの" +
-                    "書き込み権限（ACE）が残っていますが、管理画面アップロード機能" +
+                    // 配置フォルダのパスを必ず含める（Issue #465）: データルートは
+                    // YAGURA_DATAROOT で既定以外にも置けるため、撤去先を本文だけで特定できないと
+                    // lab ③-1 の合否基準（本文にパスと撤去の誘導）を満たせない。
+                    "[forwarder-msi-acl-drift] フォワーダ MSI 配置フォルダ {FolderPath} にサービス実行" +
+                    "アカウントの書き込み権限（ACE）が残っていますが、管理画面アップロード機能" +
                     "（Admin:ForwarderKit:MsiUpload:Enabled）は無効です。機能の利用を終えた後の" +
                     "ACE の撤去（閉じ忘れ）を確認してください（ADR-0020 決定 2。撤去手順は利用者ガイド参照）。" +
                     "撤去されるまで、Web プロセスの侵害が全端末配布 MSI の差し替えに波及し得る状態が" +
                     "続きます。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
+                    _forwarderMsiFolderPath ?? "(パス不明)",
                     ActiveNotificationConstants.SuppressionWindow));
             return;
         }

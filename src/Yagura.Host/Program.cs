@@ -715,7 +715,10 @@ public static class Program
                         .IsWritableByCurrentIdentity(forwarderMsiFolderPath)
                     : null,
                 forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled,
-                viewerHttpsCertificateProbe: viewerHttpsCertificateProbe);
+                viewerHttpsCertificateProbe: viewerHttpsCertificateProbe,
+                // 1033 の本文へ載せる撤去先（Issue #465）。データルートは既定以外にも置けるため、
+                // パスが無いと運用者が撤去先を特定できない。
+                forwarderMsiFolderPath: forwarderMsiFolderPath);
         });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
@@ -1334,20 +1337,20 @@ public static class Program
                 forwarderStartupLogger.LogWarning(ex, "フォワーダ MSI 配置フォルダの起動時掃除に失敗しました（起動は継続します）。");
             }
 
-            if (!resolvedConfiguration.AdminForwarderMsiUploadEnabled && OperatingSystem.IsWindows())
+            // 起動時の一回検査は能動通知モニタへ委譲する（Issue #465）: 以前はここで直接
+            // LogWarning していたため、モニタ側の抑制記録（_lastNotifiedAt）が更新されず
+            // 「起動直後 + その約 60 秒後」の 2 連発が再起動のたびに起きていた。同じ発火経路
+            // （NotifyIfDue）を通すことで抑制の記録点が単一になり、本文も 1 つに統一される。
+            try
             {
-                var writable = Yagura.Host.Administration.ForwarderKitUpload.ForwarderMsiFolderAclInspector
-                    .IsWritableByCurrentIdentity(forwarderMsiFolderPath);
-                if (writable is true)
-                {
-                    forwarderStartupLogger.LogWarning(
-                        Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
-                        "[forwarder-msi-acl-drift] フォワーダ MSI 配置フォルダ {FolderPath} にサービス実行アカウントの" +
-                        "書き込み権限（ACE）が残っていますが、管理画面アップロード機能" +
-                        "（Admin:ForwarderKit:MsiUpload:Enabled）は無効です。機能の利用を終えた後の" +
-                        "ACE の撤去（閉じ忘れ）を確認してください（ADR-0020 決定 2。撤去手順は利用者ガイド参照）。",
-                        forwarderMsiFolderPath);
-                }
+                app.Services
+                    .GetRequiredService<Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor>()
+                    .EvaluateForwarderMsiFolderAclAtStartup();
+            }
+            catch (Exception ex)
+            {
+                forwarderStartupLogger.LogWarning(
+                    ex, "フォワーダ MSI 配置フォルダの起動時 ACL 検査に失敗しました（起動は継続します）。");
             }
         }
 
