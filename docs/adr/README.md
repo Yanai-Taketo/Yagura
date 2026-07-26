@@ -30,7 +30,7 @@
 | [0012](0012-admin-https-cert-ui.md) | 管理リモート HTTPS の証明書選択の UI 設定化 | accepted |
 | [0013](0013-admin-winauth-session.md) | 管理 UI 認証の共存セッションモデル — 認証成立後の単一 Cookie セッションと Windows 認可の失効反映（ADR-0010 決定 3 の共存セッション部分の supersession。Issue #252） | accepted |
 | [0014](0014-code-signing.md) | リリース成果物のコード署名 — Sectigo + Google Cloud KMS による Authenticode 署名（Yagura・ODV 共用。ADR-0006 基準 5・ADR-0009 委任事項 8・Issue #264 を閉じる） | proposed（決定 1 裁定済み。本文承認待ち） |
-| [0015](0015-gmsa-service-account.md) | AD 環境向け gMSA によるサービス実行（opt-in。ADR-0004 決定 4 の予告・ADR-0006 基準 1・Issue #263） | accepted |
+| [0015](0015-gmsa-service-account.md) | AD 環境向け gMSA によるサービス実行（opt-in。ADR-0004 決定 4 の予告・ADR-0006 基準 1・Issue #263） | accepted（決定 2 の ACL 付替 CA に「ロールバック CA を設けない」とした判断は ADR-0023〔accepted 2026-07-26〕により部分的に superseded） |
 | [0016](0016-os-drop-gauge-mechanism.md) | OS レベル取りこぼし観測の実現手段の撤回 — 標準 API ゲージから引き算導出 + 無音化検出へ（ADR-0002 決定 2 の OS ゲージ観測部分の部分 supersession。Issue #272） | accepted |
 | [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | accepted（改訂 1 = 2026-07-19: 委任 8 の実施結果と流量閾値を非公開とする理由の明文化。改訂 2 = 2026-07-20: 委任 10 の裁定——`[permanent-failure]` に 1030 を採番。決定は不変） |
 | [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | accepted（改訂 1 = 2026-07-19: 委任 1〜7 の実施結果を記録。決定は不変） |
@@ -38,7 +38,7 @@
 | [0020](0020-forwarder-msi-upload.md) | フォワーダ配布キット MSI の管理画面アップロード（管理 UI 認証有効時限定。ADR-0008 設計条件 9 の部分 supersession。Issue #283） | accepted（決定 1 の有効化条件 (ii)〔RequireForLoopback 必須〕は ADR-0021〔accepted 2026-07-26〕により部分的に superseded） |
 | [0021](0021-msi-upload-operation-auth.md) | フォワーダ MSI アップロードの前提条件の変更 — RequireForLoopback 必須からアップロード操作単位の実認証必須へ（ADR-0020 決定 1 (ii) の部分 supersession。Issue #440） | accepted |
 | [0022](0022-viewer-https.md) | 閲覧 UI の HTTPS 化（opt-in。8514 同一ポート切替。ADR-0004 決定 3 の予告・ADR-0006 基準 1 の最終残件。Discussion #449） | accepted（改訂 1 = 2026-07-26: 委任 1〜8 の実施結果を記録〔採番 1035〜1038・2028・2029、CF-D2 = operations.md §9、ブラウザ実機検証は lab 手順書へ〕。決定は不変） |
-| [0023](0023-upgrade-availability.md) | アップグレード時の可用性 — DB 到達不能での起動継続とインストーラのロールバック安全性（Issue #466・#467） | proposed |
+| [0023](0023-upgrade-availability.md) | アップグレード時の可用性 — DB 到達不能での起動継続とインストーラのロールバック安全性（ADR-0015 決定 2 の rollback CA 判断の部分 supersession。Issue #466・#467） | accepted |
 
 ## 起案予定
 

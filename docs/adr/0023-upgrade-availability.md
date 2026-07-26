@@ -1,6 +1,6 @@
 # ADR-0023: アップグレード時の可用性 — DB 到達不能での起動継続とインストーラのロールバック安全性
 
-- 状態: proposed
+- 状態: accepted（2026-07-26 マージ = PR #469。ペルソナレビュー round 1 = 5 件・変更部分再レビュー round 2 = 3 件を同 PR で実施。round 1 で決定 2 の第一候補が `afterInstallFinalize` → `afterInstallExecute` へ、round 2 で共存窓の前提が実装確認により訂正された）
 - 日付: 2026-07-26
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)（品質の原則「ログを失わない」）/ [ADR-0002](0002-architecture-principles.md)（決定 2 のスプール退避）/ [ADR-0006](0006-v1-release-criteria.md)（基準 2 の重大不具合「起動不能」・基準 4 のアップグレード実証）/ [ADR-0010](0010-admin-ui-authentication.md)（決定 1 の loopback 最終復旧経路・受信断のコスト）/ [ADR-0011](0011-app-auth-failure-backoff.md)（決定 2〜4 の「締め出さない」設計）/ [ADR-0015](0015-gmsa-service-account.md)（決定 2・4・7 のインストーラ CA と lab ④）/ [Issue #466](https://github.com/Yanai-Taketo/Yagura/issues/466)・[Issue #467](https://github.com/Yanai-Taketo/Yagura/issues/467)（本 ADR の起案元。実機 lab で検出）/ Issue #283（lab 実施）/ Issue #291（環境要因での縮小継続への反転の先例）/ [architecture.md](../design/architecture.md) §1.2・[configuration.md](../design/configuration.md) §1・[security.md](../design/security.md) §4.3
