@@ -88,34 +88,42 @@
             }
         </MudNavMenu>
     </MudDrawer>
-    <MudMainContent Class="pa-4">
-        @*
-            全画面共通の状態帯（ui.md §5.1「ダッシュボード最上部（および全画面の状態帯）」）。
-            「稼働中」はポートの待ち受けを意味し、ログが現に届いていることは意味しないため、
-            全送信元合算の最終受信時刻を併記し、送信元別の受信状況への導線を置く。
-        *@
-        <div class="mb-4">
-            <YaguraStatusBand Status="@_bandStatus"
-                              Summary="@_bandSummary"
-                              LastReceivedAt="@_lastReceivedAt"
-                              SourcesLinkHref="/#sources" />
+    @*
+        MudMainContent 自体には余白クラスを付けない（Issue #437）: Class="pa-4" を直接指定すると、
+        MudBlazor が固定アプリバー高さ分（--mud-appbar-height 連動。ブレークポイントで 56/64px）
+        として与える padding-top が padding: 16px で上書きされ、main 領域先頭（状態帯を含む）が
+        アプリバーの背後に潜り込む。余白は内側のコンテナで付ける。
+    *@
+    <MudMainContent>
+        <div class="pa-4">
+            @*
+                全画面共通の状態帯（ui.md §5.1「ダッシュボード最上部（および全画面の状態帯）」）。
+                「稼働中」はポートの待ち受けを意味し、ログが現に届いていることは意味しないため、
+                全送信元合算の最終受信時刻を併記し、送信元別の受信状況への導線を置く。
+            *@
+            <div class="mb-4">
+                <YaguraStatusBand Status="@_bandStatus"
+                                  Summary="@_bandSummary"
+                                  LastReceivedAt="@_lastReceivedAt"
+                                  SourcesLinkHref="/#sources" />
+            </div>
+            @*
+                閲覧認証（ADR-0010 Phase 4 決定 7）の circuit 層ガード。HTTP 層の ViewerPolicy が
+                「circuit 確立までの経路」を守るのに対し、確立済み circuit 上の対話的ナビゲーション
+                （HTTP 要求を発生させない——security.md §1 L-5 の覆域の限界）を本ガードで塞ぐ。ログ本体
+                （@Body の検索結果・メッセージ）は未認証では描画しない。状態帯（上）の集約健康・最終受信
+                時刻は @Body より機微度が低く、未認証で一瞬露出しても即リダイレクトで閉じる（HTTP 層の
+                ViewerPolicy が通常経路を既に遮断済み——本ガードは対話ナビの多層防御）。
+            *@
+            @if (_viewerAccessSatisfied)
+            {
+                @Body
+            }
+            else
+            {
+                <MudText>@UiText.ViewerScreenRequiresAuthentication</MudText>
+            }
         </div>
-        @*
-            閲覧認証（ADR-0010 Phase 4 決定 7）の circuit 層ガード。HTTP 層の ViewerPolicy が
-            「circuit 確立までの経路」を守るのに対し、確立済み circuit 上の対話的ナビゲーション
-            （HTTP 要求を発生させない——security.md §1 L-5 の覆域の限界）を本ガードで塞ぐ。ログ本体
-            （@Body の検索結果・メッセージ）は未認証では描画しない。状態帯（上）の集約健康・最終受信
-            時刻は @Body より機微度が低く、未認証で一瞬露出しても即リダイレクトで閉じる（HTTP 層の
-            ViewerPolicy が通常経路を既に遮断済み——本ガードは対話ナビの多層防御）。
-        *@
-        @if (_viewerAccessSatisfied)
-        {
-            @Body
-        }
-        else
-        {
-            <MudText>@UiText.ViewerScreenRequiresAuthentication</MudText>
-        }
     </MudMainContent>
 </MudLayout>
 
