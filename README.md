@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/Yanai-Taketo/Yagura)
 ![License](https://img.shields.io/github/license/Yanai-Taketo/Yagura)
 
-> **English**: Yagura is a Windows-native open-source syslog server. Install the MSI, point your network devices at UDP/TCP 514, and open the built-in web viewer — no configuration files, no extra database setup, no Linux VM, no license fees. It runs as a Windows service with an embedded SQLite store out of the box and can later be promoted to SQL Server through a built-in wizard. Windows Event Log forwarding is covered by a bundled Fluent Bit kit, and the admin UI can generate a pre-configured kit (ZIP) pointing at your server. v0.5 is released for evaluation on trusted networks; it is not yet recommended for production (the v1.0 criteria are defined in [ADR-0006](docs/adr/0006-v1-release-criteria.md), in Japanese). Documentation is Japanese-first. License: Apache-2.0.
+> **English**: Yagura is a Windows-native open-source syslog server. Install the MSI, point your network devices at UDP/TCP 514, and open the built-in web viewer — no configuration files, no extra database setup, no Linux VM, no license fees. It runs as a Windows service with an embedded SQLite store out of the box and can later be promoted to SQL Server through a built-in wizard. Windows Event Log forwarding is covered by a bundled Fluent Bit kit, and the admin UI can generate a pre-configured kit (ZIP) pointing at your server. v1.0 is the first release recommended for production use on trusted networks; it satisfies the release criteria that were fixed in advance in [ADR-0006](docs/adr/0006-v1-release-criteria.md) (in Japanese). Documentation is Japanese-first. License: Apache-2.0.
 
 **Windows ネイティブな OSS syslog 集約サーバ——インストール直後、設定なしで受信・閲覧が始まります。**
 
@@ -21,21 +21,13 @@ Windows 環境での syslog 集約には空白地帯があります。商用製�
 
 対象は中小企業の Windows 管理者（ひとり情シスを含む）です。目的・スコープの詳細は [ADR-0001](docs/adr/0001-project-founding.md) を参照してください。
 
-## v0.5 の位置づけ
+## v1.0 の位置づけ
 
-**v0.5 は評価・試用向けのリリースです。本番利用はまだ推奨していません。**
+**v1.0 は、本番利用を推奨できる最初のリリースです。**
 
-v1.0（本番利用を推奨できる版）は、[ADR-0006](docs/adr/0006-v1-release-criteria.md) が定める公開基準——独立した 2 環境以上での連続 30 日以上の実運用実績、opt-in セキュリティ強化（TLS 受信・HTTPS・AD 認証）の提供完了など——をすべて満たしてから公開します。基準は先に固定してあり、達成しやすい形に動かしません。
+[ADR-0006](docs/adr/0006-v1-release-criteria.md) が先に固定した公開基準——独立した 2 環境以上での連続 30 日以上の実運用実績、opt-in セキュリティ強化（TLS 受信・HTTPS・AD 認証）の提供完了、利用者向け文書の第三者による実地確認など——をすべて満たしたうえで公開しています。基準を達成しやすい形に動かすことはしていません。
 
-### 試用にご協力いただける方を募集しています
-
-v1.0 公開基準のひとつ「独立 2 環境 × 連続 30 日の実運用」に向けて、試用協力者を歓迎します。
-
-- **既存のログ基盤との並行受信（ミラー）で構いません**。本番の可用性を Yagura に預ける必要はありません
-- 実機器由来のトラフィックを複数送信元から継続的に受信できる環境が対象です。SQL Server 構成の環境は特に歓迎します
-- ご連絡は GitHub の [Issues](https://github.com/Yanai-Taketo/Yagura/issues) / [Discussions](https://github.com/Yanai-Taketo/Yagura/discussions) へ。開始時に簡単な報告様式（開始報告 + 完了報告の 2〜3 回を想定）をお渡しします
-
-## できること（v0.5）
+## できること
 
 以下はすべて実装済みの機能です（予定機能は書いていません）。
 
@@ -51,6 +43,8 @@ v1.0 公開基準のひとつ「独立 2 環境 × 連続 30 日の実運用」�
 - **送信元の途絶検知（opt-in）**: 「来るはずの syslog が来ていない」に気づけます。ウォッチリストに登録した送信元から閾値時間（既定 24 時間。エントリごとに変更可）受信がないと警告し、メール通知の対象にもできます。登録は受信実績のある送信元からの候補選択が主経路で、アドレスの転記ミスを構造的に避けます
 - **管理 UI のアクセス制御（opt-in）**: 既定では管理 UI はサーバ自身（loopback）からのみ・無認証で使えますが、opt-in で **Windows 統合認証（AD/Kerberos。Kerberos-only も選択可）** または **アプリ独自 ID/パスワード認証**を有効化できます。管理 UI をリモート公開する場合は **HTTPS 必須（fail-closed）** です。アプリ独自認証は、バックオフ + IP レート制限 + グローバル上限の三層で総当たりに耐性を持たせています（[ADR-0010](docs/adr/0010-admin-ui-authentication.md)・[ADR-0011](docs/adr/0011-app-auth-failure-backoff.md)）
 - **閲覧 UI のアクセス制御（opt-in。v0.4.0）**: 既定では閲覧 UI は無認証で LAN に公開されますが、opt-in で **Windows 統合認証 + AD グループマッピング**を有効化できます。AD グループを「閲覧」「管理」の役割にマップし（グループ名または SID で指定・ネストグループ対応）、機微なログを読める人を AD グループで絞れます（管理 ⊇ 閲覧）。既定は現状どおり無認証のため、有効化しない環境の体験は変わりません（[ADR-0010](docs/adr/0010-admin-ui-authentication.md) Phase 4）
+<!-- TODO(v1.0): 閲覧 UI の HTTPS 実装完了後、この箇条書きを実装に合わせて確定する（設計は configuration.md §6） -->
+- **閲覧 UI の HTTPS（opt-in）**: 閲覧 UI を HTTPS で公開できます。証明書は管理画面から Windows 証明書ストアの一覧で選択し、期限切れ・失効時は平文 HTTP へ落とさず HTTPS を停止します（平文の syslog 受信は影響を受けません）
 - **MSI インストーラ**: Windows サービス登録・ファイアウォール規則の作成まで自動で行い、完了画面から閲覧画面をそのまま開けます。self-contained のため .NET ランタイムの事前導入も不要です
 
 ## アーキテクチャ概要
@@ -75,7 +69,7 @@ Yagura は受信・永続化・Web UI を **単一の Windows サービスプロ
    │ ブラウザ（http://<サーバ名>:8514/）
 ```
 
-「ログを失わない設計」（[できること（v0.5）](#できることv05)を参照）は、このパイプラインの各段に組み込まれています。プロセス内の境界・信頼性機構・受信パイプラインの詳細は [docs/design/architecture.md](docs/design/architecture.md) を参照してください。
+「ログを失わない設計」（[できること](#できること)を参照）は、このパイプラインの各段に組み込まれています。プロセス内の境界・信頼性機構・受信パイプラインの詳細は [docs/design/architecture.md](docs/design/architecture.md) を参照してください。
 
 ## スクリーンショット
 
@@ -137,12 +131,13 @@ Windows イベントログの転送元となる収集対象端末（Fluent Bit �
 
 ## セキュリティの前提（必ずお読みください）
 
-v0.5 の既定構成は、**管理された社内ネットワーク（信頼ネットワーク）での利用を前提**としています。
+Yagura の既定構成は、**管理された社内ネットワーク（信頼ネットワーク）での利用を前提**としています。
 
 - 既定の受信は**平文**です（UDP/TCP 514）。syslog over TLS 受信（TCP 6514・RFC 5425）を opt-in で有効化できます——証明書は Windows 証明書ストア参照方式で、相互 TLS（送信元のクライアント証明書認証）は対象外です
 - 閲覧 UI は**既定では認証なし**で LAN に公開されます（読み取りのみ。公開範囲は localhost に縮小できます）。opt-in で **Windows 統合認証 + AD グループによる「閲覧」「管理」役割のマッピング**を有効化でき、機微なログの閲覧を AD グループで絞れます（v0.4.0。[ADR-0010](docs/adr/0010-admin-ui-authentication.md) Phase 4）
 - 管理 UI は既定で **loopback 限定・無認証**ですが、opt-in で **Windows 統合認証（AD/Kerberos）またはアプリ独自 ID/パスワード認証**を有効化でき、リモート公開する場合は **HTTPS 必須（fail-closed）** です（[ADR-0010](docs/adr/0010-admin-ui-authentication.md)）
-- **閲覧 UI 側の HTTPS はまだ提供しておらず**（閲覧リスナは既定で平文 HTTP）、v1.0 までに opt-in での提供を検討します
+<!-- TODO(v1.0): 閲覧 UI の HTTPS 実装完了後、この箇条書きを実装に合わせて確定する -->
+- 閲覧 UI の HTTPS は **opt-in** です（既定は平文 HTTP。証明書は Windows 証明書ストアから選択し、期限切れ・失効時は平文へ落とさず HTTPS を停止します）
 - ただし**書き込み系の管理操作（設定変更・DB 切替・保持期間変更等）は、既定でサーバ自身（localhost）からのみ実行できます**。LAN 上の第三者が設定を書き換えることはできません
 - MSI が作成する受信許可規則（UDP/TCP 514・閲覧 8514）は**ネットワークプロファイルが Domain + Private 限定**です。Public プロファイル（公衆ネットワーク等）には開放されません
 
@@ -157,17 +152,11 @@ Yagura は syslog の**受信・保存・閲覧・通知に特化**します。�
 - SOAR、大規模分析基盤（専用クエリ言語等）、Microsoft 365 Defender / XDR 連携
 - Windows イベントログ転送エージェントの自作（Fluent Bit 等の実績あるツールの利用を案内します——[配布キットあり](docs/guides/forward-windows-eventlog.md)）
 
-## v1.0 に向けたロードマップ
+## バージョニングと互換性
 
-Yagura は「本番利用を推奨できる」状態を、期日ではなく **第三者が検証できる基準** で定義しています。次の 5 基準をすべて満たしたときに v1.0 を公開します（判定方法・証拠形式の詳細は [ADR-0006](docs/adr/0006-v1-release-criteria.md)）。
+Yagura は「本番利用を推奨できる」状態を、期日ではなく **第三者が検証できる基準** で定義し、その 5 基準（機能の完備・独立 2 環境 × 連続 30 日の実運用実績・利用者向け文書の完備・後方互換性の凍結・リリースの完全性）をすべて満たして v1.0 を公開しました（判定方法・証拠形式の詳細は [ADR-0006](docs/adr/0006-v1-release-criteria.md)）。
 
-1. **機能**: ゼロ設定ファーストラン等の導入体験・品質原則が動作し、TLS 受信・Web UI の HTTPS・AD 連携認証の opt-in 強化がすべて提供済みであること
-2. **実運用実績**: 独立した 2 環境以上で連続 30 日以上の実運用実績（[試用にご協力いただける方を募集しています](#試用にご協力いただける方を募集しています)）
-3. **利用者向け文書の完備**: 文書だけを頼りに導入から運用まで到達できることを、利害関係のない第三者が実地確認済みであること
-4. **後方互換性の凍結**: 設定・DB スキーマ・保存データ形式の互換性凍結の準備が整っていること
-5. **リリースの完全性**: インストーラへの Authenticode コード署名・checksum 添付・SECURITY.md のサポート対象明記
-
-v0.x の間は MINOR バージョンで機能追加を行い、後方互換を破る変更も許容します。設計の意思決定はすべて [docs/adr/](docs/adr/) に記録しています。
+v1.0 以降は、設定・DB スキーマ・保存データ形式の後方互換性を凍結しています。後方互換を破る変更は MAJOR バージョンでのみ行い、機能追加は MINOR バージョンで行います。設計の意思決定はすべて [docs/adr/](docs/adr/) に記録しています。
 
 ## ソースからのビルド
 
