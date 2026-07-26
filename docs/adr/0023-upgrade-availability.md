@@ -1,6 +1,6 @@
 # ADR-0023: アップグレード時の可用性 — DB 到達不能での起動継続とインストーラのロールバック安全性
 
-- 状態: accepted（2026-07-26 マージ = PR #469。ペルソナレビュー round 1 = 5 件・変更部分再レビュー round 2 = 3 件を同 PR で実施。round 1 で決定 2 の第一候補が `afterInstallFinalize` → `afterInstallExecute` へ、round 2 で共存窓の前提が実装確認により訂正された）
+- 状態: accepted（2026-07-26 マージ = PR #469。ペルソナレビュー round 1 = 5 件・変更部分再レビュー round 2 = 3 件を同 PR で実施。round 1 で決定 2 の第一候補が `afterInstallFinalize` → `afterInstallExecute` へ、round 2 で共存窓の前提が実装確認により訂正された）。**決定 2 の採否条件は 2026-07-26 に判定済み = 採用**（改訂履歴 1）
 - 日付: 2026-07-26
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)（品質の原則「ログを失わない」）/ [ADR-0002](0002-architecture-principles.md)（決定 2 のスプール退避）/ [ADR-0006](0006-v1-release-criteria.md)（基準 2 の重大不具合「起動不能」・基準 4 のアップグレード実証）/ [ADR-0010](0010-admin-ui-authentication.md)（決定 1 の loopback 最終復旧経路・受信断のコスト）/ [ADR-0011](0011-app-auth-failure-backoff.md)（決定 2〜4 の「締め出さない」設計）/ [ADR-0015](0015-gmsa-service-account.md)（決定 2・4・7 のインストーラ CA と lab ④）/ [Issue #466](https://github.com/Yanai-Taketo/Yagura/issues/466)・[Issue #467](https://github.com/Yanai-Taketo/Yagura/issues/467)（本 ADR の起案元。実機 lab で検出）/ Issue #283（lab 実施）/ Issue #291（環境要因での縮小継続への反転の先例）/ [architecture.md](../design/architecture.md) §1.2・[configuration.md](../design/configuration.md) §1・[security.md](../design/security.md) §4.3
@@ -392,4 +392,50 @@ ADR-0006 基準 4 は「蓄積データと設定が実際に保全されるこ�
 
 ## 改訂履歴
 
-（初回 amendment 発生時にこのセクションへ追記する）
+### 1. 決定 2 の採否条件の判定 — **採用**（2026-07-26。委任 2 の実装 PR にて）
+
+**分類**: 決定 2 が定めた手続き（「判定は委任 2 の実装 PR で行い、結果〔採用・撤回のいずれでも〕を
+改訂履歴に残す」）の履行。決定本文は変更しない。
+
+決定 2 は「まず採否条件（①〜②）を確認する。**不成立なら本決定は不採用とする**」と定めていた。
+判定の結果、**両条件とも成立したため決定 2 を採用し、`Schedule="afterInstallExecute"` を実装した**。
+
+**条件①（コンポーネント GUID の版間安定性）— 成立**。`HostPublishFiles` は
+`<Files Include="$(PublishDir)\**">` の自動採番であり、版が変わると GUID が変わるなら
+遅いスケジュールの参照カウントは崩れる。ビルドして `Component` テーブルを突き合わせた実測:
+
+| 比較条件 | 結果 |
+|---|---|
+| 0.5.0 → 0.6.0（版のみ変更） | **419 コンポーネントが完全一致**（Component キー・ComponentId・Directory すべて） |
+| 上記に加えファイル 1 件の追加 + 既存ファイルの内容変更 | **増分は新規 1 行のみ。既存 419 行の GUID は不変** |
+
+自動採番はパス由来であり、版・ファイル内容・ファイル集合の変化に影響されない。実アップグレードは
+版と中身の両方が変わるため、**2 段目（内容変更・ファイル追加）まで確認して初めて条件①が
+満たされたと言える**。
+
+**条件②（旧製品のアンインストールが新サービスを止めない・消さない）— 成立**。
+`afterInstallExecute` により `RemoveExistingProducts` は `InstallExecute`（6500）と
+`InstallFinalize`（6600）の間 = **`StartServices`（5900）より後**に入る。すなわち新サービスを
+起動した後に旧製品のアンインストールが走り、これを防ぐのはコンポーネント参照カウントのみである。
+**この条件は MSI テーブルの照合では確かめられない**ため、`installer-e2e` に実アップグレードの
+シナリオを追加し、GitHub ホストランナー上の実測で判定した（run 30202340161）:
+
+- 旧版（0.0.1）をインストール → Running を確認
+- 新版（0.5.0）へメジャーアップグレード → 成功
+- **`upgrade-service-survives`: サービス `Yagura` が Running のまま残存**（条件②の核心）
+- `upgrade-single-product-entry`: 製品エントリは 1 件のみ・**ProductCode は変化**
+  （= 実際にメジャーアップグレードが起きたことの確認。同一版の再インストールでは検証にならない）
+- `upgrade-ingestion-still-works`: アップグレード後に UDP 受信 → 閲覧照合が成立
+
+**継続検知**: 上記シナリオは `installer-e2e` の常設ステップとして残る（受け入れ基準⑤の
+正常系側）。アップグレード元 MSI が見つからない場合は workflow が明示的に失敗する——黙って
+スキップして緑になる経路を残さない。
+
+**本判定が確定させた新しい不変条件**: 遅いスケジュールを採る以上、**コンポーネント GUID の
+版間安定性は今後の変更で守るべき制約**になった（決定 2 の帰結「コンポーネント GUID の版間
+安定性が新しい不変条件になる」の実効化）。ハーベスト方式の変更・明示 GUID の導入は、
+この条件を再確認してから行う。
+
+**未了**: 受け入れ基準⑤の**起動段を意図的に失敗させる細工**による「製品が残ること」の検証は
+本判定には含まれない（正常系のアップグレードを先に固めた）。異常系は別途 `installer-e2e` へ
+追加する。
