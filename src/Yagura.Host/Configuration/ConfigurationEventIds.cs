@@ -180,4 +180,17 @@ public static class ConfigurationEventIds
     /// </remarks>
     public static readonly EventId ViewerHttpsCertificateUnavailableAtStartup =
         new(1035, "ViewerHttpsCertificateUnavailableAtStartup");
+
+    /// <summary>
+    /// 「認証あり・平文・LAN」構成の起動時警告（ADR-0022 決定 5。Issue #455）。
+    /// <c>Viewer:Authentication:Windows:AdminGroups</c> が非空（= 管理等価 Cookie が発行され得る）
+    /// かつ閲覧 HTTPS が有効でなく、かつ公開範囲が LAN の組み合わせで 1 回だけ発する。
+    /// <b>起動も機能も止めない</b>——連動強制（閲覧認証有効時の HTTPS 必須化）はオーナー裁定で
+    /// 却下済みであり、本 ID は可視化のみを担う（「連動強制はしないが、無音にもしない」）。
+    /// <c>ViewerGroups</c> のみの構成は対象外（焦点は管理等価 Cookie。警告のノイズ化を避ける）。
+    /// レベルは警告。採番: 1036・1037 は ActiveNotificationEventIds 側（閲覧 HTTPS 証明書の
+    /// 期限接近・稼働中使用不能）が使用済みのため 1038。
+    /// </summary>
+    public static readonly EventId ViewerAdminGroupsPlaintextExposure =
+        new(1038, "ViewerAdminGroupsPlaintextExposure");
 }

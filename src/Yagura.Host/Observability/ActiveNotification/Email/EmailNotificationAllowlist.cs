@@ -65,6 +65,10 @@ internal static class EmailNotificationAllowlist
             [ActiveNotificationEventIds.AdminHttpsCertificateUnavailableWhileRunning.Id] = Severity.Warning,  // 1015
             [ActiveNotificationEventIds.IngestionTlsCertificateExpiryApproaching.Id] = Severity.Warning,      // 1017
             [ActiveNotificationEventIds.IngestionTlsCertificateUnavailableWhileRunning.Id] = Severity.Warning, // 1018
+            // 閲覧 HTTPS（ADR-0022 決定 2 可視化②・決定 7——期限切れで停止する面のため事前警告が
+            // 実質的な命綱。メール対象は起動時 1 回の 1035 ではなく、この周期監視 2 ID が担う）。
+            [ActiveNotificationEventIds.ViewerHttpsCertificateExpiryApproaching.Id] = Severity.Warning,       // 1036
+            [ActiveNotificationEventIds.ViewerHttpsCertificateUnavailableWhileRunning.Id] = Severity.Warning, // 1037
 
             // --- 認証防御の昇格（ADR-0011。攻撃の予兆——希少で重要な初報の代表例） ---
             [ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated.Id] = Severity.Warning, // 1019

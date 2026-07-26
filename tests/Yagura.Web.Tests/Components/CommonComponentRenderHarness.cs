@@ -68,6 +68,9 @@ internal static class CommonComponentRenderHarness
         // 描画テストは常に無効構成で行い、外向き DNS クエリを発しない（決定 4 の縮小側と同じ向き。
         // 有効時の解決挙動は ReverseDnsResolverTests が偽実装で検証する）。
         services.AddSingleton(new Yagura.Web.ReverseDns.ReverseDnsDisplayOptions(Enabled: false));
+        // 閲覧 HTTPS の縮小継続状態（ADR-0022 決定 2 可視化③）——AdminHome の常設バナーの注入元。
+        // 既定は「縮小継続なし」（AddYaguraWebViewer の TryAdd 既定と同じ）。
+        services.AddSingleton(Yagura.Web.Administration.ViewerHttpsRuntimeState.Normal);
         services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsLookup, Yagura.Web.ReverseDns.SystemDnsReverseLookup>();
         services.AddSingleton<Yagura.Web.Diagnostics.ReverseDnsMetrics>();
         services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsResolver, Yagura.Web.ReverseDns.ReverseDnsResolver>();

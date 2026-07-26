@@ -661,6 +661,15 @@ public static class Program
                     resolvedConfiguration.IngestionTlsCertificateThumbprint!)
                 : null;
 
+        // 閲覧 UI HTTPS 証明書の周期監視プローブ（ADR-0022 決定 2 可視化①・決定 7。期限接近 = 1036・
+        // 稼働中の使用不能 = 1037）。証明書が実際に解決できて閲覧 HTTPS が有効な場合にのみ結線する——
+        // 起動時に解決できず縮小継続した構成は 1035 が既に報告済み（上記 2 プローブと同じ判断）。
+        Yagura.Host.Observability.ActiveNotification.ICertificateStatusProbe? viewerHttpsCertificateProbe =
+            viewerHttpsCertificate is not null
+                ? new Yagura.Host.Administration.Https.StoreViewerHttpsCertificateStatusProbe(
+                    resolvedConfiguration.ViewerHttpsCertificateThumbprint!)
+                : null;
+
         // フォワーダ MSI 配置フォルダ（ADR-0008 設計条件 9 / ADR-0020 配置経路 (b)）の実パス。
         // 検出側（IForwarderMsiSource）・書き込み側（IForwarderMsiStore）・ACL 周期検出
         // （ActiveNotificationMonitor）の三者で共有する。
@@ -705,7 +714,8 @@ public static class Program
                     ? Yagura.Host.Administration.ForwarderKitUpload.ForwarderMsiFolderAclInspector
                         .IsWritableByCurrentIdentity(forwarderMsiFolderPath)
                     : null,
-                forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled);
+                forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled,
+                viewerHttpsCertificateProbe: viewerHttpsCertificateProbe);
         });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
@@ -1081,6 +1091,14 @@ public static class Program
             new Yagura.Host.Administration.Https.ViewerHttpsAdminService(
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
+
+        // 閲覧 HTTPS の縮小継続状態を管理画面の常設バナーへ渡す（ADR-0022 決定 2 可視化③。
+        // Issue #455 段階 ③）。起動時に確定する実効値であり、稼働中の再判定はしない（縮小継続は
+        // 再起動なしに解消しない——1035 の XML doc 参照）。
+        builder.Services.AddSingleton(
+            viewerHttpsCertificateUnavailableReason is not null
+                ? new Yagura.Web.Administration.ViewerHttpsRuntimeState(true, viewerHttpsCertificateUnavailableReason)
+                : Yagura.Web.Administration.ViewerHttpsRuntimeState.Normal);
 
         // メール通知の設定・テスト送信・健全性参照（ADR-0017 決定 4・8。Issue #350）。
         // ディスパッチャは Func 経由で遅延解決する——本サービスとディスパッチャの登録順に
@@ -1600,16 +1618,26 @@ public static class Program
         // 8516）へも届く。SecurePolicy=SameAsRequest（ADR-0013 決定 7）のため、平文 HTTP で発行された
         // 管理等価 Cookie は Secure 属性なしで LAN を流れる。管理操作は管理リスナ（loopback またはリモート
         // HTTPS）から行い、閲覧リスナでの管理役割付与は「閲覧のための管理⊇閲覧」に留める運用を推奨する。
-        if (resolvedConfiguration.ViewerWindowsAuthEnabled && windowsGroupAuthorization.ViewerAdminGroupSids.Count > 0)
+        // ADR-0022 決定 5 による絞り込み（Issue #455 段階 ③）: 警告は「管理等価 Cookie が実際に
+        // 平文で LAN を流れ得る」組み合わせ——AdminGroups 非空 × 閲覧 HTTPS 無効 × 公開範囲 Lan——に
+        // 限定し、独立イベント ID 1038 を採る。閲覧 HTTPS 有効（Enabled——平文面が消える）・
+        // LocalhostOnly（LAN を流れない）では出さない（警告のノイズ化を避ける）。これは可視化で
+        // あり連動強制ではない（オーナー裁定 ③——決定 5）。ViewerGroups のみの構成は対象外。
+        if (resolvedConfiguration.ViewerWindowsAuthEnabled &&
+            windowsGroupAuthorization.ViewerAdminGroupSids.Count > 0 &&
+            resolvedConfiguration.ViewerHttpsMode != Yagura.Host.Configuration.ViewerHttpsMode.Enabled &&
+            resolvedConfiguration.ViewerPublicAccess == Yagura.Host.Configuration.ViewerPublicAccess.Lan)
         {
             var viewerAdminGroupsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Administration.ViewerAuth");
             viewerAdminGroupsLogger.LogWarning(
+                Yagura.Host.Configuration.ConfigurationEventIds.ViewerAdminGroupsPlaintextExposure,
                 "[viewer-admingroups-plaintext] Viewer:Authentication:Windows:AdminGroups が指定されています。" +
                 "その所属者は閲覧リスナ（ポート {ViewerPort}）上で「管理」役割の認証セッション Cookie を得ます。" +
-                "閲覧リスナは既定で平文 HTTP のため、この管理等価 Cookie は Secure 属性なしで LAN を流れ、host " +
-                "スコープゆえ管理リスナへも届きます。機微環境では、管理役割の付与は管理リスナ（loopback または" +
-                "リモート HTTPS）側で行い、閲覧リスナ経由の管理ログインは避ける運用を検討してください" +
-                "（閲覧リスナ自体の HTTPS 化は今後の課題）。",
+                "閲覧リスナは平文 HTTP のため、この管理等価 Cookie は Secure 属性なしで LAN を流れ、host " +
+                "スコープゆえ管理リスナへも届きます。閲覧 UI の HTTPS（Viewer:Https:Enabled + " +
+                "Viewer:Https:CertificateThumbprint。管理画面「閲覧 UI の HTTPS 設定」から構成できます）の" +
+                "併用を推奨します。機微環境では、管理役割の付与は管理リスナ（loopback またはリモート HTTPS）側で" +
+                "行い、閲覧リスナ経由の管理ログインは避ける運用も検討してください。",
                 resolvedConfiguration.HttpPort);
         }
 

@@ -170,4 +170,30 @@ public static class ActiveNotificationEventIds
     /// </summary>
     public static readonly EventId ForwarderMsiWritePathOpenContinuing =
         new(1034, "ForwarderMsiWritePathOpenContinuing");
+
+    // 1035（閲覧 HTTPS の起動時証明書解決失敗による縮小継続）は
+    // Yagura.Host.Configuration.ConfigurationEventIds 側に定義（1013/1016 と同じ住み分け）。
+
+    /// <summary>
+    /// 閲覧 UI HTTPS（<c>Viewer:Https:Enabled</c>。ADR-0022。opt-in）の証明書の有効期限が
+    /// 接近している（決定 7——期限接近通知の第 3 用途。閾値は
+    /// <see cref="ActiveNotificationConstants.CertificateExpiryWarningWindow"/> の共有値〔仮値 30 日〕を
+    /// 流用——用途別の値を採用すべき設計上の根拠が無い〔#359 の判断の踏襲〕）。閲覧 HTTPS は
+    /// 期限切れで<b>停止する</b>面（新規ハンドシェイク拒否——平文へは落ちない）のため、本事前警告が
+    /// 実質的な命綱になる（決定 7）。レベル: 警告。採番: 1035 は ConfigurationEventIds 側で
+    /// 使用済みのため 1036。
+    /// </summary>
+    public static readonly EventId ViewerHttpsCertificateExpiryApproaching =
+        new(1036, "ViewerHttpsCertificateExpiryApproaching");
+
+    /// <summary>
+    /// 閲覧 UI HTTPS 証明書が稼働中に使用不能になった——証明書ストアからの削除・秘密鍵アクセス
+    /// 不能・有効期限切れへの遷移（期限切れ中は Kestrel の <c>ServerCertificateSelector</c> が
+    /// 新規 TLS ハンドシェイクを拒否している状態——1015 と同じ機構。ADR-0022 決定 2 可視化①
+    /// 「稼働中は 1018 同型の周期監視で継続的に記録する」）。レベル: 警告（LAN からの閲覧は
+    /// 止まるが、受信・保存・管理リスナは無傷で、閲覧系ルートは管理リスナ（loopback）経由で
+    /// 引き続き到達できる——1035 と同じ吟味の結論）。
+    /// </summary>
+    public static readonly EventId ViewerHttpsCertificateUnavailableWhileRunning =
+        new(1037, "ViewerHttpsCertificateUnavailableWhileRunning");
 }
