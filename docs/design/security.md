@@ -337,6 +337,8 @@ NT AUTHORITY\SYSTEM:(F)
 
 **イベントレベルの配線の補足（M8-4）**: Windows イベントログの `EventLog` プロバイダの既定フィルタは警告以上のため、2000 番台（情報）が既定でイベントログに届くよう、監査カテゴリ（`Yagura.Host.Observability.Auditing`）に限り情報レベルまで通すフィルタを Host が構成する（Yagura.Host/Program.cs）。「ソース Yagura の警告以上を通知」という最小監視構成は 1000/3000 番台で従来どおり成立する。
 
+**bootstrap 段（Host 構築前）の配線の補足（Issue #433。2026-07-26）**: Host 構築前の設定検証 fail-closed（1011/1012/1024/1032、および個別 ID を持たない受信ポート不正等 = EventId 0）は DI コンテナ構築前の bootstrap ロガーから発火する。このロガーは従来コンソール専用で、Windows サービス構成では標準出力がどこにも接続されないため専用イベント ID がイベントログに現れず、管理者が見られるのは未処理例外の痕跡（.NET Runtime 1026〔Application ログ。例外本文に誘導文言自体は入る〕と Application Error 1000 = APPCRASH）だけだった（ADR-0020 決定 5 lab P-1 の実機検証 2026-07-25 で発見）。**bootstrap ロガーに EventLog シンク（ソース `Yagura`・警告以上）を追加して解消した**（`Program.ConfigureBootstrapLogging`。配線の退行は `BootstrapLoggingTests` が CI で検知し、サービス構成での実機到達の回帰検証は lab 手順書 [startup-warning-regression-procedure.md](../../installer/lab/startup-warning-regression-procedure.md) §C が担う——stdout 監視の既存 E2E ではイベントログ到達の差が出ない SEC-9-a と同型の制約）。SEC-9-a（発火点を Host 構築後の DI ロガーへ移して解消）と異なり、本件の発火点は Host 構築そのものを中止する経路のため bootstrap ロガー側にシンクを持たせる以外に経路がない。制約: 設定ファイル読み込み前のロガーであるため、利用者の `Logging:EventLog:*` フィルタ設定は bootstrap 段の出力には効かない。
+
 ### 4.4 拒否試行の流量制御（証跡の希釈・ディスク圧迫対策）
 
 - 同一の送信元・同一の事象種別による拒否が短時間に反復する場合、**個別記録から集約記録へ自動で切り替える**（ADR-0004 決定 7 の委任。スキャン・設定ミスの反復が証跡を埋め尽くし、本来見るべき単発の拒否を希釈することを防ぐ）

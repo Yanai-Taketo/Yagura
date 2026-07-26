@@ -1,19 +1,20 @@
-# 起動時警告の回帰検証手順 — SEC-9-a / SEC-13
+# 起動時警告の回帰検証手順 — SEC-9-a / SEC-13 / #433
 
-> **未実施**（2026-07-19 作成）。本手順は #346（SEC-9-a）と #345（SEC-13）の修正が正しく効いていることを実機で確認するためのもの。
+> **未実施**（2026-07-19 作成。§C は 2026-07-26 追加）。本手順は #346（SEC-9-a）・#345（SEC-13）・#433（bootstrap 段 fail-closed のイベントログ到達）の修正が正しく効いていることを実機で確認するためのもの。
 > 実施したら結果を security.md の該当節へ記録し、本ファイル冒頭のこの注記を「実施済み（日付・環境）」へ書き換える。
 
-Issue #356 / #346 / #345 の lab 検証手順。
+Issue #356 / #346 / #345 / #433 の lab 検証手順。
 **実施環境**: Yagura サービスがインストール済みの lab（仮想サービスアカウント `NT SERVICE\Yagura` が存在すること）。SEC-9-a はドメイン参加環境が必要。
 
 ## なぜ CI ではなく lab なのか
 
-両件とも **CI では回帰を検出できない**ことが実装時に判明した（オーナー裁定 2026-07-19 により lab 手順として文書化）。
+いずれも **CI では回帰を検出できない**ことが実装時に判明した（オーナー裁定 2026-07-19 により lab 手順として文書化）。
 
 | 件 | CI で検出できない理由 |
 |---|---|
 | SEC-9-a（#346） | 既存の E2E ハーネスはホストを別プロセスで起動して **stdout を監視**する方式。しかし修正前も bootstrap ロガーが**コンソールへは出力していた**ため、stdout では修正前後の差が出ない。実際の欠陥は「**Windows イベントログに到達しない**」ことであり、CI で再現するにはイベントソース登録と管理者権限が要る |
 | SEC-13（#345） | 既存の `AdminRemoteBindingRegressionTests` が修正前から通っているのは、**テストが管理者権限のプロセスで走るため秘密鍵を開けてしまう**ため。同じ理由で新しいテストも修正前から通ってしまい、回帰テストとして機能しない |
+| #433 | SEC-9-a と同型（stdout 監視の E2E では差が出ない）。配線そのもの（bootstrap ロガーが EventLog シンクを含むこと）は `Yagura.Host.Tests.BootstrapLoggingTests` が CI で固定するが、**サービス構成（標準出力が切り離された状態）で実イベントログへ到達すること**はサービスとしての起動・イベントソース登録済みの実機でしか観測できない |
 
 いずれも「**テストプロセスの権限・ロギング経路が本番と違う**」ことが原因である。この非対称自体が、両 Issue が実機検証でしか見つからなかった理由でもある。
 
@@ -178,6 +179,62 @@ curl.exe -k -o NUL -w "%{http_code} %{ssl_verify_result}\n" https://localhost:85
 
 ---
 
+## C. #433 — bootstrap 段の fail-closed 専用イベントがサービス構成でイベントログに届くこと
+
+**対応する修正**: bootstrap ロガーへの EventLog シンク追加（`Program.ConfigureBootstrapLogging`。Issue #433）
+
+### 検証する仮説
+
+Host 構築前の config 検証 fail-closed の専用イベント ID（1011/1012/1024/1032 等）が、**Windows サービスとしての起動失敗時に Yagura ソースのイベントログへ記録される**こと。修正前（v0.5.3 以前）は bootstrap ロガーがコンソール専用のため 0 件で、管理者が見られるのは .NET Runtime 1026（Application ログ）と Application Error 1000（APPCRASH）だけだった（2026-07-25 実測。Issue #433）。
+
+### 手順
+
+#### 1. fail-closed になる設定を作る
+
+`%ProgramData%\Yagura\yagura.json` に、前提条件を欠いたままアップロード opt-in を追記する（1032 の再現。ADR-0020 決定 5 lab P-1 と同じ構成）:
+
+```json
+{
+  "Admin": { "ForwarderKit": { "MsiUpload": { "Enabled": "true" } } }
+}
+```
+
+#### 2. サービス再起動（起動失敗すること）
+
+```powershell
+Restart-Service Yagura   # → 起動失敗する（fail-closed 自体は修正前後で不変）
+Get-Service Yagura | Format-List Status
+```
+
+#### 3. イベントログの確認（本手順の核心）
+
+```powershell
+Get-WinEvent -FilterHashtable @{ ProviderName = 'Yagura'; Id = 1032 } -MaxEvents 5 |
+  Format-List TimeCreated, Id, LevelDisplayName, Message
+```
+
+**期待結果**: 直近の起動失敗に対応する **1032（エラー）** が記録され、本文に「欠けている前提条件の列挙」と「`Admin:ForwarderKit:MsiUpload:Enabled` を false に戻す」誘導が含まれる。
+
+**修正前はここが 0 件になる**（2026-07-25 実測）。対照として同時刻の Application ログに .NET Runtime 1026（`ConfigurationValidationException` の本文入り）と Application Error 1000 が出ていれば、fail-closed 自体は起きており「専用 ID だけが欠けている」状態＝退行の徴候である:
+
+```powershell
+Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = '.NET Runtime' } -MaxEvents 5 |
+  Format-List TimeCreated, Message
+```
+
+#### 4. 後始末
+
+`yagura.json` から手順 1 の追記を除去し、サービスが正常起動することを確認する:
+
+```powershell
+Restart-Service Yagura
+Get-Service Yagura | Format-List Status   # → Running
+```
+
+> **補足**: 1032 は代表例であり、修正は Host 構築前の全 fail-closed（1011/1012/1024・EventId 0 の受信ポート不正）に共通の経路（bootstrap ロガー）に効く。コンソール実行（開発時・E2E）でも同じ配線でイベントログへ書かれるため、開発機での事前確認は `dotnet run` の失敗起動 1 回 + `Get-WinEvent` でも行える（2026-07-26 に開発機で実測済み——サービス構成での確認が本手順の残件）。
+
+---
+
 ## 既知の論点（本手順では判定しない）
 
 **監査 2009（`AdminHttpsCertificatePrivateKeyAccessGranted`）は手順 4・5 のいずれでも記録されない。** 2009 は付与に**成功したときのみ**発火するが、既定の鍵 ACL ではサービスアカウントに `WRITE_DAC` が無いため付与は基本的に成功しない。
@@ -186,8 +243,8 @@ curl.exe -k -o NUL -w "%{http_code} %{ssl_verify_result}\n" https://localhost:85
 
 ## 参照
 
-- #356（本手順書の追跡）/ #346（SEC-9-a）/ #345（SEC-13）
+- #356（本手順書の追跡）/ #346（SEC-9-a）/ #345（SEC-13）/ #433（bootstrap 段 fail-closed）
 - PR #354（SEC-9-a の修正）/ PR #357（SEC-13 の修正）
-- PR #340（2026-07-18 の lab 実機検証。両件の元となった実測結果）
-- [security.md](../../docs/design/security.md) §2.5（秘密鍵権限付与）・§7（SEC-9 / SEC-13）
+- PR #340（2026-07-18 の lab 実機検証。SEC-9-a / SEC-13 の元となった実測結果）
+- [security.md](../../docs/design/security.md) §2.5（秘密鍵権限付与）・§4.3（bootstrap 段の配線の補足）・§7（SEC-9 / SEC-13）
 - [sec-3-audit-acl-procedure.md](sec-3-audit-acl-procedure.md)（体裁の先例）
