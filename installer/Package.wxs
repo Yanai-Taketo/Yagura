@@ -345,6 +345,14 @@
           対象 ACE が無く非ゼロを返しうる。Microsoft Learn 同ページの "A rollback custom
           action should also handle the case where the deferred custom action is interrupted
           in the middle of execution." に対応する
+        - **復元先の主体は実行時に決める**([YaguraAclRestorePrincipal]。Issue #474)。
+          当初は仮想 SA の SID を literal で持っていたが、これは「切替前は必ず仮想 SA だった」
+          という前提の固定であり、**gMSA → 別 gMSA の切替が失敗した場合に成立しない**——
+          実機で、ロールバック後の子ファイルが切替前の gMSA ではなく仮想 SA の ACE を持ち、
+          サービスは切替前の gMSA として復元されるのに設定ファイルを読めず起動できない
+          (UnauthorizedAccessException)状態が観測された。ADR-0015 決定 7 lab ④ の想定が
+          「仮想 SA ⇄ gMSA」の 2 状態だったため、この経路が検証の視界に入っていなかった。
+          復元先は下の SetProperty 2 段で決める(既定 = 仮想 SA、記憶値があればそちら)
         - 復元値は静的 SDDL(下の DataRootFolder / ForwarderFolder コンポーネント)と同一の
           権限に揃える: データルート = 0x1301bf = icacls の (M)、フォワーダ = 0x120089 =
           icacls の (R)。**復元に使う値はコマンドライン(CustomActionData)内に閉じている**
@@ -378,8 +386,26 @@
       ——上記は icacls 単体の挙動確認であり、rollback スクリプト実行時点の状態を再現した
       ものではない。
     -->
+    <!--
+      ロールバック時に ACL を戻す先の主体(Issue #474)。**2 段で決める**:
+        (1) 既定 = 仮想 SA。新規インストール(記憶値なし)と、仮想 SA から切替えて失敗した場合。
+        (2) 記憶値(前回インストール時のアカウント)があり、それが仮想 SA でなければそちらで上書き。
+            gMSA で運用中の環境が別アカウントへ切替えて失敗した場合がこれにあたる。
+      YAGURA_SERVICE_ACCOUNT_PREVIOUS を使う(YAGURA_SERVICE_ACCOUNT ではない)——後者は
+      コマンドライン指定の**新しい**値で上書きされており、「切替前」の値は前者にしか残らない。
+      条件付き SetProperty を 2 本に分けるのは、MSI のプロパティ設定に条件分岐の式が無いため。
+      順序は下の InstallExecuteSequence で固定する(既定 → 上書き)。
+    -->
+    <SetProperty Id="YaguraAclRestorePrincipal" Action="SetYaguraAclRestorePrincipalDefault"
+                 Sequence="execute" Before="RemovePreviousServiceAccountDataRootAcl"
+                 Value="[YaguraVirtualSaSid]" />
+    <SetProperty Id="YaguraAclRestorePrincipal" Action="SetYaguraAclRestorePrincipalPrevious"
+                 Sequence="execute" After="SetYaguraAclRestorePrincipalDefault"
+                 Value="[YAGURA_SERVICE_ACCOUNT_PREVIOUS]"
+                 Condition="YAGURA_SERVICE_ACCOUNT_PREVIOUS AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=&quot;NT SERVICE\Yagura&quot;)" />
+
     <SetProperty Id="RollbackGrantServiceAccountDataRootAcl" Sequence="execute" Before="RollbackGrantServiceAccountDataRootAcl"
-                 Value="&quot;[System64Folder]cmd.exe&quot; /c &quot;&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /remove:g &quot;[YAGURA_SERVICE_ACCOUNT]&quot; &amp; &quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /grant [YaguraVirtualSaSid]:(OI)(CI)(M)&quot;" />
+                 Value="&quot;[System64Folder]cmd.exe&quot; /c &quot;&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /remove:g &quot;[YAGURA_SERVICE_ACCOUNT]&quot; &amp; &quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /grant &quot;[YaguraAclRestorePrincipal]:(OI)(CI)(M)&quot;&quot;" />
     <CustomAction Id="RollbackGrantServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="rollback" Impersonate="no" Return="ignore" />
     <SetProperty Id="GrantServiceAccountDataRootAcl" Sequence="execute" Before="GrantServiceAccountDataRootAcl"
@@ -387,7 +413,7 @@
     <CustomAction Id="GrantServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="deferred" Impersonate="no" Return="check" />
     <SetProperty Id="RollbackGrantServiceAccountForwarderAcl" Sequence="execute" Before="RollbackGrantServiceAccountForwarderAcl"
-                 Value="&quot;[System64Folder]cmd.exe&quot; /c &quot;&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /remove:g &quot;[YAGURA_SERVICE_ACCOUNT]&quot; &amp; &quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /grant [YaguraVirtualSaSid]:(OI)(CI)(R)&quot;" />
+                 Value="&quot;[System64Folder]cmd.exe&quot; /c &quot;&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /remove:g &quot;[YAGURA_SERVICE_ACCOUNT]&quot; &amp; &quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /grant &quot;[YaguraAclRestorePrincipal]:(OI)(CI)(R)&quot;&quot;" />
     <CustomAction Id="RollbackGrantServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="rollback" Impersonate="no" Return="ignore" />
     <SetProperty Id="GrantServiceAccountForwarderAcl" Sequence="execute" Before="GrantServiceAccountForwarderAcl"

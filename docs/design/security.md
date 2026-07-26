@@ -476,6 +476,7 @@ MSI オプトイン同梱のため、管理者が Fluent Bit の MSI を手動�
 
 この穴は ADR-0023 決定 3 で 2 つの手当てを入れて塞いだ:
 - **ロールバック CA を対にする**（各 Grant CA の直前。撤去を先・復元を後の順で 1 つの CA が両方を行う——ロールバック CA 自体の失敗はロールバックされないため、中断しても権限が増えない向きに倒す）。icacls 経由の付替は**フォルダから既存の子へ伝播する**ため、MSI の静的 SDDL ロールバックが直せない子ファイルの孤児 ACE まで解消される
+  - **復元先の主体は実行時に決める**（`[YaguraAclRestorePrincipal]`。[Issue #474](https://github.com/Yanai-Taketo/Yagura/issues/474)）: 記憶値（`YAGURA_SERVICE_ACCOUNT_PREVIOUS`）があればそのアカウント、無ければ仮想 SA。**当初は仮想 SA の SID を literal で持っており、`gMSA → 別 gMSA` の切替失敗で成立しなかった**——ロールバック後の子ファイルが切替前の gMSA ではなく仮想 SA の ACE を持ち、サービスは切替前の gMSA として復元されるのに設定ファイルを読めず起動できない（`UnauthorizedAccessException`）状態が実機で観測された。ADR-0015 決定 7 lab ④ の想定が「仮想 SA ⇄ gMSA」の 2 状態だったため、この経路が検証の視界に入っていなかった
 - **前方修復**: 旧アカウントの ACE 除去を `/T /C` で子ファイルまで辿る。**是正対象は `YAGURA_SERVICE_ACCOUNT_PREVIOUS` という名指しの単一主体に限る**——「期待と異なれば是正」を広く取ると第三者が付与した ACE の削除、すなわち実質 `/reset` に化けるため（`/reset` は forwarder の独立 SDDL を破壊する）
 
   **後追い付与 ACE の実機 `icacls` 出力（AD lab 実測。2026-07-24。Windows Server 2025 `10.0.26100`・`yagura.test` DC・gMSA `YAGURA\gmsaYagura$`。`PermissionEx` の静的 SDDL 出力を §5 に記録済みなのと同じ扱いで本節に記録する）**:
