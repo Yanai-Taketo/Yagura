@@ -38,6 +38,16 @@ public sealed class SourceSilenceScreenEditTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _ctx.DisposeAsync();
 
+    /// <summary>
+    /// ボタン文言で探して押す。**探索とクリックを 1 つの <c>InvokeAsync</c> に収める**ことで、
+    /// その間に再描画が挟まってイベントハンドラ ID が失効する競合を閉じる（bUnit 公式の回避策）。
+    /// </summary>
+    private static Task ClickButtonAsync<TComponent>(IRenderedComponent<TComponent> cut, string buttonText)
+        where TComponent : IComponent =>
+        cut.InvokeAsync(() =>
+            cut.FindAll("button").Single(b => b.TextContent.Contains(buttonText))
+                .Click());
+
     private static SourceSilenceAdminStatus StatusWith(params SourceSilenceWatchlistItem[] watchlist) =>
         new(
             DefaultThresholdMinutes: 1440,
@@ -55,18 +65,25 @@ public sealed class SourceSilenceScreenEditTests : IAsyncLifetime
         var cut = _ctx.Render<SourceSilenceScreen>();
 
         // 「編集」→ 表示名だけ変更 →「更新」→「適用する」。
-        cut.FindAll("button").Single(b => b.TextContent.Contains(UiText.SourceSilenceEditButton))
-            .Click();
+        //
+        // **要素の探索とクリックを InvokeAsync で包む**: bUnit 公式が案内する回避策
+        // （UnknownEventHandlerIdException の説明文——"The workaround is to wrap the Find and
+        // Click method calls in InvokeAsync"）。包まないと探索からクリック到達までの間に
+        // 再描画が挟まり、解決済みのイベントハンドラ ID が失効して
+        // `There is no event handler with ID 'NN' associated with the 'onclick' event` で落ちる。
+        // 本テストは各クリックが直後に再描画を誘発する連鎖（編集開始 → 更新 → 確認ダイアログ）
+        // であり、この窓が現実に開く——負荷の高い CI で断続的に失敗していた（3 回に 1 回程度）。
+        await ClickButtonAsync(cut, UiText.SourceSilenceEditButton);
 
         // 閾値欄は空（省略の保持）。ラベルだけ書き換える。
-        var labelInput = cut.FindAll("input")
-            .First(i => i.GetAttribute("value") == "旧名");
-        await labelInput.ChangeAsync(new ChangeEventArgs { Value = "新名" });
+        await cut.InvokeAsync(async () =>
+        {
+            var labelInput = cut.FindAll("input").First(i => i.GetAttribute("value") == "旧名");
+            await labelInput.ChangeAsync(new ChangeEventArgs { Value = "新名" });
+        });
 
-        cut.FindAll("button").Single(b => b.TextContent.Contains(UiText.SourceSilenceUpdateButton))
-            .Click();
-        await cut.FindAll("button").Single(b => b.TextContent.Contains(UiText.SourceSilenceApplyButton))
-            .ClickAsync(new MouseEventArgs());
+        await ClickButtonAsync(cut, UiText.SourceSilenceUpdateButton);
+        await ClickButtonAsync(cut, UiText.SourceSilenceApplyButton);
 
         var saved = Assert.Single(_service.LastSaved!.Watchlist);
         Assert.Equal("192.0.2.10", saved.Address);
