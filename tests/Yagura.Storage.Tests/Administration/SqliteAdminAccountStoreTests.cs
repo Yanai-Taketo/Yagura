@@ -10,6 +10,9 @@ namespace Yagura.Storage.Tests.Administration;
 /// </summary>
 public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
 {
+    /// <summary>作成・変更時刻（ADR-0021 スキーマ v3）を決定的に検証するための固定時刻。</summary>
+    private static readonly DateTimeOffset TestNow = new(2026, 7, 26, 12, 0, 0, TimeSpan.Zero);
+
     private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"yagura-admin-accounts-{Guid.NewGuid():N}.db");
     private SqliteAdminAccountStore _store = null!;
 
@@ -50,7 +53,7 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
     [Fact]
     public async Task UpsertAsync_ThenFindByUsername_ReturnsAccount_CaseInsensitive()
     {
-        await _store.UpsertAsync("Admin1", "hash-1");
+        await _store.UpsertAsync("Admin1", "hash-1", TestNow);
 
         Assert.True(await _store.HasAnyAccountAsync());
 
@@ -72,11 +75,29 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
     [Fact]
     public async Task UpsertAsync_ExistingUsername_ReplacesHash()
     {
-        await _store.UpsertAsync("admin1", "hash-old");
-        await _store.UpsertAsync("admin1", "hash-new");
+        await _store.UpsertAsync("admin1", "hash-old", TestNow);
+        await _store.UpsertAsync("admin1", "hash-new", TestNow.AddMinutes(5));
 
         var reset = await _store.FindByUsernameAsync("admin1");
         Assert.Equal("hash-new", reset!.PasswordHash);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_RecordsCreatedAndUpdatedTimestamps()
+    {
+        // ADR-0021 決定 1 の切替時点検が使う値: 新規作成で両方、更新で UpdatedAtUtc のみが動く
+        // （作成時刻は保存され続ける——「いつ作られ、いつ最後に変えられたか」を提示するため）。
+        await _store.UpsertAsync("admin1", "hash-old", TestNow);
+
+        var created = await _store.FindByUsernameAsync("admin1");
+        Assert.Equal(TestNow, created!.CreatedAtUtc);
+        Assert.Equal(TestNow, created.UpdatedAtUtc);
+
+        await _store.UpsertAsync("admin1", "hash-new", TestNow.AddMinutes(5));
+
+        var updated = await _store.FindByUsernameAsync("admin1");
+        Assert.Equal(TestNow, updated!.CreatedAtUtc);
+        Assert.Equal(TestNow.AddMinutes(5), updated.UpdatedAtUtc);
     }
 
     [Fact]
@@ -88,7 +109,7 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
     [Fact]
     public async Task RecordSuccessfulLoginAsync_SetsLastLogin()
     {
-        await _store.UpsertAsync("admin1", "hash-1");
+        await _store.UpsertAsync("admin1", "hash-1", TestNow);
 
         var now = DateTimeOffset.UtcNow;
         await _store.RecordSuccessfulLoginAsync("admin1", now);
@@ -124,14 +145,18 @@ public sealed class SqliteAdminAccountStoreTests : IAsyncLifetime
         Assert.Contains("Username", columns);
         Assert.Contains("PasswordHash", columns);
         Assert.Contains("LastLoginAtUtc", columns);
+        // ADR-0021 スキーマ v3: 新規データベースの CREATE TABLE も最新形状であること
+        // （入れ忘れると新規 DB だけ列が無いまま版 3 が記録され、移行もスキップされる）。
+        Assert.Contains("CreatedAtUtc", columns);
+        Assert.Contains("UpdatedAtUtc", columns);
     }
 }
 
 /// <summary>
-/// v1（PR #217 まで。<c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> 列を持つ形）から v2
-/// （ADR-0011 決定 8）への削除マイグレーションの単体テスト。既存データベースファイルを
-/// v1 形状で直接構築し、<see cref="SqliteAdminAccountStore.InitializeAsync"/> が正しく移行することを
-/// 確認する（委任事項 2）。
+/// 既存データベースのスキーマ移行の単体テスト。v1（PR #217 まで。
+/// <c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> を持つ形）→ v2（ADR-0011 決定 8 の列削除）
+/// → v3（ADR-0021 決定 1 の時刻列追加）を、それぞれの形状のデータベースファイルを直接構築して
+/// <see cref="SqliteAdminAccountStore.InitializeAsync"/> が正しく移行することを確認する。
 /// </summary>
 public sealed class SqliteAdminAccountStoreMigrationTests : IAsyncLifetime
 {
@@ -198,6 +223,151 @@ public sealed class SqliteAdminAccountStoreMigrationTests : IAsyncLifetime
         {
             await store.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task InitializeAsync_ExistingV1Database_AlsoAppliesV3TimestampColumns()
+    {
+        // 版管理表を持たない v1 から一気に v3 まで上げる経路（移行ステップが昇順に 2 段
+        // 適用されること——ADR-0021 で ApplyMigrations 形式へ再構成した本体の回帰）。
+        await CreateLegacyV1DatabaseAsync();
+
+        var store = new SqliteAdminAccountStore(_databasePath);
+        try
+        {
+            await store.InitializeAsync();
+
+            await AssertLegacyColumnsAbsentAsync();
+            var columns = await ReadColumnNamesAsync();
+            Assert.Contains("CreatedAtUtc", columns);
+            Assert.Contains("UpdatedAtUtc", columns);
+
+            // 既存行はバックフィルしない（移行時刻で埋めると「移行日に作られた」という嘘になる）。
+            var account = await store.FindByUsernameAsync("admin1");
+            Assert.NotNull(account);
+            Assert.Null(account!.CreatedAtUtc);
+            Assert.Null(account.UpdatedAtUtc);
+        }
+        finally
+        {
+            await store.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task InitializeAsync_ExistingV2Database_AddsTimestampColumns_PreservingData()
+    {
+        await CreateV2DatabaseAsync();
+
+        var store = new SqliteAdminAccountStore(_databasePath);
+        try
+        {
+            await store.InitializeAsync();
+
+            var columns = await ReadColumnNamesAsync();
+            Assert.Contains("CreatedAtUtc", columns);
+            Assert.Contains("UpdatedAtUtc", columns);
+
+            var account = await store.FindByUsernameAsync("admin1");
+            Assert.NotNull(account);
+            Assert.Equal("v2-hash", account!.PasswordHash);
+            Assert.Null(account.CreatedAtUtc);
+            Assert.Null(account.UpdatedAtUtc);
+
+            // 移行後の更新では UpdatedAtUtc が入る（CreatedAtUtc は不明のまま——
+            // 既存行の作成時刻は復元できないため）。
+            var now = new DateTimeOffset(2026, 7, 26, 15, 0, 0, TimeSpan.Zero);
+            await store.UpsertAsync("admin1", "v3-hash", now);
+
+            var updated = await store.FindByUsernameAsync("admin1");
+            Assert.Equal(now, updated!.UpdatedAtUtc);
+            Assert.Null(updated.CreatedAtUtc);
+        }
+        finally
+        {
+            await store.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task InitializeAsync_ExistingV2Database_MigrationIsIdempotent()
+    {
+        await CreateV2DatabaseAsync();
+
+        var store = new SqliteAdminAccountStore(_databasePath);
+        try
+        {
+            await store.InitializeAsync();
+            await store.InitializeAsync();
+            await store.InitializeAsync();
+
+            var columns = await ReadColumnNamesAsync();
+            Assert.Equal(1, columns.Count(c => string.Equals(c, "CreatedAtUtc", StringComparison.Ordinal)));
+            Assert.NotNull(await store.FindByUsernameAsync("admin1"));
+        }
+        finally
+        {
+            await store.DisposeAsync();
+        }
+    }
+
+    private async Task CreateV2DatabaseAsync()
+    {
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString();
+
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using (var create = connection.CreateCommand())
+        {
+            // ADR-0011 決定 8 適用後・ADR-0021 適用前の v2 形状（版管理表に 2 を記録済み）。
+            create.CommandText =
+                """
+                CREATE TABLE AdminAccounts (
+                    UsernameNormalized TEXT PRIMARY KEY,
+                    Username TEXT NOT NULL,
+                    PasswordHash TEXT NOT NULL,
+                    LastLoginAtUtc TEXT NULL
+                );
+
+                CREATE TABLE AdminAccountsSchemaVersion (
+                    Id INTEGER PRIMARY KEY CHECK (Id = 1),
+                    Version INTEGER NOT NULL
+                );
+
+                INSERT INTO AdminAccountsSchemaVersion (Id, Version) VALUES (1, 2);
+
+                INSERT INTO AdminAccounts (UsernameNormalized, Username, PasswordHash, LastLoginAtUtc)
+                VALUES ('admin1', 'admin1', 'v2-hash', NULL);
+                """;
+            await create.ExecuteNonQueryAsync();
+        }
+    }
+
+    private async Task<List<string>> ReadColumnNamesAsync()
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString());
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(AdminAccounts);";
+        await using var reader = await command.ExecuteReaderAsync();
+
+        var columns = new List<string>();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(1));
+        }
+
+        return columns;
     }
 
     private async Task CreateLegacyV1DatabaseAsync()

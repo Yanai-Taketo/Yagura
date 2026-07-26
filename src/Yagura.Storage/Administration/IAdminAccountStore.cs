@@ -32,11 +32,22 @@ namespace Yagura.Storage.Administration;
 /// 3 つのみを扱う——「書くが判定には使わない」中間状態は選ばない（二重の真実源を作らない。
 /// ADR-0011 決定 8）。
 /// </para>
+/// <para>
+/// <b>作成・変更時刻を保持する（ADR-0021 決定 1 の切替時点検）</b>: フォワーダ MSI アップロード
+/// 機能の有効化動線は「既存アプリアカウントの有無・最終変更時刻」を管理者へ提示し、そのアカウントが
+/// 自分の管理下にあることの確認を求める（無認証 loopback で事前に仕込まれた資格情報による迂回の
+/// 検出可能性を残すため）。この提示に必要な <see cref="AdminAccountRecord.CreatedAtUtc"/>/
+/// <see cref="AdminAccountRecord.UpdatedAtUtc"/> をスキーマ v3 で追加した。**v3 より前に作成された
+/// 既存行の両列は <see langword="null"/>（= 不明）になる**——確定的な値を後から捏造しないため
+/// （UI 側は「不明」と表示する。<see cref="AdminAccountRecord.LastLoginAtUtc"/> の未ログイン =
+/// null と同じ流儀）。
+/// </para>
 /// </remarks>
 public interface IAdminAccountStore
 {
     /// <summary>スキーマを初期化する（冪等。<see cref="ILogStore.InitializeAsync"/> と同じ規約。
-    /// ADR-0011 決定 8 の削除マイグレーションを含む）。</summary>
+    /// ADR-0011 決定 8 の削除マイグレーション〔v1 → v2〕と ADR-0021 の時刻列追加〔v2 → v3〕を
+    /// 含む）。</summary>
     Task InitializeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>アプリ独自認証の管理者アカウントが 1 件でも存在するかどうか。</summary>
@@ -55,7 +66,14 @@ public interface IAdminAccountStore
     /// アカウントを作成、または既存アカウント（Phase 1 は単一アカウントのため常に同一ユーザー名）の
     /// パスワードハッシュを更新する（アップサート）。
     /// </summary>
-    Task UpsertAsync(string username, string passwordHash, CancellationToken cancellationToken = default);
+    /// <param name="atUtc">
+    /// 操作時刻（UTC）。新規作成時は <see cref="AdminAccountRecord.CreatedAtUtc"/> と
+    /// <see cref="AdminAccountRecord.UpdatedAtUtc"/> の両方に、更新時は
+    /// <see cref="AdminAccountRecord.UpdatedAtUtc"/> のみに記録する（ADR-0021 決定 1 の切替時点検が
+    /// 使う）。時刻源は呼び出し側が持つ（<see cref="RecordSuccessfulLoginAsync"/> と同じ流儀——
+    /// ストアに <c>TimeProvider</c> を持たせず、テストが時刻を決定的に固定できるようにする）。
+    /// </param>
+    Task UpsertAsync(string username, string passwordHash, DateTimeOffset atUtc, CancellationToken cancellationToken = default);
 
     /// <summary>ログイン成功を記録する（最終ログイン時刻の更新）。</summary>
     Task RecordSuccessfulLoginAsync(string username, DateTimeOffset atUtc, CancellationToken cancellationToken = default);
@@ -65,7 +83,17 @@ public interface IAdminAccountStore
 /// <param name="Username">ユーザー名（元の大小文字のまま）。</param>
 /// <param name="PasswordHash"><c>PasswordHasher&lt;TUser&gt;</c> 形式のハッシュ文字列。</param>
 /// <param name="LastLoginAtUtc">直近の成功ログイン時刻（UTC）。未ログインなら <see langword="null"/>。</param>
+/// <param name="CreatedAtUtc">
+/// アカウントの作成時刻（UTC。ADR-0021 決定 1 の切替時点検）。スキーマ v3 より前に作成された
+/// アカウントでは <see langword="null"/>（= 不明。後から確定的な値を捏造しない）。
+/// </param>
+/// <param name="UpdatedAtUtc">
+/// 直近の変更時刻（UTC。パスワード変更・ユーザー名の大小文字変更を含むアップサート）。
+/// スキーマ v3 より前に更新されたきりのアカウントでは <see langword="null"/>（= 不明）。
+/// </param>
 public sealed record AdminAccountRecord(
     string Username,
     string PasswordHash,
-    DateTimeOffset? LastLoginAtUtc);
+    DateTimeOffset? LastLoginAtUtc,
+    DateTimeOffset? CreatedAtUtc = null,
+    DateTimeOffset? UpdatedAtUtc = null);
