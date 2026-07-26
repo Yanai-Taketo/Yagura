@@ -84,6 +84,9 @@ public static class YaguraConfigurationLoader
         "Admin:Https:Enabled",
         "Admin:Https:CertificateThumbprint",
         "Admin:Https:Port",
+        // ADR-0020 決定 1。導入 PR #431 で本一覧への登録が漏れ、「未知のキーとして無視」警告と
+        // 1032 fail-closed 検証が同一起動で共存する矛盾メッセージになっていた（Issue #439）。
+        "Admin:ForwarderKit:MsiUpload:Enabled",
         "Storage:SqliteFileName",
         "Storage:Provider",
         "Storage:SqlServer:ConnectionString",

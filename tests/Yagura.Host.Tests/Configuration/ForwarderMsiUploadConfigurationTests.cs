@@ -123,6 +123,31 @@ public sealed class ForwarderMsiUploadConfigurationTests : IDisposable
     }
 
     [Fact]
+    public void Load_MsiUploadEnabledKey_IsKnown_NotReportedAsUnknown()
+    {
+        // Issue #439: 導入 PR #431 で KnownKeys への登録が漏れ、「未知のキーとして無視します」
+        // 警告と 1032 fail-closed 検証が同一起動で共存する矛盾メッセージになっていた
+        // （「無視した」と警告したキーで起動拒否する）。登録漏れの回帰検知
+        // （Load_ViewerReverseDnsEnabledKey_IsKnown と同じパターン）。
+        WriteConfigurationFile("""
+            {
+                "Admin": {
+                    "Authentication": {
+                        "App": { "Enabled": "true" },
+                        "RequireForLoopback": "true"
+                    },
+                    "ForwarderKit": { "MsiUpload": { "Enabled": "true" } }
+                }
+            }
+            """);
+        var logger = new FakeLogger();
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
+
+        Assert.Empty(result.UnknownKeys);
+    }
+
+    [Fact]
     public void Load_MsiUploadDisabled_WithoutPreconditions_DoesNotThrow()
     {
         // (iii) が無効なら前提条件の検証自体が発生しない（既定構成の非退行）。
