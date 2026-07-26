@@ -76,7 +76,10 @@ param(
     [int]$UdpPort = 514,
     [string]$ViewerBaseUrl = 'http://localhost:8514/',
 
-    [string]$OutputDir = (Join-Path $PSScriptRoot 'results'),
+    # 既定値はスクリプト本文冒頭で解決する(Issue #438: Windows PowerShell 5.1 は param 既定値式の
+    # 評価時点で $PSScriptRoot が空文字列のため、ここで Join-Path すると -File 実行が即失敗する。
+    # pwsh では発生せず CI で検出できない——素の Windows 管理者が最初に踏む形態を守る)。
+    [string]$OutputDir,
     [int]$ServiceStartTimeoutSec = 120,
     [int]$VerifyTimeoutSec = 90,
     [int]$UninstallSettleTimeoutSec = 60
@@ -84,6 +87,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# -OutputDir 既定値の解決(param ブロックのコメント参照。スクリプト本文では 5.1 でも
+# $PSScriptRoot が正しく設定される)。
+if ([string]::IsNullOrEmpty($OutputDir)) {
+    $OutputDir = Join-Path $PSScriptRoot 'results'
+}
 
 # ---------------------------------------------------------------------------
 # 共有状態
