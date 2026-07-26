@@ -123,5 +123,5 @@
             : MudBlazor.Severity.Info;
 
     private static string FormatTimestamp(DateTimeOffset? value) =>
-        value is null ? UiText.EmailNotificationHealthNever : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        value is null ? UiText.EmailNotificationHealthNever : YaguraTimeFormatter.FormatLocal(value.Value);
 }

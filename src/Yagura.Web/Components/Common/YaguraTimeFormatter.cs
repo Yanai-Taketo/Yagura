@@ -41,6 +41,39 @@ public static class YaguraTimeFormatter
     }
 
     /// <summary>
+    /// 証明書の有効期間のような<b>日付だけを見せたい範囲</b>を整形する
+    /// （例: <c>2026-07-04 〜 2027-07-04 (UTC+09:00)</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>なぜ専用のメソッドを置くのか</b>（Issue #462）: 有効期間は「何日から何日まで」で読む値であり、
+    /// 秒まで出すと桁が増えて比較しづらい。しかし画面ごとに <c>ToString("yyyy-MM-dd")</c> を書くと
+    /// ui.md §6 が禁じる「画面が独自の書式・変換を持つ」状態に戻る——**日付だけの表示も契約の側に
+    /// 引き取る**ことで、各画面から時刻整形を消し切る。
+    /// </para>
+    /// <para>
+    /// <b>オフセットは範囲全体に 1 つだけ添える</b>: 日付のみの表示でもタイムゾーンの明示は要る
+    /// （同じ瞬間でもタイムゾーンによって日付が 1 日ずれるため）。ただし両端に付けると冗長なので、
+    /// 範囲の末尾に 1 つ置く。両端でオフセットが異なる場合（夏時間を跨ぐ期間）は<b>終端側</b>を採る
+    /// ——有効期限の判断は終端を見る操作であり、そちらの現地時刻に合わせるのが読み手の意図に近い。
+    /// </para>
+    /// </remarks>
+    public static string FormatLocalDateRange(DateTimeOffset from, DateTimeOffset to) =>
+        FormatLocalDateRange(from, to, TimeZoneInfo.Local);
+
+    /// <inheritdoc cref="FormatLocalDateRange(DateTimeOffset, DateTimeOffset)"/>
+    public static string FormatLocalDateRange(DateTimeOffset from, DateTimeOffset to, TimeZoneInfo timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(timeZone);
+
+        var localFrom = TimeZoneInfo.ConvertTime(from, timeZone);
+        var localTo = TimeZoneInfo.ConvertTime(to, timeZone);
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{localFrom:yyyy-MM-dd} 〜 {localTo:yyyy-MM-dd} ({FormatOffset(localTo.Offset)})");
+    }
+
+    /// <summary>
     /// オフセットの表示形式（例: <c>UTC+09:00</c> / <c>UTC-05:00</c> / <c>UTC+00:00</c>）。
     /// </summary>
     public static string FormatOffset(TimeSpan offset)

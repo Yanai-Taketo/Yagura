@@ -141,7 +141,7 @@ else
                                     }
                                 </span>
                                 <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertIssuerLabel: @candidate.Issuer</MudText>
-                                <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertValidityLabel: @candidate.NotBefore.ToLocalTime().ToString("yyyy-MM-dd") 〜 @candidate.NotAfter.ToLocalTime().ToString("yyyy-MM-dd")</MudText>
+                                <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertValidityLabel: @YaguraTimeFormatter.FormatLocalDateRange(candidate.NotBefore, candidate.NotAfter)</MudText>
                                 <MudText Typo="Typo.body2" Style="font-family: monospace;">@UiText.AdminRemoteAccessCertThumbprintLabel: @candidate.Thumbprint</MudText>
                             </div>
                         </MudRadio>

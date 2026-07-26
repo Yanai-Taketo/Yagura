@@ -540,9 +540,18 @@
         }
     }
 
+    /// <summary>
+    /// アカウント点検の時刻表示（ui.md §6 の契約どおり <see cref="YaguraTimeFormatter"/> へ委譲する）。
+    /// </summary>
+    /// <remarks>
+    /// **UTC 生表記にしてはいけない**（Issue #462）: 本表示は「最終ログインを手がかりに、心当たりの
+    /// ないアカウントならパスワード再設定または削除を検討する」という判断材料として出している。
+    /// UTC のまま出すと、JST の管理者には 9 時間前の出来事に見え、**判断材料が判断を誤らせる**。
+    /// 画面側に残すのは「記録なし」の分岐だけで、整形は契約の実装位置に集約する。
+    /// </remarks>
     private static string FormatInventoryTimestamp(DateTimeOffset? value) =>
         value is { } at
-            ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            ? YaguraTimeFormatter.FormatLocal(at)
             : UiText.ForwarderMsiUploadEnableInventoryTimestampUnknown;
 
     /// <summary>
