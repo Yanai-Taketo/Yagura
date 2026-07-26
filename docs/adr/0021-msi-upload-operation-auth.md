@@ -1,6 +1,6 @@
 # ADR-0021: フォワーダ MSI アップロードの前提条件の変更 — RequireForLoopback 必須からアップロード操作単位の実認証必須へ
 
-- 状態: proposed
+- 状態: accepted（2026-07-26 マージ = PR #445。ペルソナレビュー round 1 = 5 件・変更部分再レビュー round 2 = 3 件を同 PR で実施）
 - 日付: 2026-07-26
 - 決定者: YANAI Taketo
 - 関連: [ADR-0020](0020-forwarder-msi-upload.md)（決定 1 の有効化条件 (ii) = 本 ADR の部分 supersession 対象）/ [ADR-0010](0010-admin-ui-authentication.md)（決定 1 の loopback 認証 opt-in と復旧経路の代償）/ [ADR-0013](0013-admin-winauth-session.md)（Cookie/circuit ログインフロー——操作単位認可の実装基盤）/ [ADR-0011](0011-app-auth-failure-backoff.md)（失敗試行対策の loopback 除外）/ [ADR-0001](0001-project-founding.md)（「Windows 管理者が GUI で完結」の思想）/ [Issue #440](https://github.com/Yanai-Taketo/Yagura/issues/440)（起案元。lab 受け入れ初回実施の体験記録）/ Issue #283（ADR-0020 の再起案元。loopback 到達主体の実機棚卸し）/ [security.md](../design/security.md) §5.1.1 / [configuration.md](../design/configuration.md) §8
