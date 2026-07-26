@@ -117,6 +117,10 @@ $script:OptOutUninstallCompleted = $false
 # 新版へのアップグレード → アンインストール、の 3 トランザクションを跨ぐため独立に追う。
 $script:UpgradeInstallCompleted = $false
 $script:UpgradeUninstallCompleted = $false
+# 手順 9b(受け入れ基準⑤の異常系)。失敗した側に残るのは**旧版**であるため、
+# 後片付けの対象 MSI が手順 9 と異なる——独立に追う。
+$script:UpgradeFailInstallCompleted = $false
+$script:UpgradeFailUninstallCompleted = $false
 $script:StartedUtc = [DateTime]::UtcNow
 
 if ($DryRun) { $script:Mode = 'DryRun' }
@@ -1029,6 +1033,7 @@ try {
         }
         elseif ($DryRun) {
             Add-SkippedStep -Name 'upgrade-from-previous-version' -Reason ('dry-run: would install "{0}", upgrade with "{1}", then assert the service is still Running, exactly one product remains, and ingestion still works' -f $UpgradeFromMsiPath, $MsiPath)
+            Add-SkippedStep -Name 'upgrade-failure-product-survives' -Reason 'dry-run: would sabotage the upgrade (nonexistent gMSA-shaped service account) and assert the old product survives, its service is Running, ingestion continues, and the data root ACL was restored (ADR-0023 acceptance criterion 5)'
         }
         else {
             [void](Invoke-E2EStep -Name 'upgrade-install-previous' -Action {
@@ -1117,6 +1122,137 @@ try {
                 $script:UpgradeUninstallCompleted = $true
                 return 'uninstalled after the upgrade scenario'
             })
+
+            # ---------------------------------------------------------------
+            # 9b. アップグレードの**失敗**で製品が消えないこと(ADR-0023 受け入れ基準⑤)
+            #
+            #     Issue #467 現象 A の本体はここ——既定スケジュールでは旧製品が先に削除
+            #     されるため、新製品側の起動段が失敗すると Yagura が 1 つも残らない。
+            #     afterInstallExecute では削除がトランザクション内に留まるため、
+            #     **全体がロールバックされて旧製品が残る**はずである。
+            #
+            #     失敗のさせ方(ADR-0023「DB を止めずにサービス起動を意図的に失敗させる細工」):
+            #     実在しない gMSA 形式のアカウントを YAGURA_SERVICE_ACCOUNT に渡す。
+            #       - ValidateYaguraServiceAccount は「\ を含み $ で終わる」形式を通すため、
+            #         起動前の静的検証では落ちない(= 起動段まで到達する)
+            #       - AD も SQL Server も要らない(fork からの PR でも自己確認できる)
+            #       - **データルートには一切触れない**ため、ロールバック後の旧サービスは
+            #         元の構成のまま起動できる。設定ファイルを壊す細工だと旧サービスも
+            #         道連れになり、「旧版が動いたまま」を確認できない
+            #     この細工は ACL 付替 CA(Return="check")または StartServices のいずれかで
+            #     失敗する。どちらでも「InstallServices より後の失敗」であり基準⑤の意図を満たす。
+            #
+            #     副次的な収穫: この経路は**実 MSI のロールバック**を通るため、ADR-0023 決定 3
+            #     のロールバック CA が本当に ACL を戻すかを CI で観測できる(lab 受け入れ基準⑧の
+            #     一部を CI 側へ前倒しする)。
+            # ---------------------------------------------------------------
+            [void](Invoke-E2EStep -Name 'upgrade-failure-install-previous' -Action {
+                if ($null -ne (Get-YaguraService)) {
+                    throw 'service "Yagura" still exists after the successful-upgrade scenario cleanup; aborting'
+                }
+                $oldFull = (Resolve-Path -Path $UpgradeFromMsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-upgradefail-install-previous.log'
+                [void](Invoke-Msiexec -ArgumentString ('/i "{0}" /qn /norestart /l*v "{1}"' -f $oldFull, $msiLog) -Description 'install of the previous version (failure scenario)')
+                $script:UpgradeFailInstallCompleted = $true
+                $running = Wait-E2ECondition -TimeoutSec $ServiceStartTimeoutSec -Probe {
+                    $svc = Get-YaguraService
+                    ($null -ne $svc -and $svc.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running)
+                }
+                if (-not $running) {
+                    throw ('previous version did not reach Running within {0}s' -f $ServiceStartTimeoutSec)
+                }
+                return 'previous version installed and Running (failure scenario baseline)'
+            })
+
+            $script:UpgradeFailBaselineCodes = @(Get-InstalledYaguraProductCode)
+
+            [void](Invoke-E2EStep -Name 'upgrade-failure-attempt' -Action {
+                $newFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-upgradefail-attempt.log'
+                # Invoke-Msiexec は成功前提のため使わない——ここは「失敗すること」が期待値。
+                $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/i "{0}" /qn /norestart YAGURA_SERVICE_ACCOUNT=YAGURAE2E\nosuchgmsa$ /l*v "{1}"' -f $newFull, $msiLog) -Wait -PassThru
+                if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+                    # 想定外に成功した = 細工が効いていない。ここで止めないと以降の
+                    # アサーションが「旧製品が残った」を誤って報告する。
+                    throw ('the sabotaged upgrade unexpectedly succeeded (exit code {0}) - the failure injection no longer works, so acceptance criterion 5 is not being tested' -f $proc.ExitCode)
+                }
+                return ('sabotaged upgrade failed as expected (msiexec exit code {0}, log: msiexec-upgradefail-attempt.log)' -f $proc.ExitCode)
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-failure-product-survives' -Action {
+                # Issue #467 現象 A の回帰検査。既定スケジュールへ戻ると製品が 0 件になる。
+                $codes = @(Get-InstalledYaguraProductCode)
+                if ($codes.Count -eq 0) {
+                    throw 'no Yagura product remains after the failed upgrade - this is exactly Issue #467 symptom A (MajorUpgrade removed the old product before the new one failed)'
+                }
+                if ($codes.Count -ne 1) {
+                    throw ('expected exactly 1 product after the failed upgrade, found {0}: {1}' -f $codes.Count, ($codes -join ', '))
+                }
+                $baseline = @($script:UpgradeFailBaselineCodes)
+                if ($baseline.Count -eq 1 -and $codes[0] -ne $baseline[0]) {
+                    throw ('the surviving product is not the original one (before: {0}, after: {1})' -f $baseline[0], $codes[0])
+                }
+                return ('the original product survived the failed upgrade ({0})' -f $codes[0])
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-failure-service-still-running' -Action {
+                # 合格条件は「一覧にエントリが残る」ではない(佐藤の質問 2)——
+                # 旧版のサービスが動いていなければ受信は止まったままである。
+                $svc = Get-YaguraService
+                if ($null -eq $svc) {
+                    throw 'service "Yagura" does not exist after the failed upgrade - the product entry may remain but the server is gone'
+                }
+                $running = Wait-E2ECondition -TimeoutSec $ServiceStartTimeoutSec -Probe {
+                    $s = Get-YaguraService
+                    ($null -ne $s -and $s.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running)
+                }
+                if (-not $running) {
+                    $svc = Get-YaguraService
+                    throw ('service "Yagura" is not Running after the failed upgrade (state: {0}) - rollback did not restore the previous version to service' -f [string]$svc.Status)
+                }
+                return 'the previous version service is Running again after the rolled-back upgrade'
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-failure-ingestion-continues' -Action {
+                $token = $script:RunId + 'UPGFAIL'
+                $message = ('<134>yagura-e2e-upgradefail {0}' -f $token)
+                $script:UpgradeFailSendCount = 0
+                $found = Wait-E2ECondition -TimeoutSec $VerifyTimeoutSec -IntervalMs 500 -Probe {
+                    Send-SyslogDatagram -Port $UdpPort -Message $message
+                    $script:UpgradeFailSendCount++
+                    Start-Sleep -Milliseconds 300
+                    Test-ViewerContainsToken -BaseUrl $ViewerBaseUrl -Token $token
+                }
+                if (-not $found) {
+                    throw ('token {0} did not appear within {1}s after the failed upgrade - ingestion did not resume' -f $token, $VerifyTimeoutSec)
+                }
+                return ('ingestion still works after the failed upgrade (token {0}, {1} datagram(s))' -f $token, $script:UpgradeFailSendCount)
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-failure-acl-restored' -Action {
+                # ADR-0023 決定 3 のロールバック CA を**実 MSI のロールバック経路上で**観測する
+                # (lab 受け入れ基準⑧の一部を CI へ前倒し)。細工したアカウントは実在しないため
+                # 名前としては ACL に現れないが、仮想 SA の ACE が失われていないことは見られる
+                # ——現象 B はまさに「仮想 SA の ACE を失う」形で再インストール不能になる。
+                $lines = @(& icacls $script:DataRoot 2>$null)
+                $serviceLine = @($lines | Where-Object { $_ -match 'NT SERVICE\\Yagura' -or $_ -match 'S-1-5-80-' })
+                if ($serviceLine.Count -eq 0) {
+                    throw ('the virtual service account ACE is missing from {0} after the rolled-back upgrade - this is Issue #467 symptom B (the data root would be unreadable and reinstall would fail). icacls: {1}' -f $script:DataRoot, ($lines -join ' | '))
+                }
+                if ($serviceLine -notmatch '\(M\)' -and $serviceLine -notmatch '\(F\)') {
+                    throw ('the virtual service account no longer has modify on {0} after the rolled-back upgrade: {1}' -f $script:DataRoot, ($serviceLine -join ' | '))
+                }
+                return ('data root ACL still grants the virtual service account modify after the rolled-back upgrade: {0}' -f ($serviceLine -join ' | '))
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-failure-cleanup' -Action {
+                # 残っているのは**旧版**であるため、旧版 MSI でアンインストールする。
+                $oldFull = (Resolve-Path -Path $UpgradeFromMsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-upgradefail-cleanup.log'
+                [void](Invoke-Msiexec -ArgumentString ('/x "{0}" /qn /norestart /l*v "{1}"' -f $oldFull, $msiLog) -Description 'uninstall after the failed-upgrade scenario')
+                $script:UpgradeFailUninstallCompleted = $true
+                return 'uninstalled after the failed-upgrade scenario'
+            })
         }
     }
 }
@@ -1146,7 +1282,8 @@ finally {
     # 消えなければ旧版でも試す。
     $leftoverInstall = ($script:InstallCompleted -and -not $script:UninstallCompleted) -or
         ($script:OptOutInstallCompleted -and -not $script:OptOutUninstallCompleted) -or
-        ($script:UpgradeInstallCompleted -and -not $script:UpgradeUninstallCompleted)
+        ($script:UpgradeInstallCompleted -and -not $script:UpgradeUninstallCompleted) -or
+        ($script:UpgradeFailInstallCompleted -and -not $script:UpgradeFailUninstallCompleted)
     if ($leftoverInstall) {
         try {
             Write-E2ELog 'cleanup: attempting uninstall of leftover install'
@@ -1164,7 +1301,8 @@ finally {
             # アップグレード検証(手順 9)が旧版インストール直後に落ちた場合、残っているのは
             # 旧版であり、上の /x(新版 MSI)は ProductCode 不一致で何も消せない。旧版 MSI でも
             # 試す(ベストエフォート。結果は合否に含めない)。
-            if ($script:UpgradeInstallCompleted -and -not $script:UpgradeUninstallCompleted -and
+            if ((($script:UpgradeInstallCompleted -and -not $script:UpgradeUninstallCompleted) -or
+                 ($script:UpgradeFailInstallCompleted -and -not $script:UpgradeFailUninstallCompleted)) -and
                 -not [string]::IsNullOrWhiteSpace($UpgradeFromMsiPath) -and (Test-Path -Path $UpgradeFromMsiPath)) {
                 $oldFull = (Resolve-Path -Path $UpgradeFromMsiPath).Path
                 $oldLog = Join-Path $OutputDir 'msiexec-cleanup-uninstall-previous.log'

@@ -113,6 +113,28 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 **参照カウントが版間で保たれるか**であり、版番号以外を変えないほうが判定が鋭くなる
 （GUID の版間安定性そのものは ADR-0023 委任 2 の実測で別途確認済み）。
 
+さらに**アップグレードが失敗したときに製品が消えないこと**（受け入れ基準⑤。Issue #467 現象 A の
+本体）も同じ `-UpgradeFromMsiPath` で検証する:
+
+| ステップ | 何を見るか |
+|---|---|
+| `upgrade-failure-attempt` | 細工したアップグレードが**失敗すること**（成功したら細工が効いていない = 基準⑤を検査できていないため、その場で落とす） |
+| `upgrade-failure-product-survives` | **製品が 0 件にならない**こと、かつ残ったのが元の ProductCode であること |
+| `upgrade-failure-service-still-running` | **旧版のサービスが Running に戻っていること**（「一覧にエントリが残る」では不十分——佐藤の質問 2） |
+| `upgrade-failure-ingestion-continues` | 失敗したアップグレードの後も**実際に受信できる**こと |
+| `upgrade-failure-acl-restored` | データルートの仮想 SA の ACE が残っていること（現象 B の回帰検査） |
+
+**失敗のさせ方**: 実在しない gMSA 形式のアカウント（`YAGURAE2E\nosuchgmsa$`）を
+`YAGURA_SERVICE_ACCOUNT` に渡す。`ValidateYaguraServiceAccount` は「`\` を含み `$` で終わる」
+形式を通すため静的検証では落ちず、**`InstallServices` より後**（ACL 付替 CA または
+`StartServices`）で失敗する。AD も SQL Server も要らないため fork からの PR でも自己確認できる。
+**データルートには一切触れない**のが要点——設定ファイルを壊す細工だと旧サービスも道連れになり、
+「旧版が動いたまま」を確認できない。
+
+この経路は**実 MSI のロールバック**を通るため、ADR-0023 決定 3 のロールバック CA が実際に ACL を
+戻すかを CI で観測できる（lab 受け入れ基準⑧の一部を CI 側へ前倒ししている。ただし gMSA 実環境での
+ACE 集合一致の確認は引き続き lab の管轄）。
+
 `-UpgradeFromMsiPath` を省略するとこれらは丸ごとスキップされる（2 本ビルドできない環境でも
 既存フローが動く）。**CI では省略を許さない**——workflow 側が 2 本目の MSI を見つけられない
 場合に明示的に落とす（黙ってスキップして緑になる経路を残さない）。
