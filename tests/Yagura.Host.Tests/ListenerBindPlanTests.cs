@@ -127,11 +127,62 @@ public sealed class ListenerBindPlanTests
         Assert.True(remoteEntry.Port > 0, "OS 採番(0)指定でも具体ポートへ解決されること。");
     }
 
+    [Theory]
+    [InlineData(ViewerHttpsMode.Enabled)]
+    [InlineData(ViewerHttpsMode.SuppressListener)]
+    public void Create_ViewerHttpsNotDisabled_ViewerEntriesRequireHttps(ViewerHttpsMode mode)
+    {
+        // ADR-0022 決定 1・2: HTTPS opt-in（Enabled）と設定の静的な不成立（SuppressListener）の
+        // いずれでも、閲覧エントリは requiresHttps を立てて返す——平文で開いてよいのは Disabled の
+        // ときだけ。実際に開くかどうか（SuppressListener・証明書解決失敗はスキップ = 縮小継続）は
+        // Program 側の判断（管理リモート HTTPS と同じ分担）。
+        var configuration = CreateConfiguration(
+            ViewerPublicAccess.Lan, adminHttpPort: 8515, viewerHttpsMode: mode);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        var viewerEntry = Assert.Single(entries, e => e.Kind == ListenerKind.Viewer);
+        Assert.True(viewerEntry.RequiresHttps);
+        Assert.Equal(8514, viewerEntry.Port);
+
+        // 管理リスナの loopback 面は影響を受けない（HTTPS 対象外のまま——ADR-0010 決定 4）。
+        Assert.All(
+            entries.Where(e => e.Kind == ListenerKind.Admin),
+            e => Assert.False(e.RequiresHttps));
+    }
+
+    [Fact]
+    public void Create_ViewerHttpsEnabledWithLocalhostOnly_BothLoopbackEntriesRequireHttps()
+    {
+        // HTTPS は公開範囲と直交（ADR-0022 決定 5）——LocalhostOnly でも両系統に適用される。
+        var configuration = CreateConfiguration(
+            ViewerPublicAccess.LocalhostOnly, adminHttpPort: 8515, viewerHttpsMode: ViewerHttpsMode.Enabled);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        var viewerEntries = entries.Where(e => e.Kind == ListenerKind.Viewer).ToList();
+        Assert.Equal(2, viewerEntries.Count);
+        Assert.All(viewerEntries, e => Assert.True(e.RequiresHttps));
+    }
+
+    [Fact]
+    public void Create_ViewerHttpsDisabled_ViewerEntryIsPlaintext()
+    {
+        var configuration = CreateConfiguration(
+            ViewerPublicAccess.Lan, adminHttpPort: 8515, viewerHttpsMode: ViewerHttpsMode.Disabled);
+
+        var entries = ListenerBindPlan.Create(configuration);
+
+        var viewerEntry = Assert.Single(entries, e => e.Kind == ListenerKind.Viewer);
+        Assert.False(viewerEntry.RequiresHttps);
+    }
+
     private static ResolvedYaguraConfiguration CreateConfiguration(
         ViewerPublicAccess viewerPublicAccess,
         int adminHttpPort,
         bool adminRemoteBindingEnabled = false,
-        int adminHttpsPort = 8516) =>
+        int adminHttpsPort = 8516,
+        ViewerHttpsMode viewerHttpsMode = ViewerHttpsMode.Disabled) =>
         new(
             DataRoot: Path.GetTempPath(),
             UdpBindAddress: "0.0.0.0",
@@ -172,5 +223,12 @@ public sealed class ListenerBindPlanTests
             FlowControlEnabled: true,
             FlowControlMessagesPerSecond: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultMessagesPerSecond,
             FlowControlBurstSize: Yagura.Ingestion.FlowControl.TokenBucketIngressGate.DefaultBurstSize,
-            AuditRetentionDays: 365);
+            AuditRetentionDays: 365)
+        {
+            ViewerHttpsMode = viewerHttpsMode,
+            ViewerHttpsCertificateThumbprint =
+                viewerHttpsMode == ViewerHttpsMode.Enabled ? new string('B', 40) : null,
+            ViewerHttpsSuppressedReason =
+                viewerHttpsMode == ViewerHttpsMode.SuppressListener ? "テスト用の不成立理由" : null,
+        };
 }

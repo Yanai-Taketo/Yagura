@@ -156,4 +156,28 @@ public static class ConfigurationEventIds
     /// </summary>
     public static readonly EventId ForwarderMsiUploadFailClosedStartupRejected =
         new(1032, "ForwarderMsiUploadFailClosedStartupRejected");
+
+    /// <summary>
+    /// 閲覧 UI の HTTPS（<c>Viewer:Https:Enabled</c>。ADR-0022。opt-in）が構成されているのに
+    /// 閲覧リスナを HTTPS で開けない場合の起動時警告（縮小継続——起動は中止しない）。対象は
+    /// ①証明書ストア参照の失敗（証明書が見つからない・秘密鍵にアクセスできない・既に期限切れ）と
+    /// ②設定の静的な不成立（拇印が未設定・形式不正、または <c>Enabled</c> が真偽値として不正
+    /// かつ拇印設定済み——<see cref="ViewerHttpsMode.SuppressListener"/>）の両方。
+    /// <b>閲覧リスナ（既定 8514）は平文 HTTP では開かず、このリスナだけを開かない</b>
+    /// （ADR-0022 決定 2——受信・解析・保存・スプール・管理リスナは一切影響を受けない。
+    /// 閲覧系ルートは管理リスナ（loopback）に同居しているため、サーバ上の閲覧・証明書差し替え・
+    /// HTTPS 無効化は引き続き可能）。
+    /// レベルは警告——LAN からの閲覧は止まるが、機能停止ではなく opt-in 面の縮退であり、
+    /// 復旧動線（loopback 管理面）が構造的に残るため <see cref="AdminHttpsCertificateUnavailableAtStartup"/>
+    /// （1013）・<see cref="IngestionTlsCertificateUnavailableAtStartup"/>（1016）と同区分とする
+    /// （ADR-0022 委任 1 の吟味——「機能停止を伴う事象はエラー」原則との照合の結論。
+    /// 稼働中の継続的な可視化は 1018 同型の周期監視——実装は通知段——が担い、本 ID は起動時の
+    /// 1 回に限る）。
+    /// </summary>
+    /// <remarks>
+    /// 採番の経緯: 1033・1034 は ActiveNotificationEventIds 側（フォワーダ MSI 配置フォルダの
+    /// ACL 検査。ADR-0020 決定 2）が使用済みのため、additive-only 規約に従い次の 1035 を採る。
+    /// </remarks>
+    public static readonly EventId ViewerHttpsCertificateUnavailableAtStartup =
+        new(1035, "ViewerHttpsCertificateUnavailableAtStartup");
 }

@@ -196,6 +196,34 @@ public sealed record ResolvedYaguraConfiguration(
     public bool IngestionTlsBindAddressIsExplicit { get; init; }
 
     /// <summary>
+    /// 閲覧 UI の HTTPS（ADR-0022。opt-in）の解決済み動作モード（既定
+    /// <see cref="Configuration.ViewerHttpsMode.Disabled"/> = 従来どおり平文 HTTP）。
+    /// <see cref="Configuration.ViewerHttpsMode.Enabled"/> のとき、閲覧リスナ
+    /// （<see cref="HttpPort"/>）は同一ポートのまま HTTPS で listen する（決定 1——ポートキーは
+    /// 増やさない）。<see cref="Configuration.ViewerHttpsMode.SuppressListener"/> のとき、閲覧リスナは
+    /// 開かずに縮小継続する（決定 2——平文 HTTP では開かない。理由は
+    /// <see cref="ViewerHttpsSuppressedReason"/>）。
+    /// </summary>
+    public ViewerHttpsMode ViewerHttpsMode { get; init; } = ViewerHttpsMode.Disabled;
+
+    /// <summary>
+    /// 閲覧 UI の HTTPS 証明書拇印（正規化済み・大文字 16 進 40 桁。未設定/不正形式は
+    /// <see langword="null"/>）。<see cref="ViewerHttpsMode"/> が
+    /// <see cref="Configuration.ViewerHttpsMode.Enabled"/> のときは常に非 null（形式検証は
+    /// <see cref="YaguraConfigurationLoader"/> が済ませている）。実際に証明書ストアで解決できるか
+    /// （存在・秘密鍵アクセス可否・有効期間内か）は静的検証の対象外——解決できない場合は
+    /// 閲覧リスナのみ縮小継続する（Program 側の判断。<c>Admin:Https:CertificateThumbprint</c> と同型）。
+    /// </summary>
+    public string? ViewerHttpsCertificateThumbprint { get; init; }
+
+    /// <summary>
+    /// <see cref="ViewerHttpsMode"/> が <see cref="Configuration.ViewerHttpsMode.SuppressListener"/> の
+    /// 理由（起動時警告——<see cref="ConfigurationEventIds.ViewerHttpsCertificateUnavailableAtStartup"/>——の
+    /// 本文に使う。他のモードでは <see langword="null"/>）。
+    /// </summary>
+    public string? ViewerHttpsSuppressedReason { get; init; }
+
+    /// <summary>
     /// メール通知（ADR-0017。opt-in）の検証済み設定。<see langword="null"/> は「送らない」
     /// （明示的な無効化・未設定、および構成不備による縮退のいずれも含む——区別は警告一覧
     /// 〔<see cref="ConfigurationLoadResult.Warnings"/>〕側に現れる）。

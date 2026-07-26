@@ -196,6 +196,17 @@ public static class AuditEventIds
     /// </summary>
     public static readonly EventId ForwarderMsiDeleted = new(2027, "ForwarderMsiDeleted");
 
+    /// <summary>
+    /// 閲覧 UI HTTPS（ADR-0022。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ付与した
+    /// （configuration.md §6「付与は監査記録の対象とする」。
+    /// <see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/>（2009）・
+    /// <see cref="IngestionTlsCertificatePrivateKeyAccessGranted"/>（2010）と同型。付与対象・拇印を
+    /// 記録し秘密鍵そのものは記録しない）。レベルは情報。
+    /// 採番: 2000 番台の次の空き番号 2028（2026・2027 はフォワーダ MSI 配置・削除が使用済み）。
+    /// </summary>
+    public static readonly EventId ViewerHttpsCertificatePrivateKeyAccessGranted =
+        new(2028, "ViewerHttpsCertificatePrivateKeyAccessGranted");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

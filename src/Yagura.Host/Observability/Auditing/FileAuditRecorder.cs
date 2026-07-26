@@ -279,6 +279,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.AdminLoginSucceeded => AuditEventIds.AdminLoginSucceeded,
         AuditEventKind.AdminAuthorizationDenied => AuditEventIds.AdminAuthorizationDenied,
         AuditEventKind.AdminHttpsCertificatePrivateKeyAccessGranted => AuditEventIds.AdminHttpsCertificatePrivateKeyAccessGranted,
+        AuditEventKind.ViewerHttpsCertificatePrivateKeyAccessGranted => AuditEventIds.ViewerHttpsCertificatePrivateKeyAccessGranted,
         AuditEventKind.IngestionTlsCertificatePrivateKeyAccessGranted => AuditEventIds.IngestionTlsCertificatePrivateKeyAccessGranted,
         AuditEventKind.AdminRemoteBindingConfigured => AuditEventIds.AdminRemoteBindingConfigured,
         AuditEventKind.AdminHttpsCertificateConfigured => AuditEventIds.AdminHttpsCertificateConfigured,

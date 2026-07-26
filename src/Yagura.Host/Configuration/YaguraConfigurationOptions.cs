@@ -171,6 +171,38 @@ public sealed class YaguraConfigurationOptions
         /// </summary>
         public AuthenticationOptions? Authentication { get; set; }
 
+        /// <summary>
+        /// 閲覧 UI の HTTPS（ADR-0022。opt-in。既定は現状維持——平文 HTTP）。有効化すると
+        /// 閲覧リスナ（<see cref="HttpPort"/>。既定 8514）が同一ポートのまま HTTPS で listen する
+        /// （ポートキーは増やさない——ADR-0022 決定 1）。設定キーは管理リスナのリモート HTTPS
+        /// （<c>Admin:Https:*</c>）・TLS 受信（<c>Ingestion:Tls:*</c>）とは独立——暗黙の連動をしない
+        /// （configuration.md §6。同一証明書の流用は両方のキーに指定することで実現する）。
+        /// 閲覧 UI 認証（<see cref="Authentication"/>）とも独立に有効化できる（ADR-0022 決定 5——
+        /// 連動強制はしない）。
+        /// </summary>
+        public HttpsOptions? Https { get; set; }
+
+        public sealed class HttpsOptions
+        {
+            /// <summary>
+            /// 閲覧 UI の HTTPS を有効化する（既定 <c>false</c>）。不正値の縮退は条件分岐
+            /// （ADR-0022 決定 1）: <see cref="CertificateThumbprint"/> が設定済み（= HTTPS を
+            /// 意図した証跡がある）なら平文（無効）へは倒さず閲覧リスナを開かない縮小継続、
+            /// 拇印も未設定なら無効 + 警告（<c>Notification:Email:Smtp:Security</c> と同じ
+            /// 「暗号化の意図を黙って外さない」判断）。
+            /// </summary>
+            public string? Enabled { get; set; }
+
+            /// <summary>
+            /// Windows 証明書ストア（ローカルコンピューター・<c>My</c>）内の証明書を選択する拇印
+            /// （SHA-1、40 桁の 16 進表記。configuration.md §6——PFX パス + パスワード方式は
+            /// 採らない）。空白・区切り文字は正規化して比較する。<see cref="Enabled"/> が有効なのに
+            /// 未設定・不正形式・ストアで解決不能の場合、閲覧リスナは開かずに縮小継続する
+            /// （ADR-0022 決定 2——平文 HTTP では開かない。受信・管理リスナは影響を受けない）。
+            /// </summary>
+            public string? CertificateThumbprint { get; set; }
+        }
+
         public sealed class ReverseDnsOptions
         {
             /// <summary>

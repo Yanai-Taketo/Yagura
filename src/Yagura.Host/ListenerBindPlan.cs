@@ -40,9 +40,17 @@ public static class ListenerBindPlan
 
         var entries = new List<ListenerBindEntry>();
 
+        // 閲覧 UI の HTTPS（ADR-0022 決定 1）: 同一ポート（Viewer:HttpPort）のまま HTTPS へ
+        // 切り替える——ポートは増やさない。Disabled 以外（Enabled / SuppressListener）の閲覧
+        // エントリは requiresHttps を立て、実際に開くかどうかは呼び出し元（Program）が証明書
+        // 解決の成否（SuppressListener は設定の静的な不成立として常に不成立）で判断する
+        // （管理リスナのリモート HTTPS と同じ縮小継続の分担——本メソッドは常にエントリを返す）。
+        // 平文で開いてよいのは Disabled のときだけ（決定 2「平文へは決して落ちない」）。
+        var viewerRequiresHttps = configuration.ViewerHttpsMode != ViewerHttpsMode.Disabled;
+
         if (configuration.ViewerPublicAccess == ViewerPublicAccess.Lan)
         {
-            entries.Add(ListenerBindEntry.AnyIP(ListenerKind.Viewer, configuration.HttpPort));
+            entries.Add(ListenerBindEntry.AnyIP(ListenerKind.Viewer, configuration.HttpPort, viewerRequiresHttps));
         }
         else
         {
@@ -52,9 +60,10 @@ public static class ListenerBindPlan
             // それぞれ別々のエフェメラルポートを採番し得る(bind(0) はソケットごとに独立——
             // 2 回の呼び出しが同じポートになる保証は POSIX/Winsock のいずれにもない)。
             // 事前に 1 回だけポートを予約し、その具体値を両系統へ渡すことで一致させる。
+            // HTTPS は公開範囲と直交（ADR-0022 決定 5）——LocalhostOnly でも同様に適用する。
             var port = ResolvePortForDualStackLoopback(configuration.HttpPort);
-            entries.Add(ListenerBindEntry.Specific(ListenerKind.Viewer, IPAddress.Loopback, port));
-            entries.Add(ListenerBindEntry.Specific(ListenerKind.Viewer, IPAddress.IPv6Loopback, port));
+            entries.Add(ListenerBindEntry.Specific(ListenerKind.Viewer, IPAddress.Loopback, port, viewerRequiresHttps));
+            entries.Add(ListenerBindEntry.Specific(ListenerKind.Viewer, IPAddress.IPv6Loopback, port, viewerRequiresHttps));
         }
 
         // 管理リスナ: 設定値（ViewerPublicAccess 等）に一切依存せず、常に loopback の両系統を
@@ -170,10 +179,14 @@ public sealed record ListenerBindEntry
     public bool IsAnyIP { get; }
 
     /// <summary>
-    /// <see langword="true"/> の場合、このエントリは HTTPS 必須（ADR-0010 Phase 2 決定 4。
-    /// 管理リスナのリモートバインド面）。呼び出し側（<c>Program</c>）は証明書を解決できた場合のみ
+    /// <see langword="true"/> の場合、このエントリは HTTPS 必須。対象は 2 面:
+    /// 管理リスナのリモートバインド面（ADR-0010 Phase 2 決定 4）と、閲覧リスナの HTTPS opt-in
+    /// （ADR-0022 決定 1——<see cref="ViewerHttpsMode"/> が <c>Disabled</c> 以外）。
+    /// 呼び出し側（<c>Program</c>）は当該面（<see cref="Kind"/>）の証明書を解決できた場合のみ
     /// <c>UseHttps</c> 付きで bind し、解決できなければこのエントリを縮小継続としてスキップする
-    /// （<see cref="ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup"/>）。
+    /// （管理面 = <see cref="ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup"/>、
+    /// 閲覧面 = <see cref="ConfigurationEventIds.ViewerHttpsCertificateUnavailableAtStartup"/>。
+    /// 閲覧面は平文 HTTP へ落とさない——ADR-0022 決定 2）。
     /// </summary>
     public bool RequiresHttps { get; }
 
