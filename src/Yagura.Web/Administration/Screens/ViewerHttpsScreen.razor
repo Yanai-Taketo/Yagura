@@ -1,0 +1,385 @@
+@page "/admin/viewer-https"
+@namespace Yagura.Web.Administration.Screens
+@layout AdminScreenLayout
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Administration
+@using Yagura.Web.Circuits
+@inject IViewerHttpsAdminService ViewerHttpsAdminService
+@inject ICertificateStoreReader CertificateStoreReader
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+@inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
+@inject IConfigurationReloadService ReloadService
+
+@*
+    閲覧 UI の HTTPS 設定画面（ADR-0022 決定 3・4・6・9・10。Issue #455 段階 ②）。
+
+    - 証明書設定の 3 画面目（管理リモート HTTPS /admin/remote-access・TLS 受信 /admin/ingestion-tls）。
+      相互リンクを置き、見出し・説明文で用途を書き分ける（「LAN のブラウザ → Yagura の閲覧用」）
+    - 対象は Viewer:Https:Enabled / :CertificateThumbprint の 2 キーのみ。ポートは増えない
+      （8514 同一ポート切替——決定 1）
+    - 検証ポリシー（決定 3・4）: 期限切れ・秘密鍵読取不可・EKU 不適合は保存拒否（管理 HTTPS と
+      同じ停止面の扱い。TLS 受信との差分理由も表示する）。SAN ホスト名不整合のみ「警告して通す」
+      ——検査結果と「警告なしになる見込みの URL」を具体的に提示し、保存後も確認できる
+    - 決定 6: 有効化の保存時に (a) 反映は再起動後 (b) 新 URL (c) 旧 URL 断絶の周知依頼
+      (d) メール通知無効時の指摘、を案内する
+    - 決定 9: 管理リモート HTTPS の拇印の明示コピー（転写のみ・連動なし・検証はバイパスしない）
+    - 反映は再起動（決定 1 の受信断レール）。保存後に自動再読み込みで再起動待ちカードへ計上する
+      （TLS 受信画面と同じ経路）
+*@
+<PageTitle>@UiText.ViewerHttpsTitle - Yagura</PageTitle>
+
+<MudText Typo="Typo.h5">@UiText.ViewerHttpsTitle</MudText>
+<MudText Typo="Typo.body2" Class="mt-1">@UiText.ViewerHttpsIntro</MudText>
+<MudText Typo="Typo.caption" Class="mt-1">
+    @UiText.ViewerHttpsOtherScreensNote
+    <MudLink Href="/admin/remote-access" Typo="Typo.caption">@UiText.AdminRemoteAccessTitle</MudLink>
+    ・
+    <MudLink Href="/admin/ingestion-tls" Typo="Typo.caption">@UiText.IngestionTlsTitle</MudLink>
+</MudText>
+
+@if (_status is null)
+{
+    <MudText>@UiText.AdminScreenAccessChecking</MudText>
+}
+else
+{
+    @* 現在の状態（永続値。GetStatusAsync 由来） *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.ViewerHttpsStatusTitle</MudText>
+        <MudSimpleTable Dense="true" Class="mt-2" Elevation="0">
+            <tbody>
+                <tr>
+                    <td>@UiText.ViewerHttpsStatusEnabled</td>
+                    <td>@(_status.Enabled ? UiText.AdminRemoteAccessStatusEnabled : UiText.AdminRemoteAccessStatusDisabled)</td>
+                </tr>
+                <tr>
+                    <td>@UiText.ViewerHttpsStatusThumbprint</td>
+                    <td style="font-family: monospace;">@(_status.CertificateThumbprint ?? UiText.AdminRemoteAccessStatusNotSet)</td>
+                </tr>
+                <tr>
+                    <td>@UiText.ViewerHttpsStatusPort</td>
+                    <td>@(_status.ViewerPort ?? UiText.ViewerHttpsStatusDefaultPort)</td>
+                </tr>
+            </tbody>
+        </MudSimpleTable>
+    </MudPaper>
+
+    @* 有効化スイッチ（旧 URL 断絶の予告つき——決定 6） *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudSwitch T="bool" @bind-Value="_enabled" Label="@UiText.ViewerHttpsEnabledLabel" Color="Color.Primary" />
+        <MudText Typo="Typo.caption">@UiText.ViewerHttpsEnabledNote</MudText>
+    </MudPaper>
+
+    @* 証明書の選択（既存 2 画面と同一の列挙契約を共有する——決定 3） *@
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <div class="d-flex align-center">
+            <MudText Typo="Typo.h6">@UiText.ViewerHttpsCertificatesTitle</MudText>
+            <MudSpacer />
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       OnClick="RefreshCertificates">@UiText.ViewerHttpsRefreshButton</MudButton>
+        </div>
+
+        @if (_status.AdminHttpsCertificateThumbprint is not null)
+        {
+            @* 決定 9: 管理リモート HTTPS に設定済みの場合のみ表示する明示コピー。転写のみで
+               連動はなく、保存時には通常の検証 + SAN 検査を通る（バイパスにならない） *@
+            <div class="mt-2">
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.ContentCopy"
+                           OnClick="CopyFromAdminHttps">@UiText.ViewerHttpsCopyFromAdminButton</MudButton>
+                <MudText Typo="Typo.caption" Class="mt-1">@UiText.ViewerHttpsCopyFromAdminNote</MudText>
+            </div>
+        }
+
+        @if (_certificateListError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-2">
+                @string.Format(UiText.ViewerHttpsEnumerationFailedFormat, _certificateListError)
+            </MudAlert>
+        }
+        else if (_candidates.Count == 0)
+        {
+            <YaguraEmptyState Title="@UiText.ViewerHttpsEmptyTitle"
+                              Description="@UiText.ViewerHttpsEmptyDescription"
+                              Icon="@Icons.Material.Outlined.Badge">
+                <NextAction>
+                    <MudText Typo="Typo.body2">@UiText.ViewerHttpsEmptyNextAction</MudText>
+                </NextAction>
+            </YaguraEmptyState>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.ViewerHttpsCertificatesIntro</MudText>
+
+            @if (SelectedThumbprintMissingFromList)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">
+                    @string.Format(UiText.ViewerHttpsThumbprintNotInListFormat, _selectedThumbprint)
+                </MudAlert>
+            }
+
+            <MudRadioGroup T="string" @bind-Value="_selectedThumbprint" Class="mt-2">
+                <MudRadio T="string" Value="@string.Empty" Color="Color.Primary">@UiText.SelectNoneOption</MudRadio>
+                @foreach (var candidate in _candidates)
+                {
+                    <div class="mt-2">
+                        <MudRadio T="string" Value="@candidate.Thumbprint" Color="Color.Primary">
+                            <div>
+                                <span class="d-inline-flex align-center" style="gap: 8px;">
+                                    <MudText Typo="Typo.body1" Style="font-weight: 600;">@candidate.SubjectCommonName</MudText>
+                                    @if (candidate.IsExpired)
+                                    {
+                                        @* 閲覧 HTTPS では期限切れは保存拒否（管理 HTTPS と同じ停止面）——Error バッジ *@
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@UiText.ViewerHttpsCertExpiredBadge</MudChip>
+                                    }
+                                    @if (!candidate.IsPrivateKeyReadable)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@UiText.ViewerHttpsCertKeyUnreadableBadge</MudChip>
+                                    }
+                                    @if (!candidate.IsExpired && candidate.IsPrivateKeyReadable)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">@UiText.ViewerHttpsCertOkBadge</MudChip>
+                                    }
+                                </span>
+                                <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertIssuerLabel: @candidate.Issuer</MudText>
+                                <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertValidityLabel: @candidate.NotBefore.ToLocalTime().ToString("yyyy-MM-dd") 〜 @candidate.NotAfter.ToLocalTime().ToString("yyyy-MM-dd")</MudText>
+                                <MudText Typo="Typo.body2" Style="font-family: monospace;">@UiText.AdminRemoteAccessCertThumbprintLabel: @candidate.Thumbprint</MudText>
+                            </div>
+                        </MudRadio>
+                        @if (candidate.IsExpired)
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true" Class="ml-8 mt-1">
+                                @UiText.ViewerHttpsCertExpiredNote
+                            </MudAlert>
+                        }
+                        @if (!candidate.IsPrivateKeyReadable)
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true" Class="ml-8 mt-1">
+                                @UiText.ViewerHttpsPrivateKeyUnreadableNote
+                            </MudAlert>
+                        }
+                    </div>
+                }
+            </MudRadioGroup>
+        }
+    </MudPaper>
+
+    @* SAN ホスト名検査（決定 4——保存後も確認できる読み出し面）。選択中の拇印に対して随時実行 *@
+    @if (_sanInspection is not null)
+    {
+        <MudPaper Elevation="1" Class="pa-4 mt-4">
+            <MudText Typo="Typo.h6">@UiText.ViewerHttpsSanTitle</MudText>
+            @if (!_sanInspection.HasSanExtension)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">@UiText.ViewerHttpsSanNoExtension</MudAlert>
+            }
+            else if (_sanInspection.IsSatisfied)
+            {
+                <MudAlert Severity="Severity.Success" Class="mt-2">
+                    @string.Format(UiText.ViewerHttpsSanSatisfiedFormat, string.Join("、", _sanInspection.RequiredServerNames))
+                </MudAlert>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">
+                    @string.Format(UiText.ViewerHttpsSanMissingFormat, string.Join("、", _sanInspection.MissingServerNames))
+                </MudAlert>
+            }
+
+            @if (SuggestedUrls.Count > 0)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">@UiText.ViewerHttpsSanUrlListIntro</MudText>
+                <ul class="mt-1">
+                    @foreach (var url in SuggestedUrls)
+                    {
+                        <li><MudText Typo="Typo.body2" Style="font-family: monospace;">@url</MudText></li>
+                    }
+                </ul>
+            }
+
+            <MudText Typo="Typo.caption" Class="mt-2">@UiText.ViewerHttpsSanLimitationNote</MudText>
+        </MudPaper>
+    }
+
+    @* 反映方式の常設注記（決定 1: 受信断の予告 + 3 面バッチ反映の促し） *@
+    <MudAlert Severity="Severity.Info" Class="mt-4">@UiText.ViewerHttpsRestartNote</MudAlert>
+
+    @if (_errorMessage is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
+    }
+
+    @if (_savedSummary is not null)
+    {
+        <MudAlert Severity="Severity.Success" Class="mt-4">@_savedSummary</MudAlert>
+    }
+
+    @if (_showAfterEnableGuidance)
+    {
+        @* 決定 6 の保存時案内 (a)〜(d): 有効化を保存したときだけ表示する *@
+        <MudPaper Elevation="1" Class="pa-4 mt-4">
+            <MudText Typo="Typo.h6">@UiText.ViewerHttpsAfterEnableTitle</MudText>
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.ViewerHttpsAfterEnableRestartNote</MudText>
+            @if (SuggestedUrls.Count > 0)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">
+                    @string.Format(UiText.ViewerHttpsAfterEnableNewUrlFormat, string.Join(" / ", SuggestedUrls))
+                </MudText>
+                <MudText Typo="Typo.caption">@UiText.ViewerHttpsAfterEnablePortOverrideNote</MudText>
+            }
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.ViewerHttpsAfterEnableBookmarkNote</MudText>
+            @if (!_status.EmailNotificationEnabled)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                    @UiText.ViewerHttpsAfterEnableEmailNote
+                    <MudLink Href="/admin/email-notification" Typo="Typo.body2">@UiText.ViewerHttpsEmailSettingsLinkText</MudLink>
+                </MudAlert>
+            }
+        </MudPaper>
+    }
+
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
+        適用する
+    </YaguraButton>
+}
+
+@code {
+    private ViewerHttpsStatus? _status;
+    private bool _enabled;
+    private string _selectedThumbprint = string.Empty;
+    private IReadOnlyList<CertificateCandidate> _candidates = [];
+    private ViewerHttpsSanInspection? _sanInspection;
+    private string? _certificateListError;
+    private string? _errorMessage;
+    private string? _savedSummary;
+    private bool _showAfterEnableGuidance;
+
+    /// <summary>
+    /// 選択中（または永続値の）拇印が列挙結果に存在しない場合 true。列挙自体が失敗している間は
+    /// 判定しない（誤警告を避ける）。
+    /// </summary>
+    private bool SelectedThumbprintMissingFromList =>
+        _certificateListError is null &&
+        !string.IsNullOrEmpty(_selectedThumbprint) &&
+        !_candidates.Any(c => string.Equals(c.Thumbprint, _selectedThumbprint, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 「警告なしになる見込みの閲覧 URL」（決定 4・6）。SAN の dNSName（ワイルドカードを除く）から
+    /// 組み立てる。ポートは永続値（未設定は既定 8514）——環境変数上書きは画面から見えないため
+    /// 注記で補う。
+    /// </summary>
+    private IReadOnlyList<string> SuggestedUrls =>
+        _sanInspection is null || _status is null
+            ? []
+            : _sanInspection.CertificateDnsNames
+                .Where(name => !name.StartsWith("*", StringComparison.Ordinal))
+                .Select(name => $"https://{name}:{_status.ViewerPort ?? "8514"}/")
+                .ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = await ViewerHttpsAdminService.GetStatusAsync();
+        ApplyStatusToFields(_status);
+        LoadCertificates();
+
+        // 保存後も検査結果を確認できるようにする（決定 4）: 永続値に拇印があれば初期表示で検査する。
+        if (_status.CertificateThumbprint is not null)
+        {
+            _sanInspection = await ViewerHttpsAdminService.InspectCertificateAsync(_status.CertificateThumbprint);
+        }
+    }
+
+    private void ApplyStatusToFields(ViewerHttpsStatus status)
+    {
+        _enabled = status.Enabled;
+        _selectedThumbprint = status.CertificateThumbprint ?? string.Empty;
+    }
+
+    private void RefreshCertificates()
+    {
+        LoadCertificates();
+    }
+
+    private void LoadCertificates()
+    {
+        _certificateListError = null;
+
+        try
+        {
+            _candidates = CertificateStoreReader.ListServerAuthCertificates();
+        }
+        catch (Exception ex)
+        {
+            _candidates = [];
+            _certificateListError = ex.Message;
+        }
+    }
+
+    private void CopyFromAdminHttps()
+    {
+        // 決定 9: 転写のみ（保存はしない）。保存時に通常の検証 + SAN 検査を通る。
+        if (_status?.AdminHttpsCertificateThumbprint is { } adminThumbprint)
+        {
+            _selectedThumbprint = adminThumbprint;
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _errorMessage = null;
+        _savedSummary = null;
+        _showAfterEnableGuidance = false;
+
+        try
+        {
+            // 「誰が」欄（ADR-0010 決定 6）: circuit の現在の認証状態から操作者を導出して監査 2029 へ渡す。
+            var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+            var result = await ViewerHttpsAdminService.ConfigureAsync(
+                _enabled,
+                string.IsNullOrWhiteSpace(_selectedThumbprint) ? null : _selectedThumbprint,
+                CircuitContext.RemoteAddress,
+                operatorScheme,
+                operatorPrincipal);
+
+            _status = result.Status;
+            ApplyStatusToFields(_status);
+            _sanInspection = result.SanInspection;
+
+            if (result.ChangedKeys.Count == 0)
+            {
+                Notifier.NotifyInfo(UiText.ViewerHttpsSavedNoChanges);
+            }
+            else
+            {
+                _savedSummary = string.Format(
+                    UiText.ViewerHttpsSavedFormat, string.Join("、", result.ChangedKeys));
+                Notifier.NotifyOk(_savedSummary);
+
+                // 決定 6 の保存時案内は「有効な状態を保存した」ときに表示する（無効化の保存では
+                // 旧 URL 断絶が起きないため出さない）。
+                _showAfterEnableGuidance = _enabled;
+
+                // 保存を再起動待ちカードへ計上する（決定 1 の受信断レール。TLS 受信画面と同じ経路——
+                // ADR-0019 委任 2 / Issue #388 の確定に追随）。
+                var reload = await ReloadService.ReloadAsync(
+                    CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
+                if (reload.Rejected)
+                {
+                    Notifier.NotifyWarning(string.Format(
+                        UiText.AdminSaveReloadRejectedFormat, reload.RejectionReason));
+                }
+            }
+        }
+        catch (WizardValidationException ex)
+        {
+            // 保存前 fail-closed 検証の拒否理由（決定 3・4）: メッセージは画面へそのまま表示できる
+            // 日本語（是正手順への誘導つき）。
+            _errorMessage = ex.Message;
+        }
+    }
+}

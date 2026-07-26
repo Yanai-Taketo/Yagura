@@ -1073,6 +1073,15 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
 
+        // 閲覧 UI の HTTPS 設定の保存・保存前 fail-closed 検証 + SAN 助言検査 + 監査
+        // （ADR-0022 決定 3・4・10。Issue #455 段階 ②）。証明書設定サービスの 3 例目で、
+        // 列挙・解決・EKU 判定・秘密鍵の読取検証は既存 2 サービスと実装を共有する
+        // （三重実装しない。ViewerHttpsAdminService の remarks 参照）。
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IViewerHttpsAdminService>(sp =>
+            new Yagura.Host.Administration.Https.ViewerHttpsAdminService(
+                dataRoot,
+                sp.GetRequiredService<IAuditRecorder>()));
+
         // メール通知の設定・テスト送信・健全性参照（ADR-0017 決定 4・8。Issue #350）。
         // ディスパッチャは Func 経由で遅延解決する——本サービスとディスパッチャの登録順に
         // 依存させないため（AddSingleton のファクトリは Build 後の初回解決時に走る）。

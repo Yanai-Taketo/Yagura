@@ -207,6 +207,14 @@ public static class AuditEventIds
     public static readonly EventId ViewerHttpsCertificatePrivateKeyAccessGranted =
         new(2028, "ViewerHttpsCertificatePrivateKeyAccessGranted");
 
+    /// <summary>
+    /// 閲覧 UI の HTTPS 設定（<c>Viewer:Https:Enabled</c>・<c>Viewer:Https:CertificateThumbprint</c>）の
+    /// 変更（ADR-0022 決定 10。Issue #455）。2012（管理リモート HTTPS）・2020（TLS 受信）の閲覧版。
+    /// レベルは情報。採番: 2000 番台の次の空き番号 2029。
+    /// </summary>
+    public static readonly EventId ViewerHttpsConfigured =
+        new(2029, "ViewerHttpsConfigured");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>
