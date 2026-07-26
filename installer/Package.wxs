@@ -38,21 +38,51 @@
 
     <!--
       MajorUpgrade: アップグレードの基本定義。
-      Schedule は既定値(afterInstallValidate)のまま明示しない。公式ドキュメント引用
-      (docs.firegiant.com/wix/schema/wxs/majorupgrade/、確認日 2026-07-06):
-        "The default is 'afterInstallValidate' which removes the installed product
-         entirely before installing the upgrade product. It's slowest but gives the
-         most flexibility in changing components and features in the upgrade product."
-        "Note that if the installation of the upgrade product fails, the machine will
-         have neither version installed."
+
+      【Schedule="afterInstallExecute" を採る理由(ADR-0023 決定 2。Issue #467 現象 A)】
+      **旧記述は既定(afterInstallValidate)のままとし、公式引用の "the machine will have
+      neither version installed" を自認していた**。実機 lab でその通りの事態が起きた——
+      新製品側の起動段が失敗すると、旧製品は既に削除済みのため **Yagura が 1 つも残らず、
+      サービスも消えて syslog 受信が停止する**。ログ集約サーバとして最も避けたい失敗様式で
+      あり、自認して放置してよい性質のものではなかった。
+
+      RemoveExistingProducts Action(learn.microsoft.com/windows/win32/msi/
+      removeexistingproducts-action の "Sequence Restrictions"、確認日 2026-07-26)より:
+        - InstallExecute と InstallFinalize の間(= WiX の afterInstallExecute):
+          "In this case the updated files are installed first and then the old files are
+           removed. However, if the removal of the old application fails, then the installer
+           rolls back both the removal of the old application and the install of the new
+           application."
+        - InstallFinalize の後(= afterInstallFinalize):
+          "This is the most efficient placement for the action. ... If the removal of the old
+           application fails, then the installer only rolls back the uninstallation of the
+           old application."
+      afterInstallFinalize は**採らない**: 旧製品の削除がトランザクション外になり、失敗すると
+      新旧が両方残る新しい失敗様式を作る。より弱い保護のためにより重い失敗様式を招く。
+      afterInstallExecute なら削除がトランザクション内に留まり、観測 2 の起点である
+      StartServices の失敗では**全体がロールバックされて旧製品が残る**。
+
+      共存窓は存在しない(ADR-0023 決定 2 の訂正): 下の ServiceControl は Stop="both" であり、
+      標準シーケンスの StopServices(1900)は InstallFiles(4000)より前に走る
+      (learn.microsoft.com/windows/win32/msi/suggested-installexecutesequence、確認日
+      2026-07-26)。新製品のインストール開始時点で旧サービスは既に停止しているため、
+      UDP 514 の bind 競合もデータルート・監査ファイル・スプールへの二重アクセスも起きない。
+
+      **本スケジュールが依存する新しい不変条件**: 遅いスケジュールでは「新サービスを起動した
+      後に旧製品のアンインストールが走る」ため、**コンポーネント参照カウントが崩れていれば
+      それが新サービスを止め・消す**(ServiceControl は同名 Yagura を
+      Stop="both" Remove="uninstall" で対象とする)。したがって**コンポーネント GUID の
+      版間安定性**が成立条件になる。自動採番(下の HostPublishFiles の Files 要素)が
+      これを満たすことは実測で確認した——ADR-0023 委任 2 の判定結果を参照。
+      継続検知は installer-e2e の upgrade-* ステップが担う。
+
       データ・設定の保持: データルート(%ProgramData%\Yagura 配下の yagura.json・組み込み DB・
       スプール等)は MSI のコンポーネントとして追跡されないため、旧製品の削除でも消えない
       (MSI が削除するのは自身がインストールしたリソースのみ)。旧リポジトリの trap
-      (Permanent="yes" vs REINSTALLMODE の同等性主張)を踏まないよう、本 PR では
-      REINSTALLMODE への言及・変更を一切行わず、既定挙動のみで構成する。
-      実機でのアップグレード挙動検証(設定・DB が残ること)は M9-3 lab の受け入れ条件。
+      (Permanent="yes" vs REINSTALLMODE の同等性主張)を踏まないよう、
+      REINSTALLMODE への言及・変更は引き続き一切行わない(ADR-0023 決定 2 も同じ自己拘束)。
     -->
-    <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeErrorMessage)" />
+    <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="!(loc.DowngradeErrorMessage)" />
 
     <MediaTemplate EmbedCab="yes" />
 

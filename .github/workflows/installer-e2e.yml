@@ -60,6 +60,34 @@ jobs:
       - name: Build MSI
         run: dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=x64
 
+      # アップグレード元 MSI(ADR-0023 決定 2 の採否条件②。Issue #467):
+      # Schedule="afterInstallExecute" では**新サービスを起動した後に旧製品のアンインストールが
+      # 走る**ため、コンポーネント参照カウントが崩れていれば起動したばかりの新サービスが
+      # 止められ・消される。これは authoring の照合では確かめられず、**実際にアップグレードして
+      # 新サービスが動き続けていること**を見るしかない。そのために「現行より古いバージョン」の
+      # MSI をもう 1 本焼く。
+      #
+      # 版だけを下げた同一ツリーのビルドである点は承知のうえで採る——真の旧版(過去のリリース
+      # 成果物)を引いてくる形は、①リリースが存在しない開発初期に成立せず、②fork からの PR で
+      # 外部成果物の取得に依存し、③「その版のコンポーネント GUID」を検証対象にしてしまう。
+      # ここで検証したいのは「参照カウントが版間で保たれるか」であり、版番号以外を変えないほうが
+      # 判定が鋭くなる(GUID の版間安定性そのものは ADR-0023 委任 2 の実測で別途確認済み)。
+      #
+      # 出力を上書きしないよう別ディレクトリへ焼く。**obj も必ず分ける**——同一作業ツリーで
+      # 版だけ変えて連続ビルドすると、MSBuild の増分判定が installer/obj のキャッシュを誤って
+      # 再利用し、2 本目に 1 本目の版が混ざる(installer/README.md が記録している既知の問題。
+      # 本 PR の実装中に開発機でも実際に踏み、clean 後は正しい版になることを確認した)。
+      # 出力先を bin/ ・obj/ の**配下**に置くのは、リポジトリの .gitignore が [Bb]in/ ・
+      # [Oo]bj/ しか無視しないため——bin-prev/ のような兄弟ディレクトリを作ると
+      # ビルド成果物が未追跡ファイルとして現れる。
+      - name: Build previous-version MSI (upgrade source)
+        run: >
+          dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=x64
+          -p:YaguraVersion=0.0.1
+          -p:SkipYaguraHostPublish=true
+          -p:BaseOutputPath=bin/prev/
+          -p:BaseIntermediateOutputPath=obj/prev/
+
       # 管理者権限の根拠(実体検証済みの公式記載):
       # GitHub 公式ドキュメント「GitHub-hosted runners reference」の
       # 「Administrative privileges」節(docs.github.com/en/actions/reference/
@@ -79,14 +107,26 @@ jobs:
           # MSI パスは実出力から解決する(既定は installer/bin/Release/ja-JP/Yagura-x64.msi。
           # ADR-0009 決定4 で成果物命名にアーキサフィックスが付いた——WiX SDK の出力パス構成の
           # 変化にも頑健にするため Filter は "Yagura-*.msi" のワイルドカードにする)。
-          $msi = Get-ChildItem -Path installer/bin -Recurse -Filter Yagura-*.msi |
+          # 探索先を installer/bin/Release に限定する(installer/bin 全体を再帰すると
+          # アップグレード元の installer/bin/prev/... を掴みうる——そうなると「同じ版へ
+          # アップグレードする」無意味な検証になり、しかも緑になる)。
+          $msi = Get-ChildItem -Path installer/bin/Release -Recurse -Filter Yagura-*.msi |
             Select-Object -First 1
           if ($null -eq $msi) {
-            throw 'Yagura-*.msi not found under installer/bin'
+            throw 'Yagura-*.msi not found under installer/bin/Release'
           }
           Write-Host "MSI: $($msi.FullName)"
+          # アップグレード元(古い版)。見つからない場合はここで落とす——黙ってスキップすると
+          # ADR-0023 決定 2 の採否条件②が検証されないまま緑になる。
+          $prev = Get-ChildItem -Path installer/bin/prev -Recurse -Filter Yagura-*.msi -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -eq $prev) {
+            throw 'previous-version Yagura-*.msi not found under installer/bin/prev (upgrade verification would be silently skipped)'
+          }
+          Write-Host "Upgrade-from MSI: $($prev.FullName)"
           ./installer/e2e/Invoke-YaguraInstallerE2E.ps1 `
             -MsiPath $msi.FullName `
+            -UpgradeFromMsiPath $prev.FullName `
             -OutputDir 'e2e-results'
 
       # 証拠 artifact(ADR-0006 基準 1): 人間可読ログ(*.log.txt)+ 機械可読サマリ

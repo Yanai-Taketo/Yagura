@@ -85,8 +85,59 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   - 照合は ASCII の RunId トークンのみで行う(日本語本文の照合は en-US CI の CP437 で
     文字化けして誤判定するため)
 - CI: [.github/workflows/installer-e2e.yml](../.github/workflows/installer-e2e.yml)
-  (workflow_dispatch + installer/ 配下変更の pull_request)。MSI ビルド → E2E 実行 →
+  (workflow_dispatch + installer/ 配下変更の pull_request)。MSI ビルド →
+  **アップグレード元 MSI（版だけ下げた 2 本目）のビルド** → E2E 実行 →
   証拠を artifact `installer-e2e-results` に保存する
+
+### メジャーアップグレードの検証（ADR-0023 決定 2。Issue #467）
+
+`MajorUpgrade` の `Schedule="afterInstallExecute"` は、**新サービスを起動した後に旧製品の
+アンインストールが走る**という順序を作る。旧製品の `ServiceControl` は同名 `Yagura` を
+`Stop="both" Remove="uninstall"` で対象とするため、**コンポーネント参照カウントが崩れていれば
+起動したばかりの新サービスが止められ・消される**。これは MSI テーブルの照合では確かめられず、
+実際にアップグレードして確認するしかない。
+
+`-UpgradeFromMsiPath` に「現行より古い版の MSI」を渡すと、次の 5 ステップが走る:
+
+| ステップ | 何を見るか |
+|---|---|
+| `upgrade-install-previous` | 旧版がインストールでき、サービスが Running になること |
+| `upgrade-to-current` | 新版のインストール（= メジャーアップグレード）が成功すること |
+| `upgrade-service-survives` | **サービスが Running のまま残っていること**（採否条件②の核心。参照カウントが崩れていればここで落ちる） |
+| `upgrade-single-product-entry` | 「アプリと機能」に Yagura が **1 つだけ**残ること（受け入れ基準⑫） |
+| `upgrade-ingestion-still-works` | アップグレード後に**実際に受信できる**こと（「一覧にエントリが残る」では不十分——受け入れ基準⑤） |
+
+アップグレード元は「版だけを下げた同一ツリーのビルド」である。過去のリリース成果物を引いて
+くる形は、①リリースが存在しない開発初期に成立せず、②fork からの PR で外部成果物の取得に
+依存し、③「その版のコンポーネント GUID」を検証対象にしてしまう。ここで見たいのは
+**参照カウントが版間で保たれるか**であり、版番号以外を変えないほうが判定が鋭くなる
+（GUID の版間安定性そのものは ADR-0023 委任 2 の実測で別途確認済み）。
+
+さらに**アップグレードが失敗したときに製品が消えないこと**（受け入れ基準⑤。Issue #467 現象 A の
+本体）も同じ `-UpgradeFromMsiPath` で検証する:
+
+| ステップ | 何を見るか |
+|---|---|
+| `upgrade-failure-attempt` | 細工したアップグレードが**失敗すること**（成功したら細工が効いていない = 基準⑤を検査できていないため、その場で落とす） |
+| `upgrade-failure-product-survives` | **製品が 0 件にならない**こと、かつ残ったのが元の ProductCode であること |
+| `upgrade-failure-service-still-running` | **旧版のサービスが Running に戻っていること**（「一覧にエントリが残る」では不十分——佐藤の質問 2） |
+| `upgrade-failure-ingestion-continues` | 失敗したアップグレードの後も**実際に受信できる**こと |
+| `upgrade-failure-acl-restored` | データルートの仮想 SA の ACE が残っていること（現象 B の回帰検査） |
+
+**失敗のさせ方**: 実在しない gMSA 形式のアカウント（`YAGURAE2E\nosuchgmsa$`）を
+`YAGURA_SERVICE_ACCOUNT` に渡す。`ValidateYaguraServiceAccount` は「`\` を含み `$` で終わる」
+形式を通すため静的検証では落ちず、**`InstallServices` より後**（ACL 付替 CA または
+`StartServices`）で失敗する。AD も SQL Server も要らないため fork からの PR でも自己確認できる。
+**データルートには一切触れない**のが要点——設定ファイルを壊す細工だと旧サービスも道連れになり、
+「旧版が動いたまま」を確認できない。
+
+この経路は**実 MSI のロールバック**を通るため、ADR-0023 決定 3 のロールバック CA が実際に ACL を
+戻すかを CI で観測できる（lab 受け入れ基準⑧の一部を CI 側へ前倒ししている。ただし gMSA 実環境での
+ACE 集合一致の確認は引き続き lab の管轄）。
+
+`-UpgradeFromMsiPath` を省略するとこれらは丸ごとスキップされる（2 本ビルドできない環境でも
+既存フローが動く）。**CI では省略を許さない**——workflow 側が 2 本目の MSI を見つけられない
+場合に明示的に落とす（黙ってスキップして緑になる経路を残さない）。
 - 証拠形式(ADR-0006 基準 1): 人間可読ログ(`*.log.txt`)+ 機械可読サマリ
   (`*.summary.json`。RunId・各手順の合否・所要時間・実行環境)+ msiexec 詳細ログ。
   CI 実行記録(workflow run と artifact)を基準 1 の証拠としてリンクする
