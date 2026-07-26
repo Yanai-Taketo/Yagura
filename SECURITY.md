@@ -1,6 +1,6 @@
 # セキュリティポリシー / Security Policy
 
-> **English**: Yagura's default configuration assumes a **trusted network** (a LAN segment under a single administrative authority, not reachable from the internet): syslog reception is plaintext, and the web viewer is unauthenticated by default (read-only). Write operations (configuration, database switch-over) are restricted to the server itself via a loopback-only admin listener. Opt-in hardening is available: TLS syslog reception, admin-UI authentication (Windows/AD or app credentials, with HTTPS required for remote admin access), and viewer-UI authentication (Windows integrated auth with AD-group role mapping, since v0.4.0). HTTPS for the viewer UI is still planned for v1.0. Please report vulnerabilities via GitHub's **Private Vulnerability Reporting** on this repository (Security tab → "Report a vulnerability"; a GitHub account is required). Do **not** open a public issue for security problems. We aim to acknowledge reports within 7 days and provide an initial assessment within 14 days. Please refrain from public disclosure until a fix is released; if you receive no response within 90 days, we respect your decision to disclose. Reporters are credited in advisories (anonymity respected on request).
+> **English**: Yagura's default configuration assumes a **trusted network** (a LAN segment under a single administrative authority, not reachable from the internet): syslog reception is plaintext, and the web viewer is unauthenticated by default (read-only). Write operations (configuration, database switch-over) are restricted to the server itself via a loopback-only admin listener. Opt-in hardening is available: TLS syslog reception, admin-UI authentication (Windows/AD or app credentials, with HTTPS required for remote admin access), and viewer-UI authentication (Windows integrated auth with AD-group role mapping, since v0.4.0), and HTTPS for the viewer UI. Please report vulnerabilities via GitHub's **Private Vulnerability Reporting** on this repository (Security tab → "Report a vulnerability"; a GitHub account is required). Do **not** open a public issue for security problems. We aim to acknowledge reports within 7 days and provide an initial assessment within 14 days. Please refrain from public disclosure until a fix is released; if you receive no response within 90 days, we respect your decision to disclose. Reporters are credited in advisories (anonymity respected on request).
 
 ## 設計上の前提 — 信頼ネットワーク
 
@@ -12,7 +12,7 @@ Yagura の既定構成は、次の条件を満たすネットワークでの利�
 
 インターネットに露出するホスト、複数組織が共用するネットワーク、ゼロトラスト方針の環境では、既定構成のまま使わないでください。VPN 経由の在宅勤務端末が同一セグメントに入る構成、保守業者の持ち込み端末の一時接続、ゲスト無線と同居するフラットな LAN も、条件 3 を満たさない可能性があります。
 
-## 既定構成の姿勢（v0.5）
+## 既定構成の姿勢
 
 **開いているもの**（信頼ネットワークに委ねる範囲）:
 
@@ -28,10 +28,11 @@ Yagura の既定構成は、次の条件を満たすネットワークでの利�
 - **資格情報の暗号化保存**: 管理画面のウィザードで設定した SQL Server 接続文字列は、Windows DPAPI で暗号化して保存されます（`dpapi:` 接頭辞）。暗号化された設定は**そのマシンでのみ復号できる**ため、設定ファイルを別マシンへコピーした場合は組み込みデータベース（SQLite）へ切り替えて警告します——移行時はウィザードで再入力してください。なお、パスワードを扱わない **Windows 統合認証の利用を引き続き推奨**します
 - **テレメトリは行いません**。既定構成では外部への送信も一切行いません（opt-in のメール通知を有効化した場合に限り、利用者自身が設定した SMTP サーバへの送信が発生します——「opt-in 強化の提供状況」参照。外向き通信の全量は設計書 [security.md §1.1 の外向き通信台帳](docs/design/security.md) に列挙しています）
 
-**既知の制限（v0.5）**:
+**既知の制限**:
 
 - 設定ファイルを**手で編集**して接続文字列を書いた場合は平文のまま扱われます（資格情報を含む場合は起動時に警告を出しますが、利用者のファイルを自動では書き換えません）。暗号化保存にするには管理画面のウィザードから設定してください
-- 同一ホストにリバースプロキシを前置すると、外部からの要求が loopback 発として届き、管理操作の localhost 限定が成立しません。**リバースプロキシの前置は v0.x ではサポートしていません**
+<!-- TODO(v1.0): リバースプロキシ前置のサポート方針（v1.0 でも非サポート継続か）をリリース前に確定する -->
+- 同一ホストにリバースプロキシを前置すると、外部からの要求が loopback 発として届き、管理操作の localhost 限定が成立しません。**リバースプロキシの前置はサポートしていません**
 
 ## opt-in 強化の提供状況
 
@@ -42,10 +43,8 @@ Yagura の既定構成は、次の条件を満たすネットワークでの利�
 - **管理 UI 認証**: Windows 統合認証（AD/Kerberos。Kerberos-only 可）またはアプリ独自 ID/パスワード認証。リモート公開時は HTTPS 必須（fail-closed）（[ADR-0010](docs/adr/0010-admin-ui-authentication.md)・[ADR-0011](docs/adr/0011-app-auth-failure-backoff.md)・[ADR-0012](docs/adr/0012-admin-https-cert-ui.md)）
 - **閲覧 UI 認証**（v0.4.0）: Windows 統合認証 + AD グループマッピング（「閲覧」「管理」役割・ネストグループ対応・名/SID 両指定。管理 ⊇ 閲覧）。既定は現状どおり無認証（[ADR-0010](docs/adr/0010-admin-ui-authentication.md) Phase 4）
 - **フォワーダ MSI の管理画面アップロード**（[ADR-0020](docs/adr/0020-forwarder-msi-upload.md)）: 配布キットに同梱する Fluent Bit MSI を管理画面から配置・置換・削除できます。**管理 UI 認証が有効で、かつ loopback にも認証を課した構成（= 管理リスナに無認証の到達経路が存在しない）でのみ有効化でき**、満たさない設定は起動時に fail-closed で拒否されます。有効化しても、配置フォルダの既定 ACL（サービスアカウント読み取りのみ）は変わらず、**OS 管理者が `icacls` で書き込み権限を明示付与している間だけ**書き込みが成立します（Yagura 自身は権限を変更しません。撤去も自由）。配置・削除・拒否はすべて操作者の利用者名つきで監査に記録されます
-
-未提供（v1.0 公開までに opt-in で提供を検討）:
-
-- **閲覧 UI 側の HTTPS**（閲覧リスナは既定で平文 HTTP。閲覧認証で `Viewer:AdminGroups` を使う場合、管理等価 Cookie が平文で流れる点は運用ガイドで注意喚起。[ADR-0006](docs/adr/0006-v1-release-criteria.md) 基準 1・[docs/operations.md](docs/operations.md)）
+<!-- TODO(v1.0): 閲覧 UI の HTTPS 実装完了後、この箇条書きを実装に合わせて確定する（設計は configuration.md §6） -->
+- **閲覧 UI の HTTPS**: 閲覧 UI を HTTPS で公開できます。証明書は Windows 証明書ストア参照方式で、期限切れ・失効時は平文 HTTP へ落とさず HTTPS を停止します（平文の syslog 受信は影響を受けません）。閲覧認証（AD グループマッピング）を有効化する構成では、認証 Cookie を平文で流さないために HTTPS の併用を推奨します
 
 ## フォワーダ（Fluent Bit）について
 
@@ -89,7 +88,7 @@ Windows イベントログの転送には、第三者の [Fluent Bit](https://fl
 
 | バージョン | 対応 |
 |---|---|
-| v0.5（最新リリース） | 対応します |
+| v1.0（最新リリース） | 対応します |
 | `main` ブランチ | 対応します |
 
 修正は最新リリースと `main` に対して提供します。過去のリリースへの遡及修正（バックポート）は行いません。
