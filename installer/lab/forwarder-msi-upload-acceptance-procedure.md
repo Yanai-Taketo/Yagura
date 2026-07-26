@@ -48,6 +48,12 @@ Get-WinEvent -ProviderName Yagura -MaxEvents 5 | Format-List Id, Message
 **合否**: サービスが起動せず、イベント ID **1032** に「欠けている条件の列挙」と
 「`Admin:ForwarderKit:MsiUpload:Enabled` を false に戻す」誘導が含まれること。
 
+> **版の注記（Issue #433）**: 「Yagura ソースの 1032」が出るのは **#433 の修正を含むビルド以降**。
+> v0.5.3 以前のサービス構成では bootstrap ロガーがコンソール専用のため 1032 はイベントログに
+> 現れず、代わりに Application ログの .NET Runtime 1026（例外本文に同じ誘導文言入り）と
+> Application Error 1000 で起動拒否を確認する（2026-07-25 の初回実施で発見された挙動）。
+> fail-closed（起動拒否）そのものは版に依らず成立する。
+
 次に正規の順序で構成する:
 
 1. `/admin/auth-setup` でアプリ独自認証を有効化し、管理者アカウントを作成する

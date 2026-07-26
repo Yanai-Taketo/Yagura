@@ -68,9 +68,9 @@ public static class Program
         // 設定基盤（M3-1）: データルート直下の JSON 設定ファイル（既定 yagura.json）を
         // 読み込み、検証・3 分類の適用・環境変数上書きを経た最終設定を得る。設定ファイルが
         // 存在しない場合は既定値のみで起動する（ゼロ設定ファーストラン）。
-        // ここで使うロガーは DI コンテナ構築前の一時的なものであり、Generic Host 標準の
-        // コンソールロガーと同じ出力先（標準出力）に揃える。
-        using var bootstrapLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole());
+        // ここで使うロガーは DI コンテナ構築前の一時的なもの。構成は ConfigureBootstrapLogging
+        // （テストから配線を固定するため切り出し。Issue #433）を参照。
+        using var bootstrapLoggerFactory = LoggerFactory.Create(ConfigureBootstrapLogging);
         var configurationLogger = bootstrapLoggerFactory.CreateLogger("Yagura.Host.Configuration");
 
         ConfigurationLoadResult configurationLoadResult;
@@ -1538,6 +1538,50 @@ public static class Program
     /// 「桁」ではなくバイト位置であり、日本語を含む行では桁として読めないため補助情報として添える。
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// bootstrap ロガー（DI コンテナ構築前。<see cref="Main"/> 冒頭）のプロバイダ構成。
+    /// コンソール（Generic Host 標準と同じ標準出力）に加え、<b>Windows イベントログ</b>
+    /// （ソース名 = サービス名 <c>Yagura</c>。DI 側の登録と同一）へも書く（Issue #433）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>なぜ bootstrap 段に EventLog シンクが要るのか（Issue #433）</b>: Windows サービス構成では
+    /// 標準出力がどこにも接続されないため、Host 構築前の config 検証 fail-closed
+    /// （1011/1012/1024/1032・個別 ID を持たない受信ポート不正等 = EventId 0）の LogCritical は
+    /// コンソール専用ロガーでは観測不能になり、管理者がイベントログで見られるのは未処理例外の
+    /// 痕跡（.NET Runtime 1026 / Application Error 1000）だけになる——「専用イベント ID +
+    /// 詳細メッセージで『なぜ起動しないか』が一目で分かる警告」（ADR-0010 委任事項 5・
+    /// security.md §2.4）の設計意図がサービス構成で成立していなかった。同型の先行事例
+    /// SEC-9-a（Issue #346）は発火点を <c>app.Build()</c> 後の DI ロガーへ移して解決したが、
+    /// 本件の発火点は <b>Host 構築そのものを中止する経路</b>のため同じ手が使えない——
+    /// bootstrap ロガー自身にシンクを持たせるのが唯一の経路である。
+    /// </para>
+    /// <para>
+    /// <b>コンソール実行時にもイベントログへ書く（サービス判定で分岐しない）</b>: DI 側の
+    /// EventLog プロバイダ登録（<see cref="Main"/> 内の AddEventLog のコメント参照）と同じ判断
+    /// ——常時稼働する Windows サービスと日常の開発内側ループを同じログ配線で検証できることを
+    /// 優先する。ソース未登録 + 管理者権限なしの環境でホストが落ちない縮退挙動も同コメントの
+    /// 実装確認（dotnet/runtime の WindowsEventLog.WriteEntry）がそのまま当てはまる。
+    /// </para>
+    /// <para>
+    /// <b>EventLog は Warning 以上に絞る</b>: DI 側の EventLog プロバイダの既定フィルタ
+    /// （Warning 以上。同上コメントで確認済み）は Generic Host の既定構成が登録するもので、
+    /// 素の <see cref="LoggerFactory.Create(Action{ILoggingBuilder})"/> には付かないため明示する。
+    /// 絞らないと設定読み込みの Information ログ（ゼロ設定ファーストランの案内等）が起動のたびに
+    /// イベントログへ流れる。なお本ロガーは設定ファイル読み込みより前に生きるため、利用者の
+    /// <c>Logging:EventLog:*</c> フィルタ設定は bootstrap 段には効かない（構造上の制約）。
+    /// </para>
+    /// </remarks>
+    internal static void ConfigureBootstrapLogging(ILoggingBuilder logging)
+    {
+        logging.AddConsole();
+        logging.AddEventLog(settings =>
+        {
+            settings.SourceName = WindowsServiceName;
+        });
+        logging.AddFilter<EventLogLoggerProvider>(category: null, LogLevel.Warning);
+    }
+
     private static void LogConfigurationFileUnreadable(ILogger logger, string dataRoot, Exception failure)
     {
         var path = Path.Combine(dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
