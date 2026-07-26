@@ -57,7 +57,27 @@
 - ② gMSA → 仮想 SA（明示指定）: 切替成立、gMSA ACE 残存 0。
 - ③ 実在しないアカウント指定: 再構成失敗 1603 でロールバックし、**元アカウント・元 ACL へクリーン着地**（部分適用なし。CLI 値自体は正しく解決され、失敗はサービス構成段）。
 
+- ④ **gMSA → 別 gMSA の失敗着地**（[#474](https://github.com/Yanai-Taketo/Yagura/issues/474) で追加。③ は「仮想 SA ⇄ gMSA」の 2 状態しか見ておらず、この経路が視界に入っていなかった）: gMSA 稼働中の環境から、**本機でパスワードを取得できない gMSA**（`PrincipalsAllowedToRetrieveManagedPassword` に本機を含めない）へ切替を試み、`StartServices` で 1920 → 1603 を誘発する。
+
+  ```powershell
+  # 事前に取得不可の gMSA を作っておく（本機を取得許可に含めない）
+  New-ADServiceAccount -Name gmsaOrphan -DNSHostName gmsaOrphan.yagura.test `
+    -PrincipalsAllowedToRetrieveManagedPassword 'SomeOtherHost$'
+  msiexec /i <新MSI> /qn YAGURA_SERVICE_ACCOUNT=YAGURA\gmsaOrphan$
+  ```
+
+  **確認項目**（ロールバック後）:
+  - 製品・サービス `StartName` が**切替前の gMSA** に復元されること
+  - データルート・forwarder の**フォルダ**に切替前の gMSA の ACE があること
+  - **既存子ファイル**（`yagura.json`・`yagura.db` 等）にも**切替前の gMSA** の ACE があること
+    ——ここが #474 の核心。修正前は仮想 SA の ACE に置き換わり、復元されたサービスが
+    設定ファイルを読めず `UnauthorizedAccessException` で起動できなかった
+  - 切替先（`gmsaOrphan`）の ACE がデータルート配下に 0 件であること（`icacls … /T` 全域走査）
+  - `Start-Service Yagura` が成功し、受信が再開すること
+
 **⚠ 検出した欠陥（[#426](https://github.com/Yanai-Taketo/Yagura/issues/426)）**: 素の remember-property では AppSearch が RegistrySearch の記憶値でコマンドライン指定値を上書きし、**既存インストール上のサイレント切替が無言 no-op**（msiexec は成功で終わるのにアカウントは変わらない）になる。PR #427 で RobMensching の「コマンドライン優先」拡張（既定 `Value` 撤去 + 退避/復元/既定の 3 段 SetProperty を UI/Execute 両シーケンスへ）を適用し是正。優先順位は**コマンドライン > 記憶値 > 既定**。回帰は `installer-e2e` の `msi-service-account-table` ステップ（Property 静的既定値の不在・`DefaultServiceAccount`/`Save+RestoreCmdLine` CA の存在を検証）で検出。
+
+**⚠ 検出した欠陥（[#474](https://github.com/Yanai-Taketo/Yagura/issues/474)）**: ADR-0023 決定 3 のロールバック CA が、復元先として仮想 SA の SID を literal で持っていた。「切替前は必ず仮想 SA だった」という前提の固定であり、**gMSA → 別 gMSA の切替失敗では成立しない**——ロールバック後の子ファイルが切替前の gMSA ではなく仮想 SA の ACE を持ち、サービスは切替前の gMSA として復元されるのに設定ファイルを読めず起動できない。復元先を実行時解決（`[YaguraAclRestorePrincipal]`。記憶値があればそれ、無ければ仮想 SA）へ変更して是正。**CI では ACL の実効挙動を再現できない**ため、回帰は `msi-service-account-table` ステップの「復元先が literal の SID ではなくプロパティ参照であること」の照合で押さえ、実挙動は本項 ④ が担う。
 
 ## (e) 監査証跡
 

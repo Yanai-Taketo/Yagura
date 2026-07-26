@@ -516,6 +516,22 @@ try {
                             throw ('CustomAction {0} は rollback 属性(0x100)を持たなければならない。found type: {1}' -f $pair.Rollback, $rollbackType)
                         }
 
+                        # 復元先が**実行時に決まる**こと(Issue #474)。当初は仮想 SA の SID を
+                        # literal で持っており、gMSA → 別 gMSA の切替が失敗すると子ファイルが
+                        # 切替前の gMSA ではなく仮想 SA の ACE を持ち、復元されたサービスが
+                        # 設定ファイルを読めず起動できない状態になった。literal へ戻す変更は
+                        # ビルドを壊さずに通るため、テーブル側で固定する。
+                        $rollbackTarget = Get-MsiSingleValue $database ("SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'Set{0}'" -f $pair.Rollback)
+                        if ($null -eq $rollbackTarget) {
+                            throw ('CustomAction table: Set{0}(ロールバック CA のコマンドライン)が見つからない' -f $pair.Rollback)
+                        }
+                        if ($rollbackTarget -notmatch '\[YaguraAclRestorePrincipal\]') {
+                            throw ('ロールバック CA {0} の復元先は [YaguraAclRestorePrincipal](実行時解決)でなければならない(Issue #474)。found: {1}' -f $pair.Rollback, $rollbackTarget)
+                        }
+                        if ($rollbackTarget -match '/grant\s+"?\*?S-1-5-80-') {
+                            throw ('ロールバック CA {0} が復元先に仮想 SA の SID を literal で持っている(Issue #474 の回帰)。found: {1}' -f $pair.Rollback, $rollbackTarget)
+                        }
+
                         $rollbackSeq = Get-MsiSingleValue $database ("SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = '{0}'" -f $pair.Rollback)
                         $grantSeq = Get-MsiSingleValue $database ("SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = '{0}'" -f $pair.Grant)
                         if ($null -eq $rollbackSeq -or $null -eq $grantSeq) {
