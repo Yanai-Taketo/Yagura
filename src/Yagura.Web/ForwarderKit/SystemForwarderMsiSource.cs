@@ -78,26 +78,19 @@ public sealed class SystemForwarderMsiSource : IForwarderMsiSource
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>設計条件 9 は「MSI の ProductVersion を優先」を要求する</b>が、ProductVersion は
+    /// <b>設計条件 9 は「MSI の ProductVersion を優先」を要求する</b>。ProductVersion は
     /// Windows Installer プロパティテーブル（MSI 自体は OLE 構造化ストレージ）に格納されており、
-    /// 汎用のファイルバージョンリソース（<see cref="FileVersionInfo"/>）としては公開されていない。
-    /// 正攻法は <c>msi.dll</c> の <c>MsiOpenDatabase</c> + <c>MsiDatabaseOpenView</c>
-    /// （<c>SELECT Value FROM Property WHERE Property='ProductVersion'</c>）の P/Invoke だが、
-    /// COM 相当の複雑な後始末（ハンドルの確実な解放）を要し本 PR の範囲では過剰と判断した。
-    /// 汎用のファイルバージョンリソース API（<c>System.Diagnostics.FileVersionInfo</c>）は
-    /// 実行可能ファイル（EXE/DLL）のリソースセクションを読むものであり、MSI（OLE 構造化
-    /// ストレージ）には使えない。
+    /// <c>msi.dll</c> の <c>MsiOpenDatabase</c>（読み取り専用）+ Property テーブル参照で読む
+    /// （方式の詳細・<c>MsiGetFileVersion</c> を使ってはならない理由 = Issue #436 は
+    /// <see cref="ForwarderMsiProductVersionReader"/> を参照）。汎用のファイルバージョンリソース
+    /// API（<c>System.Diagnostics.FileVersionInfo</c>）は実行可能ファイル（EXE/DLL）の
+    /// リソースセクションを読むものであり、MSI には使えない。
     /// </para>
     /// <para>
-    /// <b>実装した方式</b>: <c>MsiGetFileVersionW</c>（<c>msi.dll</c>）は MSI ファイル自身に対しても
-    /// 呼び出すことができ、MSI の <c>ProductVersion</c> プロパティ相当の値を直接返す
-    /// （Windows Installer SDK のドキュメント上の契約——インストールされた実行可能ファイルだけでなく
-    /// パッケージファイル自体の版取得にも使える）。P/Invoke 1 関数のみで完結し、
-    /// <c>MsiOpenDatabase</c> 系のハンドル管理を避けられるため、これを採用する。
-    /// 呼び出しが失敗した場合（0 以外の戻り値）は <see langword="null"/> を返し、
-    /// 呼び出し側はファイル名からの版抽出（<see cref="ForwarderMsiFilter.ExtractVersionFromFileName"/>）
-    /// を補助的に使う——「ファイル名だけに依拠しない」という設計条件 9 の意図は、
-    /// ProductVersion 取得を最初に試みる本メソッドの存在そのもので満たす。
+    /// 読み取れなかった場合は <see langword="null"/> を返し、呼び出し側はファイル名からの版抽出
+    /// （<see cref="ForwarderMsiFilter.ExtractVersionFromFileName"/>）を補助的に使う——
+    /// 「ファイル名だけに依拠しない」という設計条件 9 の意図は、ProductVersion 取得を最初に
+    /// 試みる本メソッドの存在そのもので満たす。
     /// </para>
     /// </remarks>
     private static string? TryReadProductVersion(string filePath) =>
