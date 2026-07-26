@@ -35,7 +35,7 @@
 | [0017](0017-email-notification.md) | 能動通知のメール送信チャネル（SMTP。opt-in。Issue #273） | accepted（改訂 1 = 2026-07-19: 委任 8 の実施結果と流量閾値を非公開とする理由の明文化。改訂 2 = 2026-07-20: 委任 10 の裁定——`[permanent-failure]` に 1030 を採番。決定は不変） |
 | [0018](0018-source-silence-detection.md) | 送信元の途絶検知（ウォッチリスト方式。opt-in。ADR-0008 委任事項 4。Issue #275） | accepted（改訂 1 = 2026-07-19: 委任 1〜7 の実施結果を記録。決定は不変） |
 | [0019](0019-ingestion-tls-cert-ui.md) | TLS 受信の証明書選択の UI 設定化（ADR-0012 の再利用。Issue #276） | accepted |
-| [0020](0020-forwarder-msi-upload.md) | フォワーダ配布キット MSI の管理画面アップロード（管理 UI 認証有効時限定。ADR-0008 設計条件 9 の部分 supersession。Issue #283） | accepted（決定 1 の有効化条件 (ii)〔RequireForLoopback 必須〕は ADR-0021 により部分的に superseded） |
+| [0020](0020-forwarder-msi-upload.md) | フォワーダ配布キット MSI の管理画面アップロード（管理 UI 認証有効時限定。ADR-0008 設計条件 9 の部分 supersession。Issue #283） | accepted（決定 1 の有効化条件 (ii)〔RequireForLoopback 必須〕は ADR-0021〔proposed〕で変更提案中） |
 | [0021](0021-msi-upload-operation-auth.md) | フォワーダ MSI アップロードの前提条件の変更 — RequireForLoopback 必須からアップロード操作単位の実認証必須へ（ADR-0020 決定 1 (ii) の部分 supersession。Issue #440） | proposed |
 
 ## 起案予定
