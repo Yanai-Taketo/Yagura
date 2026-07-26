@@ -128,6 +128,11 @@ public static class ConfigurationKeyMetadata
             ["Admin:Https:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:Port"] = ConfigurationReloadEffect.RestartRequired,
+            // フォワーダ MSI アップロード opt-in（ADR-0020 決定 1。Issue #439 で KnownKeys とともに
+            // 登録漏れを追補）: アップロード関連エンドポイントの条件付き登録（構造的非存在）は
+            // WebApplication 構築時に固定されるため、他の Admin 系キーと同じくサービス再起動
+            // （configuration.md §8 の宣言どおり）。
+            ["Admin:ForwarderKit:MsiUpload:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             // メール通知（ADR-0017。opt-in）は §8 表の宣言どおり「即時」とする——ソケットの
             // bind も Kestrel の再構成も要さず、SMTP 接続は送信のたびに張る（常設接続を持たない）
             // ため、次回送信から新しい値が効く（ADR-0017 決定 9）。現時点の実効は送信側の

@@ -76,6 +76,7 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Admin:Https:Enabled", before.Admin?.Https?.Enabled, after.Admin?.Https?.Enabled);
         CompareKey(changedKeys, "Admin:Https:CertificateThumbprint", before.Admin?.Https?.CertificateThumbprint, after.Admin?.Https?.CertificateThumbprint);
         CompareKey(changedKeys, "Admin:Https:Port", before.Admin?.Https?.Port, after.Admin?.Https?.Port);
+        CompareKey(changedKeys, "Admin:ForwarderKit:MsiUpload:Enabled", before.Admin?.ForwarderKit?.MsiUpload?.Enabled, after.Admin?.ForwarderKit?.MsiUpload?.Enabled);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
         CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);
