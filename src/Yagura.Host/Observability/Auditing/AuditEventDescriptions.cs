@@ -80,6 +80,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.ForwarderMsiPlaced => "フォワーダ MSI を管理画面から配置",
         AuditEventKind.ForwarderMsiDeleted => "フォワーダ MSI を管理画面から削除",
         AuditEventKind.ForwarderMsiUploadRejected => "フォワーダ MSI のアップロード/削除を拒否",
+        AuditEventKind.AdminAccountStoreUnavailableRejected => "保存先到達不能のためアプリ独自認証のログインを拒否",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 }

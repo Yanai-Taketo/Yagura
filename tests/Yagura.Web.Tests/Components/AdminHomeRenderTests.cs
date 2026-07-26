@@ -43,14 +43,48 @@ public sealed class AdminHomeRenderTests
         Assert.Contains("2026-07-18T01:23:45", html);
     }
 
+    [Fact]
+    public async Task StorageAvailable_DoesNotShowTheDegradedBanner()
+    {
+        var html = await RenderAsync([]);
+
+        Assert.DoesNotContain(UiText.AdminHomeStorageUnavailableTitle, html);
+    }
+
+    [Fact]
+    public async Task StorageUnavailable_ShowsTheDegradedBannerOnTheEntryPage()
+    {
+        // ADR-0023 決定 1 の「可視化された縮退」: 起動を失敗させずに縮退させる以上、縮退している
+        // ことが必ず見えるのが成立条件。Windows 認証・認証無効の構成では管理面に入れてしまうため、
+        // 入れた側にも同じ事実を見せる（メール通知未設定の環境では、管理画面を開いた瞬間に
+        // 分かることが現実的な発見経路——ペルソナレビュー 佐藤の指摘）。
+        var degraded = new Yagura.Web.Administration.StorageAvailabilityState();
+        degraded.MarkUnavailable("SqlException");
+
+        var html = await RenderAsync([], storageAvailability: degraded);
+
+        Assert.Contains(UiText.AdminHomeStorageUnavailableTitle, html);
+        Assert.Contains(UiText.AdminHomeStorageUnavailableDescription, html);
+
+        // 失敗の詳細（例外型名）は画面に出さない——出所はイベントログへ寄せる（ADR-0023 決定 1）。
+        Assert.DoesNotContain("SqlException", html);
+    }
+
     private static Task<string> RenderAsync(
-        IReadOnlyList<PendingRestartKey> pendingKeys, EmailNotificationStatus? emailStatus = null) =>
+        IReadOnlyList<PendingRestartKey> pendingKeys,
+        EmailNotificationStatus? emailStatus = null,
+        Yagura.Web.Administration.StorageAvailabilityState? storageAvailability = null) =>
         CommonComponentRenderHarness.RenderAsync<AdminHome>(
             configureServices: services =>
             {
                 services.AddSingleton<IConfigurationReloadService>(new FakeReloadService(pendingKeys));
                 services.AddSingleton<IEmailNotificationAdminService>(
                     new FakeEmailNotificationAdminService(emailStatus ?? EmailStatus(enabled: false)));
+
+                if (storageAvailability is not null)
+                {
+                    services.AddSingleton(storageAvailability);
+                }
             });
 
     private static EmailNotificationStatus EmailStatus(

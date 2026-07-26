@@ -71,6 +71,9 @@ internal static class CommonComponentRenderHarness
         // 閲覧 HTTPS の縮小継続状態（ADR-0022 決定 2 可視化③）——AdminHome の常設バナーの注入元。
         // 既定は「縮小継続なし」（AddYaguraWebViewer の TryAdd 既定と同じ）。
         services.AddSingleton(Yagura.Web.Administration.ViewerHttpsRuntimeState.Normal);
+        // 保存先の可用性（ADR-0023 決定 1）——AdminHome の縮退バナーの注入元。既定は健全
+        // （新規インスタンスの初期状態が「利用可能」であり、テストは必要に応じて上書きする）。
+        services.AddSingleton<Yagura.Web.Administration.StorageAvailabilityState>();
         services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsLookup, Yagura.Web.ReverseDns.SystemDnsReverseLookup>();
         services.AddSingleton<Yagura.Web.Diagnostics.ReverseDnsMetrics>();
         services.AddSingleton<Yagura.Web.ReverseDns.IReverseDnsResolver, Yagura.Web.ReverseDns.ReverseDnsResolver>();

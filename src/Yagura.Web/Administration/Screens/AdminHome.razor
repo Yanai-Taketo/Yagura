@@ -5,6 +5,7 @@
 @inject IConfigurationReloadService ReloadService
 @inject IEmailNotificationAdminService EmailNotificationAdminService
 @inject Yagura.Web.Administration.ViewerHttpsRuntimeState ViewerHttpsState
+@inject Yagura.Web.Administration.StorageAvailabilityState StorageAvailability
 
 @*
     設定トップ（ui.md §4 の画面構成「設定（ウィザード群）」の入口。M8-4 骨格）。
@@ -72,6 +73,18 @@
     </MudAlert>
 }
 
+@if (!_storageAvailable)
+{
+    @* 保存先到達不能による縮退の常設バナー（ADR-0023 決定 1。Issue #466）: 起動を失敗させずに
+       縮退させる以上、**縮退していることが必ず見える**のが成立条件（「可視化された縮退」）。
+       Windows 認証や認証無効の環境では管理面に入れてしまうため、入れた側にも同じ事実を見せる。
+       失敗の詳細（保存先名・例外文字列）はここには出さない——出所はイベントログに寄せる。 *@
+    <MudAlert Severity="Severity.Error" Class="mt-4">
+        <MudText Typo="Typo.subtitle1"><b>@UiText.AdminHomeStorageUnavailableTitle</b></MudText>
+        <MudText Typo="Typo.body2">@UiText.AdminHomeStorageUnavailableDescription</MudText>
+    </MudAlert>
+}
+
 <MudPaper Elevation="1" Class="pa-4 mt-4">
     <MudNavMenu>
         <MudNavLink Href="/admin/setup">@UiText.AdminSetupWizardTitle</MudNavLink>
@@ -90,11 +103,13 @@
 @code {
     private IReadOnlyList<PendingRestartKey> _pendingRestartKeys = [];
     private EmailNotificationStatus? _emailStatus;
+    private bool _storageAvailable = true;
 
     protected override async Task OnInitializedAsync()
     {
         // スナップショット読み取りのみ（再読み込みは実行しない——状態を変更しない読み取り口）。
         _pendingRestartKeys = ReloadService.GetPendingRestartKeys();
+        _storageAvailable = StorageAvailability.IsAdminAccountStoreAvailable;
         _emailStatus = await EmailNotificationAdminService.GetStatusAsync();
     }
 

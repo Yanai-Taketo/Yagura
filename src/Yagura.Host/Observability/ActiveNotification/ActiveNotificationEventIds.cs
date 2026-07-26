@@ -196,4 +196,29 @@ public static class ActiveNotificationEventIds
     /// </summary>
     public static readonly EventId ViewerHttpsCertificateUnavailableWhileRunning =
         new(1037, "ViewerHttpsCertificateUnavailableWhileRunning");
+
+    /// <summary>
+    /// 保存先のスキーマ初期化に失敗し、**アプリ独自認証が一時的に利用不能**な縮退へ入った
+    /// （ADR-0023 決定 1。Issue #466）。受信・閲覧・Windows 統合認証は継続する。
+    /// レベル: 警告——認証手段が 1 つ失われた状態を放置させないため。ただし**起動は止めない**
+    /// （起動を止めれば syslog 受信ごと停止し、より重い害になる）。
+    /// </summary>
+    /// <remarks>
+    /// 本通知は縮退が続く限り抑制窓ごとに繰り返す（「復旧したのに使えないまま」を沈黙させない
+    /// ——round 1 鈴木の指摘）。回復時は対の
+    /// <see cref="AdminAccountStoreRecovered"/> が 1 度だけ発火し、「アプリ独自認証が使えなかった
+    /// 窓」を事後に確定できるようにする。
+    /// 採番: 1000 番台の次の空き（1038 までは Configuration/Persistence 側が使用済み）。
+    /// </remarks>
+    public static readonly EventId AdminAccountStoreUnavailable =
+        new(1039, "AdminAccountStoreUnavailable");
+
+    /// <summary>
+    /// 保存先が復旧し、アプリ独自認証が自動的に回復した（ADR-0023 決定 1。
+    /// <see cref="AdminAccountStoreUnavailable"/> と対になる事象）。レベル: 情報。
+    /// 本文には**縮退していた期間**と、復旧のために緩めた設定があれば戻す導線を含める
+    /// （round 2 田中の指摘 1——恒久的に緩めたまま忘れる誘因を、戻し忘れの可視化で断つ）。
+    /// </summary>
+    public static readonly EventId AdminAccountStoreRecovered =
+        new(1040, "AdminAccountStoreRecovered");
 }

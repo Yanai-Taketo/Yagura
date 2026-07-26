@@ -68,6 +68,23 @@ public enum AppAuthenticationResult
     /// <see cref="AdminAuthDenialLayer.GlobalBucket"/>）のみ待機応答を返す（決定 5.1・6）。
     /// </summary>
     Denied,
+
+    /// <summary>
+    /// 保存先（アカウント台帳）が到達不能なため、アプリ独自認証が**一時的に利用できない**
+    /// （ADR-0023 決定 1。Issue #466）。資格情報の正誤とは無関係であり、
+    /// <see cref="InvalidCredentials"/> と同じ扱いにしてはならない——「パスワードを間違えた」と
+    /// 誤読した利用者がリセットを試み、それも失敗して混乱するため（ペルソナレビュー 佐藤の指摘）。
+    /// </summary>
+    /// <remarks>
+    /// <b>列挙耐性（ADR-0011 決定 3）との関係</b>: 本結果はアカウントの存否ではなく**サーバ側の
+    /// 状態**を伝えるため、対象外としてよい。ただし成立条件がある——**アカウント照会より前に、
+    /// 実在・非実在を問わず一律に返す**こと（照会の後に置くと per-name オラクルを縮退時だけ
+    /// 再開することになる）。あわせて、無認証・無制限に叩ける保存先の死活オラクルにしないため、
+    /// **リモート発は IP レート制限のカウント対象**とする（グローバルバケットと失敗回数 n は
+    /// 据え置く）。実装は <c>AppAdminAuthenticationService.TryAuthenticateAsync</c> の
+    /// 評価順序 ①.5 を参照。
+    /// </remarks>
+    StoreUnavailable,
 }
 
 /// <summary>
