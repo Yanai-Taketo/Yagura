@@ -71,6 +71,11 @@ public interface IForwarderMsiUploadAdminService : IYaguraWriteService
 /// （= 不明。画面は「不明」と表示する）。
 /// </param>
 /// <param name="AppAccountUpdatedAtUtc">直近の変更時刻（同上）。</param>
+/// <param name="AppAccountLastLoginAtUtc">
+/// 直近の成功ログイン時刻（Issue #458 で追加）。**スキーマ v3 より前から存在するアカウントでも
+/// 値が入る**ため、作成・変更時刻が不明なアップグレード環境で点検の唯一の手がかりになる
+/// （「使われていないのに存在するアカウント」の判断材料）。未ログインなら <see langword="null"/>。
+/// </param>
 public sealed record ForwarderMsiUploadSettingStatus(
     bool Enabled,
     bool WindowsAuthEnabled,
@@ -78,7 +83,8 @@ public sealed record ForwarderMsiUploadSettingStatus(
     bool HasAppAccount,
     string? AppAccountUsername,
     DateTimeOffset? AppAccountCreatedAtUtc,
-    DateTimeOffset? AppAccountUpdatedAtUtc);
+    DateTimeOffset? AppAccountUpdatedAtUtc,
+    DateTimeOffset? AppAccountLastLoginAtUtc = null);
 
 /// <summary><see cref="IForwarderMsiUploadAdminService.ConfigureAsync"/> の結果。</summary>
 /// <param name="Changed">値が実際に変わったか（false = no-op。保存も監査も行っていない）。</param>

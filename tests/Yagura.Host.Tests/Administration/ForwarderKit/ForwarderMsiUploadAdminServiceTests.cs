@@ -165,6 +165,60 @@ public sealed class ForwarderMsiUploadAdminServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetStatusAsync_LegacyAccountWithoutTimestamps_StillExposesLastLogin()
+    {
+        // Issue #458: アップグレード環境の既存行は CreatedAtUtc/UpdatedAtUtc が NULL（v3 で
+        // 追加した列のため）。点検が「ユーザー名だけ」に退化しないよう、旧版から記録されている
+        // 最終ログインを手がかりとして提示する。
+        SeedAuthentication(appAuthEnabled: true);
+        await SeedLegacyAccountWithoutTimestampsAsync("legacy-admin", TestNow.AddDays(-30));
+
+        var status = await _service.GetStatusAsync();
+
+        Assert.True(status.HasAppAccount);
+        Assert.Equal("legacy-admin", status.AppAccountUsername);
+        Assert.Null(status.AppAccountCreatedAtUtc);
+        Assert.Null(status.AppAccountUpdatedAtUtc);
+        Assert.Equal(TestNow.AddDays(-30), status.AppAccountLastLoginAtUtc);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_LegacyAccount_RecordsLastLoginInAudit()
+    {
+        SeedAuthentication(appAuthEnabled: true);
+        await SeedLegacyAccountWithoutTimestampsAsync("legacy-admin", TestNow.AddDays(-30));
+
+        await _service.ConfigureAsync(
+            enabled: true, accountInventoryAcknowledged: true, operatorIsUploadOperationAuthenticated: true);
+
+        var detail = Assert.Single(_audit.Recorded).Detail;
+        Assert.Contains("existingAppAccount=legacy-admin", detail);
+        Assert.Contains("existingAppAccountUpdatedAt=unknown", detail);
+        // 作成・変更が unknown でも、何を手がかりに判断したか（最終ログイン）は残る。
+        Assert.Contains("existingAppAccountLastLoginAt=2026-06-26", detail);
+    }
+
+    /// <summary>
+    /// v3 より前に作られたアカウント（時刻列が NULL・最終ログインのみ記録済み）を再現する。
+    /// <c>UpsertAsync</c> は必ず時刻を書くため、列を直接 NULL へ戻して状況を作る。
+    /// </summary>
+    private async Task SeedLegacyAccountWithoutTimestampsAsync(string username, DateTimeOffset lastLoginAtUtc)
+    {
+        await _accountStore.UpsertAsync(username, "legacy-hash", TestNow);
+        await _accountStore.RecordSuccessfulLoginAsync(username, lastLoginAtUtc);
+
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(_dataRoot, "yagura.db"),
+            }.ToString());
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE AdminAccounts SET CreatedAtUtc = NULL, UpdatedAtUtc = NULL;";
+        await command.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
     public async Task GetStatusAsync_ExposesAccountTimestampsForInventoryCheck()
     {
         // 切替時点検の提示材料（ADR-0021 決定 1）。スキーマ v3 の時刻列がそのまま出ること。

@@ -119,6 +119,9 @@ public sealed class ForwarderMsiUploadAdminService : IForwarderMsiUploadAdminSer
             $"key={EnabledKey} value={enabled}" +
             $" existingAppAccount={(currentStatus.HasAppAccount ? currentStatus.AppAccountUsername : "(none)")}" +
             $" existingAppAccountUpdatedAt={FormatTimestamp(currentStatus.AppAccountUpdatedAtUtc)}" +
+            // 最終ログインはアップグレード環境（作成・変更時刻が unknown）でも値が入るため、
+            // 監査側にも残す——「何を見て有効化したか」の再現に必要（Issue #458）。
+            $" existingAppAccountLastLoginAt={FormatTimestamp(currentStatus.AppAccountLastLoginAtUtc)}" +
             $" inventoryAcknowledged={accountInventoryAcknowledged}";
 
         await _auditRecorder.RecordAsync(
@@ -147,7 +150,10 @@ public sealed class ForwarderMsiUploadAdminService : IForwarderMsiUploadAdminSer
             HasAppAccount: account is not null,
             AppAccountUsername: account?.Username,
             AppAccountCreatedAtUtc: account?.CreatedAtUtc,
-            AppAccountUpdatedAtUtc: account?.UpdatedAtUtc);
+            AppAccountUpdatedAtUtc: account?.UpdatedAtUtc,
+            // アップグレード環境では作成・変更時刻が NULL（v3 で追加した列のため）。最終ログインは
+            // 旧版から記録されているため、点検の手がかりとして併記する（Issue #458）。
+            AppAccountLastLoginAtUtc: account?.LastLoginAtUtc);
 
     private static string FormatTimestamp(DateTimeOffset? value) =>
         value?.UtcDateTime.ToString("O") ?? "unknown";

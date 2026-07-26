@@ -260,8 +260,17 @@
                         UiText.ForwarderMsiUploadEnableInventoryDetailFormat,
                         _uploadSetting.AppAccountUsername,
                         FormatInventoryTimestamp(_uploadSetting.AppAccountCreatedAtUtc),
-                        FormatInventoryTimestamp(_uploadSetting.AppAccountUpdatedAtUtc))
+                        FormatInventoryTimestamp(_uploadSetting.AppAccountUpdatedAtUtc),
+                        FormatInventoryTimestamp(_uploadSetting.AppAccountLastLoginAtUtc))
                 </MudText>
+                @if (_uploadSetting.AppAccountCreatedAtUtc is null && _uploadSetting.AppAccountUpdatedAtUtc is null)
+                {
+                    @* アップグレード環境の既存アカウント（Issue #458）: 時刻が記録されていない理由と、
+                       最終ログインを手がかりにした判断・対処まで案内する（「壊れている」と読ませない）。 *@
+                    <MudText Typo="Typo.caption" Color="Color.Warning" role="note" Class="d-block mt-1">
+                        @UiText.ForwarderMsiUploadEnableInventoryLegacyNotice
+                    </MudText>
+                }
                 <YaguraCheckboxField Label="@UiText.ForwarderMsiUploadEnableInventoryAcknowledge"
                                      @bind-Value="_enableInventoryAcknowledged" />
             }
@@ -366,6 +375,7 @@
                     <YaguraButton Role="YaguraButtonRole.Destructive"
                                   ConfirmTitle="@UiText.ForwarderMsiDeleteConfirmTitle"
                                   ConfirmSummary="@string.Format(UiText.ForwarderMsiDeleteConfirmDetailFormat, _msiLookup.Details!.FileName, _msiLookup.Details!.Sha256)"
+                                  ConfirmActionLabel="@UiText.ForwarderMsiDeleteConfirmButton"
                                   OnClick="ConfirmDeleteAsync">@UiText.ForwarderMsiDeleteConfirmButton</YaguraButton>
                     <YaguraButton Role="YaguraButtonRole.Normal" OnClick="CancelDelete">@UiText.ForwarderMsiDeleteCancelButton</YaguraButton>
                 </div>

@@ -1906,11 +1906,21 @@ public static class UiText
     public const string ForwarderMsiUploadEnableInventoryTitle =
         "有効化の前に、既存のアプリ独自認証アカウントを確認してください:";
 
-    /// <summary>{0} = ユーザー名、{1} = 作成時刻、{2} = 最終変更時刻。</summary>
+    /// <summary>{0} = ユーザー名、{1} = 作成時刻、{2} = 最終変更時刻、{3} = 最終ログイン。</summary>
     public const string ForwarderMsiUploadEnableInventoryDetailFormat =
-        "ユーザー名: {0} / 作成: {1} / 最終変更: {2}";
+        "ユーザー名: {0} / 作成: {1} / 最終変更: {2} / 最終ログイン: {3}";
 
-    public const string ForwarderMsiUploadEnableInventoryTimestampUnknown = "不明";
+    public const string ForwarderMsiUploadEnableInventoryTimestampUnknown = "記録なし";
+
+    /// <summary>
+    /// アップグレード環境で作成・変更時刻が欠ける場合の理由説明（Issue #458）。「壊れている」と
+    /// 読まれないよう理由を明示し、心当たりのないアカウントの扱いまで誘導する。
+    /// </summary>
+    public const string ForwarderMsiUploadEnableInventoryLegacyNotice =
+        "作成・最終変更の時刻は、この機能を導入したバージョンより前に作られたアカウントでは"
+        + "記録されていません（時刻を後から復元することはできないため「記録なし」と表示しています）。"
+        + "その場合は最終ログインを手がかりに、心当たりのないアカウントであれば有効化の前に"
+        + "パスワードの再設定または削除を検討してください。";
 
     public const string ForwarderMsiUploadEnableInventoryAcknowledge =
         "このアカウントが自分（または信頼できる管理者）が作成したものであることを確認しました";
