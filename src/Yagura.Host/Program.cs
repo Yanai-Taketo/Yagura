@@ -233,7 +233,7 @@ public static class Program
 
         var listenerBindEntries = ListenerBindPlan.Create(resolvedConfiguration);
 
-        if (listenerBindEntries.Any(e => e.RequiresHttps))
+        if (listenerBindEntries.Any(e => e is { Kind: ListenerKind.Admin, RequiresHttps: true }))
         {
             var certificateLoadResult = Yagura.Host.Administration.Https.CertificateProvider.Load(
                 resolvedConfiguration.AdminHttpsCertificateThumbprint!);
@@ -251,6 +251,40 @@ public static class Program
             else
             {
                 adminHttpsCertificate = certificateLoadResult.Certificate;
+            }
+        }
+
+        // 閲覧 UI の HTTPS（ADR-0022。opt-in・既定無効）: 証明書ストア参照は管理リスナの
+        // リモート HTTPS（上記）と同一の実装（CertificateProvider.Load）を再利用する——設定キーは
+        // 独立（Viewer:Https:*）だが参照方式は共有し、三重実装しない（決定 3——3 回目の再利用）。
+        // 失敗時挙動は管理面と同型の縮小継続（決定 2「失敗時に受信を巻き添えにしない・平文へは
+        // 決して落ちない・閲覧面は可視化つきで落ちてよい」）: 解決できなければ閲覧リスナの bind
+        // エントリを開かずにスキップする。平文 HTTP では開かない。期限切れは管理面と同じく
+        // 「未解決」として扱う（TLS 受信の「期限切れでも受け入れる」とは異なる——期限切れで停止
+        // する面〔管理 HTTPS・閲覧 HTTPS〕と継続する面〔TLS 受信〕の確定済み非対称。ADR-0019 決定 2）。
+        // SuppressListener（設定の静的な不成立——拇印未設定等）は Loader が理由を確定済みのため
+        // ストア参照自体を行わない。
+        System.Security.Cryptography.X509Certificates.X509Certificate2? viewerHttpsCertificate = null;
+        string? viewerHttpsCertificateUnavailableReason = resolvedConfiguration.ViewerHttpsSuppressedReason;
+
+        if (resolvedConfiguration.ViewerHttpsMode == Yagura.Host.Configuration.ViewerHttpsMode.Enabled)
+        {
+            var viewerCertificateLoadResult = Yagura.Host.Administration.Https.CertificateProvider.Load(
+                resolvedConfiguration.ViewerHttpsCertificateThumbprint!);
+
+            if (!viewerCertificateLoadResult.Succeeded)
+            {
+                viewerHttpsCertificateUnavailableReason = viewerCertificateLoadResult.FailureReason;
+            }
+            else if (viewerCertificateLoadResult.IsExpired)
+            {
+                viewerHttpsCertificateUnavailableReason =
+                    $"証明書（拇印 {resolvedConfiguration.ViewerHttpsCertificateThumbprint}）の有効期間外です" +
+                    $"（NotBefore={viewerCertificateLoadResult.Certificate!.NotBefore:O}, NotAfter={viewerCertificateLoadResult.Certificate.NotAfter:O}）。";
+            }
+            else
+            {
+                viewerHttpsCertificate = viewerCertificateLoadResult.Certificate;
             }
         }
 
@@ -294,10 +328,18 @@ public static class Program
         {
             foreach (var entry in listenerBindEntries)
             {
-                if (entry.RequiresHttps && adminHttpsCertificate is null)
+                // HTTPS 必須エントリの証明書は面（Kind）ごとに独立（configuration.md §6——暗黙の
+                // 連動をしない）: 管理リモート面 = adminHttpsCertificate / 閲覧面 = viewerHttpsCertificate。
+                var certificateForEntry = entry.Kind == ListenerKind.Admin
+                    ? adminHttpsCertificate
+                    : viewerHttpsCertificate;
+
+                if (entry.RequiresHttps && certificateForEntry is null)
                 {
-                    // 証明書が解決できなかった（未検出・秘密鍵アクセス不可・期限切れ）——
-                    // このエントリだけを bind せず縮小継続する（警告は app.Build() 後、下記参照）。
+                    // 証明書が解決できなかった（未検出・秘密鍵アクセス不可・期限切れ）、または
+                    // 閲覧面の設定が静的に不成立（SuppressListener）——このエントリだけを bind せず
+                    // 縮小継続する（警告は app.Build() 後、下記参照）。閲覧面は平文 HTTP へは
+                    // 落とさない（ADR-0022 決定 2）。
                     continue;
                 }
 
@@ -310,9 +352,10 @@ public static class Program
 
                     listenOptions.UseHttps(httpsOptions =>
                     {
-                        // 最低 TLS 1.2・1.3 優先を明示固定する（ADR-0010 Phase 2 決定 4。田中の指摘）。
-                        // OS 既定（schannel ポリシー）に暗黙に委ねない——Windows Server の版が混在する
-                        // 導入先で TLS 1.0/1.1 が意図せず有効のまま露出することを防ぐ。
+                        // 最低 TLS 1.2・1.3 優先を明示固定する（ADR-0010 Phase 2 決定 4。田中の指摘。
+                        // 閲覧面も同じ明示固定——ADR-0022 決定 1）。OS 既定（schannel ポリシー）に
+                        // 暗黙に委ねない——Windows Server の版が混在する導入先で TLS 1.0/1.1 が
+                        // 意図せず有効のまま露出することを防ぐ。
                         httpsOptions.SslProtocols =
                             System.Security.Authentication.SslProtocols.Tls12 |
                             System.Security.Authentication.SslProtocols.Tls13;
@@ -320,13 +363,13 @@ public static class Program
                         // ServerCertificateSelector は TLS ハンドシェイクのたびに呼ばれる公式の
                         // 拡張点（証明書のホットスワップ用途で用意されている）。ここでは「起動後に
                         // 証明書が期限切れへ遷移した場合、以後の新規ハンドシェイクを拒否する
-                        // （= リモート HTTPS リスナを事実上停止する。configuration.md §6 の既存方針
-                        // 『HTTPS リスナは停止し HTTP へは落とさない』をリモート面に適用——決定 4）」
-                        // という runtime の挙動を、Kestrel のリスナを再構成することなく実現する
-                        // ために転用する。null を返すと当該ハンドシェイクは失敗する（TLS レベルで
-                        // 拒否——loopback 面には一切影響しない。管理者は RDP + loopback から
-                        // 引き続き復旧操作ができる）。
-                        var capturedCertificate = adminHttpsCertificate!;
+                        // （= HTTPS リスナを事実上停止する。configuration.md §6『HTTPS リスナは停止し
+                        // HTTP へは落とさない』——管理リモート面は ADR-0010 Phase 2 決定 4、閲覧面は
+                        // ADR-0022 決定 2 が同じ機構への整合を既定とした）」という runtime の挙動を、
+                        // Kestrel のリスナを再構成することなく実現するために転用する。null を返すと
+                        // 当該ハンドシェイクは失敗する（TLS レベルで拒否——loopback 管理面には一切
+                        // 影響しない。管理者は RDP + loopback から引き続き閲覧・復旧操作ができる）。
+                        var capturedCertificate = certificateForEntry!;
                         httpsOptions.ServerCertificateSelector = (_, _) =>
                         {
                             var now = DateTime.Now;
@@ -1379,6 +1422,58 @@ public static class Program
                     "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2 と同型の手順）。",
                     effectiveServiceAccountName,
                     ingestionTlsGrantResult.FailureReason);
+            }
+        }
+
+        // 閲覧 UI の HTTPS（ADR-0022 決定 2）: 閲覧リスナを HTTPS で開けなかった場合の起動時警告
+        // （縮小継続——起動は中止しない。平文 HTTP では開かない。
+        // ConfigurationEventIds.ViewerHttpsCertificateUnavailableAtStartup = 1035 参照）。
+        // 管理リスナのリモート HTTPS（1013）・TLS 受信（1016）と同じパターン。
+        if (viewerHttpsCertificateUnavailableReason is not null)
+        {
+            var viewerHttpsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.ViewerHttps");
+            viewerHttpsLogger.LogWarning(
+                Yagura.Host.Configuration.ConfigurationEventIds.ViewerHttpsCertificateUnavailableAtStartup,
+                "[viewer-https-certificate-unavailable] 閲覧 UI の HTTPS（Viewer:Https:Enabled）が構成されていますが、" +
+                "閲覧リスナ（ポート {ViewerPort}）を HTTPS で開けないため、このリスナは開かずに縮小継続します" +
+                "（平文 HTTP では開きません——ADR-0022 決定 2）。syslog 受信・保存・管理リスナは影響を受けません。" +
+                "サーバ上の閲覧・証明書の差し替え・HTTPS の無効化は、管理画面（http://localhost:{AdminPort}/admin）から" +
+                "引き続き実行できます。理由: {Reason}",
+                listenerBindEntries.First(e => e.Kind == ListenerKind.Viewer).Port,
+                effectiveAdminPort,
+                viewerHttpsCertificateUnavailableReason);
+        }
+        else if (viewerHttpsCertificate is not null)
+        {
+            // 秘密鍵の読み取り権限をサービスアカウントへ付与する（管理リスナのリモート HTTPS・
+            // TLS 受信と同型の起動時 best-effort。configuration.md §6「付与は監査記録の対象とする」——
+            // ADR-0022 決定 3。付与先は実効実行アカウント——security.md §5.2）。付与に失敗しても
+            // 閲覧 HTTPS 自体は（証明書が現在の実行アカウントから既に読める限り）動作を継続できる
+            // ため、起動は妨げない——警告のみ残す（CF-D2 の手動手順への誘導）。
+            var viewerHttpsLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.ViewerHttps");
+            var viewerHttpsGrantResult = Yagura.Host.Administration.Https.CertificatePrivateKeyAccessGranter.TryGrantReadAccess(
+                viewerHttpsCertificate, effectiveServiceAccountName);
+
+            var viewerHttpsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
+            if (viewerHttpsGrantResult.Succeeded)
+            {
+                await viewerHttpsAuditRecorder.RecordAsync(new AuditEvent(
+                    OccurredAt: TimeProvider.System.GetUtcNow(),
+                    Kind: AuditEventKind.ViewerHttpsCertificatePrivateKeyAccessGranted,
+                    RemoteAddress: null,
+                    RemotePort: null,
+                    Detail: $"thumbprint={resolvedConfiguration.ViewerHttpsCertificateThumbprint};account={effectiveServiceAccountName}"))
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                viewerHttpsLogger.LogWarning(
+                    "[viewer-https-private-key-grant-failed] 閲覧 UI HTTPS 証明書の秘密鍵読み取り権限を" +
+                    "{Account} へ自動付与できませんでした（理由: {Reason}）。サービスアカウントが証明書へ既存の権限で" +
+                    "アクセスできない場合、閲覧 UI の接続受付が失敗する可能性があります。証明書スナップイン" +
+                    "（certlm.msc）から手動で権限を付与してください（configuration.md §6 CF-D2）。",
+                    effectiveServiceAccountName,
+                    viewerHttpsGrantResult.FailureReason);
             }
         }
 

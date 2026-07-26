@@ -133,6 +133,14 @@ public enum AuditEventKind
     IngestionTlsCertificatePrivateKeyAccessGranted,
 
     /// <summary>
+    /// 管理操作: 閲覧 UI HTTPS（ADR-0022。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ
+    /// 付与（configuration.md §6「付与は監査記録の対象とする」。
+    /// <see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型の起動時自動操作。
+    /// イベント ID 2028）。記録内容は証明書拇印・付与先アカウントのみ。
+    /// </summary>
+    ViewerHttpsCertificatePrivateKeyAccessGranted,
+
+    /// <summary>
     /// 拒否・セキュリティ事象: アプリ独自認証のアカウント単位バックオフが cap（上限遅延）に到達
     /// （ADR-0011 決定 3・9。イベント ID 3006）。<see cref="AppAuthenticationLoginFailed"/>（3004）は
     /// 通常の失敗ログインとして引き続き記録し、本 ID は「バックオフが上限まで達した」ことを示す

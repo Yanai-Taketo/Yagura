@@ -112,6 +112,10 @@ public static class ConfigurationKeyMetadata
             // 固定されるため管理認証キーと同じくサービス再起動が現時点の実効。
             ["Viewer:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Viewer:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
+            // 閲覧 UI の HTTPS（ADR-0022 決定 1）: Kestrel の bind エントリ・UseHttps 構成は
+            // WebApplicationBuilder 構築時に固定されるため、Admin:Https:* と同じくサービス再起動。
+            ["Viewer:Https:Enabled"] = ConfigurationReloadEffect.RestartRequired,
+            ["Viewer:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             // 注: SEC-9 のグループ一覧（Admin/Viewer:Authentication:Windows:*Groups）は配列キー
             // （KnownArrayKeys）であり、下の ArrayReloadEffectsByKey で宣言する（本表はスカラー専用）。
             // 反映は名 → SID 解決を含め起動時に固定（restart-required）であることは変わらないが、

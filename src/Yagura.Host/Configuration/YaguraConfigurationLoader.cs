@@ -75,6 +75,8 @@ public static class YaguraConfigurationLoader
         "Viewer:ReverseDns:Enabled",
         "Viewer:Authentication:Windows:Enabled",
         "Viewer:Authentication:Windows:KerberosOnly",
+        "Viewer:Https:Enabled",
+        "Viewer:Https:CertificateThumbprint",
         "Admin:HttpPort",
         "Admin:Authentication:Windows:Enabled",
         "Admin:Authentication:Windows:KerberosOnly",
@@ -242,6 +244,12 @@ public static class YaguraConfigurationLoader
             options.Viewer?.Authentication?.Windows?.KerberosOnly, "Viewer:Authentication:Windows:KerberosOnly", warnings);
         var viewerWindowsViewerGroups = ResolveGroupSpecs(options.Viewer?.Authentication?.Windows?.ViewerGroups);
         var viewerWindowsAdminGroups = ResolveGroupSpecs(options.Viewer?.Authentication?.Windows?.AdminGroups);
+
+        // --- UI: 閲覧 UI の HTTPS（ADR-0022 決定 1。opt-in。不正時挙動は条件分岐——拇印の設定
+        //     有無 = 暗号化意図の証跡の有無で、平文（無効）へ倒すか閲覧リスナを開かない縮小継続へ
+        //     倒すかを分ける。「緩い側へ倒せば暗号化の意図が黙って外れる」を無音にしない） ---
+        var (viewerHttpsMode, viewerHttpsCertificateThumbprint, viewerHttpsSuppressedReason) =
+            ResolveViewerHttps(options, warnings);
 
         // --- UI: 管理 HTTP ポート（§1「既定値で継続」。bind 先は常に loopback 固定。M6-1） ---
         var adminHttpPort = ResolveAdminHttpPort(options, warnings);
@@ -438,6 +446,9 @@ public static class YaguraConfigurationLoader
             UdpBindAddressIsExplicit = udpBindAddressIsExplicit,
             TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
             IngestionTlsBindAddressIsExplicit = ingestionTlsBindAddressIsExplicit,
+            ViewerHttpsMode = viewerHttpsMode,
+            ViewerHttpsCertificateThumbprint = viewerHttpsCertificateThumbprint,
+            ViewerHttpsSuppressedReason = viewerHttpsSuppressedReason,
             EmailNotification = emailNotification,
             SourceSilence = sourceSilence,
             AdminForwarderMsiUploadEnabled = adminForwarderMsiUploadEnabled,
@@ -1184,6 +1195,86 @@ public static class YaguraConfigurationLoader
                 "（configuration.md §1 の縮小側継続——認証関連のセキュリティ項目は不正値で開放側へ落とさない）")));
 
         return false;
+    }
+
+    /// <summary>
+    /// 閲覧 UI の HTTPS（ADR-0022 決定 1）を解決する。不正時挙動は条件分岐:
+    /// <list type="bullet">
+    /// <item><c>Enabled = true</c> + 形式上有効な拇印 → <see cref="ViewerHttpsMode.Enabled"/>
+    /// （実際のストア解決は Program 側）。</item>
+    /// <item><c>Enabled = true</c> + 拇印が未設定・形式不正 → <see cref="ViewerHttpsMode.SuppressListener"/>
+    /// （閲覧リスナを開かない縮小継続——平文では開かない。決定 2）。</item>
+    /// <item><c>Enabled</c> が真偽値として不正 + 拇印が設定済み（形式不正含む——HTTPS を意図した
+    /// 証跡がある）→ <see cref="ViewerHttpsMode.SuppressListener"/> + 警告。</item>
+    /// <item><c>Enabled</c> が真偽値として不正 + 拇印も未設定（HTTPS が構成された形跡がない）→
+    /// <see cref="ViewerHttpsMode.Disabled"/> + 警告（閲覧全停止は釣り合わない）。</item>
+    /// </list>
+    /// <c>Admin:Https:Enabled</c>（不正値は無効へ）と縮退の向きが異なるのは意図的——管理側は
+    /// RemoteBinding との fail-closed 組み合わせ検証（1012）が最終防衛線として控えるため無効化が
+    /// 平文露出に直結しないが、閲覧側にその防衛線はない（ADR-0022 決定 1。ペルソナレビュー——
+    /// 田中・クリス——の指摘による確定）。
+    /// </summary>
+    private static (ViewerHttpsMode Mode, string? Thumbprint, string? SuppressedReason) ResolveViewerHttps(
+        YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
+    {
+        var rawEnabled = options.Viewer?.Https?.Enabled;
+        var rawThumbprint = options.Viewer?.Https?.CertificateThumbprint;
+        var thumbprint = NormalizeCertificateThumbprintOrNull(
+            rawThumbprint,
+            "Viewer:Https:CertificateThumbprint",
+            warnings,
+            "閲覧 HTTPS の証明書未設定として扱います（Viewer:Https:Enabled が有効な場合、閲覧リスナは" +
+                "平文では開かず縮小継続します——ADR-0022 決定 2。受信・管理リスナは影響を受けません）");
+
+        if (string.IsNullOrWhiteSpace(rawEnabled))
+        {
+            return (ViewerHttpsMode.Disabled, thumbprint, null);
+        }
+
+        if (bool.TryParse(rawEnabled, out var enabled))
+        {
+            if (!enabled)
+            {
+                return (ViewerHttpsMode.Disabled, thumbprint, null);
+            }
+
+            if (thumbprint is null)
+            {
+                return (ViewerHttpsMode.SuppressListener, null,
+                    "閲覧 HTTPS（Viewer:Https:Enabled）が有効ですが、証明書拇印" +
+                    "（Viewer:Https:CertificateThumbprint）が未設定、または SHA-1 拇印（16 進 40 桁）として" +
+                    "解釈できない形式です。");
+            }
+
+            return (ViewerHttpsMode.Enabled, thumbprint, null);
+        }
+
+        // Enabled が真偽値として不正。拇印の「設定有無」は生値の有無で判定する（形式不正の拇印も
+        // 「HTTPS を構成しようとした証跡」に数える——ADR-0022 決定 1 の趣旨）。
+        if (!string.IsNullOrWhiteSpace(rawThumbprint))
+        {
+            warnings.Add(new ConfigurationWarning(
+                Key: "Viewer:Https:Enabled",
+                InvalidValue: rawEnabled,
+                AppliedValue: "(閲覧リスナを開かない縮小継続)",
+                Reason: "真偽値として不正で、かつ証明書拇印（Viewer:Https:CertificateThumbprint）が設定済み" +
+                    "（HTTPS を意図した証跡がある）ため、平文（無効）へは倒さず閲覧リスナを開かない縮小継続と" +
+                    "します（ADR-0022 決定 1——暗号化の意図を黙って外さない。Notification:Email:Smtp:Security の" +
+                    "前例と同じ判断）"));
+
+            return (ViewerHttpsMode.SuppressListener, thumbprint,
+                "閲覧 HTTPS の有効/無効（Viewer:Https:Enabled）が真偽値として解釈できず、証明書拇印が" +
+                "設定済み（HTTPS を意図した証跡がある）のため、平文では開かず閲覧リスナを停止しています。");
+        }
+
+        warnings.Add(new ConfigurationWarning(
+            Key: "Viewer:Https:Enabled",
+            InvalidValue: rawEnabled,
+            AppliedValue: bool.FalseString,
+            Reason: "真偽値として不正なため無効（平文 HTTP）を適用（証明書拇印も未設定で HTTPS が構成された" +
+                "形跡がなく、閲覧リスナの全停止は釣り合わない——ADR-0022 決定 1）"));
+
+        return (ViewerHttpsMode.Disabled, null, null);
     }
 
     /// <summary>

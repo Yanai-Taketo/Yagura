@@ -59,6 +59,11 @@ internal static class YaguraConfigurationOptionsCloner
                 {
                     Enabled = source.Viewer.ReverseDns.Enabled,
                 },
+                Https = source.Viewer.Https is null ? null : new YaguraConfigurationOptions.ViewerOptions.HttpsOptions
+                {
+                    Enabled = source.Viewer.Https.Enabled,
+                    CertificateThumbprint = source.Viewer.Https.CertificateThumbprint,
+                },
                 Authentication = source.Viewer.Authentication is null ? null : new YaguraConfigurationOptions.ViewerOptions.AuthenticationOptions
                 {
                     Windows = source.Viewer.Authentication.Windows is null ? null : new YaguraConfigurationOptions.ViewerOptions.AuthenticationOptions.WindowsOptions
