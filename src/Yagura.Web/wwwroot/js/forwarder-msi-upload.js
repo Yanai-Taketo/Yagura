@@ -35,15 +35,26 @@ export async function stage(inputElement, architecture) {
     return { status: 0, ok: false, body: { error: "no-file" } };
   }
 
+  // X-Requested-With: 未認証時に Cookie ハンドラの 302 ログイン誘導ではなく 401 を受けるため
+  // （ADR-0021 決定 1——アップロード系操作は専用ポリシーで実認証必須。302 を追従すると
+  // fetch がログイン画面の HTML を掴み、JSON 解釈で壊れる）。
   const tokenResponse = await fetch("/admin/forwarder-kit/msi/antiforgery", {
     credentials: "same-origin",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
   });
   if (!tokenResponse.ok) {
-    return { status: tokenResponse.status, ok: false, body: { error: "token-fetch-failed" } };
+    return {
+      status: tokenResponse.status,
+      ok: false,
+      body: { error: tokenResponse.status === 401 ? "authentication-required" : "token-fetch-failed" },
+    };
   }
   const tokenInfo = await tokenResponse.json();
 
-  const headers = { "Content-Type": "application/octet-stream" };
+  const headers = {
+    "Content-Type": "application/octet-stream",
+    "X-Requested-With": "XMLHttpRequest",
+  };
   headers[tokenInfo.headerName || "RequestVerificationToken"] = tokenInfo.token;
 
   const response = await fetch(
@@ -60,6 +71,11 @@ export async function stage(inputElement, architecture) {
     body = await response.json();
   } catch {
     // 応答が JSON でない（プロキシ・切断等）——status だけで判定する。
+  }
+
+  if (response.status === 401 && (!body || !body.error)) {
+    // 専用ポリシーの認可拒否（サインイン切れ等）。サーバは監査 3014 に記録済み。
+    body = { error: "authentication-required" };
   }
 
   return { status: response.status, ok: response.ok, body: body };

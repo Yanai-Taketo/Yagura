@@ -173,6 +173,13 @@ public enum ForwarderMsiCommitError
 
     /// <summary>リネーム・旧ファイル除去の書き込みに失敗した。</summary>
     WriteFailed,
+
+    /// <summary>
+    /// 操作者が実認証済みの管理セッションでない（ADR-0021 決定 1——無認証 loopback の暗黙
+    /// プリンシパルは書き込み口につながる操作を実行できない）。ストアではなく
+    /// <c>ForwarderMsiPlacementService</c> が返す（ファイルシステム状態とは無関係の拒否）。
+    /// </summary>
+    OperationNotAuthenticated,
 }
 
 /// <summary><see cref="IForwarderMsiStore.Commit"/> の結果。</summary>
@@ -208,6 +215,12 @@ public enum ForwarderMsiDeleteError
 
     /// <summary>削除の書き込みに失敗した（ACE 未付与を含む）。</summary>
     WriteFailed,
+
+    /// <summary>
+    /// 操作者が実認証済みの管理セッションでない（ADR-0021 決定 1。<c>ForwarderMsiCommitError.OperationNotAuthenticated</c>
+    /// と同じ扱い——ストアではなく <c>ForwarderMsiPlacementService</c> が返す）。
+    /// </summary>
+    OperationNotAuthenticated,
 }
 
 /// <summary><see cref="IForwarderMsiStore.Delete"/> の結果（削除前 SHA256 を監査に残す——ADR-0020 決定 3）。</summary>

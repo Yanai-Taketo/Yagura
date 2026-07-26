@@ -46,8 +46,8 @@ public sealed class ForwarderMsiUploadConfigurationTests : IDisposable
     [Fact]
     public void Load_MsiUploadEnabled_WithAuthAndRequireForLoopback_Succeeds()
     {
-        // 前提条件が揃った唯一の正当な有効化構成（ADR-0020 決定 1: (i) 認証有効 + (ii)
-        // RequireForLoopback + (iii) 機能 opt-in）。
+        // 認証有効 + RequireForLoopback + opt-in——ADR-0020 当時の正当構成は改訂後も当然に有効
+        // （RequireForLoopback 自体の機能は不変。ADR-0021 決定 2）。
         WriteConfigurationFile("""
             {
                 "Admin": {
@@ -69,10 +69,12 @@ public sealed class ForwarderMsiUploadConfigurationTests : IDisposable
     }
 
     [Fact]
-    public void Load_MsiUploadEnabled_WithoutRequireForLoopback_ThrowsFailClosed()
+    public void Load_MsiUploadEnabled_WithoutRequireForLoopback_Succeeds()
     {
-        // 認証は有効だが loopback 認証 opt-in が無い——管理リスナに無認証の到達経路が残る構成
-        // での有効化は起動を拒否する（ADR-0020 決定 1。1032）。
+        // ADR-0021 決定 2: 条件 (ii)（RequireForLoopback 必須）は撤廃——認証方式が構成済みなら
+        // RequireForLoopback = false（既定）でも有効化できる。無認証 loopback からの到達遮断は
+        // アップロード操作単位の専用認可ポリシーが担う（構成レベルの検証対象ではない）。
+        // 旧仕様（ADR-0020 決定 1 (ii)）ではこの構成は 1032 起動拒否だった——仕様変更の回帰固定。
         WriteConfigurationFile("""
             {
                 "Admin": {
@@ -85,19 +87,18 @@ public sealed class ForwarderMsiUploadConfigurationTests : IDisposable
             """);
         var logger = new FakeLogger();
 
-        var exception = Assert.Throws<ConfigurationValidationException>(() => YaguraConfigurationLoader.Load(_dataRoot, logger));
+        var result = YaguraConfigurationLoader.Load(_dataRoot, logger);
 
-        Assert.Equal(ConfigurationEventIds.ForwarderMsiUploadFailClosedStartupRejected.Id, exception.EventId?.Id);
-        Assert.Contains("Admin:Authentication:RequireForLoopback", exception.Message);
-        // 復旧に必要な具体の設定キーと値を明記する（ADR-0020 委任 1——手編集復旧の場面では
-        // UI の誘導が使えない。再レビュー鈴木指摘）。
-        Assert.Contains("Admin:ForwarderKit:MsiUpload:Enabled を false に戻して", exception.Message);
+        Assert.True(result.Configuration.AdminForwarderMsiUploadEnabled);
+        Assert.False(result.Configuration.AdminAuthRequireForLoopback);
+        Assert.True(result.Configuration.AdminAppAuthEnabled);
     }
 
     [Fact]
     public void Load_MsiUploadEnabled_WithoutAnyAuthMethod_ThrowsFailClosed()
     {
-        // 認証方式がひとつも無い + RequireForLoopback も無い——欠けている条件が両方列挙される。
+        // 認証方式がひとつも無い——サインインの手段が存在しなければ操作単位認可を誰も通過
+        // できないため、引き続き起動拒否（ADR-0021 決定 2。1032）。
         WriteConfigurationFile("""{ "Admin": { "ForwarderKit": { "MsiUpload": { "Enabled": "true" } } } }""");
         var logger = new FakeLogger();
 
@@ -106,7 +107,11 @@ public sealed class ForwarderMsiUploadConfigurationTests : IDisposable
         Assert.Equal(ConfigurationEventIds.ForwarderMsiUploadFailClosedStartupRejected.Id, exception.EventId?.Id);
         Assert.Contains("Admin:Authentication:Windows:Enabled", exception.Message);
         Assert.Contains("Admin:Authentication:App:Enabled", exception.Message);
-        Assert.Contains("Admin:Authentication:RequireForLoopback", exception.Message);
+        // RequireForLoopback は前提条件ではなくなった（ADR-0021）——メッセージにも現れない。
+        Assert.DoesNotContain("Admin:Authentication:RequireForLoopback", exception.Message);
+        // 復旧に必要な具体の設定キーと値を明記する（ADR-0020 委任 1——手編集復旧の場面では
+        // UI の誘導が使えない）。
+        Assert.Contains("Admin:ForwarderKit:MsiUpload:Enabled を false に戻して", exception.Message);
     }
 
     [Fact]

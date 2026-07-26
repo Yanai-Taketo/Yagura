@@ -227,24 +227,22 @@
                     <MudText Typo="Typo.caption" Inline="true" Class="ml-1">（設定済み）</MudText>
                 }
             </li>
-            <li>
-                @UiText.ForwarderMsiUploadConditionRequireForLoopback
-                @if (AuthOptions.RequireAuthentication)
-                {
-                    <MudText Typo="Typo.caption" Inline="true" Class="ml-1">（設定済み）</MudText>
-                }
-                else
-                {
-                    @* 条件 (ii) の代償の提示（ADR-0020 決定 1——復旧経路のトレードオフを
-                       知らずに輸入させない。ブレークグラス強推奨込み）。 *@
-                    <MudText Typo="Typo.caption" Color="Color.Warning" role="alert" Class="d-block mt-1">
-                        @UiText.ForwarderMsiUploadConditionRequireForLoopbackCost
-                    </MudText>
-                }
-            </li>
+            @* 条件 (ii)（RequireForLoopback 必須）は ADR-0021 により撤廃——リスナ全体の認証では
+               なく、アップロード系操作単位の実認証（サインイン）で身元保証を担う。 *@
             <li>@UiText.ForwarderMsiUploadConditionOptIn</li>
         </ul>
         <MudText Typo="Typo.caption">@UiText.ForwarderMsiUploadDisabledManualGuide</MudText>
+    }
+    else if (!_operationAuthenticated)
+    {
+        @* アップロード系操作の専用認可（ADR-0021 決定 1）: 機能は有効だが、この circuit は
+           実認証済みの管理セッションではない（無認証 loopback を含む）。操作 UI は出さず、
+           「なぜこの操作だけ認証が要るか」の平易な説明とサインイン動線を示す（沈黙にしない）。 *@
+        <MudText Typo="Typo.body2" Class="mt-2">@UiText.ForwarderMsiUploadSignInRequiredTitle</MudText>
+        <MudText Typo="Typo.caption" Class="mt-1">@UiText.ForwarderMsiUploadSignInRequiredExplanation</MudText>
+        <div class="mt-2">
+            <MudLink Href="@AdminAuthenticationExtensions.LoginPath">@UiText.ForwarderMsiUploadSignInLinkLabel</MudLink>
+        </div>
     }
     else if (_writeAccess?.CanWrite != true)
     {
@@ -396,18 +394,30 @@
     private bool _uploadVersionMismatchAcknowledged;
     private bool _deleteConfirming;
     private bool _deleteAcknowledged;
+    private bool _operationAuthenticated;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         _candidates = NicCandidateSource.GetCandidates();
         RefreshMsiLookup();
 
         if (UploadOptions.Enabled)
         {
+            // アップロード系操作の専用認可（ADR-0021 決定 1）。判定は HTTP 側ポリシーと同じ
+            // 単一実装（IsForwarderMsiUploadOperationAllowed）——UI の出し分けと実行可否
+            // （ForwarderMsiPlacementService の最終防衛線・stage エンドポイントの 401）を
+            // 食い違わせない。
+            _operationAuthenticated = AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
             // 書き込み可否の実挙動検出（ADR-0020 決定 2・委任 2）。画面表示のたびに 1 回——
             // 周期の ACL 監視（1033/1034）とは別に、利用者が今まさに操作できるかを実書き込み
             // プローブで確かめる（頻度が低いため SACL 汚染の懸念は周期監視と異なり許容）。
-            _writeAccess = MsiStore.CheckWriteAccess();
+            // 未サインイン時は省略する（操作 UI を出さないため。プローブの SACL 痕跡も残さない）。
+            if (_operationAuthenticated)
+            {
+                _writeAccess = MsiStore.CheckWriteAccess();
+            }
         }
     }
 
@@ -687,6 +697,7 @@
                 ForwarderMsiCommitError.ReplaceNotAcknowledged => UiText.ForwarderMsiUploadErrorNotAcknowledged,
                 ForwarderMsiCommitError.FolderStateChanged => UiText.ForwarderMsiUploadErrorStateChanged,
                 ForwarderMsiCommitError.WriteFailed => UiText.ForwarderMsiUploadErrorWriteFailed,
+                ForwarderMsiCommitError.OperationNotAuthenticated => UiText.ForwarderMsiUploadErrorAuthenticationRequired,
                 _ => UiText.ForwarderMsiUploadErrorGeneric,
             };
             if (result.Error is ForwarderMsiCommitError.UnknownStagingToken or ForwarderMsiCommitError.FolderStateChanged)
@@ -754,6 +765,7 @@
                 ForwarderMsiDeleteError.Sha256Mismatch => UiText.ForwarderMsiDeleteErrorMismatch,
                 ForwarderMsiDeleteError.MultipleExistingFiles => UiText.ForwarderMsiUploadErrorMultipleExisting,
                 ForwarderMsiDeleteError.WriteFailed => UiText.ForwarderMsiUploadErrorWriteFailed,
+                ForwarderMsiDeleteError.OperationNotAuthenticated => UiText.ForwarderMsiUploadErrorAuthenticationRequired,
                 _ => UiText.ForwarderMsiUploadErrorGeneric,
             };
         }
@@ -771,10 +783,16 @@
 
     private async Task<ForwarderMsiOperatorContext> ResolveOperatorContextAsync()
     {
-        var (scheme, principal) = AuditActorResolver.Resolve(
-            (await AuthStateProvider.GetAuthenticationStateAsync()).User);
+        var user = (await AuthStateProvider.GetAuthenticationStateAsync()).User;
+        var (scheme, principal) = AuditActorResolver.Resolve(user);
         return new ForwarderMsiOperatorContext(
-            CircuitContext.RemoteAddress, CircuitContext.IsLoopbackListener, scheme, principal);
+            CircuitContext.RemoteAddress,
+            CircuitContext.IsLoopbackListener,
+            scheme,
+            principal,
+            // 専用認可の判定（ADR-0021 決定 1）。操作時点の認証状態で毎回判定する——
+            // 画面表示時（_operationAuthenticated）から状態が変わっていても安全側に働く。
+            OperationAuthenticated: AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(user));
     }
 
     private string ArchitectureQueryValue() =>
@@ -799,6 +817,9 @@
         "product-version-unreadable" or "product-version-invalid" => UiText.ForwarderMsiUploadErrorVersionUnreadable,
         "multiple-existing-files" => UiText.ForwarderMsiUploadErrorMultipleExisting,
         "no-file" => UiText.ForwarderMsiUploadNoFileSelected,
+        // 専用認可の拒否（ADR-0021 決定 1。401——サインイン切れを含む）。token-fetch-failed は
+        // antiforgery 配布の失敗（401 以外）だが、いずれもサインインからやり直すのが復旧手順。
+        "authentication-required" or "token-fetch-failed" => UiText.ForwarderMsiUploadErrorAuthenticationRequired,
         _ => UiText.ForwarderMsiUploadErrorGeneric,
     };
 }

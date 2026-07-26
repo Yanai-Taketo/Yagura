@@ -56,7 +56,11 @@ internal static class ForwarderMsiUploadEndpoints
 
         endpoint
             .WithMetadata(ListenerPortGuardEndpointMetadata.Admin)
-            .RequireAuthorization(AdminAuthenticationExtensions.AdminPolicyName);
+            // 専用ポリシー（ADR-0021 決定 1）: トークン配布も認可対象——未認証ローカルプロセスに
+            // よるトークン採取を入口で塞ぐ。AdminPolicy（暗黙 loopback バイパスあり）は使わない。
+            // マーカーは認可拒否の監査（ForwarderMsiUploadAuthorizationAuditHandler → 3014）用。
+            .WithMetadata(ForwarderMsiUploadOperationMetadata.AntiforgeryToken)
+            .RequireAuthorization(AdminAuthenticationExtensions.ForwarderMsiUploadPolicyName);
     }
 
     private static void MapStage(IEndpointRouteBuilder endpoints)
@@ -145,7 +149,14 @@ internal static class ForwarderMsiUploadEndpoints
 
         endpoint
             .WithMetadata(ListenerPortGuardEndpointMetadata.Admin)
-            .RequireAuthorization(AdminAuthenticationExtensions.AdminPolicyName);
+            // 専用ポリシー（ADR-0021 決定 1）: 実際にサインインした管理セッションのみ。
+            // 未認証の要求はハンドラへ到達せず 401（JS は X-Requested-With を付けて fetch する
+            // ため Cookie ハンドラの 302 誘導ではなく 401 が返る）。認可拒否の監査は
+            // ForwarderMsiUploadAuthorizationAuditHandler（本マーカーを見て 3014
+            // reason=operation-auth-required を記録）が担う——「拒否されること」だけでなく
+            // 「拒否が見えること」が設計条件（ADR-0021 決定 1）。
+            .WithMetadata(ForwarderMsiUploadOperationMetadata.Stage)
+            .RequireAuthorization(AdminAuthenticationExtensions.ForwarderMsiUploadPolicyName);
     }
 
     private static async Task RecordRejectionAsync(

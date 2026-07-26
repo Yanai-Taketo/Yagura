@@ -74,6 +74,15 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
     /// <see langword="true"/> のとき MapYaguraWebViewer が閲覧ページ・CSV へ ViewerPolicy を付与し、
     /// 閲覧ログインエンドポイント（<c>/login/*</c>）を登録する——L-5 許可リストの enabled 変種が検証する。
     /// </param>
+    /// <param name="forwarderMsiUploadEnabled">
+    /// フォワーダ MSI アップロード機能を有効にした構成でホストを起動する（ADR-0020 決定 1・
+    /// ADR-0021 決定 1。既定 false = エンドポイント非登録〔構造的非存在〕。
+    /// <c>ForwarderMsiUploadEndpointAuthorizationTests</c> が専用認可ポリシーの実 HTTP 検証に使う）。
+    /// </param>
+    /// <param name="forwarderMsiStore">
+    /// <see cref="Yagura.Web.ForwarderKit.IForwarderMsiStore"/> の差し替え
+    /// （<paramref name="forwarderMsiUploadEnabled"/> = true のとき stage エンドポイントが要求する）。
+    /// </param>
     public static async Task<ViewerHostHarness> StartAsync(
         Yagura.Web.ForwarderKit.IForwarderMsiSource? forwarderMsiSource = null,
         ILogStore? logStore = null,
@@ -81,7 +90,9 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         Yagura.Abstractions.Administration.IAppAdminAuthenticator? appAuthenticator = null,
         IAuditRecorder? auditRecorder = null,
         bool windowsAuthEnabled = false,
-        bool viewerAuthEnabled = false)
+        bool viewerAuthEnabled = false,
+        bool forwarderMsiUploadEnabled = false,
+        Yagura.Web.ForwarderKit.IForwarderMsiStore? forwarderMsiStore = null)
     {
         var builder = WebApplication.CreateBuilder();
 
@@ -155,6 +166,12 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         // スタブとする——実処理は ForwarderMsiFilterTests / ForwarderKitBuilderTests が検証する）。
         builder.Services.AddSingleton(forwarderMsiSource ?? new StubForwarderMsiSource());
 
+        // ADR-0021: アップロード系エンドポイントの専用認可ポリシーの実 HTTP 検証用。
+        if (forwarderMsiStore is not null)
+        {
+            builder.Services.AddSingleton(forwarderMsiStore);
+        }
+
         // 閲覧・管理の両方を同一ホストにマップする(Program.cs と同じ構造。ポートによる
         // 到達可否の分離は実行時の ListenerPortGuardMiddleware が担うため、エンドポイント表
         // レベルでは両者は同居する——ViewerEndpointAllowlistTests のコメント参照)。
@@ -179,7 +196,10 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             "Yagura.Web.staticwebassets.endpoints.json",
             viewerAuthEnabled: viewerAuthEnabled,
             appAuthAvailable: appAuthEnabled);
-        app.MapYaguraAdmin(razorComponents, windowsAuthEnabled: windowsAuthEnabled);
+        app.MapYaguraAdmin(
+            razorComponents,
+            windowsAuthEnabled: windowsAuthEnabled,
+            forwarderMsiUploadEnabled: forwarderMsiUploadEnabled);
 
         await app.StartAsync();
 
@@ -384,6 +404,7 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             string? operatorAddress = null,
             string? operatorScheme = null,
             string? operatorPrincipal = null,
+            bool operatorIsUploadOperationAuthenticated = false,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
     }

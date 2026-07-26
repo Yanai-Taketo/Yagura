@@ -41,9 +41,20 @@ public interface IAdminAuthenticationAdminService : IYaguraWriteService
     /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用）。</param>
     /// <param name="operatorScheme">操作者の認証方式（ADR-0010 決定 6。未認証では <see langword="null"/>）。</param>
     /// <param name="operatorPrincipal">操作者の認証済み利用者名（同上）。</param>
+    /// <param name="operatorIsUploadOperationAuthenticated">
+    /// 操作者がフォワーダ MSI アップロード系操作の専用認可判定（実認証済みの管理セッション。
+    /// ADR-0021 決定 1）を通過しているか。画面が HTTP 側ポリシーと同じ単一実装
+    /// （<c>AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed</c>）で判定して渡す。
+    /// **アップロード機能が有効な構成では、認証設定の変更・アプリアカウントの作成/変更
+    /// （= 資格情報の発行口）にも同じ判定を要求する**——無認証 loopback でアカウントを
+    /// 自己発行してから「実認証」する迂回（ADR-0021 決定 1 のブートストラップ迂回）を閉じる。
+    /// 機能無効の構成では本引数は判定に使われない（ADR-0010 決定 3 の bootstrap 設計は不変）。
+    /// </param>
     /// <exception cref="WizardValidationException">
-    /// fail-closed 不変条件（ADR-0010 決定 1）に反する組み合わせ、またはアプリ独自認証を
-    /// 有効化しようとしているのにアカウントが 1 件も存在しない（本呼び出しでも作成しない）場合。
+    /// fail-closed 不変条件（ADR-0010 決定 1）に反する組み合わせ、アプリ独自認証を
+    /// 有効化しようとしているのにアカウントが 1 件も存在しない（本呼び出しでも作成しない）場合、
+    /// またはアップロード機能有効時に未サインインの操作者が設定を変更しようとした場合
+    /// （ADR-0021 決定 1）。
     /// </exception>
     Task<AdminAuthenticationStatus> ConfigureAsync(
         bool windowsAuthEnabled,
@@ -55,6 +66,7 @@ public interface IAdminAuthenticationAdminService : IYaguraWriteService
         string? operatorAddress = null,
         string? operatorScheme = null,
         string? operatorPrincipal = null,
+        bool operatorIsUploadOperationAuthenticated = false,
         CancellationToken cancellationToken = default);
 }
 

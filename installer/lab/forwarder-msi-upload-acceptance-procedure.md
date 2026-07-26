@@ -56,13 +56,18 @@ Get-WinEvent -ProviderName Yagura -MaxEvents 5 | Format-List Id, Message
 > Application Error 1000 で起動拒否を確認する（2026-07-25 の初回実施で発見された挙動）。
 > fail-closed（起動拒否）そのものは版に依らず成立する。
 
-次に正規の順序で構成する:
+次に正規の順序で構成する（[ADR-0021](../../docs/adr/0021-msi-upload-operation-auth.md) 改訂後の
+前提条件——`RequireForLoopback` の有効化は**不要**。②以降のアップロード操作は、その場での
+サインイン——アップロード操作単位の実認証——を経て実施する）:
 
 1. `/admin/auth-setup` でアプリ独自認証を有効化し、管理者アカウントを作成する
-   （**ブレークグラス**——Windows 統合認証を主に使う場合もアプリ独自アカウントを 1 つ残す）
-2. `Admin:Authentication:RequireForLoopback = true` を有効化する
-3. `yagura.json` の `Admin:ForwarderKit:MsiUpload:Enabled` を `"true"` にして再起動する
-   （現時点で本キーは手編集のみ。起動成功すること）
+   （Windows 統合認証を主に使う場合もアプリ独自アカウントを 1 つ残すことを推奨）
+2. `yagura.json` の `Admin:ForwarderKit:MsiUpload:Enabled` を `"true"` にして再起動する
+   （現時点で本キーは手編集のみ——GUI トグル化は ADR-0021 委任 2。起動成功すること）
+3. `/admin/forwarder-kit` を**未サインイン**で開き、アップロード欄に「サインインが必要」の
+   案内とサインイン動線が表示されることを確認 → サインインして操作 UI が現れることを確認する
+   （ADR-0021 委任 1 の実機検証——無認証で確立済みの circuit からの途中サインインの成立確認を
+   兼ねる）
 
 ### P-2. 検証用 MSI を用意する
 

@@ -21,12 +21,21 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
     private readonly IAuditRecorder _auditRecorder;
     private readonly TimeProvider _timeProvider;
 
+    /// <summary>
+    /// フォワーダ MSI アップロード機能（<c>Admin:ForwarderKit:MsiUpload:Enabled</c>）の
+    /// **稼働中プロセスにおける**実効値（起動時解決値。Program が結線する）。
+    /// <see langword="true"/> の場合、本サービスは資格情報の発行口（ADR-0021 決定 1）として
+    /// 実認証済みの操作者のみを受け付ける。
+    /// </summary>
+    private readonly bool _forwarderMsiUploadEnabled;
+
     public AdminAuthenticationAdminService(
         string dataRoot,
         IAdminAccountStore accountStore,
         AppAdminAuthenticationService appAuthenticationService,
         IAuditRecorder auditRecorder,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        bool forwarderMsiUploadEnabled = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
         ArgumentNullException.ThrowIfNull(accountStore);
@@ -38,6 +47,7 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         _appAuthenticationService = appAuthenticationService;
         _auditRecorder = auditRecorder;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _forwarderMsiUploadEnabled = forwarderMsiUploadEnabled;
     }
 
     public async Task<AdminAuthenticationStatus> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -58,8 +68,24 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         string? operatorAddress = null,
         string? operatorScheme = null,
         string? operatorPrincipal = null,
+        bool operatorIsUploadOperationAuthenticated = false,
         CancellationToken cancellationToken = default)
     {
+        // 資格情報の発行口の統制（ADR-0021 決定 1）: アップロード機能が有効な稼働構成では、
+        // 認証設定の変更・アプリアカウントの作成/変更に実認証済みの管理セッションを要求する。
+        // 無認証 loopback でアカウントを自己発行 → その資格情報でサインイン → アップロード系
+        // 操作の専用ポリシーを通過、というブートストラップ迂回を閉じるための最終防衛線
+        // （UI 側の出し分けと同じ判定——AdminAuthSetupScreen が単一実装で判定した結果を受け取る）。
+        // 機能無効の構成では従来どおり（ADR-0010 決定 3 の bootstrap 設計は不変）。
+        if (_forwarderMsiUploadEnabled && !operatorIsUploadOperationAuthenticated)
+        {
+            throw new WizardValidationException(
+                "フォワーダ MSI アップロード機能（Admin:ForwarderKit:MsiUpload:Enabled）が有効な" +
+                "構成では、認証設定・管理者アカウントの変更にはサインインが必要です" +
+                "（未サインインで作成した資格情報による MSI 書き込み口への迂回を防ぐため——" +
+                "ADR-0021 決定 1）。サインインしてからやり直してください。");
+        }
+
         // fail-closed 不変条件（ADR-0010 決定 1）: 起動時検証（YaguraConfigurationLoader）と
         // 同じ判定を、ウィザード画面上でも先に拒否する——「有効化を受け付けない」というオーナー
         // 決定の実装は、まず UI 層で親切に拒否し、手編集で作られた場合の最終防衛線を起動時
@@ -77,7 +103,8 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         // 起動を拒否し、syslog 受信ごと停止してしまう。その状態に陥る設定変更を UI 層で先に拒否する
         // （起動時検証と対称の二段構え）。本画面は RemoteBinding を変更しない（認証フラグのみ）ため、
         // 現在値は設定ファイルから読む。
-        var currentRemoteBindingEnabled = ParseBool(YaguraConfigurationWriter.Read(_dataRoot).Options.Admin?.RemoteBinding?.Enabled);
+        var currentOptions = YaguraConfigurationWriter.Read(_dataRoot).Options;
+        var currentRemoteBindingEnabled = ParseBool(currentOptions.Admin?.RemoteBinding?.Enabled);
         if (currentRemoteBindingEnabled && !windowsAuthEnabled && !appAuthEnabled)
         {
             throw new WizardValidationException(
@@ -86,6 +113,22 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
                 "この設定のまま再起動すると、認証を欠いたリモート公開を防ぐ fail-closed 検証により" +
                 "サービスが起動できなくなり、syslog 受信も停止します。少なくとも一方の認証方式を" +
                 "有効に保つか、先に Admin:RemoteBinding:Enabled を false に戻してください。");
+        }
+
+        // fail-closed（UI）の対称防御（ADR-0021 決定 2——ADR-0020 決定 1 の (i)(iii) 側の判定）:
+        // アップロード機能が設定ファイル上有効なまま認証方式を両方無効にすると、次回起動時に
+        // 1032 が起動を拒否し syslog 受信ごと停止する。その状態に陥る設定変更を UI 層で先に拒否する
+        // （1011/1012 型の判定と同じ二段構え。現在値は設定ファイルから読む——本画面は
+        // MsiUpload:Enabled を変更しない）。
+        var currentMsiUploadEnabled = ParseBool(currentOptions.Admin?.ForwarderKit?.MsiUpload?.Enabled);
+        if (currentMsiUploadEnabled && !windowsAuthEnabled && !appAuthEnabled)
+        {
+            throw new WizardValidationException(
+                "フォワーダ MSI アップロード機能（Admin:ForwarderKit:MsiUpload:Enabled）が有効な" +
+                "状態では、認証方式（Windows 統合認証・アプリ独自認証）を両方とも無効にできません。" +
+                "この設定のまま再起動すると、fail-closed 検証（イベント 1032）によりサービスが" +
+                "起動できなくなり、syslog 受信も停止します。少なくとも一方の認証方式を有効に保つか、" +
+                "先にアップロード機能を無効化してください。");
         }
 
         var hasCreatingAccount = !string.IsNullOrWhiteSpace(newAppUsername) && !string.IsNullOrWhiteSpace(newAppPassword);
