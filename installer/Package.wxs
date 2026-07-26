@@ -239,6 +239,23 @@
     <?error 未対応の sys.BUILDARCH です: $(sys.BUILDARCH) ?>
     <?endif?>
     <Property Id="WixShellExecTarget" Value="http://localhost:8514/" />
+
+    <!--
+      仮想サービスアカウント NT SERVICE\Yagura の SID(icacls 記法。数値 SID は先頭に * を付ける
+      ——Microsoft Learn "icacls" の "If you use a numerical form, affix the wildcard character
+      * to the beginning of the SID."。確認日 2026-07-26)。サービス名から決定的に導出される
+      ため全マシンで同一(DataRootFolder コンポーネントのコメント参照)。
+
+      プロパティに切り出した理由は 2 つある(ADR-0023 決定 3 の実装時):
+        (1) **付与側とロールバック側で literal が食い違うと、ロールバックが黙って別の主体を
+            復元する**。同じ値を 4 箇所に書き写す形は、片方だけ直す変更で壊れて気づけない
+        (2) CustomAction の Target 列には長さ上限があり(ICE03。実ビルドで検出)、
+            cmd.exe 経由で 2 コマンドを連結するロールバック CA では 50 文字の SID literal を
+            2 回展開する余裕がない
+      PermissionEx の SDDL 側は形式が異なる(先頭 * を付けない)ため展開先を共有できず、
+      あちらは literal のまま残る。
+    -->
+    <Property Id="YaguraVirtualSaSid" Value="*S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297" />
     <CustomAction Id="LaunchYaguraViewer"
                   BinaryRef="$(YaguraUtilCABinaryRef)"
                   DllEntry="WixShellExec"
@@ -272,25 +289,102 @@
       スケジュール: InstallServices の後・StartServices の前(サービス初回起動の時点で正しい
       ACL が確定している必要がある——lab 実証の SQLite Error 14 を再現させない)。deferred +
       Impersonate="no"(elevated。ProgramData 直下の ACL 変更は昇格を要する)。
-      ロールバック CA は設けない: 付与済み ACE はデータルート(MSI 管理外)に残るが実害はなく、
-      次のインストールで冪等に再適用される。失敗時の着地状態の実機確認は SEC-14 (d)。
       コマンドラインの "[YaguraDataRoot]." の末尾ドットは、ディレクトリプロパティが末尾 \ で
       展開されて閉じ引用符をエスケープしてしまう Win32 引数解析の既知問題の回避。
+
+      ロールバック CA を対にする(ADR-0023 決定 3。Issue #467)。**旧コメントの「ロールバック
+      CA は設けない: 実害はなく次のインストールで冪等に再適用される」は誤りだった**——
+      2026-07-26 の実機 lab で、本 CA を通過してから起動段(StartServices)で失敗すると
+      **再インストールも不能になる**状態(現象 B。2 回再現)が観測された。MSI のロールバックが
+      戻すのは MSI が管理するフォルダの静的 SDDL のみで、**CA が付けた ACE と既存の子ファイル
+      は戻らない**。子ファイルは新アカウントの ACE を (I) のまま保持し、仮想 SA の ACE を失う
+      ため、既定アカウントで入れ直しても yagura.json を読めず(UnauthorizedAccessException)
+      再び 1920 → 1603 となり、MSI の通常経路では復旧できない。
+        - スケジュール: 対応する Grant CA の**直前**に置く。Microsoft Learn "Rollback Custom
+          Actions"(確認日 2026-07-26)の "A rollback custom action must always precede the
+          deferred custom action it rolls back in the action sequence." による
+        - **1 つの CA で撤去と復元の両方を行う**(ADR-0023 決定 3 の「撤去を先・復元を後」)。
+          撤去と復元を 2 つの CA に分けて順序に頼らないのは、**複数のロールバック CA の実行
+          順序を規定した公式記述を確認できなかった**ため(rollback-installation / rollback
+          custom actions のいずれにも順序の明記がない。確認日 2026-07-26)。順序の保証を
+          MSI の未文書な挙動ではなく自分のコマンドライン側に持たせる
+        - 撤去が先である理由: ロールバック CA 自体は失敗してもロールバックされないため、
+          途中で中断しても**権限が増えない向き**に倒す(復元が先だと、中断時に新旧両方の
+          ACE が残る = 権限が減っていない状態で止まる)
+        - 区切りは && ではなく & (無条件): 撤去は「Grant CA が付与する前に中断された」場合に
+          対象 ACE が無く非ゼロを返しうる。Microsoft Learn 同ページの "A rollback custom
+          action should also handle the case where the deferred custom action is interrupted
+          in the middle of execution." に対応する
+        - 復元値は静的 SDDL(下の DataRootFolder / ForwarderFolder コンポーネント)と同一の
+          権限に揃える: データルート = 0x1301bf = icacls の (M)、フォワーダ = 0x120089 =
+          icacls の (R)。**復元に使う値はコマンドライン(CustomActionData)内に閉じている**
+          ——Users が書ける一時パス等に置かない(ADR-0023 決定 3 不変条件③。LocalSystem が
+          攻撃者制御の SDDL を復元する踏み台にしない)
+        - **MsiHiddenProperties による秘匿指定は行わない**(ADR-0023 委任 3 の「CustomActionData
+          に置く場合は秘匿指定を行う」への回答): 委任の趣旨は /l*v ログへ平文で出ることだが、
+          ここに載るのは (i) 仮想 SA の SID ——同じ MSI の MsiLockPermissionsEx テーブルに
+          SDDL として平文で入っており、そもそもサービス名から誰でも導出できる—— と
+          (ii) YAGURA_SERVICE_ACCOUNT ——Secure="yes" の公開プロパティで、値はどのみち
+          ログに現れる—— の 2 つだけで、**秘匿すべき値を含まない**。隠せば「守られている」
+          という誤った安心を与えつつ、ACL 付替の失敗解析(このコマンドラインが何を実行したか)
+          だけが難しくなる。秘匿が要るのは資格情報を CA データへ載せる場合であり、本 CA は
+          該当しない
+        - Return="ignore": ロールバック CA の失敗はロールバックされない。ここで中断させると
+          「ロールバック自体が途中で止まった」より悪い着地になるため、最後まで進める
+        - **/reset 相当の一括再設定は行わない**(不変条件②。決定 4 のとおり /reset は
+          forwarder の独立 SDDL を破壊する)。操作対象は本製品が付与した主体の ACE に限る
+      【本方式が現象 B を実際に直すことの実測(2026-07-26。MSI 外の素の icacls で再現・確認)】
+      仮想 SA を BUILTIN\Performance Log Users、gMSA を BUILTIN\Guests に置き換えた継承断ち
+      フォルダ + 子ファイル 1 個で、上の Grant CA と同じコマンドを流すと現象 B と同型の状態
+      (フォルダ・子とも Guests のみ・Performance Log Users は消失。子は (I) 継承)が再現した。
+      そこへ**本ロールバック CA と同じ cmd.exe コマンドライン**(入れ子引用符そのまま)を流すと:
+        - フォルダ = Performance Log Users:(OI)(CI)(M) が復元・Guests は消滅
+        - **子ファイル = Performance Log Users:(I)(M) へ更新され、孤児の Guests:(I)(M) も消滅**
+      すなわち **icacls 経由の付替はフォルダから既存の子へ伝播する**——MSI 自身の静的 SDDL
+      ロールバックが子を更新しないのとはここが違い、現象 B の中核(子ファイルの孤児 ACE)が
+      解消される。付与前に中断された場合(Guests が存在しない状態で /remove:g GUESTS)も
+      終了コード 0 で復元まで到達することを併せて確認した。
+      **ただし実機の MSI ロールバック経路上で同じ結果になることの確認は受け入れ基準⑧(lab)**
+      ——上記は icacls 単体の挙動確認であり、rollback スクリプト実行時点の状態を再現した
+      ものではない。
     -->
+    <SetProperty Id="RollbackGrantServiceAccountDataRootAcl" Sequence="execute" Before="RollbackGrantServiceAccountDataRootAcl"
+                 Value="&quot;[System64Folder]cmd.exe&quot; /c &quot;&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /remove:g &quot;[YAGURA_SERVICE_ACCOUNT]&quot; &amp; &quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /grant [YaguraVirtualSaSid]:(OI)(CI)(M)&quot;" />
+    <CustomAction Id="RollbackGrantServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
+                  Execute="rollback" Impersonate="no" Return="ignore" />
     <SetProperty Id="GrantServiceAccountDataRootAcl" Sequence="execute" Before="GrantServiceAccountDataRootAcl"
-                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /grant &quot;[YAGURA_SERVICE_ACCOUNT]:(OI)(CI)(M)&quot; /remove:g *S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297" />
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /grant &quot;[YAGURA_SERVICE_ACCOUNT]:(OI)(CI)(M)&quot; /remove:g [YaguraVirtualSaSid]" />
     <CustomAction Id="GrantServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="deferred" Impersonate="no" Return="check" />
+    <SetProperty Id="RollbackGrantServiceAccountForwarderAcl" Sequence="execute" Before="RollbackGrantServiceAccountForwarderAcl"
+                 Value="&quot;[System64Folder]cmd.exe&quot; /c &quot;&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /remove:g &quot;[YAGURA_SERVICE_ACCOUNT]&quot; &amp; &quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /grant [YaguraVirtualSaSid]:(OI)(CI)(R)&quot;" />
+    <CustomAction Id="RollbackGrantServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
+                  Execute="rollback" Impersonate="no" Return="ignore" />
     <SetProperty Id="GrantServiceAccountForwarderAcl" Sequence="execute" Before="GrantServiceAccountForwarderAcl"
-                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /grant &quot;[YAGURA_SERVICE_ACCOUNT]:(OI)(CI)(R)&quot; /remove:g *S-1-5-80-2906685102-3215373564-3806320331-1391897514-1145735297" />
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /grant &quot;[YAGURA_SERVICE_ACCOUNT]:(OI)(CI)(R)&quot; /remove:g [YaguraVirtualSaSid]" />
     <CustomAction Id="GrantServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="deferred" Impersonate="no" Return="check" />
+    <!--
+      前方修復(ADR-0023 決定 3。鈴木の指摘 5): 既に孤児継承 ACE が残っている環境は
+      ロールバック CA では救われない(壊れたのは前回の実行であり、今回のロールバックは走らない)。
+      旧アカウントの ACE 除去に **/T /C** を加え、**子ファイルに残った旧アカウントの ACE まで
+      辿って除去する**。
+        /T = "Performs the operation on all specified files in the current directory and its
+             subdirectories"、/C = "Continues the operation even if file errors occur"
+        /remove:g = "Removes all occurrences of granted rights to the specified SID"
+        (いずれも Microsoft Learn "icacls"。確認日 2026-07-26)
+      **是正対象は本製品が付与した ACE の系に限る**(不変条件。round 2 田中の指摘 3)——操作は
+      YAGURA_SERVICE_ACCOUNT_PREVIOUS という**名指しの単一主体**にしか及ばず、第三者が付与した
+      ACE には触れない。「期待と異なれば是正」を広く取ると実質 /reset に化けるため、範囲を
+      主体で縛る形を採る。/C を付けるのは、開いているファイル 1 つで是正が止まると
+      「一部だけ直った」状態を作るため(残りは次回に持ち越され、症状が間欠的になる)。
+    -->
     <SetProperty Id="RemovePreviousServiceAccountDataRootAcl" Sequence="execute" Before="RemovePreviousServiceAccountDataRootAcl"
-                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /remove &quot;[YAGURA_SERVICE_ACCOUNT_PREVIOUS]&quot;" />
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraDataRoot].&quot; /remove &quot;[YAGURA_SERVICE_ACCOUNT_PREVIOUS]&quot; /T /C" />
     <CustomAction Id="RemovePreviousServiceAccountDataRootAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="deferred" Impersonate="no" Return="ignore" />
     <SetProperty Id="RemovePreviousServiceAccountForwarderAcl" Sequence="execute" Before="RemovePreviousServiceAccountForwarderAcl"
-                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /remove &quot;[YAGURA_SERVICE_ACCOUNT_PREVIOUS]&quot;" />
+                 Value="&quot;[System64Folder]icacls.exe&quot; &quot;[YaguraForwarderFolder].&quot; /remove &quot;[YAGURA_SERVICE_ACCOUNT_PREVIOUS]&quot; /T /C" />
     <CustomAction Id="RemovePreviousServiceAccountForwarderAcl" BinaryRef="$(YaguraUtilCABinaryRef)" DllEntry="WixQuietExec64"
                   Execute="deferred" Impersonate="no" Return="ignore" />
 
@@ -314,9 +408,18 @@
               Condition="YAGURA_SERVICE_ACCOUNT_PREVIOUS AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=&quot;NT SERVICE\Yagura&quot;) AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=YAGURA_SERVICE_ACCOUNT) AND NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="RemovePreviousServiceAccountForwarderAcl" After="RemovePreviousServiceAccountDataRootAcl"
               Condition="YAGURA_SERVICE_ACCOUNT_PREVIOUS AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=&quot;NT SERVICE\Yagura&quot;) AND NOT (YAGURA_SERVICE_ACCOUNT_PREVIOUS~=YAGURA_SERVICE_ACCOUNT) AND NOT REMOVE~=&quot;ALL&quot;" />
-      <Custom Action="GrantServiceAccountDataRootAcl" After="RemovePreviousServiceAccountForwarderAcl"
+      <!-- ロールバック CA は対応する Grant CA の直前に置く(ADR-0023 決定 3。Microsoft Learn
+           "A rollback custom action must always precede the deferred custom action it rolls
+           back in the action sequence.")。条件は Grant CA と同一にする——Grant が走らない
+           構成(仮想 SA)でロールバックだけが走ると、静的 SDDL が張った ACE を無意味に
+           張り直すことになる。 -->
+      <Custom Action="RollbackGrantServiceAccountDataRootAcl" After="RemovePreviousServiceAccountForwarderAcl"
               Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
-      <Custom Action="GrantServiceAccountForwarderAcl" After="GrantServiceAccountDataRootAcl"
+      <Custom Action="GrantServiceAccountDataRootAcl" After="RollbackGrantServiceAccountDataRootAcl"
+              Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RollbackGrantServiceAccountForwarderAcl" After="GrantServiceAccountDataRootAcl"
+              Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="GrantServiceAccountForwarderAcl" After="RollbackGrantServiceAccountForwarderAcl"
               Condition="NOT (YAGURA_SERVICE_ACCOUNT~=&quot;NT SERVICE\Yagura&quot;) AND NOT REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 

@@ -405,7 +405,7 @@ try {
         #    を照合する(gMSA 実環境での成立は AD lab——SEC-14 (a)〜(f)——の管轄)。
         # -------------------------------------------------------------------
         if ($DryRun) {
-            Add-SkippedStep -Name 'msi-service-account-table' -Reason 'dry-run: would open the MSI database and verify YAGURA_SERVICE_ACCOUNT has no static default + DefaultServiceAccount/Save+RestoreCmdLine CAs (#426) / ServiceInstall.StartName indirection / validation CA'
+            Add-SkippedStep -Name 'msi-service-account-table' -Reason 'dry-run: would open the MSI database and verify YAGURA_SERVICE_ACCOUNT has no static default + DefaultServiceAccount/Save+RestoreCmdLine CAs (#426) / ServiceInstall.StartName indirection / validation CA / ACL rollback CA pairing (#467)'
         }
         else {
             [void](Invoke-E2EStep -Name 'msi-service-account-table' -Action {
@@ -451,7 +451,42 @@ try {
                     if ($null -eq $validateCa) {
                         throw 'CustomAction table: ValidateYaguraServiceAccount (fail-closed validation) not found'
                     }
-                    return ('YAGURA_SERVICE_ACCOUNT 既定は DefaultServiceAccount CA・CLI 上書き CA(#426)・StartName 間接参照・検証 CA すべて確認')
+
+                    # ACL 付替のロールバック CA(ADR-0023 決定 3。Issue #467)。仮想 SA 構成の
+                    # installer-e2e では ACL CA 自体が発動しない(条件で除外される)ため、実行の
+                    # 検証はできない——**authoring が壊れていないこと**をテーブル照合で押さえる。
+                    # 押さえるのは 2 点:
+                    #   (a) 各ロールバック CA が rollback 属性を持つこと(type の 0x100)。
+                    #       これを落とすと「deferred CA がもう 1 つ増えて、正常時に ACE を
+                    #       付けてから即座に剥がす」という真逆の動作になる
+                    #   (b) 各ロールバック CA が対応する Grant CA より**前**に並ぶこと。
+                    #       Microsoft Learn "Rollback Custom Actions": "A rollback custom
+                    #       action must always precede the deferred custom action it rolls
+                    #       back in the action sequence."(確認日 2026-07-26)。順序が逆だと
+                    #       ロールバックスクリプトに載らず、CA は黙って無効になる
+                    $msidbCustomActionTypeRollback = 0x100
+                    foreach ($pair in @(
+                            @{ Rollback = 'RollbackGrantServiceAccountDataRootAcl';  Grant = 'GrantServiceAccountDataRootAcl' },
+                            @{ Rollback = 'RollbackGrantServiceAccountForwarderAcl'; Grant = 'GrantServiceAccountForwarderAcl' })) {
+                        $rollbackType = Get-MsiSingleValue $database ("SELECT ``Type`` FROM ``CustomAction`` WHERE ``Action`` = '{0}'" -f $pair.Rollback)
+                        if ($null -eq $rollbackType) {
+                            throw ('CustomAction table: {0}(ADR-0023 決定 3 の ACL ロールバック CA)が見つからない' -f $pair.Rollback)
+                        }
+                        if ((([int]$rollbackType) -band $msidbCustomActionTypeRollback) -eq 0) {
+                            throw ('CustomAction {0} は rollback 属性(0x100)を持たなければならない。found type: {1}' -f $pair.Rollback, $rollbackType)
+                        }
+
+                        $rollbackSeq = Get-MsiSingleValue $database ("SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = '{0}'" -f $pair.Rollback)
+                        $grantSeq = Get-MsiSingleValue $database ("SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = '{0}'" -f $pair.Grant)
+                        if ($null -eq $rollbackSeq -or $null -eq $grantSeq) {
+                            throw ('InstallExecuteSequence table: {0} / {1} の並びを取得できない' -f $pair.Rollback, $pair.Grant)
+                        }
+                        if ([int]$rollbackSeq -ge [int]$grantSeq) {
+                            throw ('ロールバック CA {0}(seq {1})は対応する {2}(seq {3})より前になければならない(ADR-0023 決定 3)' -f $pair.Rollback, $rollbackSeq, $pair.Grant, $grantSeq)
+                        }
+                    }
+
+                    return ('YAGURA_SERVICE_ACCOUNT 既定は DefaultServiceAccount CA・CLI 上書き CA(#426)・StartName 間接参照・検証 CA・ACL ロールバック CA の対(#467)すべて確認')
                 }
                 finally {
                     [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($installer)

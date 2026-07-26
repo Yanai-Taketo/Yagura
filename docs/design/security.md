@@ -470,7 +470,13 @@ MSI オプトイン同梱のため、管理者が Fluent Bit の MSI を手動�
 
   したがって **gMSA 構成では ACL を後追い付与する**——インストール時に実行アカウントが `YAGURA_SERVICE_ACCOUNT` プロパティとして既知である（configuration.md §4.4。lab スパイク (i) で確認）ため、そのアカウント名を `icacls` 相当で後追い付与する方式を採る（SID の事前解決を要しない。§5 の仮想 SA が `NT SERVICE\Yagura` 形式でそのまま `icacls /grant` に渡せるのと同じく、gMSA も `DOMAIN\name$` 形式で渡せる）。**対象は §5 のデータルート・§4.2/§5 の監査記録領域・§5.1 のフォワーダ配置フォルダの全 `PermissionEx` 適用先**であり、それぞれ既定の ACE 構成（データルート = Modify / 監査領域 = §5 の削除権限分離を選ぶ場合はその ACE / フォワーダ = 読み取りのみ）を実行アカウントへ付与し直す。**この後追い付与は gMSA 構成でのみ発動する**（仮想 SA 構成は従来どおり `PermissionEx` の静的 SDDL で成立し、後追いを要しない）。付与に成功した後追い ACE の実機 `icacls` 出力は実装 PR で本節に記録する（`PermissionEx` の静的 SDDL 出力を §5 に記録済みなのと同じ扱い）。
 
-  **実装参照（Issue #263。installer/Package.wxs）**: gMSA 指定時のみ発動する deferred CA（`WixQuietExec64` + icacls。elevated）を `InstallServices` と `StartServices` の間にスケジュールする——サービス初回起動の時点で正しい ACL が確定している必要がある（lab 実証の SQLite Error 14 を再現させない）。データルートへ `(OI)(CI)(M)`・フォワーダフォルダへ `(OI)(CI)(R)` を付与し、静的 SDDL が直前に張った仮想 SA の ACE（gMSA 構成では用のない残骸）を SID 指定で除去する。監査記録領域はデータルートからの継承で被覆される（`PermissionEx` の適用先はデータルート・フォワーダの 2 箇所であり、監査領域の削除権限分離——§5——は運用者の選択のため既定では独立 ACE を持たない）。付与失敗（gMSA 名の解決不能 = DC 未到達等）は `Return="check"` で fail-closed にロールバックする。
+  **実装参照（Issue #263。installer/Package.wxs）**: gMSA 指定時のみ発動する deferred CA（`WixQuietExec64` + icacls。elevated）を `InstallServices` と `StartServices` の間にスケジュールする——サービス初回起動の時点で正しい ACL が確定している必要がある（lab 実証の SQLite Error 14 を再現させない）。データルートへ `(OI)(CI)(M)`・フォワーダフォルダへ `(OI)(CI)(R)` を付与し、静的 SDDL が直前に張った仮想 SA の ACE（gMSA 構成では用のない残骸）を SID 指定で除去する。監査記録領域はデータルートからの継承で被覆される（`PermissionEx` の適用先はデータルート・フォワーダの 2 箇所であり、監査領域の削除権限分離——§5——は運用者の選択のため既定では独立 ACE を持たない）。付与失敗（gMSA 名の解決不能 = DC 未到達等）は `Return="check"` でインストール全体を失敗させる。
+
+**「`Return="check"` で fail-closed にロールバックする」という旧記述は誤りだった（[ADR-0023](../adr/0023-upgrade-availability.md) 決定 3 による訂正。Issue #467）**: MSI がロールバックで戻すのは**自身が管理するフォルダの静的 SDDL のみ**であり、**CA が付けた ACE と既存の子ファイルは戻らない**。2026-07-26 の実機 lab で、本 CA を通過してから起動段（`StartServices`）で失敗すると、子ファイルが新アカウントの ACE を `(I)` のまま保持して仮想 SA の ACE を失い、**既定アカウントで入れ直しても `yagura.json` を読めず（`UnauthorizedAccessException`）MSI の通常経路では復旧できない**状態が観測された（2 回再現。復旧には管理者による手動 ACL 修復を要した）。`Return="check"` が保証するのは「失敗したインストールが成功として着地しない」ことだけで、**ACL が付与前へ戻ることは保証しない**。
+
+この穴は ADR-0023 決定 3 で 2 つの手当てを入れて塞いだ:
+- **ロールバック CA を対にする**（各 Grant CA の直前。撤去を先・復元を後の順で 1 つの CA が両方を行う——ロールバック CA 自体の失敗はロールバックされないため、中断しても権限が増えない向きに倒す）。icacls 経由の付替は**フォルダから既存の子へ伝播する**ため、MSI の静的 SDDL ロールバックが直せない子ファイルの孤児 ACE まで解消される
+- **前方修復**: 旧アカウントの ACE 除去を `/T /C` で子ファイルまで辿る。**是正対象は `YAGURA_SERVICE_ACCOUNT_PREVIOUS` という名指しの単一主体に限る**——「期待と異なれば是正」を広く取ると第三者が付与した ACE の削除、すなわち実質 `/reset` に化けるため（`/reset` は forwarder の独立 SDDL を破壊する）
 
   **後追い付与 ACE の実機 `icacls` 出力（AD lab 実測。2026-07-24。Windows Server 2025 `10.0.26100`・`yagura.test` DC・gMSA `YAGURA\gmsaYagura$`。`PermissionEx` の静的 SDDL 出力を §5 に記録済みなのと同じ扱いで本節に記録する）**:
 
