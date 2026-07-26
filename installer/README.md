@@ -85,8 +85,37 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   - 照合は ASCII の RunId トークンのみで行う(日本語本文の照合は en-US CI の CP437 で
     文字化けして誤判定するため)
 - CI: [.github/workflows/installer-e2e.yml](../.github/workflows/installer-e2e.yml)
-  (workflow_dispatch + installer/ 配下変更の pull_request)。MSI ビルド → E2E 実行 →
+  (workflow_dispatch + installer/ 配下変更の pull_request)。MSI ビルド →
+  **アップグレード元 MSI（版だけ下げた 2 本目）のビルド** → E2E 実行 →
   証拠を artifact `installer-e2e-results` に保存する
+
+### メジャーアップグレードの検証（ADR-0023 決定 2。Issue #467）
+
+`MajorUpgrade` の `Schedule="afterInstallExecute"` は、**新サービスを起動した後に旧製品の
+アンインストールが走る**という順序を作る。旧製品の `ServiceControl` は同名 `Yagura` を
+`Stop="both" Remove="uninstall"` で対象とするため、**コンポーネント参照カウントが崩れていれば
+起動したばかりの新サービスが止められ・消される**。これは MSI テーブルの照合では確かめられず、
+実際にアップグレードして確認するしかない。
+
+`-UpgradeFromMsiPath` に「現行より古い版の MSI」を渡すと、次の 5 ステップが走る:
+
+| ステップ | 何を見るか |
+|---|---|
+| `upgrade-install-previous` | 旧版がインストールでき、サービスが Running になること |
+| `upgrade-to-current` | 新版のインストール（= メジャーアップグレード）が成功すること |
+| `upgrade-service-survives` | **サービスが Running のまま残っていること**（採否条件②の核心。参照カウントが崩れていればここで落ちる） |
+| `upgrade-single-product-entry` | 「アプリと機能」に Yagura が **1 つだけ**残ること（受け入れ基準⑫） |
+| `upgrade-ingestion-still-works` | アップグレード後に**実際に受信できる**こと（「一覧にエントリが残る」では不十分——受け入れ基準⑤） |
+
+アップグレード元は「版だけを下げた同一ツリーのビルド」である。過去のリリース成果物を引いて
+くる形は、①リリースが存在しない開発初期に成立せず、②fork からの PR で外部成果物の取得に
+依存し、③「その版のコンポーネント GUID」を検証対象にしてしまう。ここで見たいのは
+**参照カウントが版間で保たれるか**であり、版番号以外を変えないほうが判定が鋭くなる
+（GUID の版間安定性そのものは ADR-0023 委任 2 の実測で別途確認済み）。
+
+`-UpgradeFromMsiPath` を省略するとこれらは丸ごとスキップされる（2 本ビルドできない環境でも
+既存フローが動く）。**CI では省略を許さない**——workflow 側が 2 本目の MSI を見つけられない
+場合に明示的に落とす（黙ってスキップして緑になる経路を残さない）。
 - 証拠形式(ADR-0006 基準 1): 人間可読ログ(`*.log.txt`)+ 機械可読サマリ
   (`*.summary.json`。RunId・各手順の合否・所要時間・実行環境)+ msiexec 詳細ログ。
   CI 実行記録(workflow run と artifact)を基準 1 の証拠としてリンクする

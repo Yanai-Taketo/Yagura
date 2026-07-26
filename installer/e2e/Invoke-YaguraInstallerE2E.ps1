@@ -82,7 +82,12 @@ param(
     [string]$OutputDir,
     [int]$ServiceStartTimeoutSec = 120,
     [int]$VerifyTimeoutSec = 90,
-    [int]$UninstallSettleTimeoutSec = 60
+    [int]$UninstallSettleTimeoutSec = 60,
+
+    # アップグレード検証(ADR-0023 決定 2 の採否条件②。Issue #467)で「アップグレード元」として
+    # 使う、-MsiPath より**古いバージョン**の MSI。省略時はアップグレード系ステップを丸ごと
+    # スキップする(2 本ビルドできない環境でも既存フローが動くようにする)。
+    [string]$UpgradeFromMsiPath
 )
 
 Set-StrictMode -Version Latest
@@ -108,6 +113,10 @@ $script:UninstallCompleted = $false
 # トランザクションであるため)。
 $script:OptOutInstallCompleted = $false
 $script:OptOutUninstallCompleted = $false
+# ADR-0023 決定 2 のアップグレード検証(手順 9)専用の完了フラグ。旧版インストール →
+# 新版へのアップグレード → アンインストール、の 3 トランザクションを跨ぐため独立に追う。
+$script:UpgradeInstallCompleted = $false
+$script:UpgradeUninstallCompleted = $false
 $script:StartedUtc = [DateTime]::UtcNow
 
 if ($DryRun) { $script:Mode = 'DryRun' }
@@ -253,6 +262,33 @@ function Invoke-Msiexec {
 
 function Get-YaguraService {
     return Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+}
+
+function Get-InstalledYaguraProductCode {
+    # インストール済み Yagura の ProductCode を列挙する(ADR-0023 決定 2・受け入れ基準⑫)。
+    # 情報源はアンインストール情報のレジストリ——Win32_Product は使わない(列挙するだけで
+    # 全製品の再構成検証を誘発し、遅く・イベントログを汚す既知の問題がある)。
+    # 32/64 の両ビューを見る(本製品は x64 だが、見落としより余分に見るほうを選ぶ)。
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    $found = New-Object System.Collections.Generic.List[string]
+    foreach ($root in $roots) {
+        if (-not (Test-Path -Path $root)) { continue }
+        foreach ($key in @(Get-ChildItem -Path $root -ErrorAction SilentlyContinue)) {
+            $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue
+            if ($null -eq $props) { continue }
+            $name = $null
+            if ($props.PSObject.Properties.Name -contains 'DisplayName') { $name = [string]$props.DisplayName }
+            # 完全一致で見る——"Yagura*" の前方一致だと将来の別製品(例: Yagura Forwarder)を
+            # 誤って数え、⑫の判定が黙って壊れる。
+            if ($name -ceq 'Yagura') {
+                $found.Add($key.PSChildName)
+            }
+        }
+    }
+    return @($found)
 }
 
 function Test-ForwarderFolderAcl {
@@ -486,7 +522,33 @@ try {
                         }
                     }
 
-                    return ('YAGURA_SERVICE_ACCOUNT 既定は DefaultServiceAccount CA・CLI 上書き CA(#426)・StartName 間接参照・検証 CA・ACL ロールバック CA の対(#467)すべて確認')
+                    # MajorUpgrade の Schedule(ADR-0023 決定 2。Issue #467 現象 A)。
+                    # afterInstallExecute = RemoveExistingProducts が InstallExecute と
+                    # InstallFinalize の**間**に入ること。既定(afterInstallValidate)へ戻ると
+                    # 旧製品が先に消え、新製品側の失敗で「Yagura が 1 つも残らない」に戻る。
+                    # 位置そのものを押さえるのは、Schedule 属性の削除・値の変更が
+                    # ビルドを壊さずに通ってしまうため。
+                    $seqByAction = @{}
+                    $seqView = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, @('SELECT `Action`,`Sequence` FROM `InstallExecuteSequence`'))
+                    $seqView.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $seqView, $null) | Out-Null
+                    while ($true) {
+                        $seqRec = $seqView.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $seqView, $null)
+                        if ($null -eq $seqRec) { break }
+                        $seqAction = [string]$seqRec.GetType().InvokeMember('StringData', 'GetProperty', $null, $seqRec, @(1))
+                        $seqValue = [string]$seqRec.GetType().InvokeMember('StringData', 'GetProperty', $null, $seqRec, @(2))
+                        $seqByAction[$seqAction] = [int]$seqValue
+                    }
+                    foreach ($needed in @('RemoveExistingProducts', 'InstallExecute', 'InstallFinalize', 'StartServices')) {
+                        if (-not $seqByAction.ContainsKey($needed)) {
+                            throw ('InstallExecuteSequence table: {0} が見つからない' -f $needed)
+                        }
+                    }
+                    $rep = $seqByAction['RemoveExistingProducts']
+                    if ($rep -le $seqByAction['InstallExecute'] -or $rep -ge $seqByAction['InstallFinalize']) {
+                        throw ('MajorUpgrade Schedule は afterInstallExecute でなければならない(ADR-0023 決定 2)。RemoveExistingProducts={0} は InstallExecute={1} と InstallFinalize={2} の間にない' -f $rep, $seqByAction['InstallExecute'], $seqByAction['InstallFinalize'])
+                    }
+
+                    return ('YAGURA_SERVICE_ACCOUNT 既定は DefaultServiceAccount CA・CLI 上書き CA(#426)・StartName 間接参照・検証 CA・ACL ロールバック CA の対(#467)・RemoveExistingProducts の afterInstallExecute 配置(#467 決定 2。seq {0})すべて確認' -f $rep)
                 }
                 finally {
                     [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($installer)
@@ -947,6 +1009,115 @@ try {
                 return ('install rejected as expected (msiexec exit code {0}, log: msiexec-invalid-account-install.log); no service, no registry residue' -f $proc.ExitCode)
             })
         }
+
+        # -------------------------------------------------------------------
+        # 9. メジャーアップグレードの検証(ADR-0023 決定 2 の採否条件②。Issue #467)
+        #
+        #    Schedule="afterInstallExecute" では、**新サービスを起動した後に旧製品の
+        #    アンインストールが走る**。旧製品の ServiceControl は同名 Yagura を
+        #    Stop="both" Remove="uninstall" で対象とするため、コンポーネント参照カウントが
+        #    崩れていれば、それが起動したばかりの新サービスを止め・消す。これを防ぐのは
+        #    参照カウントだけであり、authoring の照合では確かめられない——**実際に
+        #    アップグレードして、新サービスが動き続けていること**を見る必要がある。
+        #
+        #    合格条件は「一覧にエントリが残る」ではなく **サービスが Running で受信が
+        #    継続していること**(ADR-0023 受け入れ基準⑤・佐藤の質問 2 と同じ水準)。
+        #    あわせて製品が 2 つ残らないこと(佐藤の指摘 2 = 受け入れ基準⑫)も見る。
+        # -------------------------------------------------------------------
+        if ([string]::IsNullOrWhiteSpace($UpgradeFromMsiPath)) {
+            Add-SkippedStep -Name 'upgrade-from-previous-version' -Reason '-UpgradeFromMsiPath not supplied (build a second, older-versioned MSI to exercise ADR-0023 decision 2)'
+        }
+        elseif ($DryRun) {
+            Add-SkippedStep -Name 'upgrade-from-previous-version' -Reason ('dry-run: would install "{0}", upgrade with "{1}", then assert the service is still Running, exactly one product remains, and ingestion still works' -f $UpgradeFromMsiPath, $MsiPath)
+        }
+        else {
+            [void](Invoke-E2EStep -Name 'upgrade-install-previous' -Action {
+                if ($null -ne (Get-YaguraService)) {
+                    throw ('service "{0}" already exists before the upgrade scenario; aborting to avoid polluting the verdict' -f $script:ServiceName)
+                }
+                $oldFull = (Resolve-Path -Path $UpgradeFromMsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-upgrade-install-previous.log'
+                [void](Invoke-Msiexec -ArgumentString ('/i "{0}" /qn /norestart /l*v "{1}"' -f $oldFull, $msiLog) -Description 'install of the previous version')
+                $script:UpgradeInstallCompleted = $true
+
+                $running = Wait-E2ECondition -TimeoutSec $ServiceStartTimeoutSec -Probe {
+                    $svc = Get-YaguraService
+                    ($null -ne $svc -and $svc.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running)
+                }
+                if (-not $running) {
+                    throw ('previous version did not reach Running within {0}s' -f $ServiceStartTimeoutSec)
+                }
+                return ('previous version installed and Running (log: msiexec-upgrade-install-previous.log)')
+            })
+
+            # アップグレード**直前**の製品コードを控える。MajorUpgrade が成立していれば
+            # 別の ProductCode になり、旧エントリは消えているはず。
+            $script:UpgradePreviousProductCodes = @(Get-InstalledYaguraProductCode)
+
+            [void](Invoke-E2EStep -Name 'upgrade-to-current' -Action {
+                $newFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-upgrade-to-current.log'
+                [void](Invoke-Msiexec -ArgumentString ('/i "{0}" /qn /norestart /l*v "{1}"' -f $newFull, $msiLog) -Description 'major upgrade to the current version')
+                return ('upgrade completed (log: msiexec-upgrade-to-current.log)')
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-service-survives' -Action {
+                # 核心のアサーション: 旧製品のアンインストールが新サービスを消していないこと。
+                # 参照カウントが崩れていると、ここで「サービスが存在しない」または
+                # 「Stopped のまま」になる。
+                $svc = Get-YaguraService
+                if ($null -eq $svc) {
+                    throw 'service "Yagura" does not exist after the upgrade - RemoveExistingProducts removed the newly installed service (ADR-0023 decision 2 adoption condition (2) FAILED)'
+                }
+                $running = Wait-E2ECondition -TimeoutSec $ServiceStartTimeoutSec -Probe {
+                    $s = Get-YaguraService
+                    ($null -ne $s -and $s.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running)
+                }
+                if (-not $running) {
+                    $svc = Get-YaguraService
+                    throw ('service "Yagura" is not Running after the upgrade (state: {0}) - RemoveExistingProducts stopped the newly started service (ADR-0023 decision 2 adoption condition (2) FAILED)' -f [string]$svc.Status)
+                }
+                return 'service "Yagura" is still Running after the major upgrade'
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-single-product-entry' -Action {
+                # 受け入れ基準⑫: 「アプリと機能」に Yagura が 2 つ残らないこと。
+                $codes = @(Get-InstalledYaguraProductCode)
+                if ($codes.Count -ne 1) {
+                    throw ('expected exactly 1 installed Yagura product after the upgrade, found {0}: {1}' -f $codes.Count, ($codes -join ', '))
+                }
+                $previous = @($script:UpgradePreviousProductCodes)
+                $changed = ($previous.Count -ne 1) -or ($previous[0] -ne $codes[0])
+                return ('exactly 1 product entry remains ({0}); product code changed by the upgrade: {1}' -f $codes[0], $changed)
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-ingestion-still-works' -Action {
+                # 「一覧にエントリが残る」では不十分(佐藤の質問 2)。実際に受信できることを見る。
+                # トークンは主フローの RunId と別にする——アップグレード前に送った分が残って
+                # いると「アップグレード後も受信できている」ことの証拠にならないため。
+                $token = $script:RunId + 'UPGRADE'
+                $message = ('<134>yagura-e2e-upgrade {0}' -f $token)
+                $script:UpgradeSendCount = 0
+                $found = Wait-E2ECondition -TimeoutSec $VerifyTimeoutSec -IntervalMs 500 -Probe {
+                    Send-SyslogDatagram -Port $UdpPort -Message $message
+                    $script:UpgradeSendCount++
+                    Start-Sleep -Milliseconds 300
+                    Test-ViewerContainsToken -BaseUrl $ViewerBaseUrl -Token $token
+                }
+                if (-not $found) {
+                    throw ('token {0} did not appear on {1} within {2}s after the upgrade (sent {3} datagrams to udp/{4}) - ingestion is not working after the upgrade' -f $token, $ViewerBaseUrl, $VerifyTimeoutSec, $script:UpgradeSendCount, $UdpPort)
+                }
+                return ('ingestion verified after the upgrade (token {0}, {1} datagram(s))' -f $token, $script:UpgradeSendCount)
+            })
+
+            [void](Invoke-E2EStep -Name 'upgrade-cleanup-uninstall' -Action {
+                $newFull = (Resolve-Path -Path $MsiPath).Path
+                $msiLog = Join-Path $OutputDir 'msiexec-upgrade-cleanup-uninstall.log'
+                [void](Invoke-Msiexec -ArgumentString ('/x "{0}" /qn /norestart /l*v "{1}"' -f $newFull, $msiLog) -Description 'uninstall after the upgrade scenario')
+                $script:UpgradeUninstallCompleted = $true
+                return 'uninstalled after the upgrade scenario'
+            })
+        }
     }
 }
 catch {
@@ -968,8 +1139,14 @@ finally {
     # 手順 7(Issue #203 の remember property 検証)のオプトアウトインストールが
     # 完了未清掃のまま例外で中断した場合もここで拾う(同じ製品を対象とするため
     # $script:InstallCompleted 側と競合しないよう、いずれかが未清掃なら試みる)。
+    # ADR-0023 決定 2 のアップグレード検証(手順 9)も同じ扱いにする——旧版インストール後に
+    # 落ちた場合、残るのは -MsiPath ではなく -UpgradeFromMsiPath の製品でありうるが、
+    # MajorUpgrade の UpgradeCode が同じであれば /x はどちらの MSI からでも成立しない
+    # (ProductCode が違うため)。そのため下の cleanup は「新版で消す」を試し、
+    # 消えなければ旧版でも試す。
     $leftoverInstall = ($script:InstallCompleted -and -not $script:UninstallCompleted) -or
-        ($script:OptOutInstallCompleted -and -not $script:OptOutUninstallCompleted)
+        ($script:OptOutInstallCompleted -and -not $script:OptOutUninstallCompleted) -or
+        ($script:UpgradeInstallCompleted -and -not $script:UpgradeUninstallCompleted)
     if ($leftoverInstall) {
         try {
             Write-E2ELog 'cleanup: attempting uninstall of leftover install'
@@ -983,6 +1160,23 @@ finally {
                 detail     = ('msiexec exit code {0}' -f $proc.ExitCode)
                 durationMs = 0
             })
+
+            # アップグレード検証(手順 9)が旧版インストール直後に落ちた場合、残っているのは
+            # 旧版であり、上の /x(新版 MSI)は ProductCode 不一致で何も消せない。旧版 MSI でも
+            # 試す(ベストエフォート。結果は合否に含めない)。
+            if ($script:UpgradeInstallCompleted -and -not $script:UpgradeUninstallCompleted -and
+                -not [string]::IsNullOrWhiteSpace($UpgradeFromMsiPath) -and (Test-Path -Path $UpgradeFromMsiPath)) {
+                $oldFull = (Resolve-Path -Path $UpgradeFromMsiPath).Path
+                $oldLog = Join-Path $OutputDir 'msiexec-cleanup-uninstall-previous.log'
+                $oldProc = Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/x "{0}" /qn /norestart /l*v "{1}"' -f $oldFull, $oldLog) -Wait -PassThru
+                Write-E2ELog ('cleanup(previous version): msiexec exit code {0}' -f $oldProc.ExitCode)
+                $script:Steps.Add([pscustomobject]@{
+                    name       = 'cleanup-uninstall-previous'
+                    status     = 'Info'
+                    detail     = ('msiexec exit code {0}' -f $oldProc.ExitCode)
+                    durationMs = 0
+                })
+            }
         }
         catch {
             Write-E2ELog ('cleanup: uninstall attempt failed: {0}' -f $_.Exception.Message)
