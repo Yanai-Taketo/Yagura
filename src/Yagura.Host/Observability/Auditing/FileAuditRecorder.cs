@@ -296,6 +296,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.AuditChannelRecovered => AuditEventIds.AuditChannelRecovered,
         AuditEventKind.StartupConfigurationChangeDetected => AuditEventIds.StartupConfigurationChangeDetected,
         AuditEventKind.IngestionTlsCertificateConfigured => AuditEventIds.IngestionTlsCertificateConfigured,
+        AuditEventKind.ViewerHttpsConfigured => AuditEventIds.ViewerHttpsConfigured,
         AuditEventKind.EmailNotificationConfigured => AuditEventIds.EmailNotificationConfigured,
         AuditEventKind.EmailNotificationTestSent => AuditEventIds.EmailNotificationTestSent,
         AuditEventKind.SourceSilenceWatchlistConfigured => AuditEventIds.SourceSilenceWatchlistConfigured,

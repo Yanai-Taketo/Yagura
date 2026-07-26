@@ -292,6 +292,14 @@ public enum AuditEventKind
     IngestionTlsCertificateConfigured,
 
     /// <summary>
+    /// 管理操作: 閲覧 UI の HTTPS 設定の変更（イベント ID 2029。ADR-0022 決定 10。Issue #455）。
+    /// 2012（管理リモート HTTPS）・2020（TLS 受信）の閲覧版であり、記録内容も同型——変更キー
+    /// （<c>Viewer:Https:Enabled</c>・<c>Viewer:Https:CertificateThumbprint</c>）と新値（拇印は
+    /// 証明書の公開識別子であり秘密ではないため値を残す）+ 操作者。
+    /// </summary>
+    ViewerHttpsConfigured,
+
+    /// <summary>
     /// メール通知設定の変更（イベント ID 2021。ADR-0017 決定 4。Issue #350）。
     /// </summary>
     /// <remarks>

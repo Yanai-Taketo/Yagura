@@ -1285,6 +1285,166 @@ public static class UiText
     /// <summary>観測性リンク: 計器（ハンドシェイク失敗を含む）。</summary>
     public const string IngestionTlsObservabilityMetricsLinkText = "計器（ハンドシェイク失敗を含む）";
 
+    // ---- 閲覧 UI の HTTPS 設定（ADR-0022。Issue #455 段階 ②） ----
+
+    /// <summary>閲覧 HTTPS 設定画面の見出し（決定 3——証明書設定 3 画面の書き分け）。</summary>
+    public const string ViewerHttpsTitle = "閲覧 UI の HTTPS 設定";
+
+    /// <summary>
+    /// 画面の説明文。<b>他の証明書 2 画面との用途の書き分けを明示する</b>（決定 3——
+    /// 同じ証明書一覧が出る 3 画面の取り違えを防ぐ）。
+    /// </summary>
+    public const string ViewerHttpsIntro =
+        "LAN のブラウザから閲覧画面（既定ポート 8514）を HTTPS で開けるようにする設定です。" +
+        "有効化すると、閲覧ポートはそのままで平文 HTTP から HTTPS に切り替わります（平文の面は残りません）。" +
+        "この設定は「LAN のブラウザ → Yagura」の閲覧用であり、管理画面のリモート HTTPS・機器からの TLS 受信とは別です。";
+
+    /// <summary>他の証明書設定画面への相互リンクの前置き。</summary>
+    public const string ViewerHttpsOtherScreensNote = "他の証明書設定:";
+
+    /// <summary>現在の状態の見出し。</summary>
+    public const string ViewerHttpsStatusTitle = "現在の設定（保存済みの値）";
+
+    /// <summary>状態行: 有効/無効。</summary>
+    public const string ViewerHttpsStatusEnabled = "閲覧 UI の HTTPS";
+
+    /// <summary>状態行: 証明書拇印。</summary>
+    public const string ViewerHttpsStatusThumbprint = "証明書（拇印）";
+
+    /// <summary>状態行: 閲覧ポート。</summary>
+    public const string ViewerHttpsStatusPort = "閲覧ポート（HTTPS 有効時も同じポート）";
+
+    /// <summary>状態行: 閲覧ポートの既定値表示。</summary>
+    public const string ViewerHttpsStatusDefaultPort = "8514（既定）";
+
+    /// <summary>有効化スイッチのラベル。</summary>
+    public const string ViewerHttpsEnabledLabel = "閲覧 UI の HTTPS を有効にする";
+
+    /// <summary>有効化スイッチの注記（8514 同一ポート切替 = 旧 URL 断絶の予告。決定 6）。</summary>
+    public const string ViewerHttpsEnabledNote =
+        "有効化を反映すると、閲覧 URL は https:// に変わり、http:// の従来 URL（ブックマーク・" +
+        "ショートカット・掲示用端末）は開けなくなります。反映の前に閲覧者への周知を済ませてください。";
+
+    /// <summary>証明書一覧の見出し。</summary>
+    public const string ViewerHttpsCertificatesTitle = "証明書の選択";
+
+    /// <summary>証明書一覧の説明。</summary>
+    public const string ViewerHttpsCertificatesIntro =
+        "このサーバの証明書ストア（ローカルコンピューター）にあるサーバー認証用の証明書から選択します。" +
+        "期限切れの証明書は選択しても保存できません（閲覧 HTTPS は期限切れでは動作せず、平文には落ちません）。";
+
+    /// <summary>一覧更新ボタン。</summary>
+    public const string ViewerHttpsRefreshButton = "一覧を更新";
+
+    /// <summary>列挙失敗の表示（{0} = 理由）。</summary>
+    public const string ViewerHttpsEnumerationFailedFormat = "証明書ストアの一覧を取得できませんでした: {0}";
+
+    /// <summary>候補ゼロ件の見出し。</summary>
+    public const string ViewerHttpsEmptyTitle = "選択できる証明書がありません";
+
+    /// <summary>候補ゼロ件の説明。</summary>
+    public const string ViewerHttpsEmptyDescription =
+        "ローカルコンピューターの証明書ストア（個人）に、サーバー認証（serverAuth）の拡張キー使用法と" +
+        "秘密鍵を持つ証明書が見つかりませんでした。";
+
+    /// <summary>候補ゼロ件の次アクション（CF-D2 の主経路への誘導）。</summary>
+    public const string ViewerHttpsEmptyNextAction =
+        "証明書の入手方法（AD 環境での自己署名 + グループポリシー配布の手順を含む）は利用者ガイドを参照してください。";
+
+    /// <summary>永続値の拇印が一覧に無い場合の警告（{0} = 拇印）。</summary>
+    public const string ViewerHttpsThumbprintNotInListFormat =
+        "設定済みの拇印 {0} に一致する証明書が一覧にありません（削除された・条件〔serverAuth EKU + 秘密鍵〕を満たさなくなった可能性）。";
+
+    /// <summary>期限切れバッジ（閲覧 HTTPS では保存拒否——Error 表示）。</summary>
+    public const string ViewerHttpsCertExpiredBadge = "期限切れ（保存不可）";
+
+    /// <summary>秘密鍵読取不可バッジ（閲覧 HTTPS では保存拒否——Error 表示）。</summary>
+    public const string ViewerHttpsCertKeyUnreadableBadge = "秘密鍵にアクセス不可（保存不可）";
+
+    /// <summary>問題なしバッジ。</summary>
+    public const string ViewerHttpsCertOkBadge = "選択可";
+
+    /// <summary>期限切れ証明書の説明（管理 HTTPS と同じ拒否側・TLS 受信との差分の明示）。</summary>
+    public const string ViewerHttpsCertExpiredNote =
+        "閲覧 UI の HTTPS は期限切れ証明書では動作しません（HTTPS リスナは停止し、平文 HTTP へは落としません）。" +
+        "このため保存を拒否します（TLS 受信画面が期限切れを警告付きで通すのは、受信は期限切れでも止めない設計のためで、意図的な違いです）。";
+
+    /// <summary>秘密鍵読取不可の説明 + certlm.msc 誘導（CF-D2）。</summary>
+    public const string ViewerHttpsPrivateKeyUnreadableNote =
+        "秘密鍵を読めないと TLS ハンドシェイクが成立せず、閲覧 UI に誰も接続できなくなるため、保存を拒否します。" +
+        "証明書スナップイン（certlm.msc）で対象の証明書を右クリック →「すべてのタスク」→「秘密キーの管理」から、" +
+        "サービスアカウントへ読み取り権限を付与し、「一覧を更新」で再確認してください。";
+
+    /// <summary>「管理リモート HTTPS と同じ証明書を使う」コピーボタン（決定 9）。</summary>
+    public const string ViewerHttpsCopyFromAdminButton = "管理リモート HTTPS と同じ証明書を使う";
+
+    /// <summary>コピー動線の注記（暗黙連動なしの明示。決定 9）。</summary>
+    public const string ViewerHttpsCopyFromAdminNote =
+        "管理リモート HTTPS に設定済みの拇印をこの画面の選択欄へ転写します（転写のみで、以後の連動はありません。" +
+        "保存時には通常の選択と同じ検証と SAN 検査を通ります）。";
+
+    /// <summary>SAN 検査の見出し（決定 4）。</summary>
+    public const string ViewerHttpsSanTitle = "証明書のホスト名（SAN）検査";
+
+    /// <summary>SAN 検査: 整合（{0} = カバーされたサーバ名の列挙）。断定形を避ける（委任 4 の実機検証ゲート前）。</summary>
+    public const string ViewerHttpsSanSatisfiedFormat =
+        "この証明書の SAN はサーバの名前（{0}）を含んでいます。これらの名前でのアクセスは、配布済みのルート証明書を信頼している端末では証明書名の不一致警告にならない見込みです。";
+
+    /// <summary>SAN 検査: 不整合の見出し（{0} = 不足しているサーバ名の列挙）。</summary>
+    public const string ViewerHttpsSanMissingFormat =
+        "この証明書の SAN には、サーバの名前のうち {0} が含まれていません。これらの名前で https:// アクセスすると、ブラウザに証明書名の不一致警告が出ます（保存は可能です——実際に使う名前が SAN にあれば問題ありません）。";
+
+    /// <summary>SAN 検査: SAN 拡張なし。</summary>
+    public const string ViewerHttpsSanNoExtension =
+        "この証明書は SAN（サブジェクト代替名）拡張を持ちません。現代のブラウザは SAN のみを照合するため、どの名前でアクセスしても証明書名の不一致警告になります。SAN 付きの証明書への差し替えを推奨します。";
+
+    /// <summary>SAN 検査: 警告なしでアクセスできる URL の提示（決定 4 の文言方針）。</summary>
+    public const string ViewerHttpsSanUrlListIntro = "この証明書で警告なしになる見込みの閲覧 URL:";
+
+    /// <summary>SAN 検査の限界の注記（IP 対象外——決定 4）。</summary>
+    public const string ViewerHttpsSanLimitationNote =
+        "この検査はホスト名（DNS 名）のみが対象です。IP アドレスでのアクセス（例: https://192.168.1.10:8514/）は" +
+        "検査対象外で、証明書に IP の記載がない限り警告が出ます。閲覧者には IP ではなく名前の URL を周知してください。";
+
+    /// <summary>反映方式の常設注記（決定 1 の受信断レール）。</summary>
+    public const string ViewerHttpsRestartNote =
+        "この画面の変更は保存だけでは反映されません。反映は次回サービス再起動時で、再起動中は syslog の受信を含む" +
+        "すべての機能が一時停止します。管理リモート HTTPS・TLS 受信の証明書変更がある場合は、まとめて保存してから" +
+        "1 回の再起動で反映することを推奨します（未反映の変更は管理ホームの「再起動待ちの変更」に表示されます）。";
+
+    /// <summary>保存成功（{0} = 変更キーの列挙）。</summary>
+    public const string ViewerHttpsSavedFormat = "保存しました（変更: {0}）。反映にはサービス再起動が必要です。";
+
+    /// <summary>変更なし（no-op）。</summary>
+    public const string ViewerHttpsSavedNoChanges = "変更はありません（保存・監査は行われていません）。";
+
+    /// <summary>有効化保存後の案内の見出し（決定 6）。</summary>
+    public const string ViewerHttpsAfterEnableTitle = "反映後の閲覧 URL について";
+
+    /// <summary>有効化保存後の案内 (a): 反映は再起動後（保存直後に https を試して開けないのは正常）。</summary>
+    public const string ViewerHttpsAfterEnableRestartNote =
+        "新しい URL が開けるのはサービス再起動後です（保存直後に https:// を試して開けないのは正常です）。";
+
+    /// <summary>有効化保存後の案内 (b): 新 URL の提示（{0} = URL 一覧）。</summary>
+    public const string ViewerHttpsAfterEnableNewUrlFormat = "反映後の閲覧 URL: {0}";
+
+    /// <summary>有効化保存後の案内: 環境変数上書きの注記。</summary>
+    public const string ViewerHttpsAfterEnablePortOverrideNote =
+        "（環境変数 YAGURA_HTTP_PORT でポートを上書きしている場合は、そのポートが HTTPS になります）";
+
+    /// <summary>有効化保存後の案内 (c): 旧 URL 断絶の周知依頼。</summary>
+    public const string ViewerHttpsAfterEnableBookmarkNote =
+        "http:// の従来 URL（閲覧者のブックマーク・スタートメニュー/デスクトップのショートカット・掲示用端末）は" +
+        "反映後に開けなくなります。再起動の前に、新しい URL を閲覧者へ周知してください。";
+
+    /// <summary>有効化保存後の案内 (d): メール通知が無効の場合の指摘 + 導線（決定 6・7）。</summary>
+    public const string ViewerHttpsAfterEnableEmailNote =
+        "メール通知が無効のため、証明書の期限切れが近づいたときの事前警告は Windows イベントログにしか届きません。" +
+        "期限切れになると閲覧が止まるため、メール通知の設定を推奨します。";
+
+    /// <summary>メール通知設定へのリンクテキスト。</summary>
+    public const string ViewerHttpsEmailSettingsLinkText = "メール通知の設定へ";
+
     // ---- 初期セットアップウィザード（configuration.md §3〜§7。M8-4 骨格） ----
 
     /// <summary>ステップ: 受信設定。</summary>

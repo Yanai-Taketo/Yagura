@@ -66,6 +66,7 @@ internal static class AuditEventDescriptions
         AuditEventKind.AuditChannelRecovered => "監査チャネル復旧・障害中事象を書き戻し",
         AuditEventKind.StartupConfigurationChangeDetected => "前回稼働時から設定ファイルが変更された状態で起動",
         AuditEventKind.IngestionTlsCertificateConfigured => "TLS 受信の証明書設定を変更",
+        AuditEventKind.ViewerHttpsConfigured => "閲覧 UI の HTTPS 設定を変更",
         // 2021〜2023 は Issue #350/#351 実装時に本対応表への追随が漏れており、該当事象の
         // イベントログ併記が Describe の例外（→ TryWriteEventLog の最終捕捉）で毎回縮退していた
         // （アプリ記録ファイル側は無事）。Issue #263 実装時に発見し、Describe の網羅を
