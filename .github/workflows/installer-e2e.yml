@@ -40,7 +40,17 @@ concurrency:
 
 jobs:
   installer-e2e:
-    runs-on: windows-latest
+    # 推奨環境の 2 バージョン（ADR-0024 決定 1）を両方踏む。OS バージョン差が最も現れるのは
+    # Windows サービス登録・ACL・MSI の起動条件といった本 workflow の検証面であり、
+    # ci.yml のビルド・単体テストでは被覆がほとんど増えない（同決定 5）。
+    # 本 workflow は paths フィルタ付きで必須ステータスチェックではないため、matrix 化しても
+    # ブランチ保護の設定に影響しない（ci.yml 側を別ジョブにしたのはこの差による）。
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-2022]
+
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
     steps:
@@ -135,6 +145,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: installer-e2e-results
+          # matrix の各 OS で衝突しないよう名前を分ける（同名だとアップロードが失敗する）。
+          name: installer-e2e-results-${{ matrix.os }}
           path: e2e-results/
           if-no-files-found: warn

@@ -120,3 +120,54 @@ jobs:
           name: regression-bench-results
           path: bench-results/
           if-no-files-found: ignore
+
+  # 推奨環境の 2 バージョン目（ADR-0024 決定 1・決定 5）。windows-latest は Server 2025 を指すため、
+  # 本ジョブが無いと Server 2022 はどのジョブでも踏まれない。
+  #
+  # build-and-test を matrix 化せず別ジョブにしたのは、matrix 化すると job 名が
+  # `build-and-test (windows-latest)` へ変わり、ブランチ保護の必須ステータスチェック
+  # （conventions.md の `build-and-test`）が外れるため。別ジョブなら既存の必須チェック名を
+  # 保ったまま Server 2022 の信号を足せる（リポジトリ設定の変更を伴わず、外部貢献者の PR だけで
+  # 完結する形を優先した）。本ジョブ自体を必須チェックにするかはリポジトリ設定の判断。
+  #
+  # 回帰ベンチは本ジョブでは走らせない。基準値ファイルは 1 本（ランナー OS 別の区分を持たない）
+  # であり、そこへ 2 つの OS の分布を混ぜると M-5 v2 が診断した分布混合による誤較正を再現する。
+  # ベンチの blocking 判定は突合成立のみで、これは全標本で成立した OS 非依存の機能保証である
+  # （architecture.md §5.2）。したがって OS を増やす価値は build・単体テスト側にある。
+  build-and-test-server2022:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      # SQL Server 適合テストの実行手段（本ファイル冒頭のジョブと同じ防御的パターン。
+      # ランナー image は LocalDB の存在を保証しないため、無ければ公式 MSI を導入する）。
+      - name: Ensure SQL Server LocalDB is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
+            Import-Module BitsTransfer
+            Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
+            Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
+          }
+
+          sqllocaldb create MSSQLLocalDB
+          sqllocaldb start MSSQLLocalDB
+          sqllocaldb info MSSQLLocalDB
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build
