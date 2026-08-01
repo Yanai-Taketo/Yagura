@@ -10,7 +10,7 @@
       個数の制約は静的検査できないため、利用側画面のレビュー観点とする。
     - 破壊的操作（Role=Destructive）は state-error 系 + 確認ダイアログ必須。本コンポーネントが
       確認ダイアログの表示を内蔵し、確認なしで OnClick が呼ばれない構造にする。
-    - クリック処理の実行中は自動で無効化する（二重送信ガード。Issue #372）。ハンドラから
+    - クリック処理の実行中は自動で無効化する（二重送信ガード）。ハンドラから
       漏れた例外は state-error 通知に受け、circuit エラーにしない。
 *@
 <MudButton Variant="@Variant"
@@ -96,7 +96,7 @@
 
     private async Task HandleClickAsync(MouseEventArgs args)
     {
-        // 二重送信ガード（Issue #372）: Blazor Server は await 中に次のイベントを割り込ませる
+        // 二重送信ガード: Blazor Server は await 中に次のイベントを割り込ませる
         // ため、保存の await 中の再クリックが古い VersionToken のまま 2 回目の Save に到達し
         // 楽観競合になる。Disabled の再描画が届く前に発火済みのクリックはこの再入検査で捨てる
         // （画面上の Disabled 表示と二段構え）。
@@ -122,7 +122,7 @@
         }
         catch (Exception ex)
         {
-            // 例外の受け皿（Issue #372）: 第一の受け皿は各画面の catch（画面固有の文言・誘導）。
+            // 例外の受け皿: 第一の受け皿は各画面の catch（画面固有の文言・誘導）。
             // そこから漏れた例外（楽観競合・想定外の失敗）をここで受け、circuit エラーで画面全体が
             // 使えなくなる事態を防ぐ。state-error 通知は手動で閉じるまで残る（ui.md §3.1）。
             Notifier.NotifyError(string.Format(UiText.ButtonActionFailedFormat, ex.Message));

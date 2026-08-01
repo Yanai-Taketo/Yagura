@@ -5,7 +5,7 @@
 @implements IAsyncDisposable
 
 @*
-    ダッシュボード（ui.md §4。M8-3。Issue #70。重大度分布・Top talkers = M8-5/Issue #159）:
+    ダッシュボード（ui.md §4。M8-3。重大度分布・Top talkers = M8-5）:
     健康状態の一目確認（状態帯は全画面共通の骨格 = MainLayout 側に常設——ui.md §5.1
     「ダッシュボード最上部（および全画面の状態帯）」を共通骨格 1 箇所で満たし、二重表示を
     避ける）・受信量の推移・重大度分布（平常時からの逸脱検知）・受信量上位の送信元
@@ -19,10 +19,10 @@
     - データ取得はホスト側の既存読み取り口（ILogStore・IYaguraSystemStatusReader）のみ。
       受信量推移は既存の検索 API（QueryAsync）からの導出であり、取得上限で打ち切られた場合は
       その旨を注記する（導出の限界を隠さない）
-    - **重大度分布・Top talkers の窓限定（Issue #145 への配慮）**: Severity・SourceAddress
-      列には索引が無く（Issue #145 で追跡中）、無条件の集計は大規模時にフルスキャンへ
+    - **重大度分布・Top talkers の窓限定**: Severity・SourceAddress
+      列には索引が無く、無条件の集計は大規模時にフルスキャンへ
       劣化し得る。両集計は索引済みの ReceivedAt 範囲（直近 1 時間 = 受信量推移と同じ窓）
-      へ必須で絞り込んでから集計する——索引追加そのものは Issue #145 の範囲であり、
+      へ必須で絞り込んでから集計する——索引追加は別の対応範囲であり、
       本画面はそれとは独立に「窓の必須化」で大規模時の劣化を抑える（ILogStore の
       QuerySeverityDistributionAsync / QueryTopTalkersAsync の doc コメント参照）
 *@
@@ -162,7 +162,7 @@
 </div>
 
 <div class="mb-4">
-    @* 流量制限の発火上位送信元（Issue #288。案 (a) カード型——2026-07-18 オーナー裁定）:
+    @* 流量制限の発火上位送信元（カード型で表示）:
        「取りこぼし（送信元ごとの受信量の制限）」の増加に気づいた運用者が「どの装置の暴走か」へ
        進むための view。UI-4（送信元別の受信状況）・Top talkers との住み分け（受信量 vs 制限発火の
        軸違い）と、値の生存期間（ゲートの有界バケットと同寿命）は説明文で明示する。
@@ -230,9 +230,9 @@
                     <MudTh>@UiText.SourceColumnActions</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="source">
-                    @* 逆引きホスト名の併記(ADR-0007。ui.md §4)。ウォッチリスト登録済みの
+                    @* 逆引きホスト名の併記(ui.md §4)。ウォッチリスト登録済みの
                        送信元にはマークを付ける(ADR-0018 決定 4——登録は管理面の設定画面で行い、
-                       閲覧面には導線を置かない。#286 の閲覧/管理分離)。 *@
+                       閲覧面には導線を置かない。閲覧/管理分離)。 *@
                     <MudTd DataLabel="@UiText.SourceColumnAddress">
                         <YaguraSourceAddress Address="@source.SourceAddress" />
                         @if (FindWatch(source.SourceAddress) is { } watch)
@@ -295,12 +295,12 @@
     private const int SourceLimit = 1_000;
     private const int OutageQueryLimit = 100;
 
-    // 重大度分布・Top talkers の窓は受信量推移と同じ ChartWindow を使う（Issue #145 への
-    // 配慮——索引済みの ReceivedAt 範囲へ絞り込んでから集計することでフルスキャンを避ける。
-    // ILogStore.QuerySeverityDistributionAsync / QueryTopTalkersAsync の doc コメント参照）。
+    // 重大度分布・Top talkers の窓は受信量推移と同じ ChartWindow を使う（索引済みの
+    // ReceivedAt 範囲へ絞り込んでから集計することでフルスキャンを避ける配慮）。
+    // ILogStore.QuerySeverityDistributionAsync / QueryTopTalkersAsync の doc コメント参照。
     private const int TopTalkersLimit = 10;
 
-    // 流量制限の発火上位送信元（Issue #288）の表示件数（Top talkers と同じ上位 10）。
+    // 流量制限の発火上位送信元の表示件数（Top talkers と同じ上位 10）。
     private const int FlowControlRejectionLimit = 10;
 
     private YaguraStaleGuard? _staleGuard;
@@ -405,25 +405,24 @@
         _spoolEvacuatedTotal = status.Counters
             .Where(c => c.InstrumentName == "yagura.ingestion.spool.evacuated")
             .Sum(c => c.Value);
-        // 「取りこぼし（累計）」は IsLoss な全カウンタの単純合計（Issue #201 まで単位は
-        // 全種「件」で統一されていた）。Issue #201 で追加した「スプール末尾破損破棄」のみ
+        // 「取りこぼし（累計）」は IsLoss な全カウンタの単純合計。「スプール末尾破損破棄」のみ
         // 単位がバイト（レコード単位では数えられないため。SystemStatusReader.
         // BuildCounterReadings のコメント参照）——本来なら異なる単位を同じ合計へ混ぜるべきでは
         // ないが、(a) この値が非ゼロになるのは torn write（クラッシュ・強制終了時の末尾破損）
         // 発生時のみで、1 回の発生量はフレーム 1 件分程度に収まる（実運用で「件」総数を
         // 大きく歪める規模にはならない）、(b) 代替（バイト単位を除外して合計する）は
         // architecture.md §3.1「カウンタに計上されない喪失は重大」の観測ギャップを閲覧面で
-        // 再現することになり本末転倒、の 2 点から、単純合計へ含める判断とした（Issue #201
-        // PR での明示の判断）。詳細な内訳確認（バイト値そのもの）は SystemStatus 画面の
+        // 再現することになり本末転倒、の 2 点から、単純合計へ含める判断とした。
+        // 詳細な内訳確認（バイト値そのもの）は SystemStatus 画面の
         // カウンタ一覧（ラベルに「単位はバイト」と明記済み）で行う。
         _lossTotal = status.Counters.Where(c => c.IsLoss).Sum(c => c.Value);
         _lossBaselineSinceOpen ??= _lossTotal;
 
-        // 流量制限の発火上位送信元（Issue #288）: ゲートの in-memory スナップショット
+        // 流量制限の発火上位送信元: ゲートの in-memory スナップショット
         // （DB 非アクセス）のため毎周期の軽い更新に含める。
         _flowControlRejections = StatusReader.ReadFlowControlRejections(FlowControlRejectionLimit);
 
-        // 途絶検知のウォッチリスト状態（ADR-0018 決定 4。Issue #351）: 判定器の in-memory
+        // 途絶検知のウォッチリスト状態（ADR-0018 決定 4）: 判定器の in-memory
         // スナップショット（DB 非アクセス）のため同じく軽い更新に含める。キーは正規化済み
         // アドレス（契約参照）。
         _sourceWatchByAddress = StatusReader.ReadSourceSilenceEntries()
@@ -462,9 +461,9 @@
         // 送信元別の受信状況（UI-4 無音化検出——最終受信時刻の古い順。集計は provider 側）。
         _sources = await LogStore.QuerySourceActivityAsync(SourceLimit, InternalQueryTimeout);
 
-        // 重大度分布（平常時からの逸脱検知）と Top talkers（受信量上位。フラッディング検知。
-        // Issue #159）——いずれも受信量推移と同じ窓（直近 1 時間）に限定する（Issue #145 の
-        // 索引欠如への配慮。ILogStore の doc コメント参照）。
+        // 重大度分布（平常時からの逸脱検知）と Top talkers（受信量上位。フラッディング検知）
+        // ——いずれも受信量推移と同じ窓（直近 1 時間）に限定する（索引欠如への
+        // 配慮。ILogStore の doc コメント参照）。
         var severityDistribution = await LogStore.QuerySeverityDistributionAsync(
             _chartRangeStart, _chartRangeEnd, InternalQueryTimeout);
         _severityDistribution = OrderSeverityDistribution(severityDistribution);
@@ -533,10 +532,10 @@
         : null;
 
     /// <summary>
-    /// 一時保管への退避カードの補足（Issue #132）。累計が 0 のときは付けない（カードを静かに保つ）。
+    /// 一時保管への退避カードの補足。累計が 0 のときは付けない（カードを静かに保つ）。
     /// 累計 &gt; 0 のときは「今も進行中か（<see cref="_spoolEvacuationOngoing"/>。消化完了の判定は
     /// <c>SystemStatusReader</c> がスプールの現在ゲージで行う）」で文言を出し分け、
-    /// 「一度退避が発生すると画面表示が戻らない」という誤解（Issue #132 の報告）を防ぐ——
+    /// 「一度退避が発生すると画面表示が戻らない」という誤解を防ぐ——
     /// 消化完了後は累計を過去分と分かる文言に切り替える。
     /// </summary>
     private string? SpoolEvacuatedSupplement => _spoolEvacuatedTotal switch

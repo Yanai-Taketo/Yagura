@@ -4,7 +4,7 @@ using Yagura.Web.Circuits;
 namespace Yagura.Web.Components;
 
 /// <summary>
-/// circuit 統治の受け手コンポーネント（M8-4。Issue #71）。ルートコンポーネント
+/// circuit 統治の受け手コンポーネント（M8-4）。ルートコンポーネント
 /// （<c>YaguraWebRoot</c>）に常駐し、描画は行わない。
 /// </summary>
 /// <remarks>

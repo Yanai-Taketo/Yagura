@@ -6,7 +6,7 @@
 @inject NavigationManager Navigation
 
 @*
-    ログ検索（ui.md §4。M8-3。Issue #70）:
+    ログ検索（ui.md §4。M8-3）:
     - 絞り込みの強制はしない（architecture.md §6——条件なしで最新から閲覧できる。
       初期表示は条件なしの検索を自動実行する = イベントビューア相当の操作感）
     - 防御は出力の制限で行う: 結果上限 10,000 件・射影 200 文字・タイムアウト 30 秒
@@ -37,7 +37,7 @@
             <MudItem xs="12" sm="6" md="4">
                 <YaguraTextField Label="@UiText.SearchFieldSource" @bind-Value="_sourceAddress" />
             </MudItem>
-            @* 重大度は完全一致ではなく閾値方式（Issue #148——「N 以上」の運用語彙を、選択値と、
+            @* 重大度は完全一致ではなく閾値方式（「N 以上」の運用語彙を、選択値と、
                より深刻な値をすべて含む条件として表現する。補足は HelpText で明示する）。 *@
             <MudItem xs="12" sm="6" md="4">
                 <YaguraSelectField Label="@UiText.SearchFieldSeverity"
@@ -60,12 +60,12 @@
             </MudItem>
             @* 検索ボタンを隣の入力ボックス（本文の検索語）の下端に揃える。フォーム項目枠の
                下余白（yagura-form-field の mb-4 = 16px）の分だけ align-end の基準が下がるため、
-               ボタン列に同じ 16px の下パディング（pb-4）を与えて押し上げる（2026-07-06 試用の
-               「検索がずれて見える」フィードバック）。 *@
+               ボタン列に同じ 16px の下パディング（pb-4）を与えて押し上げる
+               （試用時の「検索がずれて見える」フィードバック対応）。 *@
             <MudItem xs="12" md="3" Class="d-flex align-end pb-4">
                 @* 主ボタンは 1 ビューに 1 つ（ui.md §3.1）——本画面ではこの検索ボタンのみ。
                    検索条件は URL クエリへ反映してから実行する（NavigateTo → OnParametersSetAsync
-                   が実クエリを実行する単一経路。URL 共有・ブックマーク対応——Issue #148）。 *@
+                   が実クエリを実行する単一経路。URL 共有・ブックマーク対応）。 *@
                 <YaguraButton Role="YaguraButtonRole.Primary" OnClick="SubmitSearch" Disabled="@_searching">
                     @UiText.SearchButton
                 </YaguraButton>
@@ -94,12 +94,12 @@
         </YaguraCard>
     </div>
 
-    @* CSV エクスポート導線（Issue #157）: 現在の検索条件を引き継いだまま
+    @* CSV エクスポート導線: 現在の検索条件を引き継いだまま
        /search/export.csv へ全ページ遷移する（ForwarderKitScreen の生成ボタンと同じ方式——
        NavigationManager.NavigateTo(url, forceLoad: true)。最終検証・件数上限はサーバ側の
        責務、ここは条件の引き渡しのみ）。クエリの組み立ては検索 URL（BuildSearchUrl）と
        同一の BuildQueryParameters を共有する——条件マッピングの二重管理を避け、
-       「エクスポートは今見ている検索と同じ条件」を構造的に保証する（Issue #148 の
+       「エクスポートは今見ている検索と同じ条件」を構造的に保証する（検索条件の
        URL 共有設計に相乗り）。主ボタン（検索）は上のフォームの 1 つのみのため、
        本ボタンは Normal ロールとする（ui.md §3.1「主ボタンは 1 ビューに 1 つ」）。 *@
     <div class="mb-4 d-flex align-center justify-end gap-2">
@@ -163,7 +163,7 @@
             </HeaderContent>
             <RowTemplate Context="record">
                 <MudTd DataLabel="受信時刻"><YaguraTimestamp Value="@record.ReceivedAt" /></MudTd>
-                @* 逆引きホスト名の併記(ADR-0007。共通コンポーネント YaguraSourceAddress——ui.md §4) *@
+                @* 逆引きホスト名の併記(共通コンポーネント YaguraSourceAddress——ui.md §4) *@
                 <MudTd DataLabel="@UiText.SourceColumnAddress"><YaguraSourceAddress Address="@record.SourceAddress" /></MudTd>
                 <MudTd DataLabel="重大度"><YaguraSeverityChip Severity="@record.Severity" /></MudTd>
                 <MudTd DataLabel="分類（ファシリティ）">@UiText.FormatFacility(record.Facility)</MudTd>
@@ -178,7 +178,7 @@
         </YaguraTable>
         @if (_hasMore)
         {
-            @* カーソル（キーセット）ページングの追記型 UI（database.md DB-11。Issue #144 残課題）:
+            @* カーソル（キーセット）ページングの追記型 UI（database.md DB-11）:
                現在の検索条件のまま、表示済み最後の行から続きを追加取得する。主ボタン（検索）は
                上部フォームの 1 つのみのため、本ボタンも Normal ロールとする（ui.md §3.1）。 *@
             <div class="mt-2 d-flex justify-center">
@@ -190,7 +190,7 @@
     }
 </div>
 
-@* 詳細はオーバーレイ(モーダルダイアログ)で表示する(2026-07-06 試用フィードバック——
+@* 詳細はオーバーレイ(モーダルダイアログ)で表示する(試用フィードバック対応——
    結果テーブルの下に開く方式は、行が多いと「押しても何も起きない」ように見えた。
    オーバーレイなら結果一覧の位置に関わらず必ず前面に出る)。inline の MudDialog を
    可視状態にバインドする方式(別ダイアログコンポーネント + レコード受け渡しを増やさない)。
@@ -232,7 +232,7 @@
                 </div>
                 <div>
                     <MudText Typo="Typo.caption" Class="yagura-detail-meta-label">@UiText.SourceColumnAddress</MudText>
-                    @* 逆引きホスト名の併記(ADR-0007。ui.md §4) *@
+                    @* 逆引きホスト名の併記(ui.md §4) *@
                     <MudText Typo="Typo.body2"><YaguraSourceAddress Address="@_detail.SourceAddress" Port="@_detail.SourcePort" />（@_detail.Protocol）</MudText>
                 </div>
                 <div>
@@ -255,7 +255,7 @@
                 </div>
             </div>
 
-            @* 装置時計ずれの明示（ui.md §6・Issue #158）: 受信時刻との乖離が閾値以上の場合のみ
+            @* 装置時計ずれの明示（ui.md §6）: 受信時刻との乖離が閾値以上の場合のみ
                注記する（BuildDeviceTimestampDriftNote が閾値判定込みで文言を組み立てる）。
                補足文言は RFC 3164（TZ 情報なし）由来の近似に触れる——出し分けの判断は同メソッドの
                コメントを参照。 *@
@@ -321,8 +321,8 @@
     private string? _searchText;
     private bool _searching;
 
-    // カーソル（キーセット）ページングの「さらに読み込む」状態（database.md DB-11。Issue #144
-    // 残課題）。_hasMore は直近の取得バッチがちょうど SearchLimit 件だったか（=まだ続きが
+    // カーソル（キーセット）ページングの「さらに読み込む」状態（database.md DB-11）。
+    // _hasMore は直近の取得バッチがちょうど SearchLimit 件だったか（=まだ続きが
     // あり得るか）を表す——_results.Count 自体で判定すると、追記型で件数が増え続けるうちに
     // 「まだ続きがあるか」を表せなくなるため、直近バッチのみを見る専用フラグにする。
     // カーソルは URL に載せない（ui.md §4「カーソルページングの UI 判断」参照——検索条件のみを
@@ -342,7 +342,7 @@
     private DateTimeOffset? _retentionHorizon;
     private IReadOnlyList<YaguraListenerEndpoint> _listeners = [];
 
-    // ---- 検索条件 ⇔ URL クエリの双方向反映（Issue #148。URL 共有・ブックマーク対応） ----
+    // ---- 検索条件 ⇔ URL クエリの双方向反映（URL 共有・ブックマーク対応） ----
     // SupplyParameterFromQuery: Router は同一ページ内でクエリだけが変わるナビゲーション
     // （NavigateTo）でもこれらのパラメータを再供給し、OnParametersSetAsync を再実行する
     // （.NET の標準機構。コンポーネントの再生成は起きない）。検索ボタン（SubmitSearch）は
@@ -439,7 +439,7 @@
         QueryHelpers.AddQueryString("/search", BuildQueryParameters());
 
     /// <summary>
-    /// CSV エクスポート（Issue #157）: 現在の検索条件を引き継いだクエリ付きで
+    /// CSV エクスポート: 現在の検索条件を引き継いだクエリ付きで
     /// <c>/search/export.csv</c>（YaguraWebViewerExtensions.MapLogSearchCsvExport）へ
     /// 全ページ遷移する。クエリのキー・値は検索 URL（<see cref="BuildSearchUrl"/>）と
     /// 同一（<see cref="BuildQueryParameters"/> を共有——「今見ている検索と同じ条件」を
@@ -451,7 +451,7 @@
             forceLoad: true);
 
     /// <summary>
-    /// フォームの現在値から URL クエリパラメータ（Issue #148 の URL 共有形式）を組み立てる。
+    /// フォームの現在値から URL クエリパラメータ（URL 共有形式）を組み立てる。
     /// 検索 URL（<see cref="BuildSearchUrl"/>）と CSV エクスポート URL（<see cref="ExportCsv"/>）で
     /// 同一のロジックを共有する（条件マッピングの二重管理を避ける）。
     /// </summary>
@@ -716,10 +716,10 @@
         // database.md §2.1。ここは表示のみ）。
         System.Text.Encoding.UTF8.GetString(raw);
 
-    // ---- 装置時計ずれの明示（ui.md §6・Issue #158） ----
+    // ---- 装置時計ずれの明示（ui.md §6） ----
 
     // 乖離表示の閾値（仮値。UI-2——ステール警告の閾値（Dashboard.razor・YaguraStaleGuard）と同じ
-    // 「仮値で実装し、実利用で確定する」の流儀）。Issue #158 に具体的な提案値がなかったため、
+    // 「仮値で実装し、実利用で確定する」の流儀）。具体的な提案値がなかったため、
     // 実務者が詳細を開いて気づく水準として 5 分を仮に置く。
     internal static readonly TimeSpan DeviceTimestampDriftThreshold = TimeSpan.FromMinutes(5);
 
@@ -728,7 +728,7 @@
     /// 未満、または DeviceTimestamp 自体が未設定の場合は null——注記を出さない）。
     /// </summary>
     /// <remarks>
-    /// <b>RFC 3164（タイムゾーン情報なし）由来レコードの扱い（2026-07-09 判断）</b>:
+    /// <b>RFC 3164（タイムゾーン情報なし）由来レコードの扱い</b>:
     /// 受信段（Yagura.Ingestion.Parsing.SyslogParser）の RFC 3164 解析は TIMESTAMP に
     /// タイムゾーン情報がないため UTC とみなす近似で DeviceTimestamp を組み立てる
     /// （database.md §2.1「参考情報。基準軸にしない」）。装置が実際には UTC 以外のタイムゾーンで

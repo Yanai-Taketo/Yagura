@@ -71,7 +71,7 @@ public static class UiText
 
     /// <summary>
     /// 保持地平（ui.md §5.3）。検索範囲の下限が保持期間より古いときに出す。
-    /// 「表示中の結果そのものが消えた」という誤読（2026-07-06 試用フィードバック——条件なしの
+    /// 「表示中の結果そのものが消えた」という誤読（試用フィードバックで判明——条件なしの
     /// 初期表示で結果が並んでいる上にこの注記が出ると「消えた?」と読める）を避けるため、
     /// 削除の対象が<b>保持期間より前の古いログ</b>であることと、<b>残っているログは表示されている</b>
     /// ことの両方を言い切る。
@@ -152,7 +152,7 @@ public static class UiText
     /// <summary>
     /// ボタンのクリック処理から漏れた例外の共通表示形式。{0} に例外メッセージが入る。
     /// 第一の受け皿は各画面の catch（画面固有の文言・誘導つき）であり、これは例外を
-    /// circuit エラーにしないための最後の受け皿（Issue #372）。
+    /// circuit エラーにしないための最後の受け皿。
     /// </summary>
     public const string ButtonActionFailedFormat = "操作を完了できませんでした: {0}";
 
@@ -217,7 +217,7 @@ public static class UiText
     /// <summary>時間軸チャートで期間内の受信が 0 件の場合の注記。</summary>
     public const string TimelineNoData = "この期間に受信したログはありません";
 
-    /// <summary>時間軸チャート中央の操作案内（棒ホバーで時間帯 + 件数が出る旨。2026-07-06）。</summary>
+    /// <summary>時間軸チャート中央の操作案内（棒ホバーで時間帯 + 件数が出る旨）。</summary>
     public const string TimelineHoverHint = "棒にカーソルを合わせると、その時間帯と件数が表示されます";
 
     /// <summary>送信元別受信状況カードの見出し（ui.md §5.1 の導線の行き先。UI-4）。</summary>
@@ -261,15 +261,15 @@ public static class UiText
     public const string StatSpoolEvacuated = "一時保管への退避（累計）";
 
     /// <summary>
-    /// 一時保管への退避カードの補足（退避が現在も進行中の場合。Issue #132）。累計値は監査上の
+    /// 一時保管への退避カードの補足（退避が現在も進行中の場合）。累計値は監査上の
     /// 価値があるため残しつつ、「今」の状態が復帰したことを見分けられるようにする
     /// （ui.md §5.4「一時保管中の表示」の裏返し——進行中でなくなったら静かに戻す）。
     /// </summary>
     public const string StatSpoolEvacuatedOngoingSupplement = "現在も一時保管への退避が進行中です";
 
     /// <summary>
-    /// 一時保管への退避カードの補足（過去に退避があったが、現在は消化完了（DB 格納済み）の場合。
-    /// Issue #132。「一生画面に表示されっぱなし」という誤解を防ぐ——累計は過去分であり、
+    /// 一時保管への退避カードの補足（過去に退避があったが、現在は消化完了（DB 格納済み）の場合）。
+    /// 「一生画面に表示されっぱなし」という誤解を防ぐ——累計は過去分であり、
     /// 現在は正常に戻っていることを明示する）。
     /// </summary>
     public const string StatSpoolEvacuatedResolvedSupplement = "退避分は格納済み（現在は正常です）";
@@ -279,7 +279,7 @@ public static class UiText
 
     /// <summary>
     /// 取りこぼしカードの補足（取りこぼしがある場合のみ表示）。{0} にこの画面を開いてからの増分。
-    /// 累計値は保存件数と並ぶと「大半を捨てている」ように見える（2026-07-06 試用フィードバック——
+    /// 累計値は保存件数と並ぶと「大半を捨てている」ように見える（試用フィードバックで判明——
     /// 累計 37,529 対 保存 736）。累計はサーバ起動からの running total であること、および
     /// 「今も増えているか（＝進行中か過去か）」を開いてからの増分で示し、過去の一時的な取りこぼしと
     /// 現在進行中の取りこぼしを見分けられるようにする。
@@ -292,7 +292,7 @@ public static class UiText
     /// <summary>ダッシュボードから状態画面への導線。</summary>
     public const string StatLinkToStatus = "すべてのカウンタ・記録を見る（システム状態）";
 
-    // ---- 重大度分布・Top talkers（ui.md §4。M8-5/Issue #159） ----
+    // ---- 重大度分布・Top talkers（ui.md §4。M8-5） ----
 
     /// <summary>重大度分布カードの見出し。</summary>
     public const string SeverityDistributionTitle = "重大度別の受信件数（直近 1 時間）";
@@ -318,7 +318,7 @@ public static class UiText
     /// <summary>Top talkers にこの期間の受信がない場合の注記。</summary>
     public const string TopTalkersNoData = "この期間に受信した送信元はありません";
 
-    // ---- 流量制限の発火上位送信元（Issue #288。案 (a) カード型——2026-07-18 オーナー裁定） ----
+    // ---- 流量制限の発火上位送信元（カード型で表示） ----
 
     /// <summary>流量制限の発火上位送信元カードの見出し。</summary>
     public const string FlowControlRejectionsTitle = "流量制限の発火上位送信元";
@@ -352,25 +352,25 @@ public static class UiText
 
     /// <summary>
     /// 検索条件: 送信元アドレス（完全一致。DB-6 確定までの暫定規則）。IP アドレス指定であることを
-    /// ラベルで明示する（逆引きホスト名では検索できない——ADR-0007 決定 2・ui.md §4 の誤解手当て）。
+    /// ラベルで明示する（逆引きホスト名では検索できない——ui.md §4 の誤解手当て）。
     /// </summary>
     public const string SearchFieldSource = "送信元 IP アドレス（完全一致。名前では検索できません）";
 
-    /// <summary>検索条件: 重大度（用語対応表: severity → 重大度）。閾値方式（Issue #148）。</summary>
+    /// <summary>検索条件: 重大度（用語対応表: severity → 重大度）。閾値方式。</summary>
     public const string SearchFieldSeverity = "重大度";
 
     /// <summary>
-    /// 検索条件: 重大度欄の補足（Issue #148——完全一致ではなく閾値方式であることの明示。
+    /// 検索条件: 重大度欄の補足（完全一致ではなく閾値方式であることの明示。
     /// syslog は数値が小さいほど深刻なため、選択した重大度「以上」＝選択値と、より深刻な値を含む）。
     /// </summary>
     public const string SearchFieldSeverityHelp =
         "選択した重大度と、それより深刻な重大度をまとめて表示します（例:「3: エラー」を選ぶと、" +
         "0: 緊急・1: 警報・2: 重大・3: エラーを含みます）";
 
-    /// <summary>検索条件: ファシリティ（用語対応表: facility → 分類（ファシリティ））。完全一致（Issue #148）。</summary>
+    /// <summary>検索条件: ファシリティ（用語対応表: facility → 分類（ファシリティ））。完全一致。</summary>
     public const string SearchFieldFacility = "分類（ファシリティ）";
 
-    /// <summary>検索条件: 解析状態（Issue #148——「解析失敗だけを見たい」等の絞り込み）。</summary>
+    /// <summary>検索条件: 解析状態（「解析失敗だけを見たい」等の絞り込み）。</summary>
     public const string SearchFieldParseStatus = "解析状態";
 
     /// <summary>解析状態の選択肢: 解析済み。</summary>
@@ -388,17 +388,17 @@ public static class UiText
     /// <summary>検索実行ボタン。</summary>
     public const string SearchButton = "検索";
 
-    /// <summary>検索結果の CSV エクスポートボタン（Issue #157）。</summary>
+    /// <summary>検索結果の CSV エクスポートボタン。</summary>
     public const string SearchExportCsvButton = "CSV エクスポート";
 
     /// <summary>
     /// CSV エクスポートの上限件数の注記（<c>{0}</c> に件数を埋め込む書式文字列）。画面表示（一覧）と
-    /// 同じ上限を使うことを利用者に明示する（「件数上限の明示」——Issue #157 の受け入れ条件）。
+    /// 同じ上限を使うことを利用者に明示する（件数上限の明示）。
     /// </summary>
     public const string SearchExportCsvHintFormat = "現在の検索条件のまま、最大 {0:N0} 件まで CSV に出力します（一覧表示と同じ上限）。";
 
     /// <summary>
-    /// 「さらに読み込む」ボタン（database.md DB-11。カーソルページングの追記型 UI。Issue #144 残課題）。
+    /// 「さらに読み込む」ボタン（database.md DB-11。カーソルページングの追記型 UI）。
     /// 現在の検索条件のまま、表示済みの最後の行より過去の続きを追加で読み込む。
     /// </summary>
     public const string SearchLoadMoreButton = "さらに読み込む";
@@ -408,7 +408,7 @@ public static class UiText
     /// </summary>
     public const string SearchLoadingMoreButton = "読み込み中…";
 
-    // ---- 送信元の逆引きホスト名（ADR-0007。ui.md §4） ----
+    // ---- 送信元の逆引きホスト名（ui.md §4） ----
 
     /// <summary>
     /// 逆引きホスト名の由来ツールチップ（ui.md §4 の確定文言を正とする。送信元 IP を表示する
@@ -467,7 +467,7 @@ public static class UiText
         _ => severity.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
-    // ---- ファシリティ（syslog PRI の facility。ui.md §4。2026-07-06 オーナー指示） ----
+    // ---- ファシリティ（syslog PRI の facility。ui.md §4） ----
 
     /// <summary>
     /// ファシリティ番号 → 標準名の対応（RFC 5424 Table 1）。
@@ -559,19 +559,19 @@ public static class UiText
     public const string DetailDeviceTimestamp = "送信元が名乗った時刻（参考）";
 
     /// <summary>
-    /// 装置時計ずれの注記（ui.md §6・Issue #158）。{0} に乖離量（例: "5 時間"）が入る。
+    /// 装置時計ずれの注記（ui.md §6）。{0} に乖離量（例: "5 時間"）が入る。
     /// 装置時刻がサーバ受信時刻より進んでいる場合。
     /// </summary>
     public const string DetailDeviceTimestampDriftAheadFormat = "装置時刻はサーバ受信時刻より約 {0} 進んでいます";
 
     /// <summary>
-    /// 装置時計ずれの注記（ui.md §6・Issue #158）。{0} に乖離量（例: "5 時間"）が入る。
+    /// 装置時計ずれの注記（ui.md §6）。{0} に乖離量（例: "5 時間"）が入る。
     /// 装置時刻がサーバ受信時刻より遅れている場合。
     /// </summary>
     public const string DetailDeviceTimestampDriftBehindFormat = "装置時刻はサーバ受信時刻より約 {0} 遅れています";
 
     /// <summary>
-    /// 装置時計ずれ注記の補足（2026-07-09 Issue #158 の判断）。RFC 3164（タイムゾーン情報なし）
+    /// 装置時計ずれ注記の補足。RFC 3164（タイムゾーン情報なし）
     /// 由来の DeviceTimestamp は解析時にタイムゾーンを UTC とみなす近似のため、乖離が時計のずれ
     /// だけでなく送信元のタイムゾーン設定の違いを表すこともあることを明示する。
     /// </summary>
@@ -620,7 +620,7 @@ public static class UiText
     /// <summary>カウンタ平易語: 永続化失敗。</summary>
     public const string CounterPersistenceFailed = "取りこぼし（保存の失敗）";
 
-    // ---- 蓄積ログの移行（database.md §6.2。DB-5。Issue #266） ----
+    // ---- 蓄積ログの移行（database.md §6.2。DB-5） ----
 
     /// <summary>システムイベント平易語: 蓄積ログ移行の完了記録。</summary>
     public const string EventKindMigrationImport = "蓄積ログの移行（移行されたログの期間）";
@@ -649,7 +649,7 @@ public static class UiText
     public const string MigrationAlreadyCompleted =
         "蓄積ログの移行は完了しています。旧データベースファイルの処分は処分手順に従ってください。";
 
-    // ---- 設定の再読み込み（configuration.md §3。CF-4 層1。Issue #262） ----
+    // ---- 設定の再読み込み（configuration.md §3。CF-4 層1） ----
 
     /// <summary>設定再読み込み画面のタイトル。</summary>
     public const string AdminReloadTitle = "設定の再読み込み";
@@ -686,18 +686,18 @@ public static class UiText
 
     /// <summary>
     /// 型の読み替え一覧の前置き（情報レベル——受理は正常系であり警告にしない。
-    /// configuration.md §1。Issue #334）。
+    /// configuration.md §1）。
     /// </summary>
     public const string AdminReloadTypeCoercions = "文字列以外の JSON 型で書かれ、そのまま受理した設定キー（動作への影響はありません）:";
 
     /// <summary>
-    /// 保存後の自動再読み込み（再起動待ちカードへの計上。Issue #388）が拒否されたときの通知。
+    /// 保存後の自動再読み込み（再起動待ちカードへの計上）が拒否されたときの通知。
     /// {0} に拒否理由が入る。保存自体は成立している。
     /// </summary>
     public const string AdminSaveReloadRejectedFormat =
         "保存は完了しましたが、再起動待ちへの計上（設定の再読み込み）が拒否されました: {0}。設定の再読み込み画面から手動で実行してください";
 
-    // ---- 管理面入口のメール通知チャネル健全性カード（ADR-0017 決定 5。Issue #386） ----
+    // ---- 管理面入口のメール通知チャネル健全性カード（ADR-0017 決定 5） ----
 
     /// <summary>カードの見出し。</summary>
     public const string AdminEmailHealthCardTitle = "メール通知チャネル";
@@ -718,9 +718,9 @@ public static class UiText
     /// <summary>再読み込み拒否の通知。</summary>
     public const string AdminReloadRejectedNotification = "設定の再読み込みを中止しました（設定値を確認してください）";
 
-    // ---- ウィザード保存後の自動反映（Issue #287） ----
+    // ---- ウィザード保存後の自動反映 ----
 
-    /// <summary>保存後すぐ反映するチェックボックスのラベル（既定オン——2026-07-18 オーナー裁定）。</summary>
+    /// <summary>保存後すぐ反映するチェックボックスのラベル（既定オン）。</summary>
     public const string WizardAutoApplyLabel = "保存後すぐ反映する";
 
     /// <summary>保存後すぐ反映するチェックボックスの補足。</summary>
@@ -738,7 +738,7 @@ public static class UiText
     public const string WizardAutoApplyRejected =
         "保存は完了しましたが、自動反映は実行できませんでした（設定の検証失敗——実行中の構成は変更されていません）: ";
 
-    // ---- 再起動待ちキーの常設表示（Issue #286。管理面のみ） ----
+    // ---- 再起動待ちキーの常設表示（管理面のみ） ----
 
     /// <summary>再起動待ちカードのタイトル。</summary>
     public const string AdminPendingRestartCardTitle = "再起動待ちの設定変更";
@@ -751,17 +751,17 @@ public static class UiText
     /// <summary>再起動待ちキーの検出時刻の前置きラベル（後ろに時刻表示が続く）。</summary>
     public const string AdminPendingRestartDetectedAtLabel = "検出した再読み込み: ";
 
-    /// <summary>カウンタ平易語: 流量制御破棄（Issue #260 で判定・破棄が実装され実値を刻む）。</summary>
+    /// <summary>カウンタ平易語: 流量制御破棄（判定・破棄の実装により実値を刻む）。</summary>
     public const string CounterFlowControlDropped = "取りこぼし（送信元ごとの受信量の制限）";
 
     /// <summary>
-    /// カウンタ平易語: スプール末尾破損破棄（Issue #201）。他の取りこぼし系カウンタと異なり
+    /// カウンタ平易語: スプール末尾破損破棄。他の取りこぼし系カウンタと異なり
     /// 単位がバイト（レコード単位では数えられないため）——値の桁が他行と並ばないことでの
     /// 誤解を避けるため、ラベル自体に単位を明記する。
     /// </summary>
     public const string CounterSpoolCorruptTailDiscarded = "取りこぼし（一時保管ファイルの末尾破損。単位はバイト）";
 
-    /// <summary>カウンタ平易語: 逆引き解決成功（ADR-0007 決定 6。ui.md §7.2）。</summary>
+    /// <summary>カウンタ平易語: 逆引き解決成功（ui.md §7.2）。</summary>
     public const string CounterReverseDnsResolved = "逆引きホスト名の取得（成功）";
 
     /// <summary>カウンタ平易語: 逆引き PTR 未登録（正常系であることを平易語で明示する）。</summary>
@@ -788,7 +788,6 @@ public static class UiText
     /// <summary>
     /// OS 受信破棄（OS 統計）の常時説明（M8-3 の設計判断: 値を表示せず説明のみを常時掲示する。
     /// architecture.md §4.2・D-6——値 0 の表示が「取りこぼしゼロ」の誤解を生むため。
-    /// 計器（yagura.os.udp.*）自体も ADR-0016 決定 3 で製品コードから撤去済み。
     /// 判断記録は ui.md §5.5）。
     /// </summary>
     public const string OsUdpDiscardExplanation =
@@ -809,10 +808,10 @@ public static class UiText
     /// <summary>受信断履歴: クラッシュ近似断点の種別表示（近似である旨を含む。ui.md §5.3）。</summary>
     public const string OutageKindCrashApproximate = "正常に終了しなかったため境界はおおよそ";
 
-    /// <summary>受信断履歴: リスナ再構成（設定の再読み込み）による瞬断の種別表示（Issue #262）。</summary>
+    /// <summary>受信断履歴: リスナ再構成（設定の再読み込み）による瞬断の種別表示。</summary>
     public const string OutageKindListenerReconfigure = "設定反映（リスナ再構成）による";
 
-    /// <summary>受信断履歴: bind 失敗から再試行での受信再開までの種別表示（Issue #291）。</summary>
+    /// <summary>受信断履歴: bind 失敗から再試行での受信再開までの種別表示。</summary>
     public const string OutageKindListenerBindRetry = "ポートを開けなかった間（再試行で復旧）";
 
     /// <summary>履歴テーブル: 種別列。</summary>
@@ -919,8 +918,7 @@ public static class UiText
 
     /// <summary>
     /// ログイン失敗時の汎用エラー文言（ユーザー列挙耐性のため、資格情報誤り・アカウント不在・
-    /// バックオフ待機中のいずれも同一文言とする——ADR-0010 決定 3・ADR-0011 決定 3・
-    /// security.md §4.3・§2.4.1）。
+    /// バックオフ待機中のいずれも同一文言とする——security.md §4.3）。
     /// </summary>
     public const string AdminLoginError = "ユーザー名またはパスワードが正しくないか、現在サインインできません。";
 
@@ -950,11 +948,11 @@ public static class UiText
         + "復旧しない場合は、サーバの管理者に Windows イベントログの確認を依頼してください。";
 
     /// <summary>
-    /// 待機表示の統一文言（ADR-0011 決定 5.1・6）。<c>{0}</c> に秒数を埋め込む。
+    /// 待機表示の統一文言（ADR-0011）。<c>{0}</c> に秒数を埋め込む。
     /// <b>用途は IP レート制限/グローバルトークンバケット拒否の 429 応答（アクセス集中）に限る</b>——
     /// これらは送信元 IP 単位・プロセス全体の状態で判定し、ユーザー名の実在有無に依存しないため
-    /// カウントダウンを出しても列挙シグナルにならない（決定 4）。**アカウント単位バックオフには
-    /// 使わない**——バックオフ待機を UI に出すと実在アカウントの存在を暴く（決定 3 の非開示要件。
+    /// カウントダウンを出しても列挙シグナルにならない。**アカウント単位バックオフには
+    /// 使わない**——バックオフ待機を UI に出すと実在アカウントの存在を暴く（非開示要件。
     /// バックオフの効果はサーバ側の応答遅延としてのみ現れ、応答は誤パスワードと同一に統一する）。
     /// </summary>
     public const string AdminLoginWait = "しばらくお待ちください。あと {0} 秒で再試行できます。";
@@ -969,8 +967,8 @@ public static class UiText
 
     /// <summary>
     /// 閲覧ログイン画面の説明（認証 opt-in 有効時のみ到達）。方式に依らず中立の文言にする——アプリ独自認証併用時
-    /// （ID/パスワード欄も表示される）に「Windows でのサインインが必要」と読める固定文言だと誤解を招くため
-    /// （佐藤のレビュー指摘）。具体的な方式は各サインインボタン/フォームのラベルが示す。
+    /// （ID/パスワード欄も表示される）に「Windows でのサインインが必要」と読める固定文言だと誤解を招くため。
+    /// 具体的な方式は各サインインボタン/フォームのラベルが示す。
     /// </summary>
     public const string ViewerLoginIntro = "このログを閲覧するにはサインインが必要です。";
 
@@ -1000,8 +998,8 @@ public static class UiText
     public const string AdminRemoteAccessRemoteBindingLabel = "リモートの端末から管理画面へのアクセスを許可する";
 
     /// <summary>
-    /// リモートバインドの前提条件の説明（ADR-0010 決定 1 の fail-closed 不変条件を保存前に
-    /// 利用者の言葉で示す——ADR-0012 決定 4。認証設定への相互リンク（決定 1）とセットで表示する）。
+    /// リモートバインドの前提条件の説明（fail-closed 不変条件を保存前に
+    /// 利用者の言葉で示す——ADR-0012 決定 4。認証設定への相互リンクとセットで表示する）。
     /// </summary>
     public const string AdminRemoteAccessRemoteBindingNote =
         "有効化には、管理 UI の認証（Windows 統合認証またはアプリ独自認証）・HTTPS の有効化・証明書の選択が" +
@@ -1159,7 +1157,7 @@ public static class UiText
     /// <summary>同上のリンク表示名。</summary>
     public const string AdminRemoteAccessIngestionTlsLinkText = "TLS 受信の証明書設定";
 
-    // ---- TLS 受信の証明書設定（ADR-0019。Issue #349） ----
+    // ---- TLS 受信の証明書設定（ADR-0019） ----
 
     /// <summary>TLS 受信の証明書設定画面の見出し（ADR-0019 決定 1——管理 HTTPS とは分離した画面）。</summary>
     public const string IngestionTlsTitle = "TLS 受信の証明書設定";
@@ -1228,7 +1226,7 @@ public static class UiText
     public const string IngestionTlsCertOkBadge = "使用可能";
 
     /// <summary>
-    /// 期限切れ証明書を選んだときの警告（ADR-0019 決定 2・委任 4）。<b>管理 HTTPS との挙動差分の
+    /// 期限切れ証明書を選んだときの警告（ADR-0019 決定 2）。<b>管理 HTTPS との挙動差分の
     /// 説明を含める</b>ことが受け入れ基準。あわせて「保存しても能動通知は出続ける」ことも明示する
     /// （出続けるのは不具合ではない、と分かるようにするため）。
     /// </summary>
@@ -1293,7 +1291,7 @@ public static class UiText
     public const string IngestionTlsSavedNoChanges = "現在の設定と同じ内容のため、保存は行われませんでした。";
 
     /// <summary>
-    /// 観測性への導線の見出し（ADR-0019 決定 5b——ADR-0012 の委任を引き取ったもの）。
+    /// 観測性への導線の見出し（ADR-0019 決定 5b）。
     /// 証明書差し替え + 再起動の直後に運用者が行う「全送信元が再接続できたかの確認」を、
     /// 設定画面から始められるようにする。
     /// </summary>
@@ -1310,7 +1308,7 @@ public static class UiText
     /// <summary>観測性リンク: 計器（ハンドシェイク失敗を含む）。</summary>
     public const string IngestionTlsObservabilityMetricsLinkText = "計器（ハンドシェイク失敗を含む）";
 
-    // ---- 閲覧 UI の HTTPS 設定（ADR-0022。Issue #455 段階 ②） ----
+    // ---- 閲覧 UI の HTTPS 設定（ADR-0022） ----
 
     /// <summary>閲覧 HTTPS 設定画面の見出し（決定 3——証明書設定 3 画面の書き分け）。</summary>
     public const string ViewerHttpsTitle = "閲覧 UI の HTTPS 設定";
@@ -1462,7 +1460,7 @@ public static class UiText
         "http:// の従来 URL（閲覧者のブックマーク・スタートメニュー/デスクトップのショートカット・掲示用端末）は" +
         "反映後に開けなくなります。再起動の前に、新しい URL を閲覧者へ周知してください。";
 
-    /// <summary>有効化保存後の案内 (d): メール通知が無効の場合の指摘 + 導線（決定 6・7）。</summary>
+    /// <summary>有効化保存後の案内 (d): メール通知が無効の場合の指摘 + 導線（決定 6）。</summary>
     public const string ViewerHttpsAfterEnableEmailNote =
         "メール通知が無効のため、証明書の期限切れが近づいたときの事前警告は Windows イベントログにしか届きません。" +
         "期限切れになると閲覧が止まるため、メール通知の設定を推奨します。";
@@ -1525,7 +1523,7 @@ public static class UiText
     public const string WizardInvalidToken = "操作の有効期限が切れています。確認ステップからやり直してください。";
 
     /// <summary>
-    /// 適用完了画面からの再編集開始ボタン（Issue #248——適用後の画面を行き止まりにしない。
+    /// 適用完了画面からの再編集開始ボタン（適用後の画面を行き止まりにしない。
     /// 現在の設定値を種にウィザードを再開する）。
     /// </summary>
     public const string WizardBeginReconfiguration = "設定を変更する";
@@ -1542,7 +1540,7 @@ public static class UiText
     /// <summary>反映方式の表示: サービス再起動が必要。</summary>
     public const string ApplyEffectRestartRequired = "反映にはサービスの再起動が必要です（再起動中は受信できません）";
 
-    // ---- 本番昇格ウィザード（database.md §6.1。M8-4 骨格 + PR #102 の UX 完成） ----
+    // ---- 本番昇格ウィザード（database.md §6.1） ----
 
     /// <summary>接続の入力方式: 項目で入力（既定——database.md §6.1）。</summary>
     public const string PromotionInputModeForm = "項目で入力（推奨）";
@@ -1759,7 +1757,7 @@ public static class UiText
     /// <summary>ポート入力のラベル。</summary>
     public const string ForwarderKitPortLabel = "ポート";
 
-    // ---- 転送方式（Issue #156: Udp（既定）/ Tcp。TLS 送信はキットから除外——オーナー決定 2026-07-11） ----
+    // ---- 転送方式（Udp（既定）/ Tcp。TLS 送信はキットから除外） ----
 
     /// <summary>転送方式選択の見出し。</summary>
     public const string ForwarderKitModeTitle = "転送方式";
@@ -1775,7 +1773,7 @@ public static class UiText
     /// <summary>転送方式: TCP。</summary>
     public const string ForwarderKitModeTcp = "TCP";
 
-    /// <summary>TCP 選択時の注記（RFC 6587 octet-counting 非対応の制約——Issue #156）。</summary>
+    /// <summary>TCP 選択時の注記（RFC 6587 octet-counting 非対応の制約）。</summary>
     public const string ForwarderKitModeTcpNote =
         "Fluent Bit の out_syslog は TCP で RFC 6587 の octet-counting に対応していません（LF 区切り）。" +
         "複数行を含むイベント本文（Security 監査ログ等）が複数レコードに分かれて届く場合があります。";
@@ -1831,7 +1829,7 @@ public static class UiText
     /// <summary>配置フォルダのフルパス表示の形式。{0} にフルパスが入る。</summary>
     public const string ForwarderKitMsiFolderPathFormat = "配置フォルダ: {0}";
 
-    // ---- 収集対象端末のアーキ選択（ADR-0009 決定7・委任 #4） ----
+    // ---- 収集対象端末のアーキ選択（ADR-0009 決定 7） ----
 
     /// <summary>収集対象端末のアーキ選択の見出し。</summary>
     public const string ForwarderKitMsiArchitectureTitle = "収集対象端末のアーキテクチャ";
@@ -1897,7 +1895,7 @@ public static class UiText
     public const string ForwarderKitErrorMsiVersionMismatchNotAcknowledged =
         "MSI の版が検証済み版と異なります。同梱するには確認チェックを入れてください。";
 
-    // ---- フォワーダ MSI アップロード（ADR-0020。配置経路 (b)。Issue #283） ----
+    // ---- フォワーダ MSI アップロード（ADR-0020。配置経路 (b)） ----
 
     public const string ForwarderMsiUploadSectionTitle = "MSI のアップロード（管理画面から配置）";
 
@@ -1921,7 +1919,7 @@ public static class UiText
     public const string ForwarderMsiUploadSignInRequiredTitle =
         "MSI のアップロード・削除の操作には、サインインが必要です。";
 
-    /// <summary>「なぜこの操作だけ認証が要るか」の平易な説明（ADR-0021 決定 2・委任 1）。</summary>
+    /// <summary>「なぜこの操作だけ認証が要るか」の平易な説明（ADR-0021 決定 2）。</summary>
     public const string ForwarderMsiUploadSignInRequiredExplanation =
         "この画面の他の機能はサーバ上のブラウザからそのまま使えますが、ここに配置した MSI は"
         + "全端末に配布されるため、アップロード・削除だけは「誰が行ったか」を記録できるよう、"
@@ -1929,7 +1927,7 @@ public static class UiText
 
     public const string ForwarderMsiUploadSignInLinkLabel = "サインイン画面を開く";
 
-    // ---- opt-in の有効化・無効化トグル（ADR-0021 決定 4 = 委任 2） ----
+    // ---- opt-in の有効化・無効化トグル（ADR-0021 決定 4） ----
 
     public const string ForwarderMsiUploadEnableSectionTitle = "アップロード機能を有効にする";
 
@@ -1953,7 +1951,7 @@ public static class UiText
     public const string ForwarderMsiUploadEnableInventoryTimestampUnknown = "記録なし";
 
     /// <summary>
-    /// アップグレード環境で作成・変更時刻が欠ける場合の理由説明（Issue #458）。「壊れている」と
+    /// アップグレード環境で作成・変更時刻が欠ける場合の理由説明。「壊れている」と
     /// 読まれないよう理由を明示し、心当たりのないアカウントの扱いまで誘導する。
     /// </summary>
     public const string ForwarderMsiUploadEnableInventoryLegacyNotice =
@@ -2099,7 +2097,7 @@ public static class UiText
         "この操作にはサインインが必要です（サインインの有効期限が切れた場合を含みます）。"
         + "サインインし直してから、最初からやり直してください。";
 
-    // ---- メール通知（ADR-0017。Issue #350） ----
+    // ---- メール通知（ADR-0017） ----
 
     public const string EmailNotificationTitle = "メール通知";
 
@@ -2150,7 +2148,7 @@ public static class UiText
         "入力した値は暗号化して保存します（このサーバでのみ復号できます）。画面に再表示することはありません。";
 
     /// <summary>
-    /// 保存済みパスワードの明示的な削除（PR #366 レビュー対応）。「空欄 = 変更しない」に固定した
+    /// 保存済みパスワードの明示的な削除。「空欄 = 変更しない」に固定した
     /// 帰結として、削除には専用の口が要る——これがないと SMTP 認証をやめる操作ができない。
     /// </summary>
     public const string EmailNotificationClearPasswordLabel = "保存済みのパスワードを削除する";
@@ -2183,8 +2181,8 @@ public static class UiText
     public const string EmailNotificationHealthLastFailure = "直近の失敗";
     public const string EmailNotificationHealthQueueDepth = "送信待ち";
     /// <summary>
-    /// キュー溢れ・流量上限時の押しのけ・再試行の投入不能の 3 経路の合計（Issue #371——
-    /// 「キュー溢れ」と限定して表示しない。内訳は EmailNotificationQueue.DroppedCount 参照）。
+    /// キュー溢れ・流量上限時の押しのけ・再試行の投入不能の 3 経路の合計
+    /// （「キュー溢れ」と限定して表示しない。内訳は EmailNotificationQueue.DroppedCount 参照）。
     /// </summary>
     public const string EmailNotificationHealthDropped = "送信されず破棄した通知";
     public const string EmailNotificationHealthSuppressed = "抑制した通知";
@@ -2205,7 +2203,7 @@ public static class UiText
     public const string EmailNotificationSavedNoChanges = "変更はありませんでした（保存していません）。";
     public const string EmailNotificationSavedFormat = "メール通知の設定を保存しました（変更: {0}）。次回の通知から反映されます。";
 
-    /// <summary>無関係キーの不正で設定ファイル全体の検証が失敗している状態の表示（Issue #370）。</summary>
+    /// <summary>無関係キーの不正で設定ファイル全体の検証が失敗している状態の表示。</summary>
     public const string EmailNotificationConfigurationFileErrorIntro =
         "設定ファイルにメール通知とは別の問題があり、実効状態を判定できません。"
         + "この画面での保存はできますが、送信側への反映は問題の解消後の再読み込みまで見送られます。検証エラー:";
@@ -2213,7 +2211,7 @@ public static class UiText
     public const string EmailNotificationSaveFailedFormat = "保存できませんでした: {0}";
 
     // ------------------------------------------------------------------
-    // 送信元の途絶検知（ADR-0018。/admin/source-silence。Issue #351）
+    // 送信元の途絶検知（ADR-0018。/admin/source-silence）
     // ------------------------------------------------------------------
 
     public const string SourceSilenceTitle = "送信元の途絶検知";

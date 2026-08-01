@@ -70,14 +70,14 @@
                 管理リンクは管理リスナ（loopback 専用ポート）経由の circuit でのみ出す
                 （閲覧リスナには出さない——安全側。IsAdminListener が null＝判定不能・prerender 中も
                 出さない。到達可否自体は AdminScreenLayout のガードが担保するが、閲覧リスナに
-                管理導線を「見せない」ことでも不要な露出を避ける。2026-07-06 試用フィードバック
+                管理導線を「見せない」ことでも不要な露出を避ける。試用フィードバック
                 「8515 で開いても設定・昇格への導線が無くて分かりにくい」への対応）。
             *@
             @if (CircuitContext.IsAdminListener == true)
             {
                 <MudDivider Class="my-2" />
-                @* 管理ホーム（/admin）と認証設定（/admin/auth-setup）への直接導線（Issue #248——
-                   左ナビからユーザ追加（認証設定）へ到達できない行き止まりの解消）。/admin は
+                @* 管理ホーム（/admin）と認証設定（/admin/auth-setup）への直接導線
+                   （左ナビからユーザ追加（認証設定）へ到達できない行き止まりの解消）。/admin は
                    配下パス（/admin/setup 等）と誤 Active にならないよう Match=All。 *@
                 <MudNavLink Href="/admin" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.AdminPanelSettings">@UiText.AdminHomeTitle</MudNavLink>
                 <MudNavLink Href="/admin/auth-setup" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Lock">@UiText.AdminAuthSetupTitle</MudNavLink>
@@ -91,7 +91,7 @@
         </MudNavMenu>
     </MudDrawer>
     @*
-        MudMainContent 自体には余白クラスを付けない（Issue #437）: Class="pa-4" を直接指定すると、
+        MudMainContent 自体には余白クラスを付けない: Class="pa-4" を直接指定すると、
         MudBlazor が固定アプリバー高さ分（--mud-appbar-height 連動。ブレークポイントで 56/64px）
         として与える padding-top が padding: 16px で上書きされ、main 領域先頭（状態帯を含む）が
         アプリバーの背後に潜り込む。余白は内側のコンテナで付ける。
@@ -100,11 +100,10 @@
         <div class="pa-4">
             @if (_showHttpsSwitchBanner)
             {
-                @* 閲覧 HTTPS への切替の事前告知（ADR-0022 決定 6。Issue #455 段階 ③）:
+                @* 閲覧 HTTPS への切替の事前告知（ADR-0022 決定 6）:
                    Viewer:Https:Enabled=true が保存済み・再起動待ちの間だけ、まだ平文で稼働中の
                    閲覧 UI 自身に表示する——8514 同一ポート切替の断絶コストを負担する閲覧者本人に
-                   届く唯一の window（ペルソナレビュー——クリス——の指摘）。再起動待ちキー機構
-                   （#286）の状態参照のみで成立し、新しい機構は作らない。 *@
+                   届く唯一の window。再起動待ちキー機構の状態参照のみで成立し、新しい機構は作らない。 *@
                 <MudAlert Severity="Severity.Info" Class="mb-4">@UiText.ViewerHttpsPendingSwitchBanner</MudAlert>
             }
             @*
@@ -253,8 +252,8 @@
         }
 
         // 管理リスナの loopback 束縛面が「確実」なら本ガードの対象外（ローカル復旧/全アクセス経路——
-        // ViewerPolicy の HTTP 判定と同じ根拠に揃える。リモート管理 HTTPS 面は閲覧セッションを要求する——
-        // 田中・クリスのレビュー指摘）。帰属不明（null）は「確実な管理 loopback」ではないため gate 側へ倒す
+        // ViewerPolicy の HTTP 判定と同じ根拠に揃える。リモート管理 HTTPS 面は閲覧セッションを要求する）。
+        // 帰属不明（null）は「確実な管理 loopback」ではないため gate 側へ倒す
         // （fail-closed——未認証で閲覧本体を露出させない）。SSR/prerender は接続の実ローカルポート、
         // 対話的描画は circuit 確立時の loopback 帰属で判定する（AdminScreenLayout の isLoopbackListener と同型）。
         var definitelyAdminLoopback = HttpContext is not null
