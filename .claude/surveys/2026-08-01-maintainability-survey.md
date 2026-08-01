@@ -154,6 +154,16 @@
 
 未実施(後続 = Phase 3 以降): Storage 共通化、テスト基盤(Yagura.TestSupport)、TCP/TLS Accept ループ・証明書 3 画面の重複解消、中リスク分割(Program.cs の DI 登録切り出し等)。
 
+## 4.3 Phase 3 実施記録(2026-08-01・本ブランチで完了)
+
+Storage プロバイダ間の共通化(3 プロバイダ化の露払い)。挙動・実行 SQL は不変:
+
+- **Step A**: `SchemaMigrationRunner` 新設(版判定→移行適用の分岐を LogStore/AdminAccountStore × 2 プロバイダの 4 箇所で共用)。LogStore(版一致なら書かない)と AdminAccountStore(常に版を書き直す・legacy DB 判別あり)のフロー差は実挙動の差のため別メソッドとして共存。`AdminUsernameNormalization`・`CurrentProcessAccount`(完全一致重複 3 箇所)も 1 本化
+- **Step B**: `LogRecordDataReaderMapper`(時刻・真偽値の読み方のみ注入)・`WhereClauseBuilder`(カーソル述語は AddRaw で不触)・`BatchDeleteLoop` を新設し両 LogStore から利用。プロバイダ実装ファイル計 -122 行
+- 見送り: 移行ステップ本体の共通化(SQL/トランザクション境界がプロバイダごとに異なる)、1 行委譲ラッパー、タイムアウト try-catch 骨格(過剰抽象化)
+- 3 つ目のプロバイダで書くもの: SQL 方言・プレースホルダ/パラメータ追加・型アダプタ 2 メソッド・FailureClassifier のみ
+- 検証: ソリューションビルド警告ゼロ。SQLite Conformance 69/69・Storage.Tests 85/85・Web.Tests 512 全通過。Host/Ingestion の失敗は既知の環境ベースラインと同数(SQL Server 側 Conformance は CI の実サーバで検証)
+
 ## 5. 参考数値一覧
 
 | 指標 | 値 |

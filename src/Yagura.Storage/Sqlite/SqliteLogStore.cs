@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 
@@ -179,28 +180,14 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            var recordedVersion = await ReadSchemaVersionAsync(connection, transaction, cancellationToken)
+            // 初回作成（DDL が既に v2 形状で作成済み）なら現行版をそのまま記録し、既存 v1
+            // データベースからの移行なら移行ステップを適用する（SchemaMigrationRunner 参照）。
+            await SchemaMigrationRunner.RunAsync(
+                () => ReadSchemaVersionAsync(connection, transaction, cancellationToken),
+                CurrentSchemaVersion,
+                recordFreshVersion: () => RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken),
+                applyMigrationsFrom: fromVersion => ApplyMigrationsAsync(connection, transaction, fromVersion, cancellationToken))
                 .ConfigureAwait(false);
-
-            if (recordedVersion is null)
-            {
-                // 初回作成（このデータベースファイルが今回新規に作られた）。上の DDL ブロックが
-                // 既に v2 形状（複合索引を含む）で作成済みのため、現行バージョンをそのまま記録する。
-                await RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else if (recordedVersion.Value < CurrentSchemaVersion)
-            {
-                // 既存 v1 データベースからの移行。将来のバージョン追加時は、ここに
-                // recordedVersion から CurrentSchemaVersion までの移行ステップを順に適用し、
-                // 最後に SchemaVersion.Version を更新する（適用済み移行の再適用を避ける冪等性は、
-                // この version 比較そのものが担保する）。
-                await ApplyMigrationsAsync(connection, transaction, recordedVersion.Value, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            // recordedVersion.Value == CurrentSchemaVersion の場合: 既に適用済みのため何もしない
-            // （冪等性——database.md §1.2「既に適用済みなら何もしない」）。
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -393,24 +380,24 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
             }
 
             await using var command = connection.CreateCommand();
-            var whereClauses = new List<string>();
+            var whereBuilder = new WhereClauseBuilder();
 
             if (query.ReceivedAtFrom is { } from)
             {
-                whereClauses.Add("ReceivedAt >= $receivedAtFrom");
-                command.Parameters.Add("$receivedAtFrom", SqliteType.Text).Value = from.UtcDateTime.ToString("O");
+                whereBuilder.Add("ReceivedAt >= $receivedAtFrom",
+                    () => command.Parameters.Add("$receivedAtFrom", SqliteType.Text).Value = from.UtcDateTime.ToString("O"));
             }
 
             if (query.ReceivedAtTo is { } to)
             {
-                whereClauses.Add("ReceivedAt <= $receivedAtTo");
-                command.Parameters.Add("$receivedAtTo", SqliteType.Text).Value = to.UtcDateTime.ToString("O");
+                whereBuilder.Add("ReceivedAt <= $receivedAtTo",
+                    () => command.Parameters.Add("$receivedAtTo", SqliteType.Text).Value = to.UtcDateTime.ToString("O"));
             }
 
             if (query.SourceAddress is { } sourceAddress)
             {
-                whereClauses.Add("SourceAddress = $sourceAddress");
-                command.Parameters.Add("$sourceAddress", SqliteType.Text).Value = sourceAddress;
+                whereBuilder.Add("SourceAddress = $sourceAddress",
+                    () => command.Parameters.Add("$sourceAddress", SqliteType.Text).Value = sourceAddress);
             }
 
             if (query.SeverityAtMost is { } severityAtMost)
@@ -418,20 +405,20 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 // 閾値方式（Severity <= N。LogQuery.SeverityAtMost の doc コメント参照——
                 // syslog は数値が小さいほど深刻なため「N 以上の重大度」は「Severity <= N」になる。
                 // Severity が NULL（PRI 未解析）の行は比較が unknown になり自然に対象外となる。
-                whereClauses.Add("Severity <= $severityAtMost");
-                command.Parameters.Add("$severityAtMost", SqliteType.Integer).Value = severityAtMost;
+                whereBuilder.Add("Severity <= $severityAtMost",
+                    () => command.Parameters.Add("$severityAtMost", SqliteType.Integer).Value = severityAtMost);
             }
 
             if (query.Facility is { } facilityFilter)
             {
-                whereClauses.Add("Facility = $facility");
-                command.Parameters.Add("$facility", SqliteType.Integer).Value = facilityFilter;
+                whereBuilder.Add("Facility = $facility",
+                    () => command.Parameters.Add("$facility", SqliteType.Integer).Value = facilityFilter);
             }
 
             if (query.ParseStatus is { } parseStatusFilter)
             {
-                whereClauses.Add("ParseStatus = $parseStatus");
-                command.Parameters.Add("$parseStatus", SqliteType.Integer).Value = (int)parseStatusFilter;
+                whereBuilder.Add("ParseStatus = $parseStatus",
+                    () => command.Parameters.Add("$parseStatus", SqliteType.Integer).Value = (int)parseStatusFilter);
             }
 
             if (query.SearchText is { Length: > 0 } searchText)
@@ -446,8 +433,8 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 // （database.md §4 第一候補。ICU 拡張は不採用のまま——doc コメント参照）。
                 // ネイティブ LIKE（ASCII 限定）へは戻さない——DB-6 の非 ASCII 保証集合
                 // （café/CAFÉ 等）を満たせないため。
-                whereClauses.Add("yagura_ci_contains(Message, $searchText) = 1");
-                command.Parameters.Add("$searchText", SqliteType.Text).Value = searchText;
+                whereBuilder.Add("yagura_ci_contains(Message, $searchText) = 1",
+                    () => command.Parameters.Add("$searchText", SqliteType.Text).Value = searchText);
             }
 
             if (query.Cursor is { } cursor)
@@ -465,14 +452,14 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 // 側は等価な書き換え形（ReceivedAt <= @c AND (ReceivedAt < @c OR Id < @i)）を
                 // 使う——各 provider の最適化器が確実にシークする形を実測で選ぶ（方言差の
                 // 封じ込め。database.md §1.1）。
-                whereClauses.Add(
+                whereBuilder.AddRaw(
                     "(ReceivedAt < $cursorReceivedAt OR (ReceivedAt = $cursorReceivedAt AND Id < $cursorId))");
                 command.Parameters.Add("$cursorReceivedAt", SqliteType.Text).Value =
                     cursor.ReceivedAt.UtcDateTime.ToString("O");
                 command.Parameters.Add("$cursorId", SqliteType.Integer).Value = cursor.Id;
             }
 
-            var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+            var whereSql = whereBuilder.BuildWhereSql();
 
             // Id DESC のタイブレーク: ReceivedAt 単独では同一時刻（同一ミリ秒）の
             // 行の相対順序が SQL 上未定義になる——UDP バースト・スタックトレースの分割送信等、
@@ -494,23 +481,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                var message = reader.IsDBNull(14) ? null : reader.GetString(14);
-                results.Add(new LogRecordSummary(
-                    Id: reader.GetInt64(0),
-                    ReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
-                    SourceAddress: reader.GetString(2),
-                    SourcePort: reader.GetInt32(3),
-                    Protocol: (Protocol)reader.GetInt32(4),
-                    ParseStatus: (ParseStatus)reader.GetInt32(5),
-                    DeviceTimestamp: reader.IsDBNull(6) ? null : ParseUtcTimestamp(reader.GetString(6)),
-                    Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                    Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                    Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
-                    AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
-                    ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
-                    MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                    StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
-                    Message: MessageProjection.Truncate(message, query.MessageProjectionLength)));
+                results.Add(LogRecordDataReaderMapper.ReadSummary(reader, ReadTimestamp, query.MessageProjectionLength));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -559,23 +530,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 return null;
             }
 
-            return new LogRecord(
-                Id: reader.GetInt64(0),
-                ReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
-                SourceAddress: reader.GetString(2),
-                SourcePort: reader.GetInt32(3),
-                Protocol: (Protocol)reader.GetInt32(4),
-                ParseStatus: (ParseStatus)reader.GetInt32(5),
-                DeviceTimestamp: reader.IsDBNull(6) ? null : ParseUtcTimestamp(reader.GetString(6)),
-                Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
-                AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
-                ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
-                MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
-                Message: reader.IsDBNull(14) ? null : reader.GetString(14),
-                Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15));
+            return LogRecordDataReaderMapper.ReadRecord(reader, ReadTimestamp);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -635,23 +590,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    batch.Add(new LogRecord(
-                        Id: reader.GetInt64(0),
-                        ReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
-                        SourceAddress: reader.GetString(2),
-                        SourcePort: reader.GetInt32(3),
-                        Protocol: (Protocol)reader.GetInt32(4),
-                        ParseStatus: (ParseStatus)reader.GetInt32(5),
-                        DeviceTimestamp: reader.IsDBNull(6) ? null : ParseUtcTimestamp(reader.GetString(6)),
-                        Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                        Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                        Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
-                        AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
-                        ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
-                        MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                        StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
-                        Message: reader.IsDBNull(14) ? null : reader.GetString(14),
-                        Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15)));
+                    batch.Add(LogRecordDataReaderMapper.ReadRecord(reader, ReadTimestamp));
                 }
             }
 
@@ -714,29 +653,29 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
             await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
-            var whereClauses = new List<string>();
+            var whereBuilder = new WhereClauseBuilder();
 
             // 区間の重なり判定（ILogStore の契約参照）: 範囲に少しでも掛かる区間を返す。
             if (from is { } fromValue)
             {
-                whereClauses.Add("EndAt >= $from");
-                command.Parameters.Add("$from", SqliteType.Text).Value = fromValue.UtcDateTime.ToString("O");
+                whereBuilder.Add("EndAt >= $from",
+                    () => command.Parameters.Add("$from", SqliteType.Text).Value = fromValue.UtcDateTime.ToString("O"));
             }
 
             if (to is { } toValue)
             {
-                whereClauses.Add("StartAt <= $to");
-                command.Parameters.Add("$to", SqliteType.Text).Value = toValue.UtcDateTime.ToString("O");
+                whereBuilder.Add("StartAt <= $to",
+                    () => command.Parameters.Add("$to", SqliteType.Text).Value = toValue.UtcDateTime.ToString("O"));
             }
 
             // 種別の完全一致フィルタ（ILogStore の契約参照）。
             if (kind is not null)
             {
-                whereClauses.Add("Kind = $kind");
-                command.Parameters.Add("$kind", SqliteType.Text).Value = kind;
+                whereBuilder.Add("Kind = $kind",
+                    () => command.Parameters.Add("$kind", SqliteType.Text).Value = kind);
             }
 
-            var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+            var whereSql = whereBuilder.BuildWhereSql();
 
             command.CommandText =
                 $"""
@@ -752,13 +691,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SystemEvent(
-                    Id: reader.GetInt64(0),
-                    Kind: reader.GetString(1),
-                    StartAt: ParseUtcTimestamp(reader.GetString(2)),
-                    EndAt: ParseUtcTimestamp(reader.GetString(3)),
-                    Approximate: reader.GetInt32(4) != 0,
-                    Details: reader.IsDBNull(5) ? null : reader.GetString(5)));
+                results.Add(LogRecordDataReaderMapper.ReadSystemEvent(reader, ReadTimestamp, ReadApproximate));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -823,10 +756,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SourceActivity(
-                    SourceAddress: reader.GetString(0),
-                    LastReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
-                    RecordCount: reader.GetInt64(2)));
+                results.Add(LogRecordDataReaderMapper.ReadSourceActivity(reader, ReadTimestamp));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -877,9 +807,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SeverityCount(
-                    Severity: reader.IsDBNull(0) ? null : reader.GetInt32(0),
-                    Count: reader.GetInt64(1)));
+                results.Add(LogRecordDataReaderMapper.ReadSeverityCount(reader));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -935,10 +863,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SourceActivity(
-                    SourceAddress: reader.GetString(0),
-                    LastReceivedAt: ParseUtcTimestamp(reader.GetString(1)),
-                    RecordCount: reader.GetInt64(2)));
+                results.Add(LogRecordDataReaderMapper.ReadSourceActivity(reader, ReadTimestamp));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -1035,47 +960,40 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
         DateTimeOffset cutoff,
         CancellationToken cancellationToken = default)
     {
-        long totalDeleted = 0;
         var cutoffText = cutoff.UtcDateTime.ToString("O");
 
         try
         {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                await using var connection = new SqliteConnection(_connectionString);
-                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-                await using var command = connection.CreateCommand();
-                command.CommandText =
-                    """
-                    DELETE FROM LogRecords
-                    WHERE Id IN (
-                        SELECT Id FROM LogRecords
-                        WHERE ReceivedAt < $cutoff
-                        LIMIT $batchSize
-                    );
-                    """;
-                command.Parameters.Add("$cutoff", SqliteType.Text).Value = cutoffText;
-                command.Parameters.Add("$batchSize", SqliteType.Integer).Value = RetentionConstants.DeleteBatchMaxSize;
-
-                var deletedInBatch = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-                totalDeleted += deletedInBatch;
-
-                if (deletedInBatch < RetentionConstants.DeleteBatchMaxSize)
+            var totalDeleted = await BatchDeleteLoop.RunAsync(
+                RetentionConstants.DeleteBatchMaxSize,
+                async batchCancellationToken =>
                 {
-                    // 削除対象が尽きた（このバッチで上限未満しか削除できなかった = 残りがない）。
-                    break;
-                }
-            }
+                    await using var connection = new SqliteConnection(_connectionString);
+                    await connection.OpenAsync(batchCancellationToken).ConfigureAwait(false);
+
+                    await using var command = connection.CreateCommand();
+                    command.CommandText =
+                        """
+                        DELETE FROM LogRecords
+                        WHERE Id IN (
+                            SELECT Id FROM LogRecords
+                            WHERE ReceivedAt < $cutoff
+                            LIMIT $batchSize
+                        );
+                        """;
+                    command.Parameters.Add("$cutoff", SqliteType.Text).Value = cutoffText;
+                    command.Parameters.Add("$batchSize", SqliteType.Integer).Value = RetentionConstants.DeleteBatchMaxSize;
+
+                    return await command.ExecuteNonQueryAsync(batchCancellationToken).ConfigureAwait(false);
+                },
+                cancellationToken).ConfigureAwait(false);
+
+            return new DeleteOlderThanResult(totalDeleted, cutoff);
         }
         catch (SqliteException ex)
         {
             throw ex.ToLogStoreWriteException($"保持期間削除 (cutoff={cutoffText})");
         }
-
-        return new DeleteOlderThanResult(totalDeleted, cutoff);
     }
 
     /// <inheritdoc />
@@ -1162,4 +1080,12 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
     private static DateTimeOffset ParseUtcTimestamp(string value) =>
         DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+
+    // LogRecordDataReaderMapper へ注入する SQLite 側アダプタ（TEXT 列からのパース）。
+    private static DateTimeOffset ReadTimestamp(DbDataReader reader, int ordinal) =>
+        ParseUtcTimestamp(reader.GetString(ordinal));
+
+    // SQLite に BOOLEAN 型は無く、Approximate は INTEGER 列に 0/1 で保存する。
+    private static bool ReadApproximate(DbDataReader reader, int ordinal) =>
+        reader.GetInt32(ordinal) != 0;
 }

@@ -15,42 +15,36 @@ public sealed partial class SqlServerLogStore
         DateTimeOffset cutoff,
         CancellationToken cancellationToken = default)
     {
-        long totalDeleted = 0;
         var cutoffUtc = cutoff.UtcDateTime;
 
         try
         {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                await using var connection = new SqlConnection(_connectionString);
-                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-                await using var command = connection.CreateCommand();
-                command.CommandText =
-                    """
-                    DELETE TOP (@batchSize) FROM dbo.LogRecords
-                    WHERE ReceivedAt < @cutoff;
-                    """;
-                command.Parameters.Add("@cutoff", System.Data.SqlDbType.DateTime2).Value = cutoffUtc;
-                command.Parameters.Add("@batchSize", System.Data.SqlDbType.Int).Value = RetentionConstants.DeleteBatchMaxSize;
-
-                var deletedInBatch = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-                totalDeleted += deletedInBatch;
-
-                if (deletedInBatch < RetentionConstants.DeleteBatchMaxSize)
+            var totalDeleted = await BatchDeleteLoop.RunAsync(
+                RetentionConstants.DeleteBatchMaxSize,
+                async batchCancellationToken =>
                 {
-                    break;
-                }
-            }
+                    await using var connection = new SqlConnection(_connectionString);
+                    await connection.OpenAsync(batchCancellationToken).ConfigureAwait(false);
+
+                    await using var command = connection.CreateCommand();
+                    command.CommandText =
+                        """
+                        DELETE TOP (@batchSize) FROM dbo.LogRecords
+                        WHERE ReceivedAt < @cutoff;
+                        """;
+                    command.Parameters.Add("@cutoff", System.Data.SqlDbType.DateTime2).Value = cutoffUtc;
+                    command.Parameters.Add("@batchSize", System.Data.SqlDbType.Int).Value = RetentionConstants.DeleteBatchMaxSize;
+
+                    return await command.ExecuteNonQueryAsync(batchCancellationToken).ConfigureAwait(false);
+                },
+                cancellationToken).ConfigureAwait(false);
+
+            return new DeleteOlderThanResult(totalDeleted, cutoff);
         }
         catch (SqlException ex)
         {
             throw ex.ToLogStoreWriteException($"保持期間削除 (cutoff={cutoffUtc:O})");
         }
-
-        return new DeleteOlderThanResult(totalDeleted, cutoff);
     }
 
     /// <inheritdoc />

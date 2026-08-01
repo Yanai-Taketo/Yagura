@@ -78,13 +78,8 @@ public sealed class ServiceAccountStartupInspector
     /// <summary>
     /// 現在の実効実行アカウント名（プロセスが実際に動いている Windows 識別）。秘密鍵権限の
     /// 付与先（security.md §5.2「付与先を実行アカウントから導出する」）と 2025 の照合対象に使う。
-    /// 非 Windows 分岐は CA1416 ガード（本製品は Windows 専用——ADR-0001。
-    /// <c>PromotionWizardService.ResolveCurrentAccountName</c> と同じ形）。
     /// </summary>
-    public static string ResolveEffectiveAccountName() =>
-        OperatingSystem.IsWindows()
-            ? WindowsIdentity.GetCurrent().Name
-            : Environment.UserName;
+    public static string ResolveEffectiveAccountName() => Yagura.Storage.CurrentProcessAccount.ResolveName();
 
     /// <summary>
     /// インストーラの構成記録（service-account.ini）を初回起動時に 1 回だけイベントログへ転記する

@@ -142,7 +142,7 @@ internal static class SqlServerFailureClassifier
         ArgumentNullException.ThrowIfNull(exception);
 
         return ClassifyIntegratedAuthFailureCore(exception.Number, exception.InnerException) is { } classified
-            ? new IntegratedAuthConnectionFailure(classified.Origin, classified.Description, ResolveCurrentAccountName())
+            ? new IntegratedAuthConnectionFailure(classified.Origin, classified.Description, CurrentProcessAccount.ResolveName())
             : null;
     }
 
@@ -184,14 +184,4 @@ internal static class SqlServerFailureClassifier
 
         return null;
     }
-
-    /// <summary>
-    /// 実行主体（実効実行アカウント名。SQL Server 側にこの名前で見える——database.md §6.1）。
-    /// <c>ServiceAccountStartupInspector.ResolveEffectiveAccountName</c> と同じ導出。非 Windows
-    /// 分岐は CA1416 ガード（本製品は Windows 専用——ADR-0001。テスト実行環境向け）。
-    /// </summary>
-    private static string ResolveCurrentAccountName() =>
-        OperatingSystem.IsWindows()
-            ? System.Security.Principal.WindowsIdentity.GetCurrent().Name
-            : Environment.UserName;
 }

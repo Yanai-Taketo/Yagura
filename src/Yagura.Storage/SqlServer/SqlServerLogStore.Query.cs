@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.Data.SqlClient;
 
 namespace Yagura.Storage.SqlServer;
@@ -36,24 +37,24 @@ public sealed partial class SqlServerLogStore
             // クエリタイムアウトは接続文字列既定（30 秒）に加え、LogQuery.Timeout でも
             // キャンセルする（CommandTimeout は秒単位の粗い指定のため、実際の打ち切りは
             // CancellationToken 経由の ExecuteReaderAsync キャンセルに委ねる）。
-            var whereClauses = new List<string>();
+            var whereBuilder = new WhereClauseBuilder();
 
             if (query.ReceivedAtFrom is { } from)
             {
-                whereClauses.Add("ReceivedAt >= @receivedAtFrom");
-                command.Parameters.Add("@receivedAtFrom", System.Data.SqlDbType.DateTime2).Value = from.UtcDateTime;
+                whereBuilder.Add("ReceivedAt >= @receivedAtFrom",
+                    () => command.Parameters.Add("@receivedAtFrom", System.Data.SqlDbType.DateTime2).Value = from.UtcDateTime);
             }
 
             if (query.ReceivedAtTo is { } to)
             {
-                whereClauses.Add("ReceivedAt <= @receivedAtTo");
-                command.Parameters.Add("@receivedAtTo", System.Data.SqlDbType.DateTime2).Value = to.UtcDateTime;
+                whereBuilder.Add("ReceivedAt <= @receivedAtTo",
+                    () => command.Parameters.Add("@receivedAtTo", System.Data.SqlDbType.DateTime2).Value = to.UtcDateTime);
             }
 
             if (query.SourceAddress is { } sourceAddress)
             {
-                whereClauses.Add("SourceAddress = @sourceAddress");
-                command.Parameters.Add("@sourceAddress", System.Data.SqlDbType.NVarChar, 255).Value = sourceAddress;
+                whereBuilder.Add("SourceAddress = @sourceAddress",
+                    () => command.Parameters.Add("@sourceAddress", System.Data.SqlDbType.NVarChar, 255).Value = sourceAddress);
             }
 
             if (query.SeverityAtMost is { } severityAtMost)
@@ -61,20 +62,20 @@ public sealed partial class SqlServerLogStore
                 // 閾値方式（Severity <= N。LogQuery.SeverityAtMost の doc コメント参照——
                 // syslog は数値が小さいほど深刻なため「N 以上の重大度」は「Severity <= N」になる。
                 // Severity が NULL（PRI 未解析）の行は比較が unknown になり自然に対象外となる。
-                whereClauses.Add("Severity <= @severityAtMost");
-                command.Parameters.Add("@severityAtMost", System.Data.SqlDbType.Int).Value = severityAtMost;
+                whereBuilder.Add("Severity <= @severityAtMost",
+                    () => command.Parameters.Add("@severityAtMost", System.Data.SqlDbType.Int).Value = severityAtMost);
             }
 
             if (query.Facility is { } facilityFilter)
             {
-                whereClauses.Add("Facility = @facility");
-                command.Parameters.Add("@facility", System.Data.SqlDbType.Int).Value = facilityFilter;
+                whereBuilder.Add("Facility = @facility",
+                    () => command.Parameters.Add("@facility", System.Data.SqlDbType.Int).Value = facilityFilter);
             }
 
             if (query.ParseStatus is { } parseStatusFilter)
             {
-                whereClauses.Add("ParseStatus = @parseStatus");
-                command.Parameters.Add("@parseStatus", System.Data.SqlDbType.Int).Value = (int)parseStatusFilter;
+                whereBuilder.Add("ParseStatus = @parseStatus",
+                    () => command.Parameters.Add("@parseStatus", System.Data.SqlDbType.Int).Value = (int)parseStatusFilter);
             }
 
             if (query.SearchText is { Length: > 0 } searchText)
@@ -85,9 +86,9 @@ public sealed partial class SqlServerLogStore
                 // ため（database.md §5.4）、LIKE の大文字小文字非区別（かつアクセント・かな種・
                 // 全角/半角は区別する）はサーバの既定照合順序に依存せず列単位で保証される
                 // （配備先の既定照合順序が CS でも本クエリの挙動は変わらない）。
-                whereClauses.Add("Message LIKE @searchText ESCAPE '\\'");
-                command.Parameters.Add("@searchText", System.Data.SqlDbType.NVarChar, -1).Value =
-                    "%" + EscapeLikePattern(searchText) + "%";
+                whereBuilder.Add("Message LIKE @searchText ESCAPE '\\'",
+                    () => command.Parameters.Add("@searchText", System.Data.SqlDbType.NVarChar, -1).Value =
+                        "%" + EscapeLikePattern(searchText) + "%");
             }
 
             if (query.Cursor is { } cursor)
@@ -104,14 +105,14 @@ public sealed partial class SqlServerLogStore
                 // 同一データで観測した。下の形はこれと論理的に等価（R=@c かつ Id>=@i のとき
                 // 両者とも偽・他も一致）で、先頭の conjunct（ReceivedAt <= @c）が単独で索引の
                 // シーク述語になる——常にシーク可能な形であることが下記 FORCESEEK の前提。
-                whereClauses.Add(
+                whereBuilder.AddRaw(
                     "(ReceivedAt <= @cursorReceivedAt AND (ReceivedAt < @cursorReceivedAt OR Id < @cursorId))");
                 command.Parameters.Add("@cursorReceivedAt", System.Data.SqlDbType.DateTime2).Value =
                     cursor.ReceivedAt.UtcDateTime;
                 command.Parameters.Add("@cursorId", System.Data.SqlDbType.BigInt).Value = cursor.Id;
             }
 
-            var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+            var whereSql = whereBuilder.BuildWhereSql();
 
             // FORCESEEK テーブルヒント（カーソル指定時のみ）: 上記のとおり計画選択が不安定な
             // コスト境界領域にあるため、「索引シークのみを許す」ヒントで計画を固定する
@@ -146,23 +147,7 @@ public sealed partial class SqlServerLogStore
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                var message = reader.IsDBNull(14) ? null : reader.GetString(14);
-                results.Add(new LogRecordSummary(
-                    Id: reader.GetInt64(0),
-                    ReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
-                    SourceAddress: reader.GetString(2),
-                    SourcePort: reader.GetInt32(3),
-                    Protocol: (Protocol)reader.GetInt32(4),
-                    ParseStatus: (ParseStatus)reader.GetInt32(5),
-                    DeviceTimestamp: reader.IsDBNull(6) ? null : DateTime.SpecifyKind(reader.GetDateTime(6), DateTimeKind.Utc),
-                    Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                    Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                    Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
-                    AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
-                    ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
-                    MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                    StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
-                    Message: MessageProjection.Truncate(message, query.MessageProjectionLength)));
+                results.Add(LogRecordDataReaderMapper.ReadSummary(reader, ReadTimestamp, query.MessageProjectionLength));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -224,23 +209,7 @@ public sealed partial class SqlServerLogStore
                 return null;
             }
 
-            return new LogRecord(
-                Id: reader.GetInt64(0),
-                ReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
-                SourceAddress: reader.GetString(2),
-                SourcePort: reader.GetInt32(3),
-                Protocol: (Protocol)reader.GetInt32(4),
-                ParseStatus: (ParseStatus)reader.GetInt32(5),
-                DeviceTimestamp: reader.IsDBNull(6) ? null : DateTime.SpecifyKind(reader.GetDateTime(6), DateTimeKind.Utc),
-                Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
-                AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
-                ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
-                MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
-                Message: reader.IsDBNull(14) ? null : reader.GetString(14),
-                Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15));
+            return LogRecordDataReaderMapper.ReadRecord(reader, ReadTimestamp);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -305,23 +274,7 @@ public sealed partial class SqlServerLogStore
                 await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    batch.Add(new LogRecord(
-                        Id: reader.GetInt64(0),
-                        ReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
-                        SourceAddress: reader.GetString(2),
-                        SourcePort: reader.GetInt32(3),
-                        Protocol: (Protocol)reader.GetInt32(4),
-                        ParseStatus: (ParseStatus)reader.GetInt32(5),
-                        DeviceTimestamp: reader.IsDBNull(6) ? null : DateTime.SpecifyKind(reader.GetDateTime(6), DateTimeKind.Utc),
-                        Facility: reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                        Severity: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                        Hostname: reader.IsDBNull(9) ? null : reader.GetString(9),
-                        AppName: reader.IsDBNull(10) ? null : reader.GetString(10),
-                        ProcId: reader.IsDBNull(11) ? null : reader.GetString(11),
-                        MsgId: reader.IsDBNull(12) ? null : reader.GetString(12),
-                        StructuredData: reader.IsDBNull(13) ? null : reader.GetString(13),
-                        Message: reader.IsDBNull(14) ? null : reader.GetString(14),
-                        Raw: reader.IsDBNull(15) ? null : (byte[])reader.GetValue(15)));
+                    batch.Add(LogRecordDataReaderMapper.ReadRecord(reader, ReadTimestamp));
                 }
             }
 
@@ -384,29 +337,29 @@ public sealed partial class SqlServerLogStore
             await connection.OpenAsync(linkedCts.Token).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
-            var whereClauses = new List<string>();
+            var whereBuilder = new WhereClauseBuilder();
 
             // 区間の重なり判定（ILogStore の契約参照）: 範囲に少しでも掛かる区間を返す。
             if (from is { } fromValue)
             {
-                whereClauses.Add("EndAt >= @from");
-                command.Parameters.Add("@from", System.Data.SqlDbType.DateTime2).Value = fromValue.UtcDateTime;
+                whereBuilder.Add("EndAt >= @from",
+                    () => command.Parameters.Add("@from", System.Data.SqlDbType.DateTime2).Value = fromValue.UtcDateTime);
             }
 
             if (to is { } toValue)
             {
-                whereClauses.Add("StartAt <= @to");
-                command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = toValue.UtcDateTime;
+                whereBuilder.Add("StartAt <= @to",
+                    () => command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = toValue.UtcDateTime);
             }
 
             // 種別の完全一致フィルタ（ILogStore の契約参照）。
             if (kind is not null)
             {
-                whereClauses.Add("Kind = @kind");
-                command.Parameters.Add("@kind", System.Data.SqlDbType.NVarChar, 255).Value = kind;
+                whereBuilder.Add("Kind = @kind",
+                    () => command.Parameters.Add("@kind", System.Data.SqlDbType.NVarChar, 255).Value = kind);
             }
 
-            var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+            var whereSql = whereBuilder.BuildWhereSql();
 
             command.CommandText =
                 $"""
@@ -421,13 +374,7 @@ public sealed partial class SqlServerLogStore
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SystemEvent(
-                    Id: reader.GetInt64(0),
-                    Kind: reader.GetString(1),
-                    StartAt: DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc),
-                    EndAt: DateTime.SpecifyKind(reader.GetDateTime(3), DateTimeKind.Utc),
-                    Approximate: reader.GetBoolean(4),
-                    Details: reader.IsDBNull(5) ? null : reader.GetString(5)));
+                results.Add(LogRecordDataReaderMapper.ReadSystemEvent(reader, ReadTimestamp, ReadApproximate));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -495,10 +442,7 @@ public sealed partial class SqlServerLogStore
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SourceActivity(
-                    SourceAddress: reader.GetString(0),
-                    LastReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
-                    RecordCount: reader.GetInt64(2)));
+                results.Add(LogRecordDataReaderMapper.ReadSourceActivity(reader, ReadTimestamp));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -553,9 +497,7 @@ public sealed partial class SqlServerLogStore
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SeverityCount(
-                    Severity: reader.IsDBNull(0) ? null : reader.GetInt32(0),
-                    Count: reader.GetInt64(1)));
+                results.Add(LogRecordDataReaderMapper.ReadSeverityCount(reader));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -615,10 +557,7 @@ public sealed partial class SqlServerLogStore
 
             while (await reader.ReadAsync(linkedCts.Token).ConfigureAwait(false))
             {
-                results.Add(new SourceActivity(
-                    SourceAddress: reader.GetString(0),
-                    LastReceivedAt: DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc),
-                    RecordCount: reader.GetInt64(2)));
+                results.Add(LogRecordDataReaderMapper.ReadSourceActivity(reader, ReadTimestamp));
             }
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -636,6 +575,14 @@ public sealed partial class SqlServerLogStore
 
         return results;
     }
+
+    // LogRecordDataReaderMapper へ注入する SQL Server 側アダプタ（DateTime2 列。UTC は
+    // アプリケーション層の約束であり列自体は Kind を持たないため SpecifyKind で明示する）。
+    private static DateTimeOffset ReadTimestamp(DbDataReader reader, int ordinal) =>
+        DateTime.SpecifyKind(reader.GetDateTime(ordinal), DateTimeKind.Utc);
+
+    // SystemEvents.Approximate は BIT 列。
+    private static bool ReadApproximate(DbDataReader reader, int ordinal) => reader.GetBoolean(ordinal);
 
     private static string EscapeLikePattern(string value)
     {
