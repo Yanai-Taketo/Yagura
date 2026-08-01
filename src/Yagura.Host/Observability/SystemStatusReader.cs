@@ -287,5 +287,8 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
             new("yagura.ingestion.persistence.failed", snapshot.PersistenceFailed, IsLoss: true),
             new("yagura.ingestion.flow_control.dropped", snapshot.FlowControlDropped, IsLoss: true),
             new("yagura.ingestion.spool.corrupt_tail_discarded_bytes", snapshot.SpoolCorruptTailDiscardedBytes, IsLoss: true),
+            // 分類漏れの失敗経路を通った接続。その接続の未処理データが無言で失われていた可能性を
+            // 含むため損失側に数える（平常時ゼロであり、非ゼロなら原因の特定が必要な状態）。
+            new("yagura.ingestion.tcp_connection.faulted", snapshot.TcpConnectionFaulted, IsLoss: true),
         ];
 }

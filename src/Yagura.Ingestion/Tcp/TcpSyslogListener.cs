@@ -192,6 +192,25 @@ public sealed class TcpSyslogListener : IAsyncDisposable
                     stoppingToken).ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 正常停止に伴うキャンセル。異常ではないため計上しない。
+            return;
+        }
+        catch (Exception ex)
+        {
+            // 想定内の失敗経路（アイドル/フレーミングタイムアウト・再同期上限・上限超過メッセージの
+            // 破棄）はいずれも専用のカウンタへ計上済みのため、ここへ到達するのは分類できていない
+            // 失敗である。捕捉しないと例外はタスク内に閉じ込められ、カウンタにもログにも残らないまま
+            // 接続だけが落ちる（プロセスは生存し TCP accept も継続するため外形監視からも見えない）。
+            _metrics.RecordTcpConnectionFaulted();
+            _logger?.LogError(
+                ex,
+                "TCP 接続 {SourceAddress}:{SourcePort} の処理が想定外の例外で終了しました。",
+                sourceAddress,
+                sourcePort);
+            return;
+        }
         finally
         {
             _acceptLoop.ReleaseConnectionSlot();

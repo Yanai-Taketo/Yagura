@@ -37,6 +37,10 @@
 /// 単位は他の破棄系カウンタと異なりレコード数ではなくバイト数（破損した末尾はフレーム境界が
 /// 保証されずレコード数を数えられないため。<see cref="IngestionMetrics"/> remarks 参照）。
 /// </param>
+/// <param name="TcpConnectionFaulted">
+/// 接続ハンドラが想定外の例外で終了した TCP / TLS 接続の累積値（既定 0）。平常時ゼロであることに
+/// 意味があるカウンタ（<see cref="IngestionMetrics.RecordTcpConnectionFaulted"/> remarks 参照）。
+/// </param>
 public sealed record IngestionCounterSnapshot(
     long InternalBufferDropped,
     long TcpConnectionRejected,
@@ -50,8 +54,9 @@ public sealed record IngestionCounterSnapshot(
     long TcpMessageOversizedDiscarded = 0,
     long TcpConnectionResyncLimitExceeded = 0,
     long TcpConnectionFramingTimeout = 0,
-    long SpoolCorruptTailDiscardedBytes = 0)
+    long SpoolCorruptTailDiscardedBytes = 0,
+    long TcpConnectionFaulted = 0)
 {
     /// <summary>全カウンタが 0 の初期スナップショット（メタデータ領域が無い初回起動用）。</summary>
-    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    public static IngestionCounterSnapshot Zero { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 }

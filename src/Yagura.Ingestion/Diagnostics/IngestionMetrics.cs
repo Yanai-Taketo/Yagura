@@ -65,6 +65,7 @@ public sealed class IngestionMetrics : IDisposable
     private readonly Counter<long> _tcpMessageDiscardedOversized;
     private readonly Counter<long> _tcpConnectionResyncLimitExceeded;
     private readonly Counter<long> _tcpConnectionFramingTimeout;
+    private readonly Counter<long> _tcpConnectionFaulted;
     private readonly Counter<long> _spoolCorruptTailDiscarded;
     private readonly Counter<long> _tlsHandshakeFailure;
     private readonly Counter<long> _parseFailedSaved;
@@ -108,6 +109,7 @@ public sealed class IngestionMetrics : IDisposable
     private long _tcpMessageDiscardedOversizedTotal;
     private long _tcpConnectionResyncLimitExceededTotal;
     private long _tcpConnectionFramingTimeoutTotal;
+    private long _tcpConnectionFaultedTotal;
     private long _spoolCorruptTailDiscardedTotal;
 
     public IngestionMetrics()
@@ -227,6 +229,17 @@ public sealed class IngestionMetrics : IDisposable
             "yagura.ingestion.tcp_connection.framing_timeout",
             unit: "{connection}",
             description: "有効メッセージが確定しないまま一定時間が経過し切断した TCP 接続数（TCP 接続断の内訳）。");
+
+        // architecture.md §4.5「TCP 接続異常終了」: 接続ハンドラが想定していない型の例外で終了した
+        // 接続数。想定内の失敗（ハンドシェイク失敗・各種タイムアウト・再同期上限）はいずれも専用の
+        // カウンタを持つため、本カウンタが非ゼロになること自体が「分類できていない失敗経路がある」
+        // という欠陥のシグナルになる。ゼロであることに意味がある側のカウンタであり、
+        // 「損失は必ずどれかのカウンタに計上される」の取りこぼしを塞ぐ最後の受け皿として置く。
+        _tcpConnectionFaulted = _meter.CreateCounter<long>(
+            "yagura.ingestion.tcp_connection.faulted",
+            unit: "{connection}",
+            description: "接続ハンドラが想定外の例外で終了した TCP / TLS 接続数（TCP 接続断の内訳）。" +
+                "非ゼロは分類漏れの失敗経路の存在を示す。");
 
         // architecture.md §4.1「TLS ハンドシェイク失敗」: TLS 受信（RFC 5425。
         // opt-in）の TLS ハンドシェイク確立失敗数。送信元別に計上する——証明書期限切れ時に送信側が
@@ -413,6 +426,22 @@ public sealed class IngestionMetrics : IDisposable
     }
 
     /// <summary>
+    /// 接続ハンドラが想定外の例外で終了した接続を 1 件計上する（§4.5。TCP・TLS 共通）。
+    /// </summary>
+    /// <remarks>
+    /// 想定内の終了経路（ハンドシェイク失敗・アイドル/フレーミングタイムアウト・再同期上限・
+    /// 正常切断）はいずれも専用のカウンタを持つため、本カウンタは<b>平常時ゼロ</b>であることに
+    /// 意味がある。非ゼロは「まだ分類できていない失敗経路が存在する」ことを示し、その経路を通った
+    /// 接続の未処理データが無言で失われていた可能性を含む。正常停止に伴うキャンセルは呼び出し側で
+    /// 除外し、本カウンタには計上しない。
+    /// </remarks>
+    public void RecordTcpConnectionFaulted()
+    {
+        _tcpConnectionFaulted.Add(1);
+        Interlocked.Increment(ref _tcpConnectionFaultedTotal);
+    }
+
+    /// <summary>
     /// TLS 受信（RFC 5425。opt-in）の TLS ハンドシェイク確立失敗を 1 件計上する。
     /// <paramref name="sourceAddress"/> を <c>source_address</c> タグとして付与する（送信元別の脱落確認。
     /// security.md §6）。ただしタグの distinct 値は <see cref="MaxTlsHandshakeFailureSourceCardinality"/>
@@ -499,6 +528,7 @@ public sealed class IngestionMetrics : IDisposable
         Interlocked.Exchange(ref _tcpMessageDiscardedOversizedTotal, previous.TcpMessageOversizedDiscarded);
         Interlocked.Exchange(ref _tcpConnectionResyncLimitExceededTotal, previous.TcpConnectionResyncLimitExceeded);
         Interlocked.Exchange(ref _tcpConnectionFramingTimeoutTotal, previous.TcpConnectionFramingTimeout);
+        Interlocked.Exchange(ref _tcpConnectionFaultedTotal, previous.TcpConnectionFaulted);
         Interlocked.Exchange(ref _spoolCorruptTailDiscardedTotal, previous.SpoolCorruptTailDiscardedBytes);
     }
 
@@ -519,7 +549,8 @@ public sealed class IngestionMetrics : IDisposable
         TcpMessageOversizedDiscarded: Interlocked.Read(ref _tcpMessageDiscardedOversizedTotal),
         TcpConnectionResyncLimitExceeded: Interlocked.Read(ref _tcpConnectionResyncLimitExceededTotal),
         TcpConnectionFramingTimeout: Interlocked.Read(ref _tcpConnectionFramingTimeoutTotal),
-        SpoolCorruptTailDiscardedBytes: Interlocked.Read(ref _spoolCorruptTailDiscardedTotal));
+        SpoolCorruptTailDiscardedBytes: Interlocked.Read(ref _spoolCorruptTailDiscardedTotal),
+        TcpConnectionFaulted: Interlocked.Read(ref _tcpConnectionFaultedTotal));
 
     /// <summary>
     /// 内部バッファ破棄カウンタの計器そのもの。テストで
@@ -568,6 +599,9 @@ public sealed class IngestionMetrics : IDisposable
 
     /// <summary>スプール末尾破損破棄カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> SpoolCorruptTailDiscardedCounter => _spoolCorruptTailDiscarded;
+
+    /// <summary>TCP 接続異常終了カウンタの計器そのもの（テスト用）。</summary>
+    public Counter<long> TcpConnectionFaultedCounter => _tcpConnectionFaulted;
 
     /// <summary>TLS ハンドシェイク失敗カウンタの計器そのもの（テスト用）。</summary>
     public Counter<long> TlsHandshakeFailureCounter => _tlsHandshakeFailure;
