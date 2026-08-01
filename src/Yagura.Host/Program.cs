@@ -30,7 +30,7 @@ namespace Yagura.Host;
 /// ターゲットフレームワークは Windows 専用の <c>net10.0-windows</c> ではなく <c>net10.0</c> のまま
 /// 維持する（<c>Yagura.Host.Tests</c> / <c>Yagura.E2E.Tests</c> は <c>net10.0</c> であり、
 /// ProjectReference は同一 TFM 系列でないと NU1201 で復元できない実機確認済みのため、Host 単体の
-/// TFM 変更はテストプロジェクト側にも波及する——本 Issue（#31）のスコープを超える）。
+/// TFM 変更はテストプロジェクト側にも波及する）。
 /// そのため <c>Microsoft.Extensions.Logging.EventLog</c>（<c>[SupportedOSPlatform("windows")]</c>
 /// 付与済み）の呼び出しは CA1416（プラットフォーム互換性）の対象になる。<see cref="Program"/>
 /// 全体に <see cref="SupportedOSPlatformAttribute"/> を付与し、「このエントリポイントは Windows
@@ -69,7 +69,7 @@ public static class Program
         // 読み込み、検証・3 分類の適用・環境変数上書きを経た最終設定を得る。設定ファイルが
         // 存在しない場合は既定値のみで起動する（ゼロ設定ファーストラン）。
         // ここで使うロガーは DI コンテナ構築前の一時的なもの。構成は ConfigureBootstrapLogging
-        // （テストから配線を固定するため切り出し。Issue #433）を参照。
+        // （テストから配線を固定するため切り出し）を参照。
         using var bootstrapLoggerFactory = LoggerFactory.Create(ConfigureBootstrapLogging);
         var configurationLogger = bootstrapLoggerFactory.CreateLogger("Yagura.Host.Configuration");
 
@@ -109,7 +109,7 @@ public static class Program
         var resolvedConfiguration = configurationLoadResult.Configuration;
         var databasePath = Path.Combine(dataRoot, resolvedConfiguration.SqliteFileName);
 
-        // 設定ライブ再読み込み（CF-4 層1。Issue #262）の差分計算の初期基準——起動時点の
+        // 設定ライブ再読み込み（CF-4 層1）の差分計算の初期基準——起動時点の
         // ファイルの生 options を捕捉しておく（ConfigurationReloadService の doc コメント参照）。
         // 受理範囲は Load と一致しているため（§1 の不変条件）ここで新たに失敗することは想定しないが、
         // 念のため同じ扱い（1024 + 起動失敗）へ寄せる——片方だけが落ちる状態を再び作らない。
@@ -158,7 +158,7 @@ public static class Program
             spoolDegraded = spool is null;
         }
 
-        // 定期自己検証（architecture.md §3.2.5。Issue #152）の投入・照合の橋渡し。投入
+        // 定期自己検証（architecture.md §3.2.5）の投入・照合の橋渡し。投入
         // （ActiveNotificationMonitor。下記）と照合（SpoolDrainCoordinator。IngestionPipeline
         // 経由）が同一インスタンスを共有することで、「drain の実機構に読ませて照合する」を
         // 実現する。スプールが無い（opt-out・縮退運転のいずれか）場合は投入対象自体が無いため
@@ -169,13 +169,13 @@ public static class Program
 
         var builder = WebApplication.CreateBuilder(args);
 
-        // 静的アセット配信面の最小化(M8-1。Issue #68)。.NET 10 の MapStaticAssets は、
+        // 静的アセット配信面の最小化(M8-1)。.NET 10 の MapStaticAssets は、
         // build 出力のマニフェスト使用時に限り「マニフェスト外のファイルも web root から
         // 配信する」開発時フォールバック(catch-all ルート {**path:file}。GET/HEAD 限定・
         // 実在ファイル制約付き)を追加登録する。publish 出力のマニフェストでは登録されない
         // (dotnet/aspnetcore release/10.0 の StaticAssetDevelopmentRuntimeHandler.cs で
         // 実体確認済み: IsEnabled は isBuildManifest を条件とし、本キー
-        // DisableStaticAssetNotFoundRuntimeFallback=true で無効化できる。確認日 2026-07-06)。
+        // DisableStaticAssetNotFoundRuntimeFallback=true で無効化できる)。
         // 閲覧リスナの配信面は「マニフェスト記載のアセットのみ」に固定する——開発実行・E2E・
         // publish のすべてで L-5 許可リスト(security.md §1)と同じ面になり、開発時だけ広い
         // 配信面が現れることを避ける(Yagura.Host は自前の wwwroot を持たず、フォールバックが
@@ -186,22 +186,22 @@ public static class Program
         // ASPNETCORE_ENVIRONMENT=Development のときだけ runtime マニフェスト
         // ({AppName}.staticwebassets.runtime.json。NuGet キャッシュ上の MudBlazor 実ファイル
         // への対応表)が読み込まれるため、build 出力を Production(既定)のまま実行すると
-        // _content/MudBlazor/* が中身 0 バイトで応答する事象を実機確認した(2026-07-06)。
+        // _content/MudBlazor/* が中身 0 バイトで応答する事象を実機確認した。
         // ここで無条件にマニフェストを読み込むことで、build 出力からの実行(E2E テスト・
         // 開発時)でもアセットが解決される。publish 出力には runtime マニフェストが含まれず
         // 実ファイルが wwwroot/ 配下へ物理配置されるため、この呼び出しは無害な no-op になる
         // (dotnet/aspnetcore release/10.0 の StaticWebAssetsLoader.ResolveManifest が
         // マニフェスト不在時に "the feature is not enabled" として何もしないことをソースで
-        // 確認済み。確認日 2026-07-06)。
+        // 確認済み)。
         // 注: builder.WebHost.UseStaticWebAssets() 拡張ではなくローダーを直接呼ぶ。
         // 拡張経由(ConfigureAppConfiguration コールバック内)では最終的な
         // WebRootFileProvider へ反映されないことを実機確認した(builder.Environment に
-        // 対して直接適用するのが minimal hosting での確実な経路。同日実機確認)。
+        // 対して直接適用するのが minimal hosting での確実な経路)。
         Microsoft.AspNetCore.Hosting.StaticWebAssets.StaticWebAssetsLoader.UseStaticWebAssets(
             builder.Environment,
             builder.Configuration);
 
-        // リスナ分離(M6-1。Issue #51。CF-1 確定値: 閲覧 8514 / 管理 8515)。
+        // リスナ分離(M6-1。CF-1 確定値: 閲覧 8514 / 管理 8515)。
         //
         // bind 先の計算そのものは ListenerBindPlan に切り出してある(単体テストで
         // 「管理リスナの bind 先は入力に関わらず常に loopback の両系統になる」を実サーバ
@@ -219,7 +219,7 @@ public static class Program
         // を設定し、その 1 ソケットだけで IPv4 も IPv6 も受け付ける実装になっている
         // (dotnet/aspnetcore の SocketTransportOptions.CreateDefaultBoundListenSocket。
         // ListenAnyIP はこの単一ソケットの Listen(IPv6Any, port) 呼び出しをラップした
-        // 公式の簡易 API——実機確認・ソース確認済み、確認日 2026-07-05)。
+        // 公式の簡易 API——実機確認・ソース確認済み)。
         // 管理リスナのリモート HTTPS（ADR-0010 Phase 2 決定 4）: bind エントリを Kestrel へ渡す前に
         // 証明書ストア参照を試みる。YaguraConfigurationLoader.Load は「認証 + HTTPS が静的に構成
         // 済みであること」までを fail-closed で検証済みだが、拇印が実際に証明書ストアで解決できる
@@ -288,7 +288,7 @@ public static class Program
             }
         }
 
-        // TLS 受信（RFC 5425。opt-in・既定無効。security.md §6。Issue #137）: 証明書ストア参照は
+        // TLS 受信（RFC 5425。opt-in・既定無効。security.md §6）: 証明書ストア参照は
         // 管理リスナのリモート HTTPS（上記）と同一の実装（CertificateProvider.Load）を再利用
         // する——設定キーは独立（Ingestion:Tls:*）だが、参照方式（Windows 証明書ストア・拇印指定）
         // は共有し、重複実装しない（security.md §6「参照方式は Web UI の HTTPS と同型」）。
@@ -352,10 +352,9 @@ public static class Program
 
                     listenOptions.UseHttps(httpsOptions =>
                     {
-                        // 最低 TLS 1.2・1.3 優先を明示固定する（ADR-0010 Phase 2 決定 4。田中の指摘。
-                        // 閲覧面も同じ明示固定——ADR-0022 決定 1）。OS 既定（schannel ポリシー）に
-                        // 暗黙に委ねない——Windows Server の版が混在する導入先で TLS 1.0/1.1 が
-                        // 意図せず有効のまま露出することを防ぐ。
+                        // 最低 TLS 1.2・1.3 優先を明示固定する（ADR-0010 Phase 2 決定 4）。OS 既定
+                        // （schannel ポリシー）に暗黙に委ねない——Windows Server の版が混在する導入先で
+                        // TLS 1.0/1.1 が意図せず有効のまま露出することを防ぐ。
                         httpsOptions.SslProtocols =
                             System.Security.Authentication.SslProtocols.Tls12 |
                             System.Security.Authentication.SslProtocols.Tls13;
@@ -364,9 +363,9 @@ public static class Program
                         // 拡張点（証明書のホットスワップ用途で用意されている）。ここでは「起動後に
                         // 証明書が期限切れへ遷移した場合、以後の新規ハンドシェイクを拒否する
                         // （= HTTPS リスナを事実上停止する。configuration.md §6『HTTPS リスナは停止し
-                        // HTTP へは落とさない』——管理リモート面は ADR-0010 Phase 2 決定 4、閲覧面は
-                        // ADR-0022 決定 2 が同じ機構への整合を既定とした）」という runtime の挙動を、
-                        // Kestrel のリスナを再構成することなく実現するために転用する。null を返すと
+                        // HTTP へは落とさない』と同じ整合を既定とした——ADR-0010 Phase 2 決定 4）」
+                        // という runtime の挙動を、Kestrel のリスナを再構成することなく実現するために
+                        // 転用する。null を返すと
                         // 当該ハンドシェイクは失敗する（TLS レベルで拒否——loopback 管理面には一切
                         // 影響しない。管理者は RDP + loopback から引き続き閲覧・復旧操作ができる）。
                         var capturedCertificate = certificateForEntry!;
@@ -407,7 +406,7 @@ public static class Program
             ? new[] { effectiveAdminPort, listenerBindEntries.First(e => e.RequiresHttps).Port }
             : [effectiveAdminPort];
 
-        // Windows サービス統合（M3-2 #31。architecture.md §1.1 「ホスト」の責務）。
+        // Windows サービス統合（M3-2。architecture.md §1.1 「ホスト」の責務）。
         //
         // AddWindowsService は「実行時にプロセスが実際に Windows サービスとして起動されて
         // いるかどうかをコンテキストとして検出し、その場合にのみ IHost の Lifetime を
@@ -415,7 +414,7 @@ public static class Program
         // 明記されている（"This is context aware and will only activate if it detects the
         // process is running as a Windows Service." — learn.microsoft.com/dotnet/api/
         // microsoft.extensions.hosting.windowsservicelifetimehostbuilderextensions.
-        // addwindowsservice, 確認日 2026-07-05）。コンソール実行時・デバッガ添付時は
+        // addwindowsservice）。コンソール実行時・デバッガ添付時は
         // 何もせず既定の ConsoleLifetime のまま動作するため、E2E テスト
         // （Process 起動によるコンソール実行）や開発時のインナーループには影響しない。
         //
@@ -431,7 +430,7 @@ public static class Program
             options.ServiceName = WindowsServiceName;
         });
 
-        // CF-5(2026-07-16 オーナー裁定。Issue #262): Windows サービスとして動いている場合のみ、
+        // CF-5: Windows サービスとして動いている場合のみ、
         // 既定の WindowsServiceLifetime を SCM カスタム制御コード対応版へ置き換える
         // (sc control Yagura 128 = 設定の再読み込み。YaguraWindowsServiceLifetime 参照)。
         // AddWindowsService 自体が IsWindowsService 判定で登録するため、置き換えも同じ条件で行う。
@@ -440,7 +439,7 @@ public static class Program
             builder.Services.AddSingleton<IHostLifetime, YaguraWindowsServiceLifetime>();
         }
 
-        // イベントログ警告経路（M3-2 #31。architecture.md §4.6 の「Windows イベントログへの
+        // イベントログ警告経路（M3-2。architecture.md §4.6 の「Windows イベントログへの
         // 警告書き出し」の受け皿）。実際の発火点（スプール退避・上限到達等）は M4 で追加する。
         //
         // ソース名は暫定でサービス名と同じ "Yagura" とする。EventLogSettings.SourceName の
@@ -448,7 +447,7 @@ public static class Program
         //
         // イベントソースの事前登録が必要という Windows の制約: 公式ドキュメント
         // （learn.microsoft.com/dotnet/api/system.diagnostics.eventlog.writeevent の
-        // Remarks、確認日 2026-07-05）に "You must have administrative rights on the
+        // Remarks）に "You must have administrative rights on the
         // computer to create a new event source." と明記されている。ソース "Yagura" の
         // 登録は本 PR の範囲外とし、M9（インストーラ）で管理者権限下の登録を行う前提とする。
         //
@@ -461,7 +460,7 @@ public static class Program
         // つまり「ソース未登録 + 管理者権限なし」でもホストプロセスは落ちず、実質的には
         // 「初回 Warning が Application ソースの下で 1 回だけ記録され、以降は記録されない」
         // という縮退になる（ソース出典: dotnet/runtime の
-        // Microsoft.Extensions.Logging.EventLog/src/WindowsEventLog.cs、確認日 2026-07-05）。
+        // Microsoft.Extensions.Logging.EventLog/src/WindowsEventLog.cs）。
         // M9 でのソース事前登録により、この縮退状態は解消される。
         //
         // コンソール実行時の二重出力について: EventLog プロバイダは Console プロバイダとは
@@ -485,19 +484,18 @@ public static class Program
         //
         // 決定 7 の「利用者の Logging:* 設定がメールを止めない」は、AddEmailNotificationSink が
         // 積む本プロバイダ名指しのフィルタ規則（Trace）で成立させる——登録経路の選び方では
-        // フィルタを迂回できない（PR #366 レビューで判明。詳細は同メソッドの remarks と
-        // EmailNotificationLoggingTests）。
+        // フィルタを迂回できない（詳細は同メソッドの remarks と EmailNotificationLoggingTests 参照）。
         //
         // キューは合成ルートが所有し、プロバイダ（投入側）とディスパッチャ（消化側）で共有する。
         // 通知が捕捉されるのはこの登録より後に発火したものに限られる——決定 7 が挙げる
         // 起動時経路の ID（1001・1022 等）は、いずれも app.Build() 後に DI ロガー経由で発火する
         // ため、構造上必ず本登録（builder 段階）の後になる（発火点: 1001 = 本メソッド末尾の
         // startupLogger、1022 = IngestionHostedService.StartAsync）。
-        // ライブ計器（ADR-0017 決定 5。Issue #386）: 破棄数・送信失敗を外部監視から観測できる形で
+        // ライブ計器（ADR-0017 決定 5）: 破棄数・送信失敗を外部監視から観測できる形で
         // 計上する（単一 Meter「Yagura」へ統合。カード表示用のプロセス内カウンタとは役割が別）。
         var emailNotificationMetrics = new EmailNotificationMetrics();
         var emailNotificationQueue = new EmailNotificationQueue(timeProvider: null, emailNotificationMetrics);
-        // 無効構成の間は投入自体を受け付けない（Issue #384——無効期間中の蓄積が有効化時に
+        // 無効構成の間は投入自体を受け付けない（無効期間中の蓄積が有効化時に
         // 流量制御を経ず一斉送信されるのを防ぐ。ディスパッチャの UpdateConfiguration が以後の
         // 変更を追従する）。
         emailNotificationQueue.SetEnabled(resolvedConfiguration.EmailNotification is not null);
@@ -527,7 +525,7 @@ public static class Program
             Port = resolvedConfiguration.TcpPort,
         });
 
-        // TLS 受信（Issue #137）: 証明書が解決できた場合のみ構成する（null の間は
+        // TLS 受信: 証明書が解決できた場合のみ構成する（null の間は
         // IngestionPipeline へ tlsListenerOptions = null を渡し、TLS 受信自体を構成しない——
         // DI 経由ではなくローカル変数の閉包で IngestionPipeline のファクトリへ渡す。adminHttpsCertificate
         // の扱い（上記 ConfigureKestrel 内 capturedCertificate）と同じパターン）。
@@ -544,7 +542,7 @@ public static class Program
                 ? () => ingestionTlsCertificate
                 : null;
 
-        // ILogStore の書き込みゲート（Issue #151。LogStoreWriteGate の doc コメント参照）:
+        // ILogStore の書き込みゲート（LogStoreWriteGate の doc コメント参照）:
         // ライブ書き込み（PersistenceWriter）・スプール drain（SpoolDrainCoordinator）・
         // 保持期間削除（RetentionScheduler）の 3 経路を単一のゲートで直列化し、
         // 「書き込みは単一 writer が呼び出す」契約（ILogStore）を実配線で満たす。
@@ -556,7 +554,7 @@ public static class Program
         // IngestionPipeline へ渡す——RetentionDays が null（既定 30 日への自動フォールバックを
         // 避ける不正値時のフォールバック。DB-1 確定に伴い既定は通常 30 が入る）でも、
         // スケジューラ自体は常に構成し、容量枯渇時の警告発火（保持期間の設定を促す）は行う。
-        // 起動時キャッチアップ（Issue #150）もこのスケジューラの Start() が担う。
+        // 起動時キャッチアップもこのスケジューラの Start() が担う。
         builder.Services.AddSingleton(sp => new Yagura.Host.Retention.RetentionScheduler(
             sp.GetRequiredService<ILogStore>(),
             new Yagura.Host.Retention.RetentionSchedulerOptions(
@@ -566,11 +564,11 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Retention.RetentionScheduler>(),
             sp.GetRequiredService<LogStoreWriteGate>()));
 
-        // 流量制御（architecture.md §3.3。ADR-0002 決定 2「送信元単位の流量制御（既定有効）」。
-        // Issue #260）: 既定は TokenBucketIngressGate、opt-out（Ingestion:FlowControl:Enabled =
+        // 流量制御（architecture.md §3.3。ADR-0002 決定 2「送信元単位の流量制御（既定有効）」）:
+        // 既定は TokenBucketIngressGate、opt-out（Ingestion:FlowControl:Enabled =
         // false）時のみ NoopIngressGate を結線する。破棄の計上は各リスナ（挿入点の呼び出し元）が
         // 行う——「発火は必ず計測される」§3.3。SwappableIngressGate で 1 段包むのは設定ライブ
-        // 再読み込み（CF-4 層1。Issue #262）で実装を無瞬断に差し替えるため。
+        // 再読み込み（CF-4 層1）で実装を無瞬断に差し替えるため。
         var ingressGate = new SwappableIngressGate(
             CreateIngressGate(resolvedConfiguration));
 
@@ -581,7 +579,7 @@ public static class Program
                     configuration.FlowControlBurstSize)
                 : new NoopIngressGate();
 
-        // 送信元の途絶検知（ADR-0018。opt-in・既定無効。Issue #351）。追跡器と判定器は
+        // 送信元の途絶検知（ADR-0018。opt-in・既定無効）。追跡器と判定器は
         // 合成ルートが所有し、受信段（ParsingStage）・監視ループ・設定の即時反映の 3 者で共有する。
         // 機能が無効（ウォッチリスト未設定）でも構築はしておく——設定の即時反映で有効化された
         // 時点から、サービスを再起動せずに追跡が始まる（決定 6）。
@@ -616,14 +614,14 @@ public static class Program
             tlsCertificateSelector,
             sourceActivityTracker));
 
-        // 能動通知の周期監視（architecture.md §4.6。Issue #149）: スプール使用率・退避継続・
+        // 能動通知の周期監視（architecture.md §4.6）: スプール使用率・退避継続・
         // 監視対象ボリュームの空き容量・SQL Server Express の DB 容量接近を定期評価する。
         // Express 判定は provider 非依存の ILogStore 契約を汚さないよう、SqlServerLogStore への
         // 型検査を Host（合成ルート）側の LogStoreExpressCapacityChecker に閉じ込める
         // （ExpressCapacityChecker.cs の remarks 参照）。
         //
-        // 空き容量の監視対象はデータルートに加えて、スプール有効時はスプール置き場所も含める
-        // （PR #188 レビュー指摘への対応）: Spool:Directory は設定で独立に変更でき
+        // 空き容量の監視対象はデータルートに加えて、スプール有効時はスプール置き場所も含める:
+        // Spool:Directory は設定で独立に変更でき
         // （configuration.md §8「スプール」区分）、データルートと別ドライブに向いた構成では
         // 「夜間にスプールが満ちていく」現場のボリュームが監視から外れてしまうため。
         // 既定構成（スプールはデータルート配下）では両パスは同一ボリュームであり、
@@ -670,7 +668,7 @@ public static class Program
                     resolvedConfiguration.ViewerHttpsCertificateThumbprint!)
                 : null;
 
-        // フォワーダ MSI 配置フォルダ（ADR-0008 設計条件 9 / ADR-0020 配置経路 (b)）の実パス。
+        // フォワーダ MSI 配置フォルダ（ADR-0020 配置経路 (b)）の実パス。
         // 検出側（IForwarderMsiSource）・書き込み側（IForwarderMsiStore）・ACL 周期検出
         // （ActiveNotificationMonitor）の三者で共有する。
         var forwarderMsiFolderPath = Path.Combine(
@@ -699,7 +697,7 @@ public static class Program
                 // ないため、ListenerBindRecovered の購読ではなく監視ループ内のポーリングで観測する
                 // （EvaluateSourceSilence 参照）。
                 listenerAvailabilityProbe: () => pipelineForMonitor.ListenerAvailability,
-                // 起動時 seed（ADR-0018 決定 3。Issue #381）: 監視開始時に最終受信時刻を 1 回だけ
+                // 起動時 seed（ADR-0018 決定 3）: 監視開始時に最終受信時刻を 1 回だけ
                 // DB から取り込み、登録済みエントリの基準を「起動時刻」から「実際の最終受信」へ
                 // 置き換える（照会失敗時は起動時刻仮基準のまま）。
                 sourceActivitySeedQuery: ct => sp.GetRequiredService<ILogStore>().QuerySourceActivityAsync(
@@ -716,7 +714,7 @@ public static class Program
                     : null,
                 forwarderMsiUploadEnabled: resolvedConfiguration.AdminForwarderMsiUploadEnabled,
                 viewerHttpsCertificateProbe: viewerHttpsCertificateProbe,
-                // 1033 の本文へ載せる撤去先（Issue #465）。データルートは既定以外にも置けるため、
+                // 1033 の本文へ載せる撤去先。データルートは既定以外にも置けるため、
                 // パスが無いと運用者が撤去先を特定できない。
                 forwarderMsiFolderPath: forwarderMsiFolderPath,
                 // ADR-0023 決定 1: 保存先のスキーマ初期化は起動経路ではなく監視ループで行う
@@ -745,7 +743,7 @@ public static class Program
 
         builder.Services.AddHostedService<IngestionHostedService>();
 
-        // 閲覧画面向けの読み取り専用の観測値公開（M8-3。Issue #70）。契約は Yagura.Abstractions
+        // 閲覧画面向けの読み取り専用の観測値公開（M8-3）。契約は Yagura.Abstractions
         // （IYaguraSystemStatusReader——書き込み系マーカー IYaguraWriteService を実装しない
         // 読み取り専用契約）、実装はホスト管轄（IngestionMetrics・DiskSpool・設定適用値の
         // 結線はここでしかできない——architecture.md §1.1 の参照構造）。
@@ -761,15 +759,15 @@ public static class Program
                     new Yagura.Abstractions.Observability.YaguraListenerEndpoint("UDP", resolvedConfiguration.UdpPort),
                     new Yagura.Abstractions.Observability.YaguraListenerEndpoint("TCP", resolvedConfiguration.TcpPort),
                 ],
-                // 流量制限の発火上位送信元（Issue #288）: SwappableIngressGate を渡す——設定
+                // 流量制限の発火上位送信元: SwappableIngressGate を渡す——設定
                 // ライブ再読み込みでゲートが差し替わっても、読み取りは常に現在の実装へ届く
                 // （流量制御 opt-out 時は NoopIngressGate のため空になる）。
                 flowControlRejections: ingressGate,
-                // 途絶検知のエントリ状態（ADR-0018 決定 4。Issue #351）: UI-4 の登録済みマーク・
+                // 途絶検知のエントリ状態（ADR-0018 決定 4）: UI-4 の登録済みマーク・
                 // 途絶中強調の入力。機能無効（ウォッチリスト未設定）の間は空を返す。
                 sourceSilenceEntries: sourceSilenceDetector.SnapshotEntryStatuses));
 
-        // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2。Issue #52）。
+        // 監査記録の最小基盤（security.md §4.1・§4.2。M6-2）。
         //
         // Yagura.Web（ListenerPortGuardMiddleware）は Yagura.Abstractions.Auditing.IAuditRecorder
         // インターフェースのみを参照し、実体（アプリ記録ファイル + Windows イベントログ併記）は
@@ -783,9 +781,9 @@ public static class Program
         // WebGuardMetrics のコメント参照）。
         builder.Services.AddSingleton<WebGuardMetrics>();
         // 監査記録のデコレータチェーン: IAuditRecorder =
-        //   AggregatingAuditRecorder（SEC-4 集約。#268）
-        //     → ResilientAuditRecorder（SEC-10 障害中保持・書き戻し。#269）
-        //       → FileAuditRecorder（ファイル + イベントログの実書き込み。#52）。
+        //   AggregatingAuditRecorder（SEC-4 集約）
+        //     → ResilientAuditRecorder（SEC-10 障害中保持・書き戻し）
+        //       → FileAuditRecorder（ファイル + イベントログの実書き込み）。
         // 全呼び出し側は IAuditRecorder 型で解決するため、両デコレータは透過的に効く。
         // Resilient は「アプリ記録ファイルへ確実に残ったか」を内側の TryRecord の戻り値で判定する
         // ため、集約の内側（＝実書き込みの直上）に置く。両デコレータは周期処理（集約の静穏サマリ・
@@ -812,7 +810,7 @@ public static class Program
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>());
 
-        // 監査記録の保持期間削除（SEC-2 = 既定 365 日。security.md §4.2。Issue #261）:
+        // 監査記録の保持期間削除（SEC-2 = 既定 365 日。security.md §4.2）:
         // 起動時 1 回 + ログ本体の保持期間削除と同じ実行時刻（Retention:ExecutionTimeOfDay）で
         // 日次実行する。独立した IHostedService として登録する——受信パイプラインと順序依存が
         // なく（対象はホスト管轄のローカルファイルのみ。ILogStore・書き込みゲートに触れない）、
@@ -826,7 +824,7 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>());
 
-        // 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5。Issue #266）: 昇格後に
+        // 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5）: 昇格後に
         // 旧 SQLite の蓄積ログを現行 provider へ移送する管理操作。書き込みは他経路と同じ
         // 書き込みゲートでバッチ単位に直列化する（移行中も受信を止めない——§6.2 要件①）。
         builder.Services.AddSingleton<ILogMigrationService>(sp => new Yagura.Host.Administration.LogMigrationService(
@@ -838,8 +836,8 @@ public static class Program
             sp.GetRequiredService<IAuditRecorder>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.LogMigrationService>()));
 
-        // ファイアウォール規則の不一致検出 + インストール記録の転記（CF-2。configuration.md §4.3。
-        // Issue #265）。起動時（app.Build() 後）とリスナ再構成の適用時に照合する。
+        // ファイアウォール規則の不一致検出 + インストール記録の転記（CF-2。configuration.md §4.3）。
+        // 起動時（app.Build() 後）とリスナ再構成の適用時に照合する。
         builder.Services.AddSingleton<Yagura.Host.Firewall.IFirewallRuleReader>(sp =>
             new Yagura.Host.Firewall.WindowsFirewallRuleReader(
                 sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Firewall.WindowsFirewallRuleReader>()));
@@ -849,7 +847,7 @@ public static class Program
             sp.GetRequiredService<IAuditRecorder>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Firewall.FirewallStartupInspector>()));
 
-        // サービス実行アカウントの証跡化（ADR-0015 決定 8。Issue #263。security.md §4.1）:
+        // サービス実行アカウントの証跡化（ADR-0015 決定 8。security.md §4.1）:
         // インストーラ構成記録の初回転記（2024）と実効実行アカウントの変化検出（2025）。
         builder.Services.AddSingleton(sp => new ServiceAccountStartupInspector(
             dataRoot,
@@ -857,7 +855,7 @@ public static class Program
             TimeProvider.System,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<ServiceAccountStartupInspector>()));
 
-        // 設定ライブ再読み込み（configuration.md §3。CF-4 層1。Issue #262）。即時反映の口
+        // 設定ライブ再読み込み（configuration.md §3。CF-4 層1）。即時反映の口
         // （ImmediateConfigurationApplier）はここ（合成ルート）で各コンポーネントの更新メソッドを
         // 束ねる。ここに登録されていないキーの変更は「再起動待ち」として明示される（1020）。
         builder.Services.AddSingleton<IConfigurationReloadService>(sp => new ConfigurationReloadService(
@@ -865,7 +863,7 @@ public static class Program
             startupRawOptions,
             new[]
             {
-                // 流量制御（Issue #260）: ゲート実装ごと差し替える（SwappableIngressGate）。
+                // 流量制御: ゲート実装ごと差し替える（SwappableIngressGate）。
                 new ImmediateConfigurationApplier(
                     ["Ingestion:FlowControl:Enabled", "Ingestion:FlowControl:MessagesPerSecond", "Ingestion:FlowControl:BurstSize"],
                     newConfiguration => ingressGate.Swap(CreateIngressGate(newConfiguration))),
@@ -898,7 +896,7 @@ public static class Program
                 new ImmediateConfigurationApplier(
                     ["Notification:SourceSilence:Watchlist", "Notification:SourceSilence:DefaultThresholdMinutes"],
                     newConfiguration => applySourceSilenceWatchlist(newConfiguration.SourceSilence?.Watchlist)),
-                // 監査記録の保持期間（Issue #261）。実行時刻は Retention 側と共有のため日数のみ。
+                // 監査記録の保持期間。実行時刻は Retention 側と共有のため日数のみ。
                 new ImmediateConfigurationApplier(
                     ["Audit:RetentionDays"],
                     newConfiguration => sp.GetRequiredService<Yagura.Host.Observability.Auditing.AuditRetentionScheduler>()
@@ -910,7 +908,7 @@ public static class Program
                     newConfiguration => (sp.GetRequiredService<Yagura.Web.ReverseDns.IReverseDnsResolver>()
                             as Yagura.Web.ReverseDns.ReverseDnsResolver)?
                         .UpdateOptions(new Yagura.Web.ReverseDns.ReverseDnsDisplayOptions(newConfiguration.ViewerReverseDnsEnabled))),
-                // RFC 3164 既定タイムゾーン（Issue #134）: 解析段へパススルー。
+                // RFC 3164 既定タイムゾーン: 解析段へパススルー。
                 new ImmediateConfigurationApplier(
                     ["Ingestion:Rfc3164:DefaultTimeZone"],
                     newConfiguration => sp.GetRequiredService<IngestionPipeline>()
@@ -920,11 +918,11 @@ public static class Program
                 new ImmediateConfigurationApplier(
                     ["Spool:QuotaBytes"],
                     newConfiguration => spool?.UpdateQuotaBytes(newConfiguration.SpoolQuotaBytes)),
-                // 受信リスナの無瞬断再構成（CF-4 層2。Issue #262）: UDP/TCP の bind を張り替える。
+                // 受信リスナの無瞬断再構成（CF-4 層2）: UDP/TCP の bind を張り替える。
                 // 失敗時は旧構成で復旧（それも失敗なら CF-6 の定期再試行）。瞬断区間は
                 // 受信断のシステムイベント（downtime.listener-reconfigure）として記録する
                 // ——書き込みは他経路（永続化段・drain・保持期間削除）と同じ書き込みゲートで
-                // 直列化する（ILogStore の単一 writer 契約。Issue #151）。
+                // 直列化する（ILogStore の単一 writer 契約）。
                 // TLS 受信キー（Ingestion:Tls:*）は対象外——宣言どおり再起動（証明書ストア参照・
                 // 秘密鍵アクセス権付与を伴うため。ConfigurationKeyMetadata 参照）。
                 new ImmediateConfigurationApplier(
@@ -949,7 +947,7 @@ public static class Program
                             }).ConfigureAwait(false);
 
                         // ポート変更の適用時の規則突合（CF-2。configuration.md §4.3「起動時と
-                        // ポート変更の適用時に検出して警告する」。Issue #265）。
+                        // ポート変更の適用時に検出して警告する」）。
                         sp.GetRequiredService<Yagura.Host.Firewall.FirewallStartupInspector>()
                             .CheckConsistency(newConfiguration);
 
@@ -976,7 +974,7 @@ public static class Program
             timeProvider: null,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<ConfigurationReloadService>()));
 
-        // 起動時の設定差分照合（Issue #329）: 前回適用スナップショットと起動時設定の差分を
+        // 起動時の設定差分照合: 前回適用スナップショットと起動時設定の差分を
         // 監査 2019 へ記録する（手編集 + 再起動で反映された変更の軽量補完。security.md §4.1）。
         // 起動時（app.Build() 後）に照合し、契機①としてスナップショットを取り直す。
         builder.Services.AddSingleton(sp => new StartupConfigurationInspector(
@@ -995,7 +993,7 @@ public static class Program
 
         // 途絶からの復帰（1029。情報レベル——1000 番台に情報レベルを置く初例）もイベントログへ
         // 届ける（ADR-0018 決定 3——途絶警告と対で「ログが欠けていた期間」の終端を証跡に残す。
-        // Issue #382: 既定フィルタが Warning 以上のため、このフィルタなしでは 1029 がコンソールに
+        // 既定フィルタが Warning 以上のため、このフィルタなしでは 1029 がコンソールに
         // しか出ず、証跡が実在しなかった）。カテゴリを監視ループに限定し、他カテゴリの
         // Information は開放しない（同カテゴリの他の Information——保留開始・回復・seed 失敗——も
         // イベントログに残るが、いずれも受信断・判定状態の運用証跡であり対象として妥当）。
@@ -1003,7 +1001,7 @@ public static class Program
             "Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor",
             LogLevel.Information);
 
-        // ---- 管理画面の書き込み系サービス（M8-4。Issue #71）----
+        // ---- 管理画面の書き込み系サービス（M8-4）----
         //
         // 契約は Yagura.Abstractions.Administration（IYaguraWriteService 実装群——security.md
         // §1 L-5 の参照分離検査の対象）、実体は設定ファイル・DB 接続を管轄する Host 側に置く
@@ -1089,7 +1087,7 @@ public static class Program
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ICertificateStoreReader>(
             _ => new Yagura.Host.Administration.Https.WindowsCertificateStoreReader());
 
-        // 管理リモート HTTPS の設定保存・保存前 fail-closed 検証 + 監査（ADR-0012 決定 1・4・7。
+        // 管理リモート HTTPS の設定保存・保存前 fail-closed 検証 + 監査（ADR-0012 決定 1）。
         // 上記 read-only 列挙とは別契約の書き込み系サービス——IAdminAuthenticationAdminService と
         // 同じ「dataRoot + IAuditRecorder を渡して Host 実体を結線する」形式）。
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IAdminRemoteAccessAdminService>(sp =>
@@ -1097,8 +1095,8 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
 
-        // TLS 受信の証明書設定の保存・保存前 fail-closed 検証 + 監査（ADR-0019 決定 1・2・5。
-        // Issue #349）。上記の管理リモート HTTPS 版と同型で、証明書の列挙・解決・EKU 判定・
+        // TLS 受信の証明書設定の保存・保存前 fail-closed 検証 + 監査（ADR-0019 決定 1）。
+        // 上記の管理リモート HTTPS 版と同型で、証明書の列挙・解決・EKU 判定・
         // 秘密鍵の読取検証は実装を共有する（二重実装しない）。挙動が割れるのは期限切れと
         // 秘密鍵読取不可の 2 点のみ（IngestionTlsAdminService の remarks 参照）。
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IIngestionTlsAdminService>(sp =>
@@ -1107,7 +1105,7 @@ public static class Program
                 sp.GetRequiredService<IAuditRecorder>()));
 
         // 閲覧 UI の HTTPS 設定の保存・保存前 fail-closed 検証 + SAN 助言検査 + 監査
-        // （ADR-0022 決定 3・4・10。Issue #455 段階 ②）。証明書設定サービスの 3 例目で、
+        // （ADR-0022 決定 3）。証明書設定サービスの 3 例目で、
         // 列挙・解決・EKU 判定・秘密鍵の読取検証は既存 2 サービスと実装を共有する
         // （三重実装しない。ViewerHttpsAdminService の remarks 参照）。
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IViewerHttpsAdminService>(sp =>
@@ -1115,15 +1113,15 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<IAuditRecorder>()));
 
-        // 閲覧 HTTPS の縮小継続状態を管理画面の常設バナーへ渡す（ADR-0022 決定 2 可視化③。
-        // Issue #455 段階 ③）。起動時に確定する実効値であり、稼働中の再判定はしない（縮小継続は
+        // 閲覧 HTTPS の縮小継続状態を管理画面の常設バナーへ渡す（ADR-0022 決定 2 可視化③）。
+        // 起動時に確定する実効値であり、稼働中の再判定はしない（縮小継続は
         // 再起動なしに解消しない——1035 の XML doc 参照）。
         builder.Services.AddSingleton(
             viewerHttpsCertificateUnavailableReason is not null
                 ? new Yagura.Web.Administration.ViewerHttpsRuntimeState(true, viewerHttpsCertificateUnavailableReason)
                 : Yagura.Web.Administration.ViewerHttpsRuntimeState.Normal);
 
-        // メール通知の設定・テスト送信・健全性参照（ADR-0017 決定 4・8。Issue #350）。
+        // メール通知の設定・テスト送信・健全性参照（ADR-0017 決定 4）。
         // ディスパッチャは Func 経由で遅延解決する——本サービスとディスパッチャの登録順に
         // 依存させないため（AddSingleton のファクトリは Build 後の初回解決時に走る）。
         builder.Services.AddSingleton<IEmailNotificationAdminService>(sp =>
@@ -1133,7 +1131,7 @@ public static class Program
                 emailNotificationQueue,
                 () => sp.GetService<EmailNotificationDispatcher>()));
 
-        // 途絶検知のウォッチリスト設定（ADR-0018 決定 4・5・6。Issue #351）。即時反映の口は
+        // 途絶検知のウォッチリスト設定（ADR-0018 決定 4）。即時反映の口は
         // 再読み込み経路（ImmediateConfigurationApplier）と同一のデリゲートを渡す——反映経路を
         // 1 本に保つ。候補選択（決定 4）は ILogStore の送信元別集計から取る。
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.ISourceSilenceAdminService>(sp =>
@@ -1144,19 +1142,18 @@ public static class Program
                 applySourceSilenceWatchlist,
                 sourceSilenceDetector.SnapshotEntryStatuses));
 
-        // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）。設定の生指定（名/SID）を
+        // AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5）。設定の生指定（名/SID）を
         // 起動時に SID 集合へ解決してキャッシュする（名 → SID は Windows 専用の NTAccount.Translate——本
         // エントリポイントは [SupportedOSPlatform("windows")]）。解決できない指定は警告してスキップされる
         // （認可を付与しない安全側。WindowsSecurityGroupResolver の remarks 参照）。
         //
         // 解決は factory 登録にして、ロガーを DI（app.Build() 後に構築されるロギングパイプライン）から
-        // 取る（Issue #346）。以前は bootstrapLoggerFactory（コンソールのみ）で解決していたため、
-        // [sec9-group-unresolved] の警告が EventLog プロバイダの構築前に出て**運用者に届かなかった**
-        // ——「スキップ」は成立しているのに「警告」が成立しておらず、グループ名のタイプミスが
-        // 「そのグループの所属者が黙って認可されない」という形でしか現れなかった。
-        // FirewallStartupInspector / StartupConfigurationInspector と同じ形（sp から ILoggerFactory を
-        // 取り、実行は app.Build() 後）に揃える。解決の実行時点は下の app.Build() 直後で固定する
-        // （遅延解決のまま放置すると初回のログイン要求まで警告が出ない）。
+        // 取る——bootstrapLoggerFactory（コンソールのみ）で解決すると、[sec9-group-unresolved] の警告が
+        // EventLog プロバイダの構築前に出て運用者に届かない。「スキップ」は成立しているのに「警告」が
+        // 成立せず、グループ名のタイプミスが「そのグループの所属者が黙って認可されない」という形でしか
+        // 現れなくなる。FirewallStartupInspector / StartupConfigurationInspector と同じ形（sp から
+        // ILoggerFactory を取り、実行は app.Build() 後）に揃える。解決の実行時点は下の app.Build() 直後で
+        // 固定する（遅延解決のまま放置すると初回のログイン要求まで警告が出ない）。
         builder.Services.AddSingleton(sp =>
         {
             var sec9Logger = sp.GetRequiredService<ILoggerFactory>()
@@ -1173,7 +1170,7 @@ public static class Program
 
         // 認証スキーム（Negotiate/AppAuth Cookie）・認可ポリシー（管理 + 閲覧）の登録
         // （AdminAuthenticationExtensions 参照）。スキームは管理・閲覧で共用の単一構成（ADR-0013 決定 1 の
-        // 単一 Cookie を閲覧へも展開——オーナー決定 2026-07-12）。実効値は起動時に固定される（反映方式は
+        // 単一 Cookie を閲覧へも展開）。実効値は起動時に固定される（反映方式は
         // §3「サービス再起動」——ConfigurationKeyMetadata 参照）。
         builder.Services.AddYaguraAdminAuthentication(
             resolvedConfiguration.AdminWindowsAuthEnabled,
@@ -1188,7 +1185,7 @@ public static class Program
 
         // 閲覧 UI 認証（ADR-0010 Phase 4 決定 7）の実効値。閲覧ログイン画面・MainLayout の circuit 層 viewer
         // ガードが参照する。AppAuthAvailable = アプリ独自認証の有効/無効（アプリアカウントは管理・閲覧で
-        // 共有の単一ストア——閲覧ログインでも Windows + アプリ両方を提示するオーナー決定 2026-07-12）。
+        // 共有の単一ストア——閲覧ログインでも Windows + アプリ両方を提示する）。
         builder.Services.AddSingleton(new Yagura.Web.Administration.ViewerAuthenticationRuntimeOptions(
             Enabled: resolvedConfiguration.ViewerWindowsAuthEnabled,
             AppAuthAvailable: resolvedConfiguration.AdminAppAuthEnabled));
@@ -1239,7 +1236,7 @@ public static class Program
 
         var app = builder.Build();
 
-        // SEC-9（Issue #346）: AD グループ → SID の解決をここで実行する。singleton の遅延解決に
+        // SEC-9: AD グループ → SID の解決をここで実行する。singleton の遅延解決に
         // 任せると初回のログイン要求まで解決されず、解決できない指定の警告
         // （[sec9-group-unresolved]）が起動時に出ない。ここで一度取得して起動時点に固定する
         // （以降の参照は同一インスタンス。下の自己ロックアウト注意でも使う）。
@@ -1247,7 +1244,7 @@ public static class Program
         var windowsGroupAuthorization =
             app.Services.GetRequiredService<Yagura.Web.Administration.WindowsGroupAuthorizationOptions>();
 
-        // CF-2（Issue #265）: 起動時のファイアウォール規則突合 + インストール記録の初回転記。
+        // CF-2: 起動時のファイアウォール規則突合 + インストール記録の初回転記。
         // いずれも失敗が起動を妨げない（Inspector 内で完結）。転記は非同期で開始し完了を待たない
         // （監査レール——FileAuditRecorder——は例外を投げない契約）。
         {
@@ -1256,7 +1253,7 @@ public static class Program
             _ = firewallInspector.TranscribeInstallationRecordOnceAsync(CancellationToken.None);
         }
 
-        // 起動時の設定差分照合 + 前回適用スナップショットの取り直し（Issue #329）。失敗は起動を
+        // 起動時の設定差分照合 + 前回適用スナップショットの取り直し。失敗は起動を
         // 妨げない（Inspector 内で完結）。非同期で開始し完了を待たない（CF-2 の転記と同型——
         // 監査レールは例外を投げない契約）。
         {
@@ -1270,16 +1267,16 @@ public static class Program
         var effectiveServiceAccountName = ServiceAccountStartupInspector.ResolveEffectiveAccountName();
 
         // サービス実行アカウントの構成転記（2024）と前回起動時からの変化検出（2025）
-        // （ADR-0015 決定 8。Issue #263）。失敗は起動を妨げない（Inspector 内で完結）。
+        // （ADR-0015 決定 8）。失敗は起動を妨げない（Inspector 内で完結）。
         {
             var serviceAccountInspector = app.Services.GetRequiredService<ServiceAccountStartupInspector>();
             _ = serviceAccountInspector.TranscribeInstallationRecordOnceAsync(CancellationToken.None);
             _ = serviceAccountInspector.DetectAccountChangeAndRefreshAsync(effectiveServiceAccountName, CancellationToken.None);
         }
 
-        // bind 再試行（CF-6）による受信再開の記録（Issue #291）: 開けなかった区間を受信断の
+        // bind 再試行（CF-6）による受信再開の記録: 開けなかった区間を受信断の
         // システムイベント（downtime.listener-bind-retry）として残す。書き込みは他経路と同じ
-        // 書き込みゲートで直列化する（Issue #151——再試行成功時は消費ループが既に動いている）。
+        // 書き込みゲートで直列化する（再試行成功時は消費ループが既に動いている）。
         {
             var pipelineForRecovery = app.Services.GetRequiredService<IngestionPipeline>();
             var recoveryLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Startup");
@@ -1323,7 +1320,7 @@ public static class Program
             // リダイレクトされた子プロセス stdout のコードページ次第で化け得るため(en-US 環境の
             // CP437 等)、E2E テストはこの ASCII トークンで照合する。イベント ID は
             // ActiveNotificationEventIds.SpoolDegradedStartup（1001。security.md §4.3「1000 番台
-            // = 運用警告」区画。Issue #149 で 1000 番台を実配線した際に遡及割当・記録した）。
+            // = 運用警告」区画）。
             startupLogger.LogWarning(
                 Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.SpoolDegradedStartup,
                 spoolOpenFailure,
@@ -1332,7 +1329,7 @@ public static class Program
                 resolvedConfiguration.SpoolDirectory);
         }
 
-        // フォワーダ MSI アップロード（ADR-0020 決定 2・3）の起動時処理:
+        // フォワーダ MSI アップロード（ADR-0020 決定 2）の起動時処理:
         // ①孤児ステージングファイルの掃除（中断・プロセス停止の残骸。決定 3——起動時 + 新規
         //   アップロード開始時の二点で掃除する）、
         // ②ACL 乖離の起動時一回検査（決定 2——周期監視〔1 分後から〕に加えて起動直後にも一度
@@ -1357,10 +1354,10 @@ public static class Program
                 forwarderStartupLogger.LogWarning(ex, "フォワーダ MSI 配置フォルダの起動時掃除に失敗しました（起動は継続します）。");
             }
 
-            // 起動時の一回検査は能動通知モニタへ委譲する（Issue #465）: 以前はここで直接
-            // LogWarning していたため、モニタ側の抑制記録（_lastNotifiedAt）が更新されず
-            // 「起動直後 + その約 60 秒後」の 2 連発が再起動のたびに起きていた。同じ発火経路
-            // （NotifyIfDue）を通すことで抑制の記録点が単一になり、本文も 1 つに統一される。
+            // 起動時の一回検査は能動通知モニタへ委譲する: 個別に LogWarning すると、モニタ側の
+            // 抑制記録（_lastNotifiedAt）が更新されないため「起動直後 + その約 60 秒後」の 2 連発が
+            // 再起動のたびに起きる。同じ発火経路（NotifyIfDue）を通すことで抑制の記録点が単一になり、
+            // 本文も 1 つに統一される。
             try
             {
                 app.Services
@@ -1424,7 +1421,7 @@ public static class Program
             }
         }
 
-        // TLS 受信（RFC 5425。opt-in。security.md §6。Issue #137）: 証明書が解決できなかった場合の
+        // TLS 受信（RFC 5425。opt-in。security.md §6）: 証明書が解決できなかった場合の
         // 起動時警告（縮小継続——起動は中止しない。平文 UDP/TCP 受信には一切影響しない。
         // ConfigurationEventIds.IngestionTlsCertificateUnavailableAtStartup = 1016 参照）。
         // 管理リスナのリモート HTTPS（上記）と同じパターン。
@@ -1534,7 +1531,7 @@ public static class Program
         // ルーティングを組み込むため、ここでは UseAntiforgery のみを明示する。
         app.UseAntiforgery();
 
-        // リスナ分離の実行時強制(M6-1。Issue #51)。UseRouting(MapRazorComponents が暗黙に
+        // リスナ分離の実行時強制(M6-1)。UseRouting(MapRazorComponents が暗黙に
         // 組み込む)によりエンドポイントが確定した後、実処理(Razor Components の描画・
         // SignalR ハブへのアップグレード等)が始まる前に、管理系エンドポイントへの到達を
         // 接続の実ローカルポートで判定する(ListenerPortGuardMiddleware のコメント参照——
@@ -1589,12 +1586,10 @@ public static class Program
             resolvedConfiguration.AdminForwarderMsiUploadEnabled);
 
         // 管理者アカウントストア・ログストアのスキーマ初期化は**ここでは行わない**
-        // （ADR-0023 決定 1。Issue #466）: 従来はこの位置で adminAccountStore.InitializeAsync() を
-        // try/catch なしで待っており、保存先が SQL Server で到達不能だと SqlException が
-        // 未処理例外となりプロセスが即死していた——受信パイプラインは同じ障害でスプールへ
-        // 正しく縮退するのに、初期化だけが縮退せず「DB 障害中は再起動できない」状態を作っていた。
-        // また当時のコメントは順序の理由を「ILogStore と同じ」と記していたが、ILogStore の初期化は
-        // architecture.md §1.2 手順 3 = 受信開始の**後**であり、この理由づけ自体が齟齬していた。
+        // （ADR-0023 決定 1）: 保存先が SQL Server で到達不能な場合、初期化を起動経路に置くと
+        // SqlException が未処理例外となりプロセスが即死する——受信パイプラインは同じ障害で
+        // スプールへ正しく縮退できるのに、初期化だけが縮退せず「DB 障害中は再起動できない」
+        // 状態になる。ILogStore の初期化自体は architecture.md §1.2 手順 3 = 受信開始の**後**である。
         //
         // 初期化は StorageInitializationCoordinator が周期監視の経路で行う（起動は完了を待たない）。
         // 接続に上限を課すだけでは足りない——初期化は DDL + スキーマ移行であり、移行コマンドは
@@ -1616,7 +1611,7 @@ public static class Program
                 // 保存先が到達不能ならこの照会も失敗する（ADR-0023 決定 1）。警告を出せないだけで
                 // 起動は止めない——縮退そのものは能動通知（1039）が別途可視化する。
                 //
-                // 天井（決定 1・リサの質問 2）: 起動シーケンス中の保存先接続試行は合計 10 秒を
+                // 天井（決定 1）: 起動シーケンス中の保存先接続試行は合計 10 秒を
                 // 超えない。スキーマ初期化を起動経路の外へ出した後、起動経路に残る保存先アクセスは
                 // この照会だけなので、ここに天井を掛ければ合計上限が満たされる。接続文字列側の
                 // Connect Timeout に頼らないのは、provider や既定値によって実効値が変わるため。
@@ -1662,17 +1657,17 @@ public static class Program
                 "アカウントは引き続き閲覧に到達できます）。");
         }
 
-        // 平文露出の注意（ADR-0010 Phase 4・田中のセキュリティレビュー指摘）: 閲覧リスナ（8514）は既定で
+        // 平文露出の注意（ADR-0010 Phase 4）: 閲覧リスナ（8514）は既定で
         // 平文 HTTP。Viewer:...:AdminGroups を指定すると、その所属者は閲覧リスナ上で「管理」役割の認証
         // セッション Cookie（admin_session）を得る——Cookie は host スコープゆえ管理リスナ（8515/リモート
         // 8516）へも届く。SecurePolicy=SameAsRequest（ADR-0013 決定 7）のため、平文 HTTP で発行された
         // 管理等価 Cookie は Secure 属性なしで LAN を流れる。管理操作は管理リスナ（loopback またはリモート
         // HTTPS）から行い、閲覧リスナでの管理役割付与は「閲覧のための管理⊇閲覧」に留める運用を推奨する。
-        // ADR-0022 決定 5 による絞り込み（Issue #455 段階 ③）: 警告は「管理等価 Cookie が実際に
+        // ADR-0022 決定 5 による絞り込み: 警告は「管理等価 Cookie が実際に
         // 平文で LAN を流れ得る」組み合わせ——AdminGroups 非空 × 閲覧 HTTPS 無効 × 公開範囲 Lan——に
         // 限定し、独立イベント ID 1038 を採る。閲覧 HTTPS 有効（Enabled——平文面が消える）・
         // LocalhostOnly（LAN を流れない）では出さない（警告のノイズ化を避ける）。これは可視化で
-        // あり連動強制ではない（オーナー裁定 ③——決定 5）。ViewerGroups のみの構成は対象外。
+        // あり連動強制ではない（決定 5）。ViewerGroups のみの構成は対象外。
         if (resolvedConfiguration.ViewerWindowsAuthEnabled &&
             windowsGroupAuthorization.ViewerAdminGroupSids.Count > 0 &&
             resolvedConfiguration.ViewerHttpsMode != Yagura.Host.Configuration.ViewerHttpsMode.Enabled &&
@@ -1698,7 +1693,7 @@ public static class Program
         // "StartAsync is called before: The app's request processing pipeline is
         // configured. The server is started and IApplicationLifetime.ApplicationStarted
         // is triggered." と明記されている。WebApplication は内部でこの Generic Host の
-        // 規約に従う。確認日 2026-07-05、learn.microsoft.com/aspnet/core/fundamentals/
+        // 規約に従う。learn.microsoft.com/aspnet/core/fundamentals/
         // host/hosted-services）。本 E2E テスト（tests/Yagura.E2E.Tests）の起動ログ順で
         // 実際に「UDP listener started」ログが「Now listening on:」より先に出ることも
         // 実証している。
@@ -1735,18 +1730,18 @@ public static class Program
     /// <summary>
     /// bootstrap ロガー（DI コンテナ構築前。<see cref="Main"/> 冒頭）のプロバイダ構成。
     /// コンソール（Generic Host 標準と同じ標準出力）に加え、<b>Windows イベントログ</b>
-    /// （ソース名 = サービス名 <c>Yagura</c>。DI 側の登録と同一）へも書く（Issue #433）。
+    /// （ソース名 = サービス名 <c>Yagura</c>。DI 側の登録と同一）へも書く。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>なぜ bootstrap 段に EventLog シンクが要るのか（Issue #433）</b>: Windows サービス構成では
+    /// <b>なぜ bootstrap 段に EventLog シンクが要るのか</b>: Windows サービス構成では
     /// 標準出力がどこにも接続されないため、Host 構築前の config 検証 fail-closed
     /// （1011/1012/1024/1032・個別 ID を持たない受信ポート不正等 = EventId 0）の LogCritical は
     /// コンソール専用ロガーでは観測不能になり、管理者がイベントログで見られるのは未処理例外の
     /// 痕跡（.NET Runtime 1026 / Application Error 1000）だけになる——「専用イベント ID +
     /// 詳細メッセージで『なぜ起動しないか』が一目で分かる警告」（ADR-0010 委任事項 5・
     /// security.md §2.4）の設計意図がサービス構成で成立していなかった。同型の先行事例
-    /// SEC-9-a（Issue #346）は発火点を <c>app.Build()</c> 後の DI ロガーへ移して解決したが、
+    /// SEC-9-a は発火点を <c>app.Build()</c> 後の DI ロガーへ移して解決したが、
     /// 本件の発火点は <b>Host 構築そのものを中止する経路</b>のため同じ手が使えない——
     /// bootstrap ロガー自身にシンクを持たせるのが唯一の経路である。
     /// </para>
@@ -1782,7 +1777,7 @@ public static class Program
 
         // 位置情報を持つ例外は入れ子の奥にある。構成システム（AddJsonFile）の場合、実測では
         // InvalidDataException → FormatException → JsonReaderException（JsonException の派生）の
-        // 3 段になる（2026-07-18 確認）。段数を決め打ちせず、連鎖を辿って最初の JsonException を拾う。
+        // 3 段になる。段数を決め打ちせず、連鎖を辿って最初の JsonException を拾う。
         JsonException? jsonFailure = null;
         for (var current = failure; current is not null; current = current.InnerException)
         {
