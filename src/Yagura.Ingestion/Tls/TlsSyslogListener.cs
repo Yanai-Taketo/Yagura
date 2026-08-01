@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -20,11 +19,12 @@ namespace Yagura.Ingestion.Tls;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>既存 TCP パイプラインとの関係</b>: Accept ループ・同時接続数上限・IPv4/IPv6 デュアルスタック
-/// bind（<see cref="DualStackTcpListenerFactory"/>）は <see cref="Yagura.Ingestion.Tcp.TcpSyslogListener"/>
-/// と同一の実装を共有する。Accept 後、平文 TCP は <c>NetworkStream</c> をそのまま読むのに対し、
-/// 本クラスは <see cref="SslStream"/> でラップしてサーバ認証（相互 TLS はスコープ外——security.md §6
-/// 「サーバ認証のみ」）のハンドシェイクを行ってから、
+/// <b>既存 TCP パイプラインとの関係</b>: Accept ループ・同時接続数上限判定と拒否処理・IPv4/IPv6
+/// デュアルスタック bind（<see cref="DualStackTcpListenerFactory"/>）・接続タスクの追跡は
+/// <see cref="Yagura.Ingestion.Tcp.TcpConnectionAcceptLoop"/> として <see cref="Yagura.Ingestion.Tcp.TcpSyslogListener"/>
+/// と共有する（本クラスが保持する <c>_acceptLoop</c> フィールド参照）。Accept 後、平文 TCP は
+/// <c>NetworkStream</c> をそのまま読むのに対し、本クラスは <see cref="SslStream"/> でラップしてサーバ
+/// 認証（相互 TLS はスコープ外——security.md §6「サーバ認証のみ」）のハンドシェイクを行ってから、
 /// 同じ読み取りループ（<see cref="Yagura.Ingestion.Tcp.TcpFramedConnectionProcessor"/>）へ渡す。
 /// </para>
 /// <para>
@@ -56,13 +56,9 @@ public sealed class TlsSyslogListener : IAsyncDisposable
     private readonly ILogger<TlsSyslogListener>? _logger;
     private readonly TimeProvider _timeProvider;
 
-    private TcpListener? _tcpListener;
-    private Task? _acceptLoopTask;
-    private CancellationTokenSource? _stoppingCts;
-
-    private readonly ConcurrentDictionary<Task, byte> _connectionTasks = new();
-
-    private int _currentConnectionCount;
+    // Accept ループ・同時接続数上限判定・接続タスクの追跡は平文 TCP 受信リスナ
+    // （Yagura.Ingestion.Tcp.TcpSyslogListener）と共有する（TcpConnectionAcceptLoop の remarks 参照）。
+    private readonly TcpConnectionAcceptLoop _acceptLoop;
 
     public TlsSyslogListener(
         TlsSyslogListenerOptions options,
@@ -86,109 +82,31 @@ public sealed class TlsSyslogListener : IAsyncDisposable
         _certificateSelector = certificateSelector;
         _logger = logger;
         _timeProvider = timeProvider ?? TimeProvider.System;
+
+        _acceptLoop = new TcpConnectionAcceptLoop(
+            nameof(TlsSyslogListener),
+            _options.MaxConcurrentConnections,
+            _metrics,
+            _logger,
+            HandleConnectionAsync);
     }
 
     /// <summary>実際に束縛された TCP ポート（テスト用の OS 採番時に実ポートを取得するために使う）。</summary>
-    public int BoundPort { get; private set; }
+    public int BoundPort => _acceptLoop.BoundPort;
 
     /// <summary>現在の接続数（テスト・観測用）。</summary>
-    public int CurrentConnectionCount => Volatile.Read(ref _currentConnectionCount);
+    public int CurrentConnectionCount => _acceptLoop.CurrentConnectionCount;
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_tcpListener is not null)
-        {
-            throw new InvalidOperationException("TlsSyslogListener は既に開始されている。");
-        }
-
-        var bindAddress = IPAddress.Parse(_options.BindAddress);
-        if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
-        {
-            _tcpListener = DualStackTcpListenerFactory.CreateOrFallBack(_options.Port, _options.BindAddressIsExplicit, _logger);
-        }
-        else
-        {
-            _tcpListener = new TcpListener(bindAddress, _options.Port);
-            _tcpListener.Start();
-        }
-
-        BoundPort = ((IPEndPoint)_tcpListener.LocalEndpoint).Port;
-
-        _stoppingCts = new CancellationTokenSource();
-        _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_stoppingCts.Token), CancellationToken.None);
-
-        return Task.CompletedTask;
+        // bind・dual-stack 判定・Accept ループは平文 TCP 受信リスナ（Yagura.Ingestion.Tcp.TcpSyslogListener）
+        // と共有する共通処理へ委譲した（TcpConnectionAcceptLoop の remarks 参照）。
+        return _acceptLoop.StartAsync(_options.BindAddress, _options.Port, _options.BindAddressIsExplicit);
     }
 
-    public async Task StopAsync()
+    public Task StopAsync()
     {
-        if (_tcpListener is null)
-        {
-            return;
-        }
-
-        _stoppingCts?.Cancel();
-
-        if (_acceptLoopTask is not null)
-        {
-            await _acceptLoopTask.ConfigureAwait(false);
-        }
-
-        _tcpListener.Stop();
-
-        var pending = _connectionTasks.Keys.ToArray();
-        if (pending.Length > 0)
-        {
-            await Task.WhenAll(pending).ConfigureAwait(false);
-        }
-
-        _stoppingCts?.Dispose();
-        _stoppingCts = null;
-        _tcpListener = null;
-    }
-
-    private async Task AcceptLoopAsync(CancellationToken stoppingToken)
-    {
-        var listener = _tcpListener!;
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            TcpClient client;
-            try
-            {
-                client = await listener.AcceptTcpClientAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (ObjectDisposedException)
-            {
-                break;
-            }
-            catch (SocketException)
-            {
-                continue;
-            }
-
-            if (Interlocked.Increment(ref _currentConnectionCount) > _options.MaxConcurrentConnections)
-            {
-                Interlocked.Decrement(ref _currentConnectionCount);
-                _metrics.RecordTcpConnectionRejected();
-                client.Close();
-                client.Dispose();
-                continue;
-            }
-
-            var connectionTask = Task.Run(() => HandleConnectionAsync(client, stoppingToken), CancellationToken.None);
-            _connectionTasks[connectionTask] = 0;
-
-            _ = connectionTask.ContinueWith(
-                t => _connectionTasks.TryRemove(t, out _),
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
+        return _acceptLoop.StopAsync();
     }
 
     private async Task HandleConnectionAsync(TcpClient client, CancellationToken stoppingToken)
@@ -321,7 +239,7 @@ public sealed class TlsSyslogListener : IAsyncDisposable
         }
         finally
         {
-            Interlocked.Decrement(ref _currentConnectionCount);
+            _acceptLoop.ReleaseConnectionSlot();
 
             // TLS 受信も「TCP 接続断」の内訳に含める（architecture.md §4.5。プロトコルを問わず
             // 接続終了そのものを 1 件計上する既存の意味論をそのまま踏襲する）。

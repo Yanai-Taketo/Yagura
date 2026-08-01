@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
@@ -92,15 +91,9 @@ public sealed class TcpSyslogListener : IAsyncDisposable
     private readonly ILogger<TcpSyslogListener>? _logger;
     private readonly TimeProvider _timeProvider;
 
-    private TcpListener? _tcpListener;
-    private Task? _acceptLoopTask;
-    private CancellationTokenSource? _stoppingCts;
-
-    // 現在接続中のソケットの読み取りループタスク一式。StopAsync でまとめて待つ。
-    private readonly ConcurrentDictionary<Task, byte> _connectionTasks = new();
-
-    // 同時接続数の有限化（§3.1）。Accept ごとにインクリメントし、接続終了時にデクリメントする。
-    private int _currentConnectionCount;
+    // Accept ループ・同時接続数上限判定・接続タスクの追跡は TLS 受信リスナ
+    // （Yagura.Ingestion.Tls.TlsSyslogListener）と共有する（TcpConnectionAcceptLoop の remarks 参照）。
+    private readonly TcpConnectionAcceptLoop _acceptLoop;
 
     public TcpSyslogListener(
         TcpSyslogListenerOptions options,
@@ -124,133 +117,42 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         // FakeTimeProvider を注入して実時間なしで決定的に検証できるようにする
         // （UdpSyslogListener の backoff 検証と同じ注入パターン）。
         _timeProvider = timeProvider ?? TimeProvider.System;
+
+        _acceptLoop = new TcpConnectionAcceptLoop(
+            nameof(TcpSyslogListener),
+            _options.MaxConcurrentConnections,
+            _metrics,
+            _logger,
+            HandleConnectionAsync);
     }
 
     /// <summary>
     /// 実際に束縛された TCP ポート。<see cref="TcpSyslogListenerOptions.Port"/> に 0
     /// を指定した場合（テスト用の OS 採番）に、開始後の実ポートを取得するために使う。
     /// </summary>
-    public int BoundPort { get; private set; }
+    public int BoundPort => _acceptLoop.BoundPort;
 
     /// <summary>
     /// 現在の接続数（テスト・観測用）。
     /// </summary>
-    public int CurrentConnectionCount => Volatile.Read(ref _currentConnectionCount);
+    public int CurrentConnectionCount => _acceptLoop.CurrentConnectionCount;
 
     /// <summary>
     /// ソケットを bind し、Accept ループを開始する（architecture.md §1.2「受信を最初に開く」）。
     /// </summary>
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_tcpListener is not null)
-        {
-            throw new InvalidOperationException("TcpSyslogListener は既に開始されている。");
-        }
-
-        var bindAddress = IPAddress.Parse(_options.BindAddress);
-        if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
-        {
-            // TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）と共有する
-            // 共通処理へ委譲した（DualStackTcpListenerFactory の remarks 参照）。
-            _tcpListener = DualStackTcpListenerFactory.CreateOrFallBack(_options.Port, _options.BindAddressIsExplicit, _logger);
-        }
-        else
-        {
-            // 明示的な 0.0.0.0（IPv4 のみ）・特定の IPv4/IPv6 アドレス指定は、
-            // 従来どおりそのアドレスファミリ単独のソケットで bind する。
-            _tcpListener = new TcpListener(bindAddress, _options.Port);
-            _tcpListener.Start();
-        }
-
-        BoundPort = ((IPEndPoint)_tcpListener.LocalEndpoint).Port;
-
-        _stoppingCts = new CancellationTokenSource();
-        _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_stoppingCts.Token), CancellationToken.None);
-
-        return Task.CompletedTask;
+        // bind・dual-stack 判定・Accept ループは TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）
+        // と共有する共通処理へ委譲した（TcpConnectionAcceptLoop の remarks 参照）。
+        return _acceptLoop.StartAsync(_options.BindAddress, _options.Port, _options.BindAddressIsExplicit);
     }
 
     /// <summary>
     /// Accept ループ・全接続の読み取りループを止め、ソケットを閉じる（architecture.md §1.3 手順 1）。
     /// </summary>
-    public async Task StopAsync()
+    public Task StopAsync()
     {
-        if (_tcpListener is null)
-        {
-            return;
-        }
-
-        // UdpSyslogListener と同じ順序（キャンセル → ループ終了待ち → 破棄）を踏む。
-        _stoppingCts?.Cancel();
-
-        if (_acceptLoopTask is not null)
-        {
-            await _acceptLoopTask.ConfigureAwait(false);
-        }
-
-        _tcpListener.Stop();
-
-        // 停止順序（依頼「リスナ停止 → 接続クローズ → drain」）: リスナは上で既に停止済み。
-        // 個々の接続の読み取りループは stoppingToken のキャンセルを受けて自ら終了し、
-        // 切断時に Incomplete マークを付けて Q1 へ流してから完了する（下記 HandleConnectionAsync）。
-        var pending = _connectionTasks.Keys.ToArray();
-        if (pending.Length > 0)
-        {
-            await Task.WhenAll(pending).ConfigureAwait(false);
-        }
-
-        _stoppingCts?.Dispose();
-        _stoppingCts = null;
-        _tcpListener = null;
-    }
-
-    private async Task AcceptLoopAsync(CancellationToken stoppingToken)
-    {
-        var listener = _tcpListener!;
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            TcpClient client;
-            try
-            {
-                client = await listener.AcceptTcpClientAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (ObjectDisposedException)
-            {
-                break;
-            }
-            catch (SocketException)
-            {
-                // 個々の Accept 失敗でループを止めない（UDP の個別データグラムエラーと同じ方針）。
-                continue;
-            }
-
-            // 同時接続数上限（architecture.md §3.1・M-14）: 上限到達時は Accept 後即クローズし、
-            // 新規接続を拒否する（既存接続を守る）。
-            if (Interlocked.Increment(ref _currentConnectionCount) > _options.MaxConcurrentConnections)
-            {
-                Interlocked.Decrement(ref _currentConnectionCount);
-                _metrics.RecordTcpConnectionRejected();
-                client.Close();
-                client.Dispose();
-                continue;
-            }
-
-            var connectionTask = Task.Run(() => HandleConnectionAsync(client, stoppingToken), CancellationToken.None);
-            _connectionTasks[connectionTask] = 0;
-
-            // 接続終了時に一覧から取り除く（無限に積み上がらないようにする）。継続はバックグラウンドで行い、
-            // Accept ループ自体はブロックしない。
-            _ = connectionTask.ContinueWith(
-                t => _connectionTasks.TryRemove(t, out _),
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
+        return _acceptLoop.StopAsync();
     }
 
     private async Task HandleConnectionAsync(TcpClient client, CancellationToken stoppingToken)
@@ -292,7 +194,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         }
         finally
         {
-            Interlocked.Decrement(ref _currentConnectionCount);
+            _acceptLoop.ReleaseConnectionSlot();
 
             // architecture.md §4.5「TCP 接続断」: 理由を問わず接続終了を 1 件計上する。
             _metrics.RecordTcpConnectionClosed();
