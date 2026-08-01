@@ -19,12 +19,12 @@
 | [0001](0001-project-founding.md) | プロジェクト創設 — 目的・スコープ・開発の原則 | accepted |
 | [0002](0002-architecture-principles.md) | アーキテクチャ原則 | accepted（改訂 2026-07-05。決定 2 の OS レベル取りこぼしの観測手段〔標準 API ゲージ〕は ADR-0016〔accepted 2026-07-18〕により部分的に superseded） |
 | [0003](0003-ui-policy.md) | UI 方針 — Blazor・デザインシステム先行・テーマ | accepted |
-| [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | accepted |
+| [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | accepted（決定 2 が想定する Server Core 構成は ADR-0024〔accepted 2026-08-01〕により**未検証を理由に対応外**へ。手編集による管理経路の設計自体は不変） |
 | [0005](0005-oss-packaging.md) | OSS 体裁 — README・貢献導線・脆弱性報告窓口 | accepted |
 | [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | accepted |
 | [0007](0007-reverse-dns-display.md) | 閲覧画面の送信元逆引き（PTR）ホスト名表示 | accepted |
 | [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | accepted（設計条件 9 の「手順は提供しない」無条件文は ADR-0020〔accepted 2026-07-24〕により部分的に superseded） |
-| [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用） | accepted |
+| [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用） | accepted（決定 2 の x64 行の**対象環境の範囲**は ADR-0024〔accepted 2026-08-01〕により部分的に superseded。アーキテクチャの判断自体は不変） |
 | [0010](0010-admin-ui-authentication.md) | 管理 UI への認証追加（opt-in）とリモート管理の解禁 | accepted（決定 3 のロックアウト機構は ADR-0011、決定 3 の共存セッションモデルは ADR-0013 により superseded） |
 | [0011](0011-app-auth-failure-backoff.md) | アプリ独自認証の失敗試行対策 — ロックアウトからバックオフ + レート制限へ（ADR-0010 決定 3 の supersession） | accepted |
 | [0012](0012-admin-https-cert-ui.md) | 管理リモート HTTPS の証明書選択の UI 設定化 | accepted |
@@ -39,7 +39,7 @@
 | [0021](0021-msi-upload-operation-auth.md) | フォワーダ MSI アップロードの前提条件の変更 — RequireForLoopback 必須からアップロード操作単位の実認証必須へ（ADR-0020 決定 1 (ii) の部分 supersession。Issue #440） | accepted |
 | [0022](0022-viewer-https.md) | 閲覧 UI の HTTPS 化（opt-in。8514 同一ポート切替。ADR-0004 決定 3 の予告・ADR-0006 基準 1 の最終残件。Discussion #449） | accepted（改訂 1 = 2026-07-26: 委任 1〜8 の実施結果を記録〔採番 1035〜1038・2028・2029、CF-D2 = operations.md §9、ブラウザ実機検証は lab 手順書へ〕。決定は不変） |
 | [0023](0023-upgrade-availability.md) | アップグレード時の可用性 — DB 到達不能での起動継続とインストーラのロールバック安全性（ADR-0015 決定 2 の rollback CA 判断の部分 supersession。Issue #466・#467） | accepted |
-| [0024](0024-supported-environments.md) | 対応環境と推奨環境の定義 — v1.0 で表明するサポート行列（OS・SQL Server・ブラウザ・ハードウェア。ADR-0009 決定 2 の x64 行の部分 supersession。ADR-0006 基準 3・ADR-0009 委任事項 7） | proposed |
+| [0024](0024-supported-environments.md) | 対応環境と推奨環境の定義 — v1.0 で表明するサポート行列（OS・SQL Server・ブラウザ・ハードウェア。ADR-0009 決定 2 の x64 行の部分 supersession。ADR-0006 基準 3・ADR-0009 委任事項 7） | accepted |
 
 ## 起案予定
 

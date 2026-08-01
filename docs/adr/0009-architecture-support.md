@@ -1,6 +1,6 @@
 # ADR-0009: アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用）
 
-- 状態: accepted（2026-07-09 マージ）
+- 状態: accepted（2026-07-09 マージ。**決定 2 の x64 行の対象環境の範囲は [ADR-0024](0024-supported-environments.md) により部分的に superseded**）
 - 日付: 2026-07-09
 - 決定者: YANAI Taketo
 - 関連: [Issue #123](https://github.com/Yanai-Taketo/Yagura/issues/123)（起票・現状調査）/ [ADR-0001](0001-project-founding.md)（目的——手軽な導入・品質原則）/ [ADR-0002](0002-architecture-principles.md)（アーキテクチャ原則）/ [ADR-0005](0005-oss-packaging.md)（README 等入口文書）/ [ADR-0008](0008-forwarder-kit-generation.md)（フォワーダ配布キット・Fluent Bit 検証済み版の運用）/ `Directory.Build.props`・`Directory.Packages.props`・`installer/Yagura.Installer.wixproj`・`installer/Package.wxs`・`.github/workflows/ci.yml`
@@ -61,9 +61,11 @@ conventions.md の実体検証原則に従い、.NET 10 の Windows サポート
 
 ### 決定 2: 2 アーキは非対称な位置づけとし、サポート水準を明文化する
 
+> **[ADR-0024](0024-supported-environments.md)（accepted 2026-08-01）により、下表 x64 行の「対象環境」欄は部分的に superseded**。アーキテクチャの判断（x64 = 対応 / ARM64 = 試験的）は不変だが、**OS バージョンの粒度を持たなかった対象環境の記述が限定された**——「Windows Server 全般」は **Server 2019 以上**（2016 以前・Server Core・Nano Server は対応外）、「Windows 10/11 クライアント」は **Windows 11 と Windows 10 LTSC/Enterprise のビルド 17763 以上**（Home/Pro は対応外）。現在有効なサポート行列は ADR-0024 決定 1 が正である。
+
 | アーキ | 対象環境 | 想定利用者・用途 | 利用者向け表記 | 検証水準 |
 |---|---|---|---|---|
-| **x64** | Windows Server 全般 + Windows 10/11 クライアント | 本番運用の主対象（現行どおり） | 対応（Supported） | 実機 lab E2E・CI 回帰ベンチを維持 |
+| **x64** | Windows Server 全般 + Windows 10/11 クライアント（**対象環境の範囲は ADR-0024 決定 1 により限定。上記注記参照**） | 本番運用の主対象（現行どおり） | 対応（Supported） | 実機 lab E2E・CI 回帰ベンチを維持 |
 | **ARM64** | **Windows 11 on Arm 等のクライアント OS**（Windows Server の ARM64 は GA されていないため対象外。再評価トリガ参照） | Arm デバイスでの試用・開発機での動作確認・小規模エッジ用途 | **試験的（Experimental）** | ビルド成立 + 起動・受信・閲覧 + **観測性カウンタの出力確認** + **スプール発動→drain 追いつきの 1 サイクル実機通過**（Phase 1 完了条件）。実機 lab E2E・回帰ベンチは対象外 |
 
 **サポート水準（どこまでを約束するか）の定義**（ペルソナレビュー クリス・佐藤の指摘を受けて明文化）:
