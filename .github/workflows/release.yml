@@ -609,18 +609,31 @@ jobs:
 
           0.4.0 以降のバージョン間(例: 0.4.0 → 0.5.0)のアップグレードはこの影響を受けません。
 
-          ## アーキテクチャ対応 (ADR-0009)
+          ## 対応環境 (ADR-0024 / ADR-0009)
 
-          | アーキ | 検証水準 | 対象環境 |
-          |---|---|---|
-          | x64 | 対応(Supported) | Windows Server 全般 + Windows 10/11 クライアント |
-          | ARM64 | 試験的(Experimental) | Windows 11 on Arm 等のクライアント OS のみ(Windows Server の ARM64 は対象外) |
+          **ダウンロードの前にご確認ください。** 対応外の OS では MSI が導入できません。
 
-          ARM64 は起動・受信・閲覧・観測性カウンタ出力・スプール発動→drain 追いつきの実機スモークまでを
-          検証水準としており、x64 のような実機 lab E2E・CI 回帰ベンチは対象外です。不具合は受け付けますが
-          修正 SLA は約束しません。詳細は [ADR-0009](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/adr/0009-architecture-support.md) を参照してください。
+          | 区分 | 対象 |
+          |---|---|
+          | 推奨 | Windows Server 2022 / 2025 (x64) |
+          | 対応 | Windows Server 2019 (x64) ※TLS 1.3 は OS 側が非対応 |
+          | 対応 | Windows 11 / Windows 10 LTSC・Enterprise (x64。OS ビルド 17763 以上) |
+          | 試験的 | Windows 11 on Arm 等のクライアント (ARM64) |
+          | **対応外** | **Windows Server 2016 以前・Server Core・Windows 10 Home/Pro・32-bit** |
 
-          **迷ったら x64 を選んでください。** 自分の環境のアーキを確認するには「設定 > システム > バージョン情報」の「システムの種類」を確認してください。
+          自分の環境は **①アーキ** (「設定 > システム > バージョン情報」の「システムの種類」)と
+          **②OS ビルド** (``Win`` + ``R`` → ``winver``)で確認できます。**迷ったら x64 です。**
+
+          - **ブラウザが必要です**: 最新版の Edge / Chrome / Firefox / Safari のいずれか。
+            Server 2022 以降は Edge 同梱ですが、**Server 2019 には同梱されないため MSI 実行前に導入**してください
+          - **ARM64 は試験的**: 起動・受信・閲覧・観測性カウンタ出力・スプール発動→drain 追いつきの実機
+            スモークまでが検証水準で、x64 のような実機 lab E2E・CI 回帰ベンチは対象外です。不具合は
+            受け付けますが修正 SLA は約束しません
+          - **v1.0 系列のサポートは 2028-11-14 まで**(同梱する .NET 10 のサポート終了日)。
+            対応 OS のサポート期限より先に終わります
+
+          要件の全体と根拠は [システム要件](https://github.com/Yanai-Taketo/Yagura/blob/main/README.md#システム要件) と
+          [ADR-0024](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/adr/0024-supported-environments.md) を参照してください。
 
           ## ダウンロード
 
