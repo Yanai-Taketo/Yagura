@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.Components.Common;
 using Yagura.Web.Tests.ArchitectureTests;
 
@@ -385,21 +386,6 @@ public sealed class AdminAuthLoginEndpointTests
                 ["username"] = username,
                 ["password"] = password,
             }));
-
-    private sealed class FakeAppAuthenticator(AppAuthenticationOutcome outcome) : IAppAdminAuthenticator
-    {
-        public bool WasCalled { get; private set; }
-
-        public AdminAuthAttemptContext? LastContext { get; private set; }
-
-        public Task<AppAuthenticationOutcome> TryAuthenticateAsync(
-            string username, string password, AdminAuthAttemptContext context, CancellationToken cancellationToken = default)
-        {
-            WasCalled = true;
-            LastContext = context;
-            return Task.FromResult(outcome);
-        }
-    }
 
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {

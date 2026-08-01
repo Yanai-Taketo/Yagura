@@ -4,6 +4,7 @@ using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration;
 
@@ -20,7 +21,8 @@ public sealed class PromotionWizardServiceTests : IDisposable
 {
     private const string ServiceAccount = @"NT SERVICE\Yagura";
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-promotion-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("promotion-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
     private readonly ManualTimeProvider _time = new(new DateTimeOffset(2026, 7, 7, 0, 0, 0, TimeSpan.Zero));
 
@@ -29,20 +31,7 @@ public sealed class PromotionWizardServiceTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート。
-            }
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     // ---- 接続の組み立て（database.md §6.1「接続文字列はサーバ側で組み立てる」） ----
 

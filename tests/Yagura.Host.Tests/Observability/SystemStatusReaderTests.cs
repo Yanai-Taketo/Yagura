@@ -4,6 +4,7 @@ using Yagura.Host.Observability;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability;
 
@@ -17,7 +18,8 @@ namespace Yagura.Host.Tests.Observability;
 /// </summary>
 public sealed class SystemStatusReaderTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-status-reader-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("status-reader-tests");
+    private string _spoolDirectory => _tempDir.Path;
     private readonly List<DiskSpool> _openedSpools = [];
 
     public void Dispose()
@@ -27,10 +29,7 @@ public sealed class SystemStatusReaderTests : IDisposable
             spool.Dispose();
         }
 
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _tempDir.Dispose();
     }
 
     [Fact]

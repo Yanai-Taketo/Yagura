@@ -5,6 +5,7 @@ using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Retention;
 
@@ -22,17 +23,14 @@ namespace Yagura.Host.Tests.Retention;
 /// </remarks>
 public sealed class WriteGateSerializationTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-write-gate-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("write-gate-tests");
+    private string _spoolDirectory => _tempDir.Path;
     private DiskSpool? _spool;
 
     public void Dispose()
     {
         _spool?.Dispose();
-
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _tempDir.Dispose();
     }
 
     [Fact]

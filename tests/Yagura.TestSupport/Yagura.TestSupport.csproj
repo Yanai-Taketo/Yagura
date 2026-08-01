@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    テスト SDK(xunit 等)は参照しない: 本プロジェクトはテストプロジェクトそのものではなく、
+    複数テストプロジェクトから ProjectReference される共有支援コード(フェイク・共通ヘルパ)
+    の置き場である。テストランナーへの依存を持たせると、支援コードの再利用先が xunit 以外の
+    テストプロジェクトになった場合に不要な依存が付きまとう。
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Yagura.Abstractions\Yagura.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Yagura.Storage\Yagura.Storage.csproj" />
+    <ProjectReference Include="..\..\src\Yagura.Web\Yagura.Web.csproj" />
+  </ItemGroup>
+
+</Project>

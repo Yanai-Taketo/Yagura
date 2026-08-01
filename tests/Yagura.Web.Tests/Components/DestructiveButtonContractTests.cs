@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.Web.Tests.Components;
 
@@ -38,7 +39,7 @@ public sealed class DestructiveButtonContractTests
     [Fact]
     public void AllDestructiveYaguraButtons_SpecifyAllThreeConfirmParameters()
     {
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         var razorFiles = Directory.EnumerateFiles(
             Path.Combine(repoRoot, "src"), "*.razor", SearchOption.AllDirectories);
 
@@ -81,24 +82,12 @@ public sealed class DestructiveButtonContractTests
     {
         // 走査自体が空振り（正規表現の破綻・探索パスの誤り）していないことの自己検査——
         // 「違反 0 件」が「1 件も見ていない」を意味しないようにする。
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         var destructiveCount = Directory
             .EnumerateFiles(Path.Combine(repoRoot, "src"), "*.razor", SearchOption.AllDirectories)
             .SelectMany(file => YaguraButtonElementPattern.Matches(File.ReadAllText(file)).Cast<Match>())
             .Count(match => match.Value.Contains("YaguraButtonRole.Destructive", StringComparison.Ordinal));
 
         Assert.True(destructiveCount > 0, "Destructive ボタンを 1 つも検出できなかった（走査が機能していない）。");
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
     }
 }

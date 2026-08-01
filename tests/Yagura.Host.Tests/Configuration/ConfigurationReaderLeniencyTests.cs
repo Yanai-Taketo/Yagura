@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -25,20 +26,15 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class ConfigurationReaderLeniencyTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-leniency-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("leniency-test");
+    private string _dataRoot => _tempDir.Path;
 
     public ConfigurationReaderLeniencyTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private void WriteConfiguration(string json) =>
         File.WriteAllText(Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName), json);

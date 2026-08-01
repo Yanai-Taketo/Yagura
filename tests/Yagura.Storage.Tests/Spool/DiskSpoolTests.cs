@@ -1,4 +1,5 @@
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Storage.Tests.Spool;
 
@@ -9,8 +10,10 @@ namespace Yagura.Storage.Tests.Spool;
 /// </summary>
 public sealed class DiskSpoolTests : IDisposable
 {
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), $"yagura-diskspool-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDirectory = new("diskspool-tests");
     private readonly List<DiskSpool> _openedSpools = [];
+
+    private string _directory => _tempDirectory.Path;
 
     public void Dispose()
     {
@@ -21,10 +24,7 @@ public sealed class DiskSpoolTests : IDisposable
             spool.Dispose();
         }
 
-        if (Directory.Exists(_directory))
-        {
-            Directory.Delete(_directory, recursive: true);
-        }
+        _tempDirectory.Dispose();
     }
 
     /// <summary>

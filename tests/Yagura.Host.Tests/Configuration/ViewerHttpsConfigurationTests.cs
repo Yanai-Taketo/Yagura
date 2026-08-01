@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -16,20 +17,15 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class ViewerHttpsConfigurationTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-viewer-https-config-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("viewer-https-config-test");
+    private string _dataRoot => _tempDir.Path;
 
     public ViewerHttpsConfigurationTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private void WriteConfigurationFile(string json) =>
         File.WriteAllText(Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName), json);

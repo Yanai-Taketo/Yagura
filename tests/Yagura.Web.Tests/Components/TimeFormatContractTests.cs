@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.Web.Tests.Components;
 
@@ -56,7 +57,7 @@ public sealed class TimeFormatContractTests
     [Fact]
     public void NoRazorScreen_FormatsDateTimeOnItsOwn()
     {
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         var violations = new List<string>();
 
         foreach (var file in EnumerateRazorFiles(repoRoot))
@@ -86,7 +87,7 @@ public sealed class TimeFormatContractTests
     {
         // 走査が空振り（探索パスの誤り）していないことの自己検査——「違反 0 件」が
         // 「1 件も見ていない」を意味しないようにする。
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         Assert.True(
             EnumerateRazorFiles(repoRoot).Count() > 10,
             ".razor を十分に検出できなかった（走査が機能していない）。");
@@ -119,17 +120,5 @@ public sealed class TimeFormatContractTests
     {
         var line = content[..index].Count(c => c == '\n') + 1;
         return $"{Path.GetRelativePath(repoRoot, file)}:{line} — {what}";
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
     }
 }

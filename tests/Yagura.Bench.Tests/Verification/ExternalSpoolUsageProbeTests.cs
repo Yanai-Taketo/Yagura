@@ -1,4 +1,5 @@
 using Yagura.Bench.Verification;
+using Yagura.TestSupport;
 
 namespace Yagura.Bench.Tests.Verification;
 
@@ -14,117 +15,99 @@ public sealed class ExternalSpoolUsageProbeTests
     [Fact]
     public async Task GetSegmentBytesOnDisk_ConcurrentDeletion_DoesNotThrow()
     {
-        var spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-bench-spool-race-{Guid.NewGuid():N}");
+        using var tempSpoolDirectory = new TestTempDirectory("bench-spool-race");
+        var spoolDirectory = tempSpoolDirectory.Path;
         Directory.CreateDirectory(spoolDirectory);
 
-        try
+        const int fileCount = 40;
+        var filePaths = Enumerable.Range(0, fileCount)
+            .Select(i => Path.Combine(spoolDirectory, $"segment-{i:D3}.seg"))
+            .ToArray();
+
+        foreach (var path in filePaths)
         {
-            const int fileCount = 40;
-            var filePaths = Enumerable.Range(0, fileCount)
-                .Select(i => Path.Combine(spoolDirectory, $"segment-{i:D3}.seg"))
-                .ToArray();
+            File.WriteAllBytes(path, new byte[512]);
+        }
 
-            foreach (var path in filePaths)
+        using var cts = new CancellationTokenSource();
+
+        // drain 処理を模した背景タスク: セグメントファイルを絶え間なく削除・再作成する。
+        // GetSegmentBytesOnDisk が列挙した直後に対象ファイルが消える窓を作り出す。
+        var deleterTask = Task.Run(async () =>
+        {
+            var rng = new Random(12345);
+            while (!cts.IsCancellationRequested)
             {
-                File.WriteAllBytes(path, new byte[512]);
-            }
-
-            using var cts = new CancellationTokenSource();
-
-            // drain 処理を模した背景タスク: セグメントファイルを絶え間なく削除・再作成する。
-            // GetSegmentBytesOnDisk が列挙した直後に対象ファイルが消える窓を作り出す。
-            var deleterTask = Task.Run(async () =>
-            {
-                var rng = new Random(12345);
-                while (!cts.IsCancellationRequested)
-                {
-                    var path = filePaths[rng.Next(filePaths.Length)];
-                    try
-                    {
-                        File.Delete(path);
-                        File.WriteAllBytes(path, new byte[512]);
-                    }
-                    catch (IOException)
-                    {
-                        // 同時書き込み・削除の衝突（ハンドル競合）は本テストの関心事ではない。
-                    }
-
-                    await Task.Delay(1);
-                }
-            });
-
-            var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
-            var iterations = 0;
-            var exceptions = new List<Exception>();
-
-            while (DateTimeOffset.UtcNow < deadline)
-            {
+                var path = filePaths[rng.Next(filePaths.Length)];
                 try
                 {
-                    // 例外を投げず、非負の値を返すことだけを検証する（削除競合下では正確な
-                    // バイト数は非決定的であり、本テストの主眼は「落ちないこと」）。
-                    var bytes = ExternalSpoolUsageProbe.GetSegmentBytesOnDisk(spoolDirectory);
-                    Assert.True(bytes >= 0);
+                    File.Delete(path);
+                    File.WriteAllBytes(path, new byte[512]);
                 }
-                catch (Exception ex)
+                catch (IOException)
                 {
-                    exceptions.Add(ex);
+                    // 同時書き込み・削除の衝突（ハンドル競合）は本テストの関心事ではない。
                 }
 
-                iterations++;
+                await Task.Delay(1);
             }
+        });
 
-            cts.Cancel();
-            await deleterTask;
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+        var iterations = 0;
+        var exceptions = new List<Exception>();
 
-            Assert.True(iterations > 0, "レース検証のためのポーリングが一度も実行されなかった。");
-            Assert.Empty(exceptions);
-        }
-        finally
+        while (DateTimeOffset.UtcNow < deadline)
         {
-            if (Directory.Exists(spoolDirectory))
+            try
             {
-                Directory.Delete(spoolDirectory, recursive: true);
+                // 例外を投げず、非負の値を返すことだけを検証する（削除競合下では正確な
+                // バイト数は非決定的であり、本テストの主眼は「落ちないこと」）。
+                var bytes = ExternalSpoolUsageProbe.GetSegmentBytesOnDisk(spoolDirectory);
+                Assert.True(bytes >= 0);
             }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+
+            iterations++;
         }
+
+        cts.Cancel();
+        await deleterTask;
+
+        Assert.True(iterations > 0, "レース検証のためのポーリングが一度も実行されなかった。");
+        Assert.Empty(exceptions);
     }
 
     [Fact]
     public async Task WaitForDrainCompletionAsync_ConcurrentDeletion_DoesNotThrow()
     {
-        var spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-bench-spool-race-wait-{Guid.NewGuid():N}");
+        using var tempSpoolDirectory = new TestTempDirectory("bench-spool-race-wait");
+        var spoolDirectory = tempSpoolDirectory.Path;
         Directory.CreateDirectory(spoolDirectory);
 
-        try
+        var filePath = Path.Combine(spoolDirectory, "segment-000.seg");
+        File.WriteAllBytes(filePath, new byte[512]);
+
+        // 削除フェーズ（drain 処理を模した背景タスク）を完了まで待ってから、最終判定として
+        // WaitForDrainCompletionAsync を呼ぶ。以前は削除タスクと WaitForDrainCompletionAsync の
+        // 固定タイムアウト（3秒）を同時に走らせていたため、CI ランナー負荷時に ThreadPool の
+        // スレッド割当が遅延して削除がタイムアウト内に間に合わず flaky になっていた
+        // （Issue #207）。削除の完了を先に確定させることで、以降の判定を非決定要素から切り離す。
+        var deleteTask = Task.Run(async () =>
         {
-            var filePath = Path.Combine(spoolDirectory, "segment-000.seg");
-            File.WriteAllBytes(filePath, new byte[512]);
+            await Task.Delay(5);
+            File.Delete(filePath);
+        });
 
-            // 削除フェーズ（drain 処理を模した背景タスク）を完了まで待ってから、最終判定として
-            // WaitForDrainCompletionAsync を呼ぶ。以前は削除タスクと WaitForDrainCompletionAsync の
-            // 固定タイムアウト（3秒）を同時に走らせていたため、CI ランナー負荷時に ThreadPool の
-            // スレッド割当が遅延して削除がタイムアウト内に間に合わず flaky になっていた
-            // （Issue #207）。削除の完了を先に確定させることで、以降の判定を非決定要素から切り離す。
-            var deleteTask = Task.Run(async () =>
-            {
-                await Task.Delay(5);
-                File.Delete(filePath);
-            });
+        await deleteTask;
 
-            await deleteTask;
+        // この時点でファイルは確実に削除済みのため、drain 完了判定は非決定的な競合に依存しない。
+        var completed = await ExternalSpoolUsageProbe
+            .WaitForDrainCompletionAsync(spoolDirectory, TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(5));
 
-            // この時点でファイルは確実に削除済みのため、drain 完了判定は非決定的な競合に依存しない。
-            var completed = await ExternalSpoolUsageProbe
-                .WaitForDrainCompletionAsync(spoolDirectory, TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(5));
-
-            Assert.True(completed, "ファイル削除後も drain 完了（使用量 0）と判定されなかった。");
-        }
-        finally
-        {
-            if (Directory.Exists(spoolDirectory))
-            {
-                Directory.Delete(spoolDirectory, recursive: true);
-            }
-        }
+        Assert.True(completed, "ファイル削除後も drain 完了（使用量 0）と判定されなかった。");
     }
 }

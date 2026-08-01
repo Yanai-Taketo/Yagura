@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification;
 
@@ -61,7 +62,7 @@ public sealed class NotificationLogEventIdPresenceTests
     [Fact]
     public void NotificationSources_PassAnEventIdToEveryWarningAndErrorLog()
     {
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         var sources = Directory
             .GetFiles(
                 Path.Combine(repoRoot, "src", "Yagura.Host", "Observability", "ActiveNotification"),
@@ -121,17 +122,5 @@ public sealed class NotificationLogEventIdPresenceTests
                 $"{fileName} の EventId なし呼び出し数が既知の {expected} 件から " +
                 $"{waivedByFileName.GetValueOrDefault(fileName)} 件へ変わりました。判断を添えて許容表を更新してください。");
         }
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
     }
 }

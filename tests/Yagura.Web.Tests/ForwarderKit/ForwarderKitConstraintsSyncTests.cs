@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 using Yagura.Web.ForwarderKit;
 
 namespace Yagura.Web.Tests.ForwarderKit;
@@ -88,22 +89,10 @@ public sealed class ForwarderKitConstraintsSyncTests
 
     private static string ReadInstallScript()
     {
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         var path = Path.Combine(repoRoot, "forwarder", "fluent-bit", "install.ps1");
 
         Assert.True(File.Exists(path), $"install.ps1 が見つからない: {path}");
         return File.ReadAllText(path);
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
     }
 }

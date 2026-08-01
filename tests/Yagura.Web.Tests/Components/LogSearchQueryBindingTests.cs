@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 using Yagura.Abstractions.Observability;
 using Yagura.Storage;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.Components.Common;
 using Yagura.Web.Components.Pages;
 using Yagura.Web.Diagnostics;
@@ -46,7 +47,8 @@ public sealed class LogSearchQueryBindingTests : IDisposable
         _ctx.Services.AddScoped<Yagura.Web.Components.Common.IYaguraNotifier,
             Yagura.Web.Components.Common.YaguraSnackbarNotifier>();
         _ctx.Services.AddSingleton<ILogStore>(_store);
-        _ctx.Services.AddSingleton<IYaguraSystemStatusReader>(new FakeStatusReader());
+        _ctx.Services.AddSingleton<IYaguraSystemStatusReader>(
+            new FakeStatusReader { Counters = [], Spool = null, Listeners = [] });
 
         // LogSearch の結果テーブル（YaguraSourceAddress）が要求する逆引き表示の依存一式
         // （CommonComponentRenderHarness と同じ構成——描画テストは常に無効構成で行う）。
@@ -212,21 +214,5 @@ public sealed class LogSearchQueryBindingTests : IDisposable
 
         public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SourceActivity>)Array.Empty<SourceActivity>());
-    }
-
-    private sealed class FakeStatusReader : IYaguraSystemStatusReader
-    {
-        public YaguraSystemStatusSnapshot ReadCurrent() => new(
-            TakenAt: DateTimeOffset.UtcNow,
-            Counters: [],
-            Spool: null,
-            SpoolDegraded: false,
-            Health: YaguraHealthReading.Ok,
-            RetentionDays: 30,
-            Listeners: []);
-
-        public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) => [];
-
-        public IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries() => [];
     }
 }

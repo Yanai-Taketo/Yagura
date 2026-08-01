@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using Yagura.TestSupport;
 using Yagura.Web.ForwarderKit;
 
 namespace Yagura.Web.Tests.ForwarderKit;
@@ -17,21 +18,16 @@ namespace Yagura.Web.Tests.ForwarderKit;
 [SupportedOSPlatform("windows")]
 public sealed class SystemForwarderMsiSourceTests : IDisposable
 {
-    private readonly string _folder;
+    private readonly TestTempDirectory _tempDir = new("forwarder-msi-source-test");
+
+    private string _folder => _tempDir.Path;
 
     public SystemForwarderMsiSourceTests()
     {
-        _folder = Path.Combine(Path.GetTempPath(), $"yagura-forwarder-msi-source-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_folder);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_folder))
-        {
-            Directory.Delete(_folder, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     [Fact]
     public void Lookup_FolderMissing_ReturnsNotFound()

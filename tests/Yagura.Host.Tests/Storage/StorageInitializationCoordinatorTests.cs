@@ -4,6 +4,7 @@ using Yagura.Host.Observability.ActiveNotification;
 using Yagura.Host.Storage;
 using Yagura.Storage;
 using Yagura.Storage.Administration;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.Administration;
 
 namespace Yagura.Host.Tests.Storage;
@@ -201,51 +202,10 @@ public sealed class StorageInitializationCoordinatorTests
         }
     }
 
-    private sealed class FakeLogStore(FailableStore behavior) : ILogStore
+    private sealed class FakeLogStore(FailableStore behavior) : LogStoreTestDouble
     {
-        public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        public override Task InitializeAsync(CancellationToken cancellationToken = default) =>
             behavior.InitializeAsync(cancellationToken);
-
-        public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(
-            int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
-            LogQuery query, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
-            DateTimeOffset cutoff, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
-            DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(
-            DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(
-            DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
-            int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
     }
 
     private sealed class FakeAdminAccountStore(FailableStore behavior) : IAdminAccountStore

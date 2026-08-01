@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Time.Testing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Observability.Auditing;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability.Auditing;
 
@@ -14,7 +15,8 @@ public sealed class AuditRetentionSchedulerTests : IDisposable
 {
     private static readonly DateTimeOffset Now = new(2027, 7, 16, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-audit-retention-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("audit-retention-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly string _auditDirectory;
     private readonly FakeTimeProvider _timeProvider = new(Now);
     private readonly RecordingAuditRecorder _recorder = new();
@@ -25,20 +27,7 @@ public sealed class AuditRetentionSchedulerTests : IDisposable
         Directory.CreateDirectory(_auditDirectory);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート（他テストと同じ判断）。
-            }
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     /// <summary>記録された監査事象を保持するだけのフェイク。</summary>
     private sealed class RecordingAuditRecorder : IAuditRecorder

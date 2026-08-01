@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.ForwarderKit;
 using Yagura.Web.Tests.ArchitectureTests;
 
@@ -202,13 +203,6 @@ public sealed class ForwarderMsiUploadEndpointAuthorizationTests
             WasTouched = true;
             return Task.FromResult(ForwarderMsiStageResult.Failed(ForwarderMsiStageError.WriteFailed));
         }
-    }
-
-    private sealed class FakeAppAuthenticator(AppAuthenticationOutcome outcome) : IAppAdminAuthenticator
-    {
-        public Task<AppAuthenticationOutcome> TryAuthenticateAsync(
-            string username, string password, AdminAuthAttemptContext context, CancellationToken cancellationToken = default)
-            => Task.FromResult(outcome);
     }
 
     private sealed class RecordingAuditRecorder : IAuditRecorder

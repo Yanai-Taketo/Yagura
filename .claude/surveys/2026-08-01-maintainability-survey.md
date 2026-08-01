@@ -164,6 +164,15 @@ Storage プロバイダ間の共通化(3 プロバイダ化の露払い)。挙�
 - 3 つ目のプロバイダで書くもの: SQL 方言・プレースホルダ/パラメータ追加・型アダプタ 2 メソッド・FailureClassifier のみ
 - 検証: ソリューションビルド警告ゼロ。SQLite Conformance 69/69・Storage.Tests 85/85・Web.Tests 512 全通過。Host/Ingestion の失敗は既知の環境ベースラインと同数(SQL Server 側 Conformance は CI の実サーバで検証)
 
+## 4.4 Phase 4 実施記録(2026-08-01・本ブランチで完了)
+
+テスト基盤整理。テストの検証内容・挙動は不変(全プロジェクトで通過/失敗数がベースライン一致、E2E 含む):
+
+- **Step A**: 共有プロジェクト `tests/Yagura.TestSupport` 新設(net10.0、テスト SDK 非依存)。`RepositoryPaths.FindRoot()`(8 ファイルの完全一致重複)、`LogStoreTestDouble`(FakeLogStore 4 定義を「既定 NotSupportedException + 必要分のみ override」の基底へ)、`FakeStatusReader`/`FakeAppAuthenticator`/`FakeForwarderMsiSource`(各 2 定義)を集約。`TestTempDirectory` ヘルパ新設
+- **Step B**: 一時ディレクトリ採番を `TestTempDirectory` へ移行 — Host 35 ファイル / Web 4 / Ingestion 6 / Storage 4 / E2E 14 / Bench 6。DB ファイル(.db)パスの直接採番 15 箇所前後は「パスの形が変わる」ため対象外として維持
+- テストコード正味 約 -600 行(共有資産 +223 行)
+- 未実施(後続候補): 否定証明×固定 Delay のフレーク源是正(`IngestionPipelineBindRetryTests` 等)、Ingestion.Tests への FakeTimeProvider 浸透(プロダクション側の設計変更を伴うため別判断)、`Assert.True/False` へのメッセージ付与
+
 ## 5. 参考数値一覧
 
 | 指標 | 値 |

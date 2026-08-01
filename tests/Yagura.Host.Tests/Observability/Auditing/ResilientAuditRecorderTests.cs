@@ -2,6 +2,7 @@ using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Time.Testing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Observability.Auditing;
+using Yagura.TestSupport;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Host.Tests.Observability.Auditing;
@@ -25,8 +26,8 @@ public sealed class ResilientAuditRecorderTests : IDisposable
 {
     private static readonly DateTimeOffset Now = new(2026, 7, 18, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _dataRoot =
-        Path.Combine(Path.GetTempPath(), $"yagura-resilient-audit-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("resilient-audit");
+    private string _dataRoot => _tempDir.Path;
     private readonly string _auditDir;
     private readonly WebGuardMetrics _metrics = new();
 
@@ -39,21 +40,7 @@ public sealed class ResilientAuditRecorderTests : IDisposable
     public void Dispose()
     {
         _metrics.Dispose();
-        try
-        {
-            if (File.Exists(_auditDir))
-            {
-                File.Delete(_auditDir);
-            }
-            if (Directory.Exists(_dataRoot))
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-            // ベストエフォート。
-        }
+        _tempDir.Dispose();
     }
 
     private FileAuditRecorder CreateInner() =>

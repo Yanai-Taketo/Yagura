@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
 using Yagura.Host.Observability.ActiveNotification.SourceSilence;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -19,17 +20,12 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class SourceSilenceConfigurationTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-silence-config-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("silence-config");
+    private string _dataRoot => _tempDir.Path;
 
     public SourceSilenceConfigurationTests() => Directory.CreateDirectory(_dataRoot);
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private ConfigurationLoadResult Load(string? json = null)
     {

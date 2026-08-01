@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -13,7 +14,8 @@ namespace Yagura.Host.Tests.Configuration;
 /// </summary>
 public sealed class ServiceAccountStartupInspectorTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-svcacct-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("svcacct-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _auditRecorder = new();
     private readonly FakeLogger<ServiceAccountStartupInspector> _logger = new();
 
@@ -22,13 +24,7 @@ public sealed class ServiceAccountStartupInspectorTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {

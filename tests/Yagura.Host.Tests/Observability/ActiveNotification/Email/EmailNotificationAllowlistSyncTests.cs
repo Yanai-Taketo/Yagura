@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Yagura.Host.Observability.ActiveNotification.Email;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification.Email;
 
@@ -28,18 +29,6 @@ namespace Yagura.Host.Tests.Observability.ActiveNotification.Email;
 /// </remarks>
 public sealed class EmailNotificationAllowlistSyncTests
 {
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
-    }
-
     // ------------------------------------------------------------------
     // (1) security.md §4.3 の「メール通知」列 ⇔ allowlist
     // ------------------------------------------------------------------
@@ -48,7 +37,7 @@ public sealed class EmailNotificationAllowlistSyncTests
     public void SecurityMd_EmailNotificationColumn_MatchesTheAllowlist()
     {
         var securityMd = File.ReadAllText(
-            Path.Combine(FindRepositoryRoot(), "docs", "design", "security.md"));
+            Path.Combine(RepositoryPaths.FindRoot(), "docs", "design", "security.md"));
 
         // §4.3 のイベント ID 表: | ID | 区画 | レベル | メール通知 | 表示名 | 意味 |
         // メール通知列が「対象（警告）」「対象（エラー）」なら allowlist に該当重大度で含まれ、
@@ -150,7 +139,7 @@ public sealed class EmailNotificationAllowlistSyncTests
     [Fact]
     public void NotificationFiringPoints_HaveNoUndocumentedEventIdLessWarningsOrErrors()
     {
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
 
         var files = NotificationFiringPointDirectories
             .SelectMany(dir => Directory.EnumerateFiles(Path.Combine(repoRoot, dir), "*.cs", SearchOption.AllDirectories))
@@ -202,7 +191,7 @@ public sealed class EmailNotificationAllowlistSyncTests
     {
         // 既知集合が実体から乖離（該当ログの削除・文言変更）したまま残らないようにする——
         // ForwarderKitVersionSyncTests と同じ「文書化した想定が実体とずれたら気づく」向き。
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
 
         foreach (var (relativePath, prefix) in KnownEventIdLessNotificationLogs)
         {

@@ -5,6 +5,7 @@ using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration.Https;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration.Https;
 
@@ -23,7 +24,8 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
     private const string ServerAuthOid = "1.3.6.1.5.5.7.3.1";
     private const string ValidThumbprint = "0123456789ABCDEF0123456789ABCDEF01234567";
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-remoteaccess-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("remoteaccess-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
 
     public AdminRemoteAccessAdminServiceTests()
@@ -31,20 +33,7 @@ public sealed class AdminRemoteAccessAdminServiceTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート（他テストと同じ判断）。
-            }
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     [Fact]
     public async Task GetStatusAsync_NoConfigurationYet_ReturnsAllDisabled()

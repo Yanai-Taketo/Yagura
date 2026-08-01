@@ -3,6 +3,7 @@ using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Ingestion.Tests.Persistence;
 
@@ -12,23 +13,19 @@ namespace Yagura.Ingestion.Tests.Persistence;
 /// </summary>
 public sealed class SpoolDrainCoordinatorTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-drain-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _spoolDirectory = new("drain-tests");
     private DiskSpool? _spool;
 
     public void Dispose()
     {
         _spool?.Dispose();
-
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _spoolDirectory.Dispose();
     }
 
     [Fact]
     public async Task SpooledRecords_DrainedAfterStoreRecovers_AppearInStoreAndSegmentIsDeleted()
     {
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         // あらかじめスプールへ 3 件退避しておく（Q2 溢れ・書き込み失敗を模したもの、という体）。
@@ -88,7 +85,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
     [Fact]
     public async Task SpooledSelfTestRecord_IsDiscardedBeforeReachingStore()
     {
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         var normalRecord = new LogRecord(
@@ -133,7 +130,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
     {
         // 定期自己検証（architecture.md §3.2.5。Issue #152）の照合機構: drain が自己検証の
         // 合成レコードを破棄する際、SpoolSelfTestTracker へ通知することを検証する。
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         var tracker = new SpoolSelfTestTracker();
@@ -170,7 +167,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
     {
         // トラッカー未指定（null）でも drain 自体の識別・破棄動作は変わらない
         // （検証の有無は drain の正しさに影響しない。SpoolDrainCoordinator の remarks 参照）。
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         await _spool.TryAppendAsync(SpoolRecord.ForSelfTest("unobserved-marker"));
@@ -210,7 +207,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
     [Fact]
     public async Task DrainSegmentWriteFailure_SegmentIsNotReAppendedToSpool_OnlyOriginalSegmentRemains()
     {
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         var record = new LogRecord(
@@ -263,7 +260,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
     [Fact]
     public async Task DrainSegmentWithCorruptTail_RecordsDiscardedBytesAndDrainsRecoveredRecords()
     {
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         var record = new LogRecord(
@@ -326,7 +323,7 @@ public sealed class SpoolDrainCoordinatorTests : IDisposable
         // 末尾破損の計上は DeleteSegment 確定直前でのみ行う設計（SpoolDrainCoordinator クラス
         // remarks 参照）——書き込み失敗による再試行のたびに同じ破損セグメントを再読み込みしても、
         // 破損バイト数が重複計上されないことを固定化する回帰テスト。
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         var record = new LogRecord(

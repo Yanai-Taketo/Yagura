@@ -4,6 +4,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -63,7 +64,7 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
 
-    private readonly List<string> _dataRoots = new();
+    private readonly List<TestTempDirectory> _dataRoots = new();
     private readonly List<Process> _hostProcesses = new();
 
     public void Dispose()
@@ -78,21 +79,10 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
             process.Dispose();
         }
 
+        // ベストエフォート（他 E2E テストと同じ判断）。
         foreach (var dataRoot in _dataRoots)
         {
-            if (!Directory.Exists(dataRoot))
-            {
-                continue;
-            }
-
-            try
-            {
-                Directory.Delete(dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート（他 E2E テストと同じ判断）。
-            }
+            dataRoot.Dispose();
         }
     }
 
@@ -470,8 +460,9 @@ public sealed class LoopbackBindingRegressionTests : IDisposable
         Action<string>? onStdoutLine,
         Action<string>? beforeStart = null)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-loopback-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-loopback");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
 
         if (beforeStart is not null)
         {

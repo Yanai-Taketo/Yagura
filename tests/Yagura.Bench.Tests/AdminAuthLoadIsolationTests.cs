@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Yagura.Bench.HostProcess;
 using Yagura.Bench.LoadGeneration;
 using Yagura.Bench.Verification;
+using Yagura.TestSupport;
 
 namespace Yagura.Bench.Tests;
 
@@ -55,72 +56,56 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
     [Fact]
     public async Task ConcurrentAdminLoginLoad_DoesNotIncreaseUdpIngestionLoss()
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-bench-authload-{Guid.NewGuid():N}");
+        using var tempDataRoot = new TestTempDirectory("bench-authload");
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
 
-        try
-        {
-            var (thumbprint, _) = IssueAndInstallTestCertificate();
-            BenchConfigurationFile.WriteAdminRemoteHttpsAuthLoadConfiguration(dataRoot, thumbprint, adminHttpsPort: 0);
+        var (thumbprint, _) = IssueAndInstallTestCertificate();
+        BenchConfigurationFile.WriteAdminRemoteHttpsAuthLoadConfiguration(dataRoot, thumbprint, adminHttpsPort: 0);
 
-            await using var host = await BenchHostProcess.StartAsync(dataRoot, adminPort: 0, adminHttpsPort: 0);
-            var adminPort = await host.WaitForAdminPortAsync();
+        await using var host = await BenchHostProcess.StartAsync(dataRoot, adminPort: 0, adminHttpsPort: 0);
+        var adminPort = await host.WaitForAdminPortAsync();
 
-            var databasePath = Path.Combine(dataRoot, "yagura.db");
+        var databasePath = Path.Combine(dataRoot, "yagura.db");
 
-            // --- 区間 1: ベースライン（UDP 送信のみ） ---
-            var baselineBefore = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
-            var baselineResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
-            await Task.Delay(TimeSpan.FromSeconds(2)); // 永続化の反映猶予（既存 Bench シナリオと同様）
-            var baselineAfter = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
-            var baselineSaved = baselineAfter - baselineBefore;
+        // --- 区間 1: ベースライン（UDP 送信のみ） ---
+        var baselineBefore = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
+        var baselineResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
+        await Task.Delay(TimeSpan.FromSeconds(2)); // 永続化の反映猶予（既存 Bench シナリオと同様）
+        var baselineAfter = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
+        var baselineSaved = baselineAfter - baselineBefore;
 
-            // --- 区間 2: UDP 送信 + 管理リスナへの継続的なログイン試行を同時実行 ---
-            // 認証負荷を先に始動させ、実際に最初の試行が発行されたことを確認してから並行バーストを
-            // 送る。これにより「認証負荷と受信が確実に重なる」ことを保証し、かつ測定窓の締め
-            // （authLoadCts.Cancel）が認証負荷のセットアップ（初回 GET）と競合してタスクが
-            // TaskCanceledException で fault する、遅い CI ランナー上のレースを構造的に排除する。
-            using var authLoadCts = new CancellationTokenSource();
-            var authLoadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var authLoadTask = RunContinuousLoginAttemptsAsync(adminPort, authLoadStarted, authLoadCts.Token);
+        // --- 区間 2: UDP 送信 + 管理リスナへの継続的なログイン試行を同時実行 ---
+        // 認証負荷を先に始動させ、実際に最初の試行が発行されたことを確認してから並行バーストを
+        // 送る。これにより「認証負荷と受信が確実に重なる」ことを保証し、かつ測定窓の締め
+        // （authLoadCts.Cancel）が認証負荷のセットアップ（初回 GET）と競合してタスクが
+        // TaskCanceledException で fault する、遅い CI ランナー上のレースを構造的に排除する。
+        using var authLoadCts = new CancellationTokenSource();
+        var authLoadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var authLoadTask = RunContinuousLoginAttemptsAsync(adminPort, authLoadStarted, authLoadCts.Token);
 
-            // 最初のログイン試行が発行される（または起動不能が確定する）まで待つ。起動不能のまま
-            // 応答が無ければ TimeoutException で顕在化させる（負荷生成器が機能していないことを
-            // 黙って通さない）。
-            await authLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        // 最初のログイン試行が発行される（または起動不能が確定する）まで待つ。起動不能のまま
+        // 応答が無ければ TimeoutException で顕在化させる（負荷生成器が機能していないことを
+        // 黙って通さない）。
+        await authLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-            var concurrentBefore = baselineAfter;
-            var concurrentResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
-            await Task.Delay(TimeSpan.FromSeconds(2));
-            var concurrentAfter = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
-            var concurrentSaved = concurrentAfter - concurrentBefore;
+        var concurrentBefore = baselineAfter;
+        var concurrentResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        var concurrentAfter = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
+        var concurrentSaved = concurrentAfter - concurrentBefore;
 
-            authLoadCts.Cancel();
-            var loginAttempts = await authLoadTask;
+        authLoadCts.Cancel();
+        var loginAttempts = await authLoadTask;
 
-            await host.StopGracefullyAsync();
+        await host.StopGracefullyAsync();
 
-            // --- 主張: 両区間とも「送信数 = 保存件数」（受信ロス 0）が成立する ---
-            Assert.Equal(baselineResult.SentCount, baselineSaved);
-            Assert.Equal(concurrentResult.SentCount, concurrentSaved);
+        // --- 主張: 両区間とも「送信数 = 保存件数」（受信ロス 0）が成立する ---
+        Assert.Equal(baselineResult.SentCount, baselineSaved);
+        Assert.Equal(concurrentResult.SentCount, concurrentSaved);
 
-            // --- 参考情報として記録するのみ（閾値判定はしない。クラスの remarks 参照） ---
-            Assert.True(loginAttempts > 0, "管理リスナへのログイン試行が 1 件も実行されなかった（負荷生成器が機能していない）。");
-        }
-        finally
-        {
-            if (Directory.Exists(dataRoot))
-            {
-                try
-                {
-                    Directory.Delete(dataRoot, recursive: true);
-                }
-                catch (IOException)
-                {
-                    // ベストエフォート（既存 Bench テストと同じ判断）。
-                }
-            }
-        }
+        // --- 参考情報として記録するのみ（閾値判定はしない。クラスの remarks 参照） ---
+        Assert.True(loginAttempts > 0, "管理リスナへのログイン試行が 1 件も実行されなかった（負荷生成器が機能していない）。");
     }
 
     private static async Task<LoadGeneratorResult> SendUdpBurstAsync(int udpPort, int count)

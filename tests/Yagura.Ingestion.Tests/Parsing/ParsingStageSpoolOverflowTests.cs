@@ -4,6 +4,7 @@ using Yagura.Ingestion.Parsing;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Ingestion.Tests.Parsing;
 
@@ -13,23 +14,19 @@ namespace Yagura.Ingestion.Tests.Parsing;
 /// </summary>
 public sealed class ParsingStageSpoolOverflowTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-parsingstage-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _spoolDirectory = new("parsingstage-tests");
     private DiskSpool? _spool;
 
     public void Dispose()
     {
         _spool?.Dispose();
-
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _spoolDirectory.Dispose();
     }
 
     [Fact]
     public async Task Q2Full_NewRecordIsSpooled_AndSpoolEvacuatedCounterIncrements()
     {
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(_spool);
 
         // Q2 の容量を 1 に絞り、永続化段側の読み手を置かない（満杯を維持する）ことで

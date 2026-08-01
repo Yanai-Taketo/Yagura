@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -38,7 +39,7 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly List<string> _dataRoots = new();
+    private readonly List<TestTempDirectory> _dataRoots = new();
     private readonly List<Process> _processes = new();
     private readonly List<string> _issuedThumbprints = new();
 
@@ -54,19 +55,10 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
             process.Dispose();
         }
 
+        // ベストエフォート（既存 E2E テストと同じ判断）。
         foreach (var dataRoot in _dataRoots)
         {
-            try
-            {
-                if (Directory.Exists(dataRoot))
-                {
-                    Directory.Delete(dataRoot, recursive: true);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // ベストエフォート（既存 E2E テストと同じ判断）。
-            }
+            dataRoot.Dispose();
         }
 
         RemoveIssuedTestCertificates();
@@ -409,8 +401,9 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
 
     private async Task<(int ExitCode, string Output)> RunHostProcessToExitAsync(string configJson)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-remotebind-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-remotebind");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(dataRoot, "yagura.json"), configJson);
 
@@ -464,8 +457,9 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
 
     private async Task<(Process Process, int AdminPort, int AdminHttpsPort)> StartHostProcessAsync(string configJson)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-remotebind-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-remotebind");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(dataRoot, "yagura.json"), configJson);
 
@@ -529,8 +523,9 @@ public sealed class AdminRemoteBindingRegressionTests : IDisposable
     /// </summary>
     private async Task<(Process Process, int AdminPort, string Output)> StartHostProcessExpectingDegradedRemoteAsync(string configJson)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-remotebind-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-remotebind");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(dataRoot, "yagura.json"), configJson);
 

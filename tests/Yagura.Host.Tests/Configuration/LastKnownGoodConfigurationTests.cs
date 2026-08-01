@@ -1,4 +1,5 @@
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -11,20 +12,15 @@ namespace Yagura.Host.Tests.Configuration;
 /// </remarks>
 public sealed class LastKnownGoodConfigurationTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-lkg-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("lkg-test");
+    private string _dataRoot => _tempDir.Path;
 
     public LastKnownGoodConfigurationTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private string ConfigurationPath => Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName);
 

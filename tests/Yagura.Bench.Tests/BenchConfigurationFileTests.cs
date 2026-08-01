@@ -1,5 +1,6 @@
 using Yagura.Bench.HostProcess;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Bench.Tests;
 
@@ -24,7 +25,9 @@ namespace Yagura.Bench.Tests;
 /// </remarks>
 public sealed class BenchConfigurationFileTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-bench-config-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDataRoot = new("bench-config-test");
+
+    private string _dataRoot => _tempDataRoot.Path;
 
     public BenchConfigurationFileTests()
     {
@@ -33,10 +36,7 @@ public sealed class BenchConfigurationFileTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
+        _tempDataRoot.Dispose();
     }
 
     /// <summary>

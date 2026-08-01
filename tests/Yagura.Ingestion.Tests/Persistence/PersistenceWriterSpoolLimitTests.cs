@@ -4,6 +4,7 @@ using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Ingestion.Tests.Persistence;
 
@@ -13,24 +14,20 @@ namespace Yagura.Ingestion.Tests.Persistence;
 /// </summary>
 public sealed class PersistenceWriterSpoolLimitTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-spoollimit-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _spoolDirectory = new("spoollimit-tests");
     private DiskSpool? _spool;
 
     public void Dispose()
     {
         _spool?.Dispose();
-
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _spoolDirectory.Dispose();
     }
 
     [Fact]
     public async Task WriteBatchFails_SpoolAtQuota_RecordDiscarded_SpoolDiscardedAndPersistenceFailedCountersIncrement()
     {
         // 上限をごく小さく（0 バイト）設定し、追記が必ず QuotaExceeded になる状況を作る。
-        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory, QuotaBytes = 0 }, out _);
+        _spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path, QuotaBytes = 0 }, out _);
         Assert.NotNull(_spool);
 
         var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)

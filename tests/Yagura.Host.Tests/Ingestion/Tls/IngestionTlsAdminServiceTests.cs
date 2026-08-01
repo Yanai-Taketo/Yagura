@@ -6,6 +6,7 @@ using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration.Https;
 using Yagura.Host.Configuration;
 using Yagura.Host.Ingestion.Tls;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Ingestion.Tls;
 
@@ -29,18 +30,13 @@ public sealed class IngestionTlsAdminServiceTests : IDisposable
     private const string ServerAuthOid = "1.3.6.1.5.5.7.3.1";
     private const string ValidThumbprint = "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678";
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-tls-admin-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("tls-admin");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
 
     public IngestionTlsAdminServiceTests() => Directory.CreateDirectory(_dataRoot);
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     // ------------------------------------------------------------------
     // 管理 HTTPS と割れる 2 点（本 ADR の核心）

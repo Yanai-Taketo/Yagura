@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -26,8 +27,10 @@ public sealed class SpoolDegradedStartupE2ETests : IDisposable
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-spool-degraded-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDataRoot = new("e2e-spool-degraded");
     private Process? _hostProcess;
+
+    private string _dataRoot => _tempDataRoot.Path;
 
     public void Dispose()
     {
@@ -38,17 +41,8 @@ public sealed class SpoolDegradedStartupE2ETests : IDisposable
 
         _hostProcess?.Dispose();
 
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート（ZeroConfigFirstRunE2ETests と同じ判断）。
-            }
-        }
+        // ベストエフォート（ZeroConfigFirstRunE2ETests と同じ判断）。
+        _tempDataRoot.Dispose();
     }
 
     [Fact]

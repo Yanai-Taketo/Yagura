@@ -3,6 +3,7 @@ using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration;
 
@@ -16,7 +17,8 @@ namespace Yagura.Host.Tests.Administration;
 /// </remarks>
 public sealed class SetupWizardServiceTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-setupwizard-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("setupwizard-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
 
     public SetupWizardServiceTests()
@@ -24,20 +26,7 @@ public sealed class SetupWizardServiceTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート。
-            }
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     [Fact]
     public async Task ConfirmSteps_ProgressIsHeldServerSide_AndResumable()

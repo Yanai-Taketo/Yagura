@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Yagura.Abstractions.Observability;
 using Yagura.Storage;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.Components.Common;
 using Yagura.Web.Components.Layout;
 using Yagura.Web.Components.Pages;
@@ -654,7 +655,7 @@ public sealed class ViewerPageRenderTests
             Message: message);
 
     /// <summary>閲覧画面が使う読み取り口のフェイク（データはテストごとにシードする）。</summary>
-    private sealed class FakeLogStore : ILogStore
+    private sealed class FakeLogStore : LogStoreTestDouble
     {
         public List<LogRecordSummary> Summaries { get; init; } = [];
         public List<SystemEvent> Events { get; init; } = [];
@@ -662,16 +663,13 @@ public sealed class ViewerPageRenderTests
         public LogRecord? Record { get; init; }
         public LogStoreStatistics Statistics { get; init; } = new(RecordCount: 0, DatabaseSizeBytes: 0);
 
-        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public override Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("閲覧画面は書き込みを行わない（L-5）。");
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public override Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<LogRecordSummary>)Summaries
                 .OrderByDescending(s => s.ReceivedAt).Take(limit).ToList());
 
-        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default) =>
+        public override Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<LogRecordSummary>)Summaries
                 .Where(s => query.ReceivedAtFrom is not { } from || s.ReceivedAt >= from)
                 .Where(s => query.ReceivedAtTo is not { } to || s.ReceivedAt <= to)
@@ -679,19 +677,13 @@ public sealed class ViewerPageRenderTests
                 .Take(query.Limit)
                 .ToList());
 
-        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("閲覧画面は書き込みを行わない（L-5）。");
-
-        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(DateTimeOffset cutoff, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("閲覧画面は書き込みを行わない（L-5）。");
-
-        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
+        public override Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Statistics);
 
-        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public override Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult(Record);
 
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default) =>
+        public override Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SystemEvent>)Events
                 .Where(e => from is not { } f || e.EndAt >= f)
                 .Where(e => to is not { } t || e.StartAt <= t)
@@ -699,57 +691,17 @@ public sealed class ViewerPageRenderTests
                 .Take(limit)
                 .ToList());
 
-        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public override Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SourceActivity>)Sources
                 .OrderBy(s => s.LastReceivedAt).Take(limit).ToList());
 
         public List<SeverityCount> SeverityDistribution { get; init; } = [];
         public List<SourceActivity> TopTalkers { get; init; } = [];
 
-        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public override Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SeverityCount>)SeverityDistribution);
 
-        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        public override Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult((IReadOnlyList<SourceActivity>)TopTalkers.OrderByDescending(t => t.RecordCount).Take(limit).ToList());
-    }
-
-    private sealed class FakeStatusReader : IYaguraSystemStatusReader
-    {
-        public List<YaguraCounterReading> Counters { get; init; } =
-        [
-            new("yagura.ingestion.internal_buffer.dropped", 0, IsLoss: true),
-            new("yagura.ingestion.spool.evacuated", 0, IsLoss: false),
-        ];
-
-        public YaguraSpoolReading? Spool { get; init; } = new(CurrentUsageBytes: 1024, QuotaBytes: 1024 * 1024);
-
-        public bool SpoolDegraded { get; init; }
-
-        public YaguraHealthReading Health { get; init; } = YaguraHealthReading.Ok;
-
-        public int? RetentionDays { get; init; } = 30;
-
-        public List<YaguraListenerEndpoint> Listeners { get; init; } =
-            [new YaguraListenerEndpoint("UDP", 514)];
-
-        public YaguraSystemStatusSnapshot ReadCurrent() => new(
-            TakenAt: DateTimeOffset.UtcNow,
-            Counters: Counters,
-            Spool: Spool,
-            SpoolDegraded: SpoolDegraded,
-            Health: Health,
-            RetentionDays: RetentionDays,
-            Listeners: Listeners);
-
-        /// <summary>流量制限の発火上位送信元（Issue #288。既定は発火なし）。</summary>
-        public List<YaguraFlowControlRejectionReading> FlowControlRejections { get; init; } = [];
-
-        public IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount) =>
-            FlowControlRejections.Take(maxCount).ToList();
-
-        /// <summary>途絶検知のウォッチリスト状態（ADR-0018。既定は未登録 = 空）。</summary>
-        public List<YaguraSourceSilenceReading> SourceSilenceEntries { get; init; } = [];
-
-        public IReadOnlyList<YaguraSourceSilenceReading> ReadSourceSilenceEntries() => SourceSilenceEntries;
     }
 }
