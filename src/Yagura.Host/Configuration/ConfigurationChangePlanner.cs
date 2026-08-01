@@ -14,17 +14,7 @@
 /// 隠れて変更なしと判定される」といった不一致が生じる。
 /// </para>
 /// <para>
-/// 比較するキーは <see cref="ConfigurationKeyMetadata"/> に登録済みのキーと同期させる
-/// （M4-3 でスプール 3 キーを追加。Issue #191 で <c>Viewer:ReverseDns:Enabled</c> の
-/// 比較漏れを追加修正——PR #190 の調査で発見され、本 Issue に記録されていた既知ギャップ。
-/// Issue #210 で残りの 5 キー（<c>Ingestion:Udp:ReceiveBufferBytes</c>・
-/// <c>Ingestion:Tcp:BindAddress</c>・<c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・
-/// <c>Retention:ExecutionTimeOfDay</c>）の比較漏れを追加修正。ADR-0010 Phase 1 の
-/// 管理 UI 認証 4 キー——PR #217——は #218 とのマージ順の意味的競合で漏れたため追補。
-/// ADR-0010 Phase 2 のリモートバインド + HTTPS 4 キー（<c>Admin:RemoteBinding:Enabled</c>・
-/// <c>Admin:Https:Enabled</c>・<c>Admin:Https:CertificateThumbprint</c>・<c>Admin:Https:Port</c>）
-/// は導入と同じ PR で本メソッドへ追加した——Phase 1 の教訓（新キー追加と比較ロジック更新を
-/// 同じ PR で行う）をそのまま踏襲）。
+/// 比較するキーは <see cref="ConfigurationKeyMetadata"/> に登録済みのキーと同期させる。
 /// 新しいキーを <see cref="YaguraConfigurationOptions"/> に追加する際は、本クラスの
 /// 比較ロジックと <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
 /// </para>
@@ -98,10 +88,10 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Notification:Email:Smtp:Username", before.Notification?.Email?.Smtp?.Username, after.Notification?.Email?.Smtp?.Username);
         CompareKey(changedKeys, "Notification:Email:Smtp:Password", before.Notification?.Email?.Smtp?.Password, after.Notification?.Email?.Smtp?.Password);
 
-        // --- 配列キー（ADR-0017 委任 9。2026-07-19 追加） ---
-        // 従来これらは比較対象ですらなく、手編集で宛先・グループ一覧だけを変えて再読み込みしても
-        // 反映も「再起動待ち」の表示もされない無音の穴になっていた（configuration.md §3 が
-        // 約束する「未反映のまま残る項目の明示」から漏れていた）。
+        // --- 配列キー（ADR-0017 委任 9） ---
+        // 比較対象に含めないと、手編集で宛先・グループ一覧だけを変えて再読み込みしても
+        // 反映も「再起動待ち」の表示もされない無音の穴になる（configuration.md §3 が
+        // 約束する「未反映のまま残る項目の明示」から漏れる）。
         CompareArrayKey(changedKeys, "Admin:Authentication:Windows:AdminGroups",
             before.Admin?.Authentication?.Windows?.AdminGroups, after.Admin?.Authentication?.Windows?.AdminGroups);
         CompareArrayKey(changedKeys, "Viewer:Authentication:Windows:ViewerGroups",
@@ -116,7 +106,7 @@ public static class ConfigurationChangePlanner
 
         // オブジェクト構造化配列（ADR-0018）。**論理キーを 1 件だけ積む**——平坦化キー
         // （...:Watchlist:0:Address）を積むと ImmediateConfigurationApplier の照合にも
-        // 再起動待ちキーの集計にも載らず、即時反映のはずが偽の再起動待ちとして #286 の
+        // 再起動待ちキーの集計にも載らず、即時反映のはずが偽の再起動待ちとして
         // 常設表示に出る（ADR-0018 委任 3 が名指しで警戒している 3 点連鎖の破綻）。
         CompareWatchlist(changedKeys, "Notification:SourceSilence:Watchlist",
             before.Notification?.SourceSilence?.Watchlist, after.Notification?.SourceSilence?.Watchlist);

@@ -86,8 +86,6 @@ public static class YaguraConfigurationLoader
         "Admin:Https:Enabled",
         "Admin:Https:CertificateThumbprint",
         "Admin:Https:Port",
-        // ADR-0020 決定 1。導入 PR #431 で本一覧への登録が漏れ、「未知のキーとして無視」警告と
-        // 1032 fail-closed 検証が同一起動で共存する矛盾メッセージになっていた（Issue #439）。
         "Admin:ForwarderKit:MsiUpload:Enabled",
         "Storage:SqliteFileName",
         "Storage:Provider",
@@ -132,7 +130,7 @@ public static class YaguraConfigurationLoader
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <see cref="KnownArrayKeys"/>（スカラーの配列）とは平坦化の形が違う。実測（2026-07-19）:
+    /// <see cref="KnownArrayKeys"/>（スカラーの配列）とは平坦化の形が違う。実測結果:
     /// </para>
     /// <list type="bullet">
     /// <item><description>スカラー配列 <c>["a","b"]</c> → <c>key:0</c> = "a" / <c>key:1</c> = "b"</description></item>
@@ -180,7 +178,7 @@ public static class YaguraConfigurationLoader
                 unknownKey);
         }
 
-        // 型の読み替え検出（Issue #334）: 平坦化後の値からはトークン型を復元できないため、
+        // 型の読み替え検出: 平坦化後の値からはトークン型を復元できないため、
         // 元ファイルを JsonDocument として別途走査する。報告対象の絞り込み（不正値警告・
         // 未知キーとの重複除外）は警告の収集が終わった Load の末尾で行う。
         var allTypeCoercions = DetectTypeCoercions(configurationFilePath);
@@ -205,7 +203,7 @@ public static class YaguraConfigurationLoader
         // --- 受信: TCP ポート（§1「起動失敗」——UDP と同じ分類。M4-1） ---
         var tcpPort = ResolveTcpPort(options);
 
-        // --- 受信: TLS 受信 opt-in（RFC 5425。security.md §6。Issue #137）。§1「縮小側で継続」——
+        // --- 受信: TLS 受信 opt-in（RFC 5425。security.md §6）。§1「縮小側で継続」——
         //     TLS 受信は opt-in 機能であり、不正値・未解決の証明書は無効側・非稼働側へ倒す
         //     （fail-closed の起動拒否は行わない。実際の証明書ストア参照の成否は Program 側で
         //     確認し、開けなければリスナ 1 本のみ縮小継続する——Admin:Https と同じ二段構え） ---
@@ -219,10 +217,10 @@ public static class YaguraConfigurationLoader
             "TLS 受信は未構成のまま扱います（Ingestion:Tls:Enabled が true の場合、Program 起動時に" +
                 "縮小継続の警告として記録されます）");
 
-        // --- 受信: RFC 3164 TIMESTAMP の既定タイムゾーン（§1「既定値で継続」。Issue #134） ---
+        // --- 受信: RFC 3164 TIMESTAMP の既定タイムゾーン（§1「既定値で継続」） ---
         var defaultRfc3164TimeZone = ResolveDefaultRfc3164TimeZone(options, warnings);
 
-        // --- 流量制御: 有効/無効・送信元別閾値（§1「既定値で継続」。ADR-0002 決定 2。Issue #260） ---
+        // --- 流量制御: 有効/無効・送信元別閾値（§1「既定値で継続」。ADR-0002 決定 2） ---
         var flowControlEnabled = ResolveFlowControlEnabled(options, warnings);
         var flowControlMessagesPerSecond = ResolveFlowControlMessagesPerSecond(options, warnings);
         var flowControlBurstSize = ResolveFlowControlBurstSize(options, warnings);
@@ -317,8 +315,8 @@ public static class YaguraConfigurationLoader
         //     「縮小側で継続」ではなく「起動失敗」に分類する——リモートバインドの fail-closed
         //     （configuration.md §1 の既存 L-4 不変条件）と対称の扱い。「loopback 認証 opt-in が
         //     有効なのに認証方式が一つも構成されていない」は、認証手段が存在しないまま
-        //     loopback にも認証を要求してしまい、佐藤・鈴木の両ペルソナが最重要視した
-        //     「最終復旧経路」を誤設定 1 つで自壊させるため、既定値へのフォールバック
+        //     loopback にも認証を要求してしまい、「最終復旧経路」を誤設定 1 つで自壊させるため、
+        //     既定値へのフォールバック
         //     （§1「縮小側で継続」の通常運用）ではなく起動そのものを止める） ---
         if (adminAuthRequireForLoopback && !adminWindowsAuthEnabled && !adminAppAuthEnabled)
         {
@@ -339,15 +337,14 @@ public static class YaguraConfigurationLoader
         var adminForwarderMsiUploadEnabled = ResolveSecurityFlag(
             options.Admin?.ForwarderKit?.MsiUpload?.Enabled, "Admin:ForwarderKit:MsiUpload:Enabled", warnings);
 
-        // --- fail-closed 不変条件（ADR-0020 決定 1 の条件 (ii) は ADR-0021 により撤廃——
-        //     前提条件は「認証方式が最低 1 つ有効」のみ。1011/1012 と同型の「起動失敗」分類）。
+        // --- fail-closed 不変条件（ADR-0021 決定 1。前提条件は「認証方式が最低 1 つ有効」のみ。
+        //     1011/1012 と同型の「起動失敗」分類）。
         //     無認証 loopback からの到達遮断はリスナ全体（RequireForLoopback）ではなく
         //     アップロード操作単位の専用認可ポリシー（実際にサインインした管理セッションのみ。
         //     ForwarderMsiUploadPolicyName）が担う。サインインの手段が存在しない構成で
         //     有効化すると誰も操作を通過できず、かつ書き込み口の存在だけが残るため、
         //     縮小継続ではなく起動そのものを止める。エラーメッセージには復旧に必要な
-        //     具体の設定キーと値を明記する（手編集復旧の場面では UI の誘導が使えない——
-        //     ADR-0020 委任 1） ---
+        //     具体の設定キーと値を明記する（手編集復旧の場面では UI の誘導が使えない） ---
         if (adminForwarderMsiUploadEnabled)
         {
             var authenticationConfigured = adminWindowsAuthEnabled || adminAppAuthEnabled;
@@ -380,13 +377,13 @@ public static class YaguraConfigurationLoader
         var retentionDays = ResolveRetentionDays(options, warnings);
         var retentionExecutionTimeOfDay = ResolveRetentionExecutionTimeOfDay(options, warnings);
 
-        // --- 監査: 保持期間（SEC-2。security.md §4.2。Issue #261） ---
+        // --- 監査: 保持期間（SEC-2。security.md §4.2） ---
         var auditRetentionDays = ResolveAuditRetentionDays(options, warnings);
 
-        // --- 能動通知: メール（ADR-0017。opt-in・既定無効。Issue #350） ---
+        // --- 能動通知: メール（ADR-0017。opt-in・既定無効） ---
         var emailNotification = ResolveEmailNotification(options, warnings);
 
-        // --- 能動通知: 送信元の途絶検知（ADR-0018。opt-in・既定無効。Issue #351） ---
+        // --- 能動通知: 送信元の途絶検知（ADR-0018。opt-in・既定無効） ---
         var sourceSilence = ResolveSourceSilence(options, warnings, logger);
 
         foreach (var warning in warnings)
@@ -441,7 +438,7 @@ public static class YaguraConfigurationLoader
             FlowControlBurstSize: flowControlBurstSize,
             AuditRetentionDays: auditRetentionDays)
         {
-            // bind アドレスの明示指定フラグ（PR #193 レビュー対応。IPv6 不可の環境での
+            // bind アドレスの明示指定フラグ（IPv6 不可の環境での
             // 「既定は IPv4 縮小 / 明示は fail-fast」の分岐の入力——受信段へ引き渡す）。
             UdpBindAddressIsExplicit = udpBindAddressIsExplicit,
             TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
@@ -454,7 +451,7 @@ public static class YaguraConfigurationLoader
             AdminForwarderMsiUploadEnabled = adminForwarderMsiUploadEnabled,
         };
 
-        // 型の読み替えの報告対象（Issue #334）: 不正値の警告・未知キーの警告が既に出るキーは
+        // 型の読み替えの報告対象: 不正値の警告・未知キーの警告が既に出るキーは
         // 情報一覧から除外する——同じキーを二重に報告しない。§1 は情報レベルの対象を「意図が
         // 一意に読み取れる型の読み替え」に限っており、不正値と判定された値（例: "Enabled": 1）は
         // 既存の警告 3 点（キー・不正値・適用値）が正本になる。
@@ -498,7 +495,7 @@ public static class YaguraConfigurationLoader
 
     /// <summary>
     /// 設定ファイルを <see cref="JsonDocument"/> として走査し、スカラー位置に数値・真偽値の
-    /// トークンが現れたキー（型の読み替え。configuration.md §1。Issue #334）を収集する。
+    /// トークンが現れたキー（型の読み替え。configuration.md §1）を収集する。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -524,7 +521,7 @@ public static class YaguraConfigurationLoader
             }
 
             // 文字コードは StreamReader の BOM 自動判別でデコードする（YaguraConfigurationWriter.Read と
-            // 同じ機構——Issue #344 / #389）。バイト列を直接 JsonDocument.Parse へ渡すと、両読み手が
+            // 同じ機構）。バイト列を直接 JsonDocument.Parse へ渡すと、両読み手が
             // 受理する UTF-16 BOM 付きファイルで本走査だけが JsonException → 空振りし、受理される
             // ファイルなのに型読み替えの情報表示が無音で欠ける。
             using var reader = new StreamReader(configurationFilePath);
@@ -584,7 +581,7 @@ public static class YaguraConfigurationLoader
                 break;
 
             case JsonValueKind.True or JsonValueKind.False when path is not null:
-                // 構成システムの平坦化結果と同じ表記（"True" / "False"。実測は Issue #312）。
+                // 構成システムの平坦化結果と同じ表記（"True" / "False"）。
                 coercions.Add(new ConfigurationTypeCoercion(
                     path, "真偽値", element.ValueKind == JsonValueKind.True ? bool.TrueString : bool.FalseString));
                 break;
@@ -607,7 +604,7 @@ public static class YaguraConfigurationLoader
             // 空の JSON 配列（"To": []）は要素を 1 つも展開せず、配列キー自身がリーフとして
             // 現れる（値は空文字）。これを未知キー扱いにすると「全ての宛先を消した」「グループ
             // 指定を空にした」という正当な編集が、綴り間違いと同じ警告として出てしまうため、
-            // 配列キー自身も既知として扱う（Issue #350 で顕在化。グループ一覧も同じ性質を持つ）。
+            // 配列キー自身も既知として扱う（グループ一覧も同じ性質を持つ）。
             if (KnownKeys.Contains(entry.Key)
                 || KnownArrayKeys.Contains(entry.Key)
                 || KnownObjectArrayKeys.ContainsKey(entry.Key)
@@ -692,7 +689,7 @@ public static class YaguraConfigurationLoader
     /// loopback（127.0.0.1）へ縮小する。
     /// </summary>
     /// <returns>
-    /// 解決済みアドレスと、キーが明示指定されていたか（PR #193 レビュー対応——IPv6 不可の
+    /// 解決済みアドレスと、キーが明示指定されていたか（IPv6 不可の
     /// 環境で「既定の <c>::</c> は IPv4 縮小 / 明示の <c>::</c> は fail-fast」を分けるための入力）。
     /// </returns>
     private static (string Address, bool IsExplicit) ResolveUdpBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
@@ -704,7 +701,7 @@ public static class YaguraConfigurationLoader
         }
 
         // IPAddress として解釈できる値を受け入れる（形式不正のみ縮小対象）。
-        // ワイルドカードの意味づけ（Issue #133・configuration.md §4.1）: 既定の "::" は
+        // ワイルドカードの意味づけ（configuration.md §4.1）: 既定の "::" は
         // DualMode による IPv4/IPv6 両受信、明示の "0.0.0.0" は IPv4 専用（後方互換の
         // 逃げ道）——解釈は受信段（DualStackBindAddress）が行い、本メソッドは形式検証のみ担う。
         if (IPAddress.TryParse(raw, out _))
@@ -791,7 +788,7 @@ public static class YaguraConfigurationLoader
             return (TcpSyslogListenerOptions.DefaultBindAddress, IsExplicit: false);
         }
 
-        // ワイルドカードの意味づけは UDP 側と同一（Issue #133。ResolveUdpBindAddress のコメント参照）。
+        // ワイルドカードの意味づけは UDP 側と同一（ResolveUdpBindAddress のコメント参照）。
         if (IPAddress.TryParse(raw, out _))
         {
             return (raw, IsExplicit: true);
@@ -828,7 +825,7 @@ public static class YaguraConfigurationLoader
     }
 
     /// <summary>
-    /// TLS 受信（RFC 5425。opt-in。Issue #137）の bind アドレスを解決する。TCP と同じ分類
+    /// TLS 受信（RFC 5425。opt-in）の bind アドレスを解決する。TCP と同じ分類
     /// （§1「縮小側で継続」）を適用する。戻り値の意味は <see cref="ResolveTcpBindAddress"/> と同一。
     /// </summary>
     private static (string Address, bool IsExplicit) ResolveIngestionTlsBindAddress(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
@@ -855,7 +852,7 @@ public static class YaguraConfigurationLoader
 
     /// <summary>
     /// TLS 受信ポートを解決する（環境変数 <see cref="YaguraHostEnvironment.IngestionTlsPortEnvironmentVariable"/>
-    /// が最優先。Issue #137）。§1「既定値で継続」——TLS 受信は opt-in であり、平文受信の成立には
+    /// が最優先）。§1「既定値で継続」——TLS 受信は opt-in であり、平文受信の成立には
     /// 不可欠ではないため、UDP/TCP ポート（§1「起動失敗」）とは分類を分ける。既定 6514（RFC 5425）。
     /// <see cref="ResolveAdminHttpsPort"/> と同じ「不正値は既定値へフォールカックし警告する」構造。
     /// </summary>
@@ -906,7 +903,7 @@ public static class YaguraConfigurationLoader
     }
 
     /// <summary>
-    /// RFC 3164 TIMESTAMP の既定タイムゾーンを解決する（Issue #134。§1「既定値で継続」——
+    /// RFC 3164 TIMESTAMP の既定タイムゾーンを解決する（§1「既定値で継続」——
     /// 受信の成立に不可欠なキーではなく、DeviceTimestamp は参考情報であるため）。
     /// </summary>
     /// <remarks>
@@ -1211,8 +1208,7 @@ public static class YaguraConfigurationLoader
     /// </list>
     /// <c>Admin:Https:Enabled</c>（不正値は無効へ）と縮退の向きが異なるのは意図的——管理側は
     /// RemoteBinding との fail-closed 組み合わせ検証（1012）が最終防衛線として控えるため無効化が
-    /// 平文露出に直結しないが、閲覧側にその防衛線はない（ADR-0022 決定 1。ペルソナレビュー——
-    /// 田中・クリス——の指摘による確定）。
+    /// 平文露出に直結しないが、閲覧側にその防衛線はない（ADR-0022 決定 1）。
     /// </summary>
     private static (ViewerHttpsMode Mode, string? Thumbprint, string? SuppressedReason) ResolveViewerHttps(
         YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
@@ -1298,8 +1294,8 @@ public static class YaguraConfigurationLoader
     /// Windows 証明書ストア拇印（SHA-1・16 進 40 桁）を正規化する共通処理（configuration.md §6 と
     /// 同型の形式検証）。空白・コロン・ハイフン区切りは正規化して受理する（証明書 MMC スナップイン
     /// 等の一般的な表示形式に合わせるため）。<see cref="ResolveAdminHttpsCertificateThumbprint"/>
-    /// （管理リスナのリモート HTTPS）と TLS 受信証明書（<c>Ingestion:Tls:CertificateThumbprint</c>。
-    /// Issue #137）の両方から呼ばれる——参照方式（拇印の形式検証）は共有し、重複実装しない
+    /// （管理リスナのリモート HTTPS）と TLS 受信証明書（<c>Ingestion:Tls:CertificateThumbprint</c>）
+    /// の両方から呼ばれる——参照方式（拇印の形式検証）は共有し、重複実装しない
     /// （security.md §6「参照方式は Web UI の HTTPS と同型」の設定検証層での具体化）。
     /// 不正な形式は §1「縮小側で継続」——未構成として扱う（<see langword="null"/> を返す）。
     /// </summary>
@@ -1480,7 +1476,7 @@ public static class YaguraConfigurationLoader
     /// SQLite への縮小 + 強い警告</b>とする（起動を止めない——上記 (1)(2) と同じ判断。
     /// 復号失敗は SQL Server provider を構築する前の設定検証段階の問題であり、上記 (3) の
     /// 整理にも合流する）。接頭辞のない平文は従来どおり受理し（手編集ユーザーを壊さない。
-    /// 2026-07-06 オーナー決定: 平文 → 暗号化への自動書き戻しはしない）、資格情報入りの場合のみ
+    /// 平文 → 暗号化への自動書き戻しはしない）、資格情報入りの場合のみ
     /// <see cref="SqlServerConnectionStringCredentialGuard"/> の検出で警告する。
     /// </para>
     /// </remarks>
@@ -1545,7 +1541,7 @@ public static class YaguraConfigurationLoader
             return (StorageProvider.Sqlite, null);
         }
 
-        // --- 平文の接続文字列（手編集経路）は従来どおり受理する（2026-07-06 オーナー決定: ---
+        // --- 平文の接続文字列（手編集経路）は従来どおり受理する（オーナー決定: ---
         // --- 自動書き換えはしない）。資格情報入りの平文のみ警告する（configuration.md §2） ---
         if (SqlServerConnectionStringCredentialGuard.ContainsPlaintextCredential(connectionString))
         {
@@ -1568,7 +1564,7 @@ public static class YaguraConfigurationLoader
     /// </summary>
     /// <summary>
     /// 送信元単位の流量制御の有効/無効を解決する（ADR-0002 決定 2「既定有効」。opt-out。
-    /// Issue #260。§1「既定値で継続」——真偽値として不正なら既定（有効）へフォールバックし
+    /// §1「既定値で継続」——真偽値として不正なら既定（有効）へフォールバックし
     /// 警告する。<see cref="ResolveSpoolEnabled"/> と同じ扱い）。
     /// </summary>
     private static bool ResolveFlowControlEnabled(YaguraConfigurationOptions options, List<ConfigurationWarning> warnings)
@@ -1740,7 +1736,7 @@ public static class YaguraConfigurationLoader
 
     /// <summary>
     /// 保持期間（日数）を解決する（database.md §3・DB-1。§1「既定値で継続」）。
-    /// <b>未設定時の既定は 30 日</b>（2026-07-05 オーナー決定。PR #64 で確定した DB-1 の値。
+    /// <b>未設定時の既定は 30 日</b>（DB-1 の値。
     /// 根拠: M7-2 実測でレコード単価 ≈ メッセージ長 + 約 95 B、10 msg/s × 30 日 ≈ 7.8 GB は
     /// SQL Server Express の 10 GB 上限に収まる。容量超過は保持期間とは独立の監視が受ける
     /// 設計であり（database.md §3「ディスク空き容量・DB 容量上限への接近は保持期間とは
@@ -1786,7 +1782,7 @@ public static class YaguraConfigurationLoader
     }
 
     /// <summary>
-    /// 監査記録の保持期間（日数）を解決する（SEC-2。security.md §4.2。Issue #261）。
+    /// 監査記録の保持期間（日数）を解決する（SEC-2。security.md §4.2）。
     /// 未設定は既定 <b>365 日</b>（SEC-2 確定値）、不正値は <c>Retention:Days</c> と同じ
     /// 「削除しない」へフォールバックし警告する（意図せぬ自動削除で証跡を失う事故を避ける安全側。
     /// 監査記録は証跡であり、不正値を既定 365 日へ読み替えて削除を始めるより、削除を止めて
@@ -1853,7 +1849,7 @@ public static class YaguraConfigurationLoader
         var email = options.Notification?.Email;
 
         // 警告文は既定（「認証関連のセキュリティ項目」）を使わない——メール通知の有効フラグに
-        // その説明は当てはまらず、利用者を認証設定側の調査へ誤誘導する（PR #366 レビュー対応）。
+        // その説明は当てはまらず、利用者を認証設定側の調査へ誤誘導する。
         if (!ResolveSecurityFlag(email?.Enabled, "Notification:Email:Enabled", warnings,
                 reason: "真偽値として不正なため縮小側（無効）を適用" +
                     "（configuration.md §1 の縮小側継続——opt-in 機能は不正値で有効側へ落とさない）"))
@@ -2018,7 +2014,7 @@ public static class YaguraConfigurationLoader
             }
         }
 
-        // 決定 3 の能動警告（Issue #385）: 資格情報あり + Security ≠ required は、設定保存時
+        // 決定 3 の能動警告: 資格情報あり + Security ≠ required は、設定保存時
         // （画面のライブバナー）だけでなく**起動時・再読み込み時にも**警告する——手編集で
         // Security を auto へ戻した場合に誰も気づけない状態を作らない。機能は無効化しない
         // （推奨からの逸脱であり不正値ではない）。

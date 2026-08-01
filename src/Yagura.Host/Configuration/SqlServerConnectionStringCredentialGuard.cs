@@ -1,9 +1,8 @@
 ﻿namespace Yagura.Host.Configuration;
 
 /// <summary>
-/// <c>Storage:SqlServer:ConnectionString</c> 内の平文資格情報の検出（M5-3 / Issue #47 で
-/// 検出の枠組みを挿入、DPAPI 暗号化の実装と同時に <see cref="YaguraConfigurationLoader"/> へ
-/// 配線した。configuration.md §2）。
+/// <c>Storage:SqlServer:ConnectionString</c> 内の平文資格情報の検出（M5-3。DPAPI 暗号化の
+/// 実装と同時に <see cref="YaguraConfigurationLoader"/> へ配線されている。configuration.md §2）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,7 +19,7 @@
 /// 平文検出の対象から除外する。
 /// </para>
 /// <para>
-/// <b>検出後の扱い（configuration.md §2。2026-07-06 オーナー決定）</b>: 手編集で書かれた
+/// <b>検出後の扱い（configuration.md §2。オーナー決定）</b>: 手編集で書かれた
 /// 平文の接続文字列は従来どおり<b>受理する</b>（手編集ユーザーを壊さない）。資格情報入りの
 /// 平文には強い警告を出し続けるが、<b>設定ファイルの自動書き換え（平文 → 暗号化への書き戻し）は
 /// 行わない</b>——利用者のファイルを勝手に変更しない方針。暗号化表現への移行はウィザード

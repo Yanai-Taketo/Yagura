@@ -4,8 +4,8 @@ namespace Yagura.Host.Configuration;
 
 /// <summary>
 /// 設定ファイル（既定 <c>yagura.json</c>）の全体書き換え保存 API
-/// （configuration.md §3。書き手はウィザード・手編集の 2 者——旧設計の第 3 の書き手
-/// 「自動書き換え（平文の DPAPI 暗号化書き戻し）」は 2026-07-06 オーナー決定で行わない
+/// （configuration.md §3。書き手はウィザード・手編集の 2 者——第 3 の書き手
+/// 「自動書き換え（平文の DPAPI 暗号化書き戻し）」はオーナー決定により行わない
 /// （§2）——のうち、ウィザードが使う「保存」の受け皿）。
 /// </summary>
 /// <remarks>
@@ -36,14 +36,13 @@ namespace Yagura.Host.Configuration;
 /// <para>
 /// <b>読み込み側は BOM の有無・種類を問わない</b>。.NET 構成システムの <c>AddJsonFile</c> は
 /// <see cref="StreamReader"/> の BOM 自動判別でファイルを文字列へデコードしてから解析するため、
-/// UTF-8 BOM だけでなく UTF-16（LE/BE）BOM 付きのファイルも受理する（2026-07-20 実測。
-/// Issue #389）。本クラスの <see cref="Read(string)"/> も同じ機構——<see cref="StreamReader"/>
+/// UTF-8 BOM だけでなく UTF-16（LE/BE）BOM 付きのファイルも受理する（実測済み）。
+/// 本クラスの <see cref="Read(string)"/> も同じ機構——<see cref="StreamReader"/>
 /// の BOM 自動判別——でデコードしてから <c>JsonSerializer</c> へ渡し、受理範囲を揃える
 /// （§1 の不変条件。UTF-16 BOM は Windows PowerShell 5.1 の <c>Set-Content</c> 既定
 /// 〔<c>-Encoding Unicode</c>〕が普通に書くため、手編集で踏み得る）。
-/// <c>JsonSerializer.Deserialize(ReadOnlySpan{byte}, ...)</c> は BOM を読み飛ばさない
-/// （Issue #344 で UTF-8 BOM が、#389 で UTF-16 BOM が、それぞれ本クラス側だけの拒否として
-/// 表面化した）。なお <b>BOM のない</b> UTF-16 は基準側も受理しない（同実測）ため対象外である。
+/// <c>JsonSerializer.Deserialize(ReadOnlySpan{byte}, ...)</c> は BOM を読み飛ばさない。
+/// なお <b>BOM のない</b> UTF-16 は基準側も受理しないため対象外である。
 /// </para>
 /// </remarks>
 public static class YaguraConfigurationWriter
@@ -55,10 +54,10 @@ public static class YaguraConfigurationWriter
 
     /// <summary>
     /// 読み取り用のオプション。configuration.md §1 の不変条件「読み手の受理範囲は一致していなければ
-    /// ならない」に従い、.NET 構成システム（<c>AddJsonFile</c>）の受理範囲に合わせる（Issue #312）。
+    /// ならない」に従い、.NET 構成システム（<c>AddJsonFile</c>）の受理範囲に合わせる。
     /// </summary>
     /// <remarks>
-    /// 差異は数値・真偽値だけではない（2026-07-18 に実測で確認）。末尾カンマとコメントは構成システムが
+    /// 差異は数値・真偽値だけではない。末尾カンマとコメントは構成システムが
     /// 受理するのに <see cref="JsonSerializer"/> の既定は拒否し、同一キーの重複定義は**逆に**構成システムが
     /// 拒否する（<see cref="InvalidDataException"/>）のに <see cref="JsonSerializer"/> の既定は
     /// 後勝ちで受理する。§1 は重複キーを受理しないと定めたため、厳格な側（構成システム）に合わせる。
@@ -92,17 +91,16 @@ public static class YaguraConfigurationWriter
         // トークンは「ディスク上の内容」から計算する（BOM を含む、デコード前の生バイト列）。
         // ConfigurationVersionToken.FromFile も生のファイル内容をハッシュしており、
         // ここでデコード後の表現を使うと BOM 付きファイルで両者のトークンが食い違い、
-        // 楽観的競合検出（Save の expectedVersionToken 照合）が誤検知する（Issue #344。
-        // UTF-16 でも同じ——照合はファイルの生内容どうしで行う）。
+        // 楽観的競合検出（Save の expectedVersionToken 照合）が誤検知する
+        // （UTF-16 でも同じ——照合はファイルの生内容どうしで行う）。
         var token = ConfigurationVersionToken.FromContent(bytes);
 
-        // 文字コードは StreamReader の BOM 自動判別でデコードしてから deserialize する
-        // （Issue #344 / #389）。基準側（.NET 構成システムの AddJsonFile）は StreamReader で
-        // ファイルを読むため UTF-8 BOM に加えて UTF-16（LE/BE）BOM も受理する（2026-07-20 実測）。
+        // 文字コードは StreamReader の BOM 自動判別でデコードしてから deserialize する。
+        // 基準側（.NET 構成システムの AddJsonFile）は StreamReader でファイルを読むため
+        // UTF-8 BOM に加えて UTF-16（LE/BE）BOM も受理する（実測済み）。
         // JsonSerializer.Deserialize(ReadOnlySpan<byte>, ...) はどちらの BOM も読み飛ばさないため、
         // バイト列を直接渡すと §1 の不変条件「2 つの読み手の受理範囲は一致していなければならない」
-        // が破れる——UTF-8 BOM だけを手動で除去する方式（#344 の当初対処）では UTF-16 側の
-        // 不一致が残った（#389）。同じ判別機構に乗ることで、受理範囲を構造的に揃える。
+        // が破れる。同じ判別機構に乗ることで、受理範囲を構造的に揃える。
         // BOM は Windows PowerShell 5.1 の Set-Content（既定 -Encoding Unicode = UTF-16LE BOM、
         // -Encoding utf8 = UTF-8 BOM）や一部のエディタが既定で付与するため、手編集で普通に踏み得る。
         string text;

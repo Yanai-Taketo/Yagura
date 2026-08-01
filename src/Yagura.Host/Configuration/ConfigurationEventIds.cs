@@ -18,12 +18,6 @@ public static class ConfigurationEventIds
     /// （起動失敗に直結する重大事象——他の 1000 番台の「警告」より一段強い。security.md §4.3
     /// のレベル割当方針「機能停止を伴う事象はエラー」の適用）。
     /// </summary>
-    /// <remarks>
-    /// 採番の経緯: 1009 は main 側で Issue #152（スプールの定期自己検証失敗）に割り当て済み、
-    /// 1010 は PR #211（スプール自己検証タイムアウトのバックログ起因の区別）が使用し先に
-    /// マージされる見込みのため（additive-only 規約——一度公開した ID の意味は変えない。
-    /// 採番は PR #217 レビューで裁定済み）、本イベントは 1011 を採る。
-    /// </remarks>
     public static readonly EventId AdminAuthenticationFailClosedStartupRejected =
         new(1011, "AdminAuthenticationFailClosedStartupRejected");
 
@@ -34,10 +28,6 @@ public static class ConfigurationEventIds
     /// （ADR-0010 Phase 2 決定 1・4）。レベルはエラー（<see cref="AdminAuthenticationFailClosedStartupRejected"/>
     /// と同じ「起動失敗に直結する重大事象」区分）。
     /// </summary>
-    /// <remarks>
-    /// 採番の経緯: 1011 は main 側で ADR-0010 Phase 1（PR #217）に割り当て済みのため、
-    /// 本イベントは additive-only 規約に従い次の 1012 を採る。
-    /// </remarks>
     public static readonly EventId AdminRemoteBindingFailClosedStartupRejected =
         new(1012, "AdminRemoteBindingFailClosedStartupRejected");
 
@@ -56,7 +46,7 @@ public static class ConfigurationEventIds
         new(1013, "AdminHttpsCertificateUnavailableAtStartup");
 
     /// <summary>
-    /// TLS 受信（<c>Ingestion:Tls:Enabled</c>。RFC 5425。opt-in。Issue #137）が有効なのに、
+    /// TLS 受信（<c>Ingestion:Tls:Enabled</c>。RFC 5425。opt-in）が有効なのに、
     /// 実際の証明書ストア参照（<c>Ingestion:Tls:CertificateThumbprint</c>）が失敗した（拇印が
     /// 未設定・不正形式・証明書が見つからない・秘密鍵にアクセスできない）場合の起動時警告
     /// （security.md §6）。<b>起動は中止しない</b>——TLS 受信の bind エントリのみを開かずに
@@ -64,22 +54,18 @@ public static class ConfigurationEventIds
     /// 平文 UDP/TCP 受信は一切影響を受けない（ADR-0004 決定 3。TLS の障害は平文経路に影響しない）。
     /// レベルは警告——受信全体の機能停止ではなく TLS 面のみの縮退のため。
     /// </summary>
-    /// <remarks>
-    /// 採番の経緯: 1015 まで既存実装（ADR-0010 Phase 2）が使用済みのため、additive-only 規約に
-    /// 従い次の 1016 を採る。
-    /// </remarks>
     public static readonly EventId IngestionTlsCertificateUnavailableAtStartup =
         new(1016, "IngestionTlsCertificateUnavailableAtStartup");
 
     /// <summary>
-    /// 設定の再読み込み（configuration.md §3。CF-4 層1。Issue #262）で、変更キーの一部が
+    /// 設定の再読み込み（configuration.md §3。CF-4 層1）で、変更キーの一部が
     /// 反映にサービス再起動（または層2 のリスナ再構成）を要し、**未反映のまま残っている**
     /// 場合の警告。§3「変更に『サービス再起動』の項目が含まれる場合、未反映のまま残る項目を
     /// 再読み込みの結果として UI とイベントログに明示する」の実装。レベルは警告——
     /// 「設定した = 反映された」という前提が静かに崩れている状態を放置させないため。
     /// 再読み込みの実行自体の証跡は監査事象 2016（情報）が担う（本 ID は未反映の残存のみ）。
     /// </summary>
-    /// <remarks>採番の経緯: 1017〜1019 は ActiveNotificationEventIds 側が使用済みのため 1020。</remarks>
+    /// <remarks>1017〜1019 は ActiveNotificationEventIds 側で使用済みのため、本イベントは 1020 を採る。</remarks>
     public static readonly EventId ConfigurationReloadPendingRestart =
         new(1020, "ConfigurationReloadPendingRestart");
 
@@ -87,15 +73,14 @@ public static class ConfigurationEventIds
     /// 設定の再読み込みが検証失敗（configuration.md §1 の「起動失敗」分類の不正値）により
     /// 拒否された場合の警告。**実行中の構成は旧設定のまま継続する**——起動時は fail-fast
     /// （起動失敗）だが、稼働中は「受信を止めない」を優先して適用だけを拒否する非対称が仕様
-    /// （Issue #262 の設計判断）。レベルは警告。
+    /// （設計判断）。レベルは警告。
     /// </summary>
     public static readonly EventId ConfigurationReloadRejected =
         new(1021, "ConfigurationReloadRejected");
 
     /// <summary>
     /// 起動時に受信リスナの一部（または全部）が環境要因（ポート競合・アドレス未確立等）で
-    /// bind できず、開けたリスナのみで縮小継続している場合の警告（configuration.md §4.1。
-    /// Issue #291——#141 原子的起動の反転。2026-07-16 オーナー裁定）。開けなかったリスナは
+    /// bind できず、開けたリスナのみで縮小継続している場合の警告（configuration.md §4.1）。開けなかったリスナは
     /// CF-6 の定期再試行（仮値 30 秒間隔）が受信再開を試み続け、成功すると受信断区間
     /// （<c>downtime.listener-bind-retry</c>）が記録される。レベルは警告——受信面の一部が
     /// 開いていない縮退状態を放置させないため。
@@ -105,7 +90,7 @@ public static class ConfigurationEventIds
 
     /// <summary>
     /// リスナの実ポートと Yagura 名前空間のファイアウォール規則の不一致（CF-2。
-    /// configuration.md §4.3。Issue #265）。起動時とリスナ再構成の適用時に検出する。
+    /// configuration.md §4.3）。起動時とリスナ再構成の適用時に検出する。
     /// ファイアウォールでの drop はアプリのカウンタにも OS のソケット統計にも現れない
     /// 観測の完全な死角であり、「ポートを変えたのに届かない」を無音で固定化させないための警告。
     /// レベルは警告。
@@ -130,29 +115,26 @@ public static class ConfigurationEventIds
     /// サービス死活の外形監視を案内する（configuration.md §10 CF-D8）。
     /// </para>
     /// <para>
-    /// 採番の経緯: 当初は #310 の設計時に「1018 と 1020 の間の空き」として 1019 を予約したが、
-    /// **1019 は <see cref="Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated"/>
-    /// （ADR-0011 決定 6）が実装済みで使用中**であり、予約側（security.md §4.3 の表）が古かった
-    /// （本クラス冒頭の「1017〜1019 は ActiveNotificationEventIds 側が使用済み」の注記どおり。
-    /// PR #333 レビューで衝突を検出）。additive-only 規約——実装済み ID の意味は変えない——に従い、
-    /// 本イベントは 1000 番台の次の空き番号 **1024** を採る（1020〜1023 は使用済み）。
+    /// 1019 は <see cref="Yagura.Host.Observability.ActiveNotification.ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated"/>
+    /// （ADR-0011 決定 6）が実装済みで使用中であり、1020〜1023 も使用済みのため、
+    /// 本イベントは 1000 番台の次の空き番号 **1024** を採る。
     /// </para>
     /// </remarks>
     public static readonly EventId ConfigurationFileUnreadableStartupFailed =
         new(1024, "ConfigurationFileUnreadableStartupFailed");
 
     /// <summary>
-    /// フォワーダ MSI アップロードの fail-closed 設定を拒否して起動を中止（ADR-0020 決定 1・委任 1。
-    /// 前提条件は ADR-0021 で改訂——<c>RequireForLoopback</c> の必須化は撤廃され、無認証 loopback
-    /// からの到達遮断はアップロード操作単位の専用認可ポリシーが担う）。
+    /// フォワーダ MSI アップロードの fail-closed 設定を拒否して起動を中止（ADR-0021 決定 1。
+    /// 前提条件は「認証方式が最低 1 つ有効」のみ——無認証 loopback からの到達遮断は
+    /// アップロード操作単位の専用認可ポリシーが担う）。
     /// <c>Admin:ForwarderKit:MsiUpload:Enabled</c> が有効なのに、前提条件（管理 UI 認証の
     /// いずれかが有効 = サインインの手段が存在する）が満たされていない設定の起動時拒否。
     /// 1011/1012 と同型の「起動失敗」分類。エラーメッセージには復旧に必要な
     /// 具体の設定キーと値（<c>Admin:ForwarderKit:MsiUpload:Enabled を false に</c>）を含める
-    /// （手編集復旧の場面では UI の誘導が使えないため——ADR-0020 委任 1）。
+    /// （手編集復旧の場面では UI の誘導が使えないため）。
     /// 採番: 1000 番台の次の空き番号 1032（1025〜1029 はメール通知・途絶検知、1030〜1031 は
-    /// Persistence 側が使用済み）。ID の意味（アップロード前提条件の fail-closed）は不変のまま
-    /// 判定条件のみ ADR-0021 に追随（additive-only 規約——意味の変更ではなく条件の縮小）。
+    /// Persistence 側が使用済み）。ID の意味（アップロード前提条件の fail-closed）は
+    /// 判定条件が変わっても不変（additive-only 規約——意味の変更ではなく条件の縮小）。
     /// </summary>
     public static readonly EventId ForwarderMsiUploadFailClosedStartupRejected =
         new(1032, "ForwarderMsiUploadFailClosedStartupRejected");
@@ -175,14 +157,14 @@ public static class ConfigurationEventIds
     /// 1 回に限る）。
     /// </summary>
     /// <remarks>
-    /// 採番の経緯: 1033・1034 は ActiveNotificationEventIds 側（フォワーダ MSI 配置フォルダの
-    /// ACL 検査。ADR-0020 決定 2）が使用済みのため、additive-only 規約に従い次の 1035 を採る。
+    /// 1033・1034 は ActiveNotificationEventIds 側（フォワーダ MSI 配置フォルダの
+    /// ACL 検査。ADR-0020 決定 2）で使用済みのため、本イベントは 1035 を採る。
     /// </remarks>
     public static readonly EventId ViewerHttpsCertificateUnavailableAtStartup =
         new(1035, "ViewerHttpsCertificateUnavailableAtStartup");
 
     /// <summary>
-    /// 「認証あり・平文・LAN」構成の起動時警告（ADR-0022 決定 5。Issue #455）。
+    /// 「認証あり・平文・LAN」構成の起動時警告（ADR-0022 決定 5）。
     /// <c>Viewer:Authentication:Windows:AdminGroups</c> が非空（= 管理等価 Cookie が発行され得る）
     /// かつ閲覧 HTTPS が有効でなく、かつ公開範囲が LAN の組み合わせで 1 回だけ発する。
     /// <b>起動も機能も止めない</b>——連動強制（閲覧認証有効時の HTTPS 必須化）はオーナー裁定で

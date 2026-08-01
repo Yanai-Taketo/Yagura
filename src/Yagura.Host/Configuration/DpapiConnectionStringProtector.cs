@@ -4,7 +4,7 @@ namespace Yagura.Host.Configuration;
 
 /// <summary>
 /// <c>Storage:SqlServer:ConnectionString</c> の DPAPI 暗号化・復号（ADR-0004 決定 5
-/// 「v0.1: DPAPI 完動」。configuration.md §2。2026-07-06 オーナー決定による公開前実装）。
+/// 「v0.1: DPAPI 完動」。configuration.md §2。オーナー決定による公開前実装）。
 /// </summary>
 /// <remarks>
 /// <para>

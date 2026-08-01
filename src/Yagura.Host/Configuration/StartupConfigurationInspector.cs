@@ -5,11 +5,11 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Host.Configuration;
 
 /// <summary>
-/// 起動時の設定差分照合（Issue #329）: 前回稼働時に適用されていた設定のスナップショット
+/// 起動時の設定差分照合: 前回稼働時に適用されていた設定のスナップショット
 /// （<see cref="LastAppliedConfigurationSnapshotStore"/>）と起動時点の設定ファイルを比較し、
 /// 差分があれば「前回稼働時から設定ファイルが変更された状態で起動した」を監査 2019 として
 /// 1 件記録する。手編集 + サービス再起動で反映された変更がどの監査証跡にも残らない特性
-/// （Issue #306。security.md §4.1）への軽量補完。
+/// （security.md §4.1）への軽量補完。
 /// </summary>
 /// <remarks>
 /// <para>

@@ -22,7 +22,7 @@
 /// 採用）:
 /// <list type="bullet">
 /// <item><c>Ingestion:Udp:BindAddress</c> / <c>Ingestion:Udp:Port</c> = リスナ再構成
-/// （§8 表「受信」区分の目標値。CF-4 層2——Issue #262——で実装済み: 設定の再読み込みが
+/// （§8 表「受信」区分の目標値。CF-4 層2で実装済み: 設定の再読み込みが
 /// <c>IngestionPipeline.ReconfigureListenersAsync</c> を呼び、短い瞬断を伴って bind を
 /// 張り替える。瞬断区間は受信断のシステムイベントとして記録される）。</item>
 /// <item><c>Viewer:HttpPort</c> = サービス再起動（§8 表「UI」区分は「リスナ再構成」を
@@ -48,11 +48,10 @@ public static class ConfigurationKeyMetadata
             // ソケット構築時（bind と同時）に SO_RCVBUF を設定する実装のため、リスナの再構成を
             // 経なければ反映されない。BindAddress/Port と同じ分類とする。
             ["Ingestion:Udp:ReceiveBufferBytes"] = ConfigurationReloadEffect.ListenerReconfiguration,
-            // TCP キー(M4-1)は UDP と同じ「受信」区分(§8)。本表への登録が M4-1 で漏れており
-            // M5-1 のレビューで追補した(KnownKeys との整合はテストで機械検証される)。
+            // TCP キーは UDP と同じ「受信」区分（§8）。KnownKeys との整合はテストで機械検証される。
             ["Ingestion:Tcp:BindAddress"] = ConfigurationReloadEffect.ListenerReconfiguration,
             ["Ingestion:Tcp:Port"] = ConfigurationReloadEffect.ListenerReconfiguration,
-            // TLS 受信（RFC 5425。opt-in。Issue #137）: §8 表の目標は他の受信系キーと同じ
+            // TLS 受信（RFC 5425。opt-in）: §8 表の目標は他の受信系キーと同じ
             // 「リスナ再構成」だが、現時点の実効は Admin:Https:* と同じ理由（証明書ストア参照・
             // 秘密鍵アクセス権付与を含む TLS リスナの構築が Program.cs の起動時処理に固定され、
             // 実行中の付け替え API を持たない）でサービス再起動——CertificateThumbprint は
@@ -61,12 +60,12 @@ public static class ConfigurationKeyMetadata
             ["Ingestion:Tls:BindAddress"] = ConfigurationReloadEffect.RestartRequired,
             ["Ingestion:Tls:Port"] = ConfigurationReloadEffect.RestartRequired,
             ["Ingestion:Tls:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
-            // RFC 3164 既定タイムゾーン（Issue #134）はソケットの bind を要さず、解析段
+            // RFC 3164 既定タイムゾーンはソケットの bind を要さず、解析段
             // （ParsingStage/SyslogParser）の解釈だけに影響するため、リスナ再構成は不要——
             // Retention:* と同じ「即時」を目標とする。現時点の実効は他の即時目標キーと同様、
             // ParsingStage の構築時（DI シングルトン）にのみ値が渡されるため再起動。
             ["Ingestion:Rfc3164:DefaultTimeZone"] = ConfigurationReloadEffect.Immediate,
-            // 流量制御(ADR-0002 決定 2。Issue #260)は §8 表「流量制御 | 即時」の目標どおり宣言する
+            // 流量制御(ADR-0002 決定 2)は §8 表「流量制御 | 即時」の目標どおり宣言する
             // (ソケットの bind を要さず、ゲートの差し替え・閾値変更のみで反映できる設計のため)。
             // 現時点の実効は他の即時目標キーと同様、ゲートの構築が起動時(Program の結線)にのみ
             // 行われるためサービス再起動(ライブ再読込 §3 の配線時に目標へ揃える)。
@@ -97,7 +96,7 @@ public static class ConfigurationKeyMetadata
             // ライブ再読込(§3)配線時に目標へ揃える)。
             ["Retention:Days"] = ConfigurationReloadEffect.Immediate,
             ["Retention:ExecutionTimeOfDay"] = ConfigurationReloadEffect.Immediate,
-            // 監査記録の保持期間(SEC-2。Issue #261)は Retention:Days と同じ「即時」を目標とする
+            // 監査記録の保持期間(SEC-2)は Retention:Days と同じ「即時」を目標とする
             // (ソケットの bind を要さず削除スケジューラの日数のみに影響)。現時点の実効は
             // スケジューラが起動時にのみ設定を読むため再起動(ライブ再読込 §3 配線時に目標へ揃える)。
             ["Audit:RetentionDays"] = ConfigurationReloadEffect.Immediate,
@@ -118,9 +117,8 @@ public static class ConfigurationKeyMetadata
             ["Viewer:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             // 注: SEC-9 のグループ一覧（Admin/Viewer:Authentication:Windows:*Groups）は配列キー
             // （KnownArrayKeys）であり、下の ArrayReloadEffectsByKey で宣言する（本表はスカラー専用）。
-            // 反映は名 → SID 解決を含め起動時に固定（restart-required）であることは変わらないが、
-            // 2026-07-19 以降は ChangePlanner の比較対象であり、手編集での変更が「再起動待ち」として
-            // 表示される（それ以前は変更が検出されず無音だった。ADR-0017 委任 9）。
+            // 反映は名 → SID 解決を含め起動時に固定（restart-required）である。ChangePlanner の
+            // 比較対象でもあり、手編集での変更は「再起動待ち」として表示される（ADR-0017 委任 9）。
             ["Admin:Authentication:Windows:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:Windows:KerberosOnly"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Authentication:App:Enabled"] = ConfigurationReloadEffect.RestartRequired,
@@ -132,15 +130,14 @@ public static class ConfigurationKeyMetadata
             ["Admin:Https:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:CertificateThumbprint"] = ConfigurationReloadEffect.RestartRequired,
             ["Admin:Https:Port"] = ConfigurationReloadEffect.RestartRequired,
-            // フォワーダ MSI アップロード opt-in（ADR-0020 決定 1。Issue #439 で KnownKeys とともに
-            // 登録漏れを追補）: アップロード関連エンドポイントの条件付き登録（構造的非存在）は
+            // フォワーダ MSI アップロード opt-in（ADR-0020 決定 1）: アップロード関連エンドポイントの条件付き登録（構造的非存在）は
             // WebApplication 構築時に固定されるため、他の Admin 系キーと同じくサービス再起動
             // （configuration.md §8 の宣言どおり）。
             ["Admin:ForwarderKit:MsiUpload:Enabled"] = ConfigurationReloadEffect.RestartRequired,
             // メール通知（ADR-0017。opt-in）は §8 表の宣言どおり「即時」とする——ソケットの
             // bind も Kestrel の再構成も要さず、SMTP 接続は送信のたびに張る（常設接続を持たない）
             // ため、次回送信から新しい値が効く（ADR-0017 決定 9）。現時点の実効は送信側の
-            // 実装（Issue #350 第 2 段）が無く ImmediateConfigurationApplier が未配線のため
+            // 実装が無く ImmediateConfigurationApplier が未配線のため
             // 再起動待ちに落ちる——送信側の実装と同じ PR で目標へ揃える。
             // 注: 宛先一覧（Notification:Email:To）は配列キー（KnownArrayKeys）であり、
             // 本表（スカラーキーの表）には載せない——Windows 認証のグループ一覧と同じ扱い。
@@ -168,12 +165,12 @@ public static class ConfigurationKeyMetadata
     /// 不変条件が壊れる——別表にして、それぞれ対応する集合と突き合わせる。
     /// </para>
     /// <para>
-    /// <b>2026-07-19 の追加（ADR-0017 委任 9。Issue #350）</b>: 従来、配列キーは
-    /// <see cref="ConfigurationChangePlanner"/> の比較対象ですらなかった。結果として
-    /// <b>手編集で宛先やグループ一覧だけを変えて再読み込みしても、反映もされなければ
+    /// <b>配列キーも <see cref="ConfigurationChangePlanner"/> の比較対象に含める理由</b>:
+    /// 含めなければ、<b>手編集で宛先やグループ一覧だけを変えて再読み込みしても、反映もされなければ
     /// 「再起動待ち」としても現れない</b>——configuration.md §3 が約束する「未反映のまま残る
-    /// 項目の明示」から漏れる無音の穴だった。メール通知の宛先（即時反映が目標）を扱うには
-    /// この穴を塞ぐ必要があり、同じ性質を持つグループ一覧 3 キーも併せて登録する。
+    /// 項目の明示」から漏れる無音の穴になる。メール通知の宛先（即時反映が目標）を扱うには
+    /// この穴を塞ぐ必要があり、同じ性質を持つグループ一覧 3 キーも併せて登録する
+    /// （ADR-0017 委任 9）。
     /// </para>
     /// </remarks>
     private static readonly IReadOnlyDictionary<string, ConfigurationReloadEffect> ArrayReloadEffectsByKey =

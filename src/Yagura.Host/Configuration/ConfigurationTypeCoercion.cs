@@ -2,7 +2,7 @@ namespace Yagura.Host.Configuration;
 
 /// <summary>
 /// 設定ファイルのスカラー位置に文字列以外の JSON トークン（数値・真偽値）が書かれ、
-/// 文字列として受理した「型の読み替え」1 件（configuration.md §1。Issue #334）。
+/// 文字列として受理した「型の読み替え」1 件（configuration.md §1）。
 /// </summary>
 /// <remarks>
 /// <para>

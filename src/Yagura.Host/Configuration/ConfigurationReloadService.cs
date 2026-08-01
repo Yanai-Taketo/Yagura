@@ -7,7 +7,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Host.Configuration;
 
 /// <summary>
-/// 設定ファイルのライブ再読み込みの実体（configuration.md §3。CF-4 層1。Issue #262）。
+/// 設定ファイルのライブ再読み込みの実体（configuration.md §3。CF-4 層1）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,7 +22,7 @@ namespace Yagura.Host.Configuration;
 /// （<see cref="ConfigurationReloadResult.PendingRestartKeys"/> + イベント ID 1020 の警告）。
 /// 「設定した = 反映された」という前提が静かに崩れた状態を、次の再読み込みで見えなくしない。
 /// 累積集合は <see cref="GetPendingRestartKeys"/> により再読み込み操作を伴わず読め、
-/// 認証済み管理面の常設表示（Issue #286）がこれを表示する。
+/// 認証済み管理面の常設表示がこれを表示する。
 /// </para>
 /// <para>
 /// <b>検証失敗時は旧設定で継続</b>: 起動失敗分類の不正値（受信ポート不正等）は、起動時なら
@@ -46,7 +46,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
 
     private YaguraConfigurationOptions _lastAppliedOptions;
 
-    // キー → 最初に検出した再読み込みの時刻（Issue #286——常設表示に検出時刻を併記する）。
+    // キー → 最初に検出した再読み込みの時刻（常設表示に検出時刻を併記する）。
     // 書き込みは _reloadGate 内だが、GetPendingRestartKeys は管理画面の描画からゲート外で
     // 呼ばれるため、辞書自体の整合はロックで守る。
     private readonly Dictionary<string, DateTimeOffset> _pendingRestartKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -180,7 +180,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
         }
 
         // 適用の口がなかった変更キーは「再起動待ち」として累積する（再起動まで見え続ける）。
-        // 検出時刻は最初に検出した再読み込みの時刻で固定する（Issue #286——「いつから
+        // 検出時刻は最初に検出した再読み込みの時刻で固定する（「いつから
         // 未反映のまま残っているか」を常設表示に併記する）。
         var detectedAt = _timeProvider.GetUtcNow();
         lock (_pendingRestartKeys)
@@ -204,7 +204,7 @@ public sealed class ConfigurationReloadService : IConfigurationReloadService
                 failure,
                 "良好構成の写しを更新できませんでした（再読み込み自体は成功しています）。設定ファイルが読めなくなった際の復旧元が古いままになります。"));
 
-        // 前回適用スナップショットの永続化（Issue #329——保存契機③「再読み込み反映」。
+        // 前回適用スナップショットの永続化（保存契機③「再読み込み反映」。
         // 起動時の設定差分照合の基準を更新する）。失敗は再読み込み自体を妨げない（Try 系）。
         LastAppliedConfigurationSnapshotStore.TrySave(_dataRoot, snapshot.Options, _logger);
 
