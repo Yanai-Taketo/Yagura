@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -18,17 +19,12 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class EmailNotificationConfigurationTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-email-config-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("email-config-test");
+    private string _dataRoot => _tempDir.Path;
 
     public EmailNotificationConfigurationTests() => Directory.CreateDirectory(_dataRoot);
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private ConfigurationLoadResult Load(string? json = null)
     {

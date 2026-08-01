@@ -3,6 +3,7 @@ using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration.AdminAuthentication;
 using Yagura.Host.Configuration;
 using Yagura.Storage.Administration.Sqlite;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration.AdminAuthentication;
 
@@ -13,7 +14,8 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
 {
     private static readonly AdminAuthAttemptContext LoopbackContext = new(System.Net.IPAddress.Loopback, IsLoopback: true);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-authadmin-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("authadmin-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly string _databasePath;
     private SqliteAdminAccountStore _accountStore = null!;
     private AppAdminAuthenticationService _appAuthService = null!;
@@ -38,18 +40,7 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _accountStore.DisposeAsync();
-
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート。
-            }
-        }
+        _tempDir.Dispose();
     }
 
     [Fact]

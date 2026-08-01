@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Observability.Auditing;
 using Yagura.Abstractions.Auditing;
+using Yagura.TestSupport;
 using Yagura.Web.Diagnostics;
 
 namespace Yagura.Host.Tests.Observability.Auditing;
@@ -17,27 +18,15 @@ namespace Yagura.Host.Tests.Observability.Auditing;
 /// </remarks>
 public sealed class FileAuditRecorderTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-audit-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("audit-test");
+    private string _dataRoot => _tempDir.Path;
 
     public FileAuditRecorderTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート（他テストと同じ判断）。
-            }
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private static readonly DateTimeOffset SampleOccurredAt = new(2026, 7, 5, 12, 0, 0, TimeSpan.Zero);
 

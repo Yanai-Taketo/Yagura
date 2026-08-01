@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Observability;
 using Yagura.Ingestion.Diagnostics;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability;
 
@@ -14,20 +15,15 @@ namespace Yagura.Host.Tests.Observability;
 /// </remarks>
 public sealed class MetadataStoreTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-metadata-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("metadata-test");
+    private string _dataRoot => _tempDir.Path;
 
     public MetadataStoreTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private string FilePath => MetadataStore.GetFilePath(_dataRoot);
 

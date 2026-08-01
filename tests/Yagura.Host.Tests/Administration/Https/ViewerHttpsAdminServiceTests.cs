@@ -5,6 +5,7 @@ using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration.Https;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration.Https;
 
@@ -30,18 +31,13 @@ public sealed class ViewerHttpsAdminServiceTests : IDisposable
     private const string ValidThumbprint = "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678";
     private static readonly string[] ServerNames = ["YAGURA01", "yagura01.example.local"];
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-viewer-https-admin-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("viewer-https-admin");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
 
     public ViewerHttpsAdminServiceTests() => Directory.CreateDirectory(_dataRoot);
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     // ------------------------------------------------------------------
     // 検証ポリシー（決定 3・4 の二分宣言）の固定

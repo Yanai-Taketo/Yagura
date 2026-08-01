@@ -4,6 +4,7 @@ using Yagura.Abstractions.Observability;
 using Yagura.Host.Configuration;
 using Yagura.Host.Observability.ActiveNotification.SourceSilence;
 using Yagura.Storage;
+using Yagura.TestSupport;
 using Yagura.TestSupport.Fakes;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification.SourceSilence;
@@ -13,7 +14,8 @@ namespace Yagura.Host.Tests.Observability.ActiveNotification.SourceSilence;
 /// </summary>
 public sealed class SourceSilenceAdminServiceTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-source-silence-admin-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("source-silence-admin");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
     private readonly FakeLogStore _logStore = new();
 
@@ -22,13 +24,7 @@ public sealed class SourceSilenceAdminServiceTests : IDisposable
 
     public SourceSilenceAdminServiceTests() => Directory.CreateDirectory(_dataRoot);
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private SourceSilenceAdminService CreateService(
         Func<IReadOnlyList<YaguraSourceSilenceReading>>? runtimeStates = null) =>

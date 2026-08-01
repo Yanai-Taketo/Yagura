@@ -4,6 +4,7 @@ using Yagura.Host.Configuration;
 using Yagura.Ingestion.FlowControl;
 using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -20,7 +21,8 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class YaguraConfigurationLoaderTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-config-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("config-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly List<string> _environmentVariablesToClear = new();
 
     public YaguraConfigurationLoaderTests()
@@ -35,10 +37,7 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
             Environment.SetEnvironmentVariable(name, null);
         }
 
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
+        _tempDir.Dispose();
     }
 
     private void SetEnvironmentVariable(string name, string? value)

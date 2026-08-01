@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -15,7 +16,8 @@ namespace Yagura.Host.Tests.Configuration;
 /// </summary>
 public sealed class StartupConfigurationInspectorTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-startup-inspect-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("startup-inspect-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
 
     public StartupConfigurationInspectorTests()
@@ -23,13 +25,7 @@ public sealed class StartupConfigurationInspectorTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {

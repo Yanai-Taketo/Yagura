@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Testing;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
 using Yagura.Host.Firewall;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Firewall;
 
@@ -12,7 +13,8 @@ namespace Yagura.Host.Tests.Firewall;
 /// </summary>
 public sealed class FirewallStartupInspectorTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-fw-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("fw-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _auditRecorder = new();
     private readonly FakeLogger<FirewallStartupInspector> _logger = new();
 
@@ -21,13 +23,7 @@ public sealed class FirewallStartupInspectorTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {

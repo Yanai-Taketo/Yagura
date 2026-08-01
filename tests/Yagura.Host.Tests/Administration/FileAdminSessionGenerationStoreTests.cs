@@ -1,4 +1,5 @@
 using Yagura.Host.Administration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration;
 
@@ -7,19 +8,15 @@ namespace Yagura.Host.Tests.Administration;
 /// </summary>
 public sealed class FileAdminSessionGenerationStoreTests : IDisposable
 {
-    private readonly string _dataRoot;
+    private readonly TestTempDirectory _tempDir = new("gen");
+    private string _dataRoot => _tempDir.Path;
 
     public FileAdminSessionGenerationStoreTests()
     {
-        _dataRoot = Path.Combine(Path.GetTempPath(), "yagura-gen-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_dataRoot, recursive: true); }
-        catch (IOException) { /* best-effort cleanup */ }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     [Fact]
     public void FreshDataRoot_StartsAtGenerationZero()

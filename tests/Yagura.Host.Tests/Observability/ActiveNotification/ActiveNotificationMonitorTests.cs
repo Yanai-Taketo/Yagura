@@ -5,6 +5,7 @@ using Yagura.Host.Observability.ActiveNotification;
 using Yagura.Ingestion.Diagnostics;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification;
 
@@ -16,7 +17,8 @@ namespace Yagura.Host.Tests.Observability.ActiveNotification;
 /// </summary>
 public sealed class ActiveNotificationMonitorTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-active-notification-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("active-notification-tests");
+    private string _spoolDirectory => _tempDir.Path;
     private readonly List<DiskSpool> _openedSpools = [];
 
     public void Dispose()
@@ -26,10 +28,7 @@ public sealed class ActiveNotificationMonitorTests : IDisposable
             spool.Dispose();
         }
 
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _tempDir.Dispose();
     }
 
     // ------------------------------------------------------------------

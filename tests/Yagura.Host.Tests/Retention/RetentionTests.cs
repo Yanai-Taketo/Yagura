@@ -3,6 +3,7 @@ using Yagura.Host.Configuration;
 using Yagura.Host.Retention;
 using Yagura.Host.Tests.Configuration;
 using Yagura.Storage;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Retention;
 
@@ -12,20 +13,15 @@ namespace Yagura.Host.Tests.Retention;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class RetentionTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-retention-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("retention-test");
+    private string _dataRoot => _tempDir.Path;
 
     public RetentionTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private void WriteConfigurationFile(string json) =>
         File.WriteAllText(Path.Combine(_dataRoot, YaguraConfigurationLoader.ConfigurationFileName), json);

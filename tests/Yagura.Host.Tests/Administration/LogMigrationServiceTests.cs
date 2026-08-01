@@ -4,6 +4,7 @@ using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration;
 
@@ -14,7 +15,8 @@ namespace Yagura.Host.Tests.Administration;
 /// </summary>
 public sealed class LogMigrationServiceTests : IAsyncLifetime
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-migration-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("migration-test");
+    private string _dataRoot => _tempDir.Path;
     private string _sourcePath = null!;
     private string _targetPath = null!;
     private SqliteLogStore _target = null!;
@@ -38,16 +40,7 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _target.DisposeAsync();
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-            }
-        }
+        _tempDir.Dispose();
     }
 
     private sealed class RecordingAuditRecorder : IAuditRecorder

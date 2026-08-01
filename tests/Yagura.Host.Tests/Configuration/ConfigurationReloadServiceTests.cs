@@ -4,6 +4,7 @@ using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration;
 using Yagura.Host.Configuration;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -14,7 +15,8 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class ConfigurationReloadServiceTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-reload-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("reload-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _auditRecorder = new();
 
     public ConfigurationReloadServiceTests()
@@ -22,13 +24,7 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
 using Yagura.Ingestion.Tls;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Configuration;
 
@@ -12,7 +13,8 @@ namespace Yagura.Host.Tests.Configuration;
 [Collection(ConfigurationEnvironmentVariableTestCollection.Name)]
 public sealed class IngestionTlsConfigurationTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-tls-config-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("tls-config-test");
+    private string _dataRoot => _tempDir.Path;
     private readonly List<string> _environmentVariablesToClear = new();
 
     public IngestionTlsConfigurationTests()
@@ -27,10 +29,7 @@ public sealed class IngestionTlsConfigurationTests : IDisposable
             Environment.SetEnvironmentVariable(name, null);
         }
 
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
+        _tempDir.Dispose();
     }
 
     private void SetEnvironmentVariable(string name, string? value)

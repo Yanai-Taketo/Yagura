@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Observability;
 using Yagura.Ingestion.Diagnostics;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability;
 
@@ -12,20 +13,15 @@ namespace Yagura.Host.Tests.Observability;
 /// </summary>
 public sealed class ObservabilityCoordinatorTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-observability-coordinator-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("observability-coordinator-test");
+    private string _dataRoot => _tempDir.Path;
 
     public ObservabilityCoordinatorTests()
     {
         Directory.CreateDirectory(_dataRoot);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     [Fact]
     public async Task CountersSurviveRestart_SecondProcessSeesComposedCumulativeValue()

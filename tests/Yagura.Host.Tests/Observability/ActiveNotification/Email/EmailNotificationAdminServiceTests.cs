@@ -4,6 +4,7 @@ using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
 using Yagura.Host.Observability.ActiveNotification.Email;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification.Email;
 
@@ -21,19 +22,14 @@ public sealed class EmailNotificationAdminServiceTests : IDisposable
 {
     private static readonly DateTimeOffset Origin = new(2026, 7, 19, 0, 0, 0, TimeSpan.Zero);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-email-admin-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("email-admin");
+    private string _dataRoot => _tempDir.Path;
     private readonly RecordingAuditRecorder _audit = new();
     private readonly EmailNotificationQueue _queue = new(new FakeTimeProvider(Origin));
 
     public EmailNotificationAdminServiceTests() => Directory.CreateDirectory(_dataRoot);
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_dataRoot))
-        {
-            Directory.Delete(_dataRoot, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private sealed class RecordingAuditRecorder : IAuditRecorder
     {

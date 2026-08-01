@@ -4,6 +4,7 @@ using Yagura.Host.Administration.ForwarderKit;
 using Yagura.Host.Configuration;
 using Yagura.Storage.Administration;
 using Yagura.Storage.Administration.Sqlite;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Administration.ForwarderKit;
 
@@ -19,7 +20,8 @@ public sealed class ForwarderMsiUploadAdminServiceTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset TestNow = new(2026, 7, 26, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-msiupload-admin-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("msiupload-admin");
+    private string _dataRoot => _tempDir.Path;
     private SqliteAdminAccountStore _accountStore = null!;
     private RecordingAuditRecorder _audit = null!;
     private ForwarderMsiUploadAdminService _service = null!;
@@ -36,18 +38,7 @@ public sealed class ForwarderMsiUploadAdminServiceTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _accountStore.DisposeAsync();
-
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート。
-            }
-        }
+        _tempDir.Dispose();
     }
 
     [Fact]
