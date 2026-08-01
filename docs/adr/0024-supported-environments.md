@@ -1,6 +1,6 @@
 # ADR-0024: 対応環境と推奨環境の定義 — v1.0 で表明するサポート行列
 
-- 状態: proposed
+- 状態: accepted（2026-08-01 マージ）
 - 日付: 2026-07-26
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md)（目的・対象利用者・導入体験の原則）/ [ADR-0004](0004-security-model.md) 決定 2（Server Core 等での管理手段）・決定 3（opt-in 強化 3 点）/ [ADR-0006](0006-v1-release-criteria.md)（v1.0 公開基準 1・3・4）/ [ADR-0009](0009-architecture-support.md)（アーキテクチャ対応。本 ADR は決定 2 の x64 行を部分的に supersede する）/ [ADR-0022](0022-viewer-https.md)（閲覧 HTTPS）/ [ADR-0023](0023-upgrade-availability.md)（アップグレード時の可用性）/ [architecture.md](../design/architecture.md) §5.2・§9 M-6 / [database.md](../design/database.md) §5.3・§5.4 / [Issue #482](https://github.com/Yanai-Taketo/Yagura/issues/482)（TLS 接続ハンドラの無音脱落。本 ADR の起案中に発見）/ [PR #481](https://github.com/Yanai-Taketo/Yagura/pull/481)（起案・ペルソナレビュー）
@@ -263,3 +263,11 @@ conventions.md の実体検証原則に従い、本 ADR の判断根拠となる
 | 9 | **ADR-0009・ADR-0004 への注記** | ADR-0009 + ADR-0004 + docs/adr/README.md | ①ADR-0009 決定 2 の x64 行と一覧表の状態欄に「x64 行の対象範囲は ADR-0024 により部分的に superseded」を注記（status は accepted のまま）。②**ADR-0004 決定 2 の Server Core 記述と帰結の該当行**に、本 ADR で Server Core が対応外区分になった旨を注記。**accepted 化 PR と同一 PR で実施する** |
 | 10 | **Server 2022 での lab 実施要否の判断** | lab 手順書 + 実装 PR | 推奨区分でありながら AD 連携認証・gMSA・MSI アップグレードが Server 2025 でしか踏まれていない非対称（決定 5）への対処。実施するなら Proxmox 上の評価版で、しないなら要件表で非対称を明示する |
 | 11 | **追跡 Issue の採番** | Issue | 本 ADR の関連行と委任事項の表に Issue 番号を与える。委任事項 3・4・6・7 は外部貢献者が拾える粒度のため、番号があると着手宣言と重複回避ができる |
+
+## 改訂履歴
+
+### 改訂 1（2026-08-01）: 委任事項 3（README 分）・8・9 の実施結果を記録。決定は不変
+
+- **委任事項 9（ADR-0009・ADR-0004 への注記）= 完了**。ADR-0009 の状態行と決定 2 の x64 行、ADR-0004 決定 2 の Server Core 箇条と帰結の該当行、および ADR 一覧表の 3 点セットへ注記を入れた。**両 ADR の status は accepted のまま維持**——本 ADR が限定したのは対象範囲であって、アーキテクチャの判断（ADR-0009）も手編集による管理経路の設計（ADR-0004）も反転していない
+- **委任事項 8（M-6 への制約の反映）= 完了**。architecture.md §9 の M-6 行・同 §5.2・conventions.md「CI 回帰ベンチの基準値更新」節の 3 点へ、決定 4 の制約（基準環境は推奨区分から選ぶ / 選ばれなかった側のバージョンの扱いも M-6 で決める / 公称値の表明対象は推奨区分に限る）を反映した
+- **委任事項 3（README のシステム要件表）= 部分完了**。README へシステム要件表を新設し、「Windows Server 全般」という広すぎる既存表明を是正した（Server 2016 以前・Windows 10 Home/Pro・Server Core を対応外へ）。**operations.md と Releases / リリースノートへの反映は未着手**であり、委任事項 3 は閉じていない
