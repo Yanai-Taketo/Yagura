@@ -24,7 +24,7 @@ jobs:
   #
   # ジョブ名は変えない——conventions.md が定めるブランチ保護の必須ステータスチェックが
   # `build-and-test` のため。
-  build-and-test:
+  build-and-test-2025:
     runs-on: windows-2025
 
     steps:
@@ -132,17 +132,16 @@ jobs:
 
   # 推奨環境の 2 つ目（ADR-0024 決定 1・決定 5）。本ジョブが無いと Server 2022 は踏まれない。
   #
-  # build-and-test を matrix 化せず別ジョブにしたのは、matrix 化すると job 名が
-  # `build-and-test (windows-latest)` へ変わり、ブランチ保護の必須ステータスチェック
-  # （conventions.md の `build-and-test`）が外れるため。別ジョブなら既存の必須チェック名を
-  # 保ったまま Server 2022 の信号を足せる（リポジトリ設定の変更を伴わず、外部貢献者の PR だけで
-  # 完結する形を優先した）。本ジョブ自体を必須チェックにするかはリポジトリ設定の判断。
+  # matrix ではなく OS ごとの独立ジョブにしたのは、matrix 化すると job 名に matrix 値が
+  # 付いて（`build-and-test (windows-2022)`）ブランチ保護の必須チェック名が動くため。
+  # 独立ジョブ + 集約ジョブ（本ファイル末尾の build-and-test）なら、ジョブ名で OS を明示しつつ
+  # 必須チェック名を安定させられる。
   #
   # 回帰ベンチは本ジョブでは走らせない。基準値ファイルは 1 本（ランナー OS 別の区分を持たない）
   # であり、そこへ 2 つの OS の分布を混ぜると M-5 v2 が診断した分布混合による誤較正を再現する。
   # ベンチの blocking 判定は突合成立のみで、これは全標本で成立した OS 非依存の機能保証である
   # （architecture.md §5.2）。したがって OS を増やす価値は build・単体テスト側にある。
-  build-and-test-server2022:
+  build-and-test-2022:
     runs-on: windows-2022
 
     steps:
@@ -192,7 +191,7 @@ jobs:
   # 本ジョブの価値は GitHub がラベルを移した日から生じる。重複期間のコストを許容できないと
   # 判断した場合は、本ジョブだけを削ればよい（推奨環境の被覆は明示ピンの 2 ジョブが持つ）。
   #
-  # ベンチを走らせないのは build-and-test-server2022 と同じ理由（基準値は 1 本で OS 別の
+  # ベンチを走らせないのは build-and-test-2022 と同じ理由（基準値は 1 本で OS 別の
   # 区分を持たず、分布を混ぜると M-5 v2 の誤較正を再現するため）。
   build-and-test-latest:
     runs-on: windows-latest
@@ -229,3 +228,29 @@ jobs:
 
       - name: Test
         run: dotnet test --configuration Release --no-build
+
+  # ブランチ保護の必須ステータスチェックの受け口（conventions.md が名指しする `build-and-test`）。
+  #
+  # 実作業のジョブ名に OS を書くと、必須チェック名が OS に固定されて推奨区分を変えるたびに
+  # リポジトリ設定の変更が要る。逆に必須チェック側へ OS 名を出さないと、名前が「どの OS を
+  # 守っているか」を語らない。本ジョブを集約点として挟むことで、**ジョブ名は OS を明示しつつ、
+  # 必須チェック名は安定**という両立にする。ゲートの構成（どの OS の成功を要求するか）は
+  # needs で明示され、変更は本ファイルだけで完結する。
+  #
+  # 対象は推奨区分の 2 つ（ADR-0024 決定 1 が「全機能」を約束する範囲）。カナリアは含めない
+  # ——対応を表明していない OS の失敗でリリースを止めないため。
+  build-and-test:
+    needs: [build-and-test-2025, build-and-test-2022]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify recommended-environment jobs succeeded
+        shell: bash
+        run: |
+          echo "windows-2025: ${{ needs.build-and-test-2025.result }}"
+          echo "windows-2022: ${{ needs.build-and-test-2022.result }}"
+          # skipped / cancelled も success 以外として扱う（依存が走らなかったことを
+          # 「通った」と誤認させない）。
+          [ "${{ needs.build-and-test-2025.result }}" = "success" ] || exit 1
+          [ "${{ needs.build-and-test-2022.result }}" = "success" ] || exit 1
