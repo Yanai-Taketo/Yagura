@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using Yagura.TestSupport;
 using Yagura.Web.ForwarderKit;
 
 namespace Yagura.Web.Tests.ForwarderKit;
@@ -17,20 +18,16 @@ namespace Yagura.Web.Tests.ForwarderKit;
 [SupportedOSPlatform("windows")] // SystemForwarderMsiSource（検出突合に使用）の注釈の伝播（SystemForwarderMsiSourceTests と同じ扱い）
 public sealed class SystemForwarderMsiStoreTests : IDisposable
 {
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), $"yagura-msistore-test-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDir = new("msistore-test");
+
+    private string _folder => _tempDir.Path;
 
     public SystemForwarderMsiStoreTests()
     {
         Directory.CreateDirectory(_folder);
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_folder))
-        {
-            Directory.Delete(_folder, recursive: true);
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     private SystemForwarderMsiStore CreateStore(string? productVersion = "5.0.8") =>
         new(_folder, _ => productVersion);

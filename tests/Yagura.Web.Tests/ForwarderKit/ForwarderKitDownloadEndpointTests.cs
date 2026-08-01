@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using Yagura.TestSupport;
 using Yagura.TestSupport.Fakes;
 using Yagura.Web.ForwarderKit;
 using Yagura.Web.Tests.ArchitectureTests;
@@ -272,7 +273,7 @@ public sealed class ForwarderKitDownloadEndpointTests
 
     private static string CreateTempMsiFile(string fileName)
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"yagura-forwarder-msi-test-{Guid.NewGuid():N}");
+        var directory = new TestTempDirectory("forwarder-msi-test").Path;
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, fileName);
         File.WriteAllBytes(path, [1, 2, 3, 4, 5]);

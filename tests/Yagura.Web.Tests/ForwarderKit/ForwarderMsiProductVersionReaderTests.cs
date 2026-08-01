@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using Yagura.TestSupport;
 using Yagura.Web.ForwarderKit;
 
 namespace Yagura.Web.Tests.ForwarderKit;
@@ -23,25 +24,16 @@ namespace Yagura.Web.Tests.ForwarderKit;
 [SupportedOSPlatform("windows")]
 public sealed class ForwarderMsiProductVersionReaderTests : IDisposable
 {
-    private readonly string _tempDirectory;
+    private readonly TestTempDirectory _tempDir = new("msi-reader-tests");
+
+    private string _tempDirectory => _tempDir.Path;
 
     public ForwarderMsiProductVersionReaderTests()
     {
-        _tempDirectory = Path.Combine(Path.GetTempPath(), "yagura-msi-reader-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempDirectory);
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_tempDirectory, recursive: true);
-        }
-        catch (IOException)
-        {
-            // 一時フォルダの掃除失敗はテスト結果に影響させない。
-        }
-    }
+    public void Dispose() => _tempDir.Dispose();
 
     [SkippableFact]
     public void TryRead_RealMsiDatabaseWithProductVersion_ReturnsIt()
