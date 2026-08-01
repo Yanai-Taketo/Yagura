@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -34,8 +35,10 @@ public sealed class IngestionTlsDegradedStartupE2ETests : IDisposable
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-tls-degraded-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDataRoot = new("e2e-tls-degraded");
     private Process? _hostProcess;
+
+    private string _dataRoot => _tempDataRoot.Path;
 
     public void Dispose()
     {
@@ -46,17 +49,8 @@ public sealed class IngestionTlsDegradedStartupE2ETests : IDisposable
 
         _hostProcess?.Dispose();
 
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート（他 E2E テストと同じ判断）。
-            }
-        }
+        // ベストエフォート（他 E2E テストと同じ判断）。
+        _tempDataRoot.Dispose();
     }
 
     [Fact]

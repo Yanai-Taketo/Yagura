@@ -1,4 +1,5 @@
 ﻿using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Storage.Tests.Spool;
 
@@ -15,21 +16,15 @@ public sealed class DiskSpoolOpenFailureTests
         // ディレクトリとして使うパスに、あらかじめ同名の「通常ファイル」を置いておくと、
         // Directory.CreateDirectory はそのパスをディレクトリとして扱えず失敗する
         // （ACL 破損等、ディスク側の異常でディレクトリを開けない状況の代替模擬）。
-        var parent = Path.Combine(Path.GetTempPath(), $"yagura-spool-openfail-{Guid.NewGuid():N}");
+        using var tempDirectory = new TestTempDirectory("spool-openfail");
+        var parent = tempDirectory.Path;
         Directory.CreateDirectory(parent);
         var blockedPath = Path.Combine(parent, "spool-should-be-a-directory");
         File.WriteAllBytes(blockedPath, [1, 2, 3]);
 
-        try
-        {
-            var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = blockedPath }, out var failure);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = blockedPath }, out var failure);
 
-            Assert.Null(spool);
-            Assert.NotNull(failure);
-        }
-        finally
-        {
-            Directory.Delete(parent, recursive: true);
-        }
+        Assert.Null(spool);
+        Assert.NotNull(failure);
     }
 }

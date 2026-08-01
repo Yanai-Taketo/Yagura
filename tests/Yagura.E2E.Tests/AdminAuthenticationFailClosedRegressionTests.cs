@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -28,7 +29,7 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
 {
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly List<string> _dataRoots = new();
+    private readonly List<TestTempDirectory> _dataRoots = new();
     private readonly List<Process> _processes = new();
 
     public void Dispose()
@@ -43,20 +44,12 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
             process.Dispose();
         }
 
+        // ベストエフォート(kill 直後は SQLite の -shm/-wal 補助ファイルへの OS ハンドル解放が
+        // 非同期に遅れることがある——後続テストの動作には影響しない。TestTempDirectory.Dispose も
+        // 同じ判断で IOException/UnauthorizedAccessException を握る)。
         foreach (var dataRoot in _dataRoots)
         {
-            try
-            {
-                if (Directory.Exists(dataRoot))
-                {
-                    Directory.Delete(dataRoot, recursive: true);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // ベストエフォート(kill 直後は SQLite の -shm/-wal 補助ファイルへの OS
-                // ハンドル解放が非同期に遅れることがある——後続テストの動作には影響しない)。
-            }
+            dataRoot.Dispose();
         }
     }
 
@@ -199,8 +192,9 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
 
     private async Task<(int ExitCode, string Output)> RunHostProcessToExitAsync(string configJson)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-authfailclosed-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-authfailclosed");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(dataRoot, "yagura.json"), configJson);
 
@@ -268,8 +262,9 @@ public sealed class AdminAuthenticationFailClosedRegressionTests : IDisposable
 
     private async Task<(Process Process, int AdminPort)> StartHostProcessAsync(string configJson)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-authfailclosed-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-authfailclosed");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(dataRoot, "yagura.json"), configJson);
 

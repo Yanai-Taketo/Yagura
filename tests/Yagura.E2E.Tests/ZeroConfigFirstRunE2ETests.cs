@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -31,8 +32,10 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
     private static readonly TimeSpan HttpPollTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
 
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _tempDataRoot = new("e2e");
     private Process? _hostProcess;
+
+    private string _dataRoot => _tempDataRoot.Path;
 
     public void Dispose()
     {
@@ -43,19 +46,11 @@ public sealed class ZeroConfigFirstRunE2ETests : IDisposable
 
         _hostProcess?.Dispose();
 
-        if (Directory.Exists(_dataRoot))
-        {
-            try
-            {
-                Directory.Delete(_dataRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // ベストエフォート。子プロセス停止直後は SQLite の WAL 補助ファイルの
-                // ハンドル解放に短い遅延があり得るが、テスト環境の一時ディレクトリの
-                // 残留は致命的でないため、削除失敗で本テストを失敗させない。
-            }
-        }
+        // ベストエフォート。子プロセス停止直後は SQLite の WAL 補助ファイルの
+        // ハンドル解放に短い遅延があり得るが、テスト環境の一時ディレクトリの
+        // 残留は致命的でないため、削除失敗で本テストを失敗させない
+        // （TestTempDirectory.Dispose も同じ判断で IOException/UnauthorizedAccessException を握る）。
+        _tempDataRoot.Dispose();
     }
 
     [Fact]

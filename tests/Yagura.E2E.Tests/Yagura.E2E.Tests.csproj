@@ -25,6 +25,7 @@
       解決でき、ビルド設定・実行環境に依存する相対パス推測を避けられる。
     -->
     <ProjectReference Include="..\..\src\Yagura.Host\Yagura.Host.csproj" />
+    <ProjectReference Include="..\Yagura.TestSupport\Yagura.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>

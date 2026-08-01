@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Yagura.TestSupport;
 
 namespace Yagura.E2E.Tests;
 
@@ -20,7 +21,7 @@ public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
 {
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly List<string> _dataRoots = new();
+    private readonly List<TestTempDirectory> _dataRoots = new();
     private readonly List<Process> _processes = new();
 
     public void Dispose()
@@ -35,19 +36,10 @@ public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
             process.Dispose();
         }
 
+        // ベストエフォート（AdminAuthenticationFailClosedRegressionTests と同じ判断）。
         foreach (var dataRoot in _dataRoots)
         {
-            try
-            {
-                if (Directory.Exists(dataRoot))
-                {
-                    Directory.Delete(dataRoot, recursive: true);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // ベストエフォート（AdminAuthenticationFailClosedRegressionTests と同じ判断）。
-            }
+            dataRoot.Dispose();
         }
     }
 
@@ -156,8 +148,9 @@ public sealed class ForwarderMsiUploadFailClosedRegressionTests : IDisposable
 
     private (Process Process, StringBuilder Output, object Gate) StartHostProcess(string configJson)
     {
-        var dataRoot = Path.Combine(Path.GetTempPath(), $"yagura-e2e-msiupload-failclosed-{Guid.NewGuid():N}");
-        _dataRoots.Add(dataRoot);
+        var tempDataRoot = new TestTempDirectory("e2e-msiupload-failclosed");
+        _dataRoots.Add(tempDataRoot);
+        var dataRoot = tempDataRoot.Path;
         Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(dataRoot, "yagura.json"), configJson);
 
