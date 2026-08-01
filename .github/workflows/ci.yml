@@ -15,8 +15,17 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # 推奨環境の 1 つ目（ADR-0024 決定 1）。**ラベルは明示ピンにする**——`windows-latest` は
+  # GitHub 側の都合で指す OS が動くため、推奨区分として何を踏んでいるかが暗黙になる。
+  # 実際、以前 `windows-latest` が Server 2022 だった頃の基準値が残ったまま実体が 2025 へ移り、
+  # 「推奨に挙げた Server 2022 がどのジョブでも踏まれていない」状態が生まれた（同 ADR 文脈節）。
+  # 明示ピンなら、推奨区分を変えるときに本ファイルも必ず直すことになり、ずれが沈黙しない。
+  # 将来 OS への追従は build-and-test-latest（カナリア）が別途担う。
+  #
+  # ジョブ名は変えない——conventions.md が定めるブランチ保護の必須ステータスチェックが
+  # `build-and-test` のため。
   build-and-test:
-    runs-on: windows-latest
+    runs-on: windows-2025
 
     steps:
       - name: Checkout
@@ -121,8 +130,7 @@ jobs:
           path: bench-results/
           if-no-files-found: ignore
 
-  # 推奨環境の 2 バージョン目（ADR-0024 決定 1・決定 5）。windows-latest は Server 2025 を指すため、
-  # 本ジョブが無いと Server 2022 はどのジョブでも踏まれない。
+  # 推奨環境の 2 つ目（ADR-0024 決定 1・決定 5）。本ジョブが無いと Server 2022 は踏まれない。
   #
   # build-and-test を matrix 化せず別ジョブにしたのは、matrix 化すると job 名が
   # `build-and-test (windows-latest)` へ変わり、ブランチ保護の必須ステータスチェック
@@ -148,6 +156,56 @@ jobs:
 
       # SQL Server 適合テストの実行手段（本ファイル冒頭のジョブと同じ防御的パターン。
       # ランナー image は LocalDB の存在を保証しないため、無ければ公式 MSI を導入する）。
+      - name: Ensure SQL Server LocalDB is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
+            Import-Module BitsTransfer
+            Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
+            Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
+          }
+
+          sqllocaldb create MSSQLLocalDB
+          sqllocaldb start MSSQLLocalDB
+          sqllocaldb info MSSQLLocalDB
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build
+
+  # 将来 OS のカナリア。推奨環境の表明（ADR-0024 決定 1）とは目的が別で、**何かを約束する
+  # ジョブではない**——GitHub が `windows-latest` を次の Windows Server へ移したときに、
+  # 非互換を「推奨区分へ入れる前に」検知するための先行警告である。
+  #
+  # 必須ステータスチェックにはしない: ここが落ちても、それは Yagura が対応を表明していない
+  # OS の話であり、リリースを止める理由にならない。赤は「次の OS で困りそうな兆候が出た」
+  # という調査の合図として扱う（continue-on-error は使わない——緑に見えると兆候が埋もれる）。
+  #
+  # 現在 `windows-latest` は Server 2025 を指すため build-and-test と実体が重複する。
+  # 本ジョブの価値は GitHub がラベルを移した日から生じる。重複期間のコストを許容できないと
+  # 判断した場合は、本ジョブだけを削ればよい（推奨環境の被覆は明示ピンの 2 ジョブが持つ）。
+  #
+  # ベンチを走らせないのは build-and-test-server2022 と同じ理由（基準値は 1 本で OS 別の
+  # 区分を持たず、分布を混ぜると M-5 v2 の誤較正を再現するため）。
+  build-and-test-latest:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
       - name: Ensure SQL Server LocalDB is available
         shell: pwsh
         run: |

@@ -45,10 +45,15 @@ jobs:
     # ci.yml のビルド・単体テストでは被覆がほとんど増えない（同決定 5）。
     # 本 workflow は paths フィルタ付きで必須ステータスチェックではないため、matrix 化しても
     # ブランチ保護の設定に影響しない（ci.yml 側を別ジョブにしたのはこの差による）。
+    #
+    # ラベルは ci.yml と同じく明示ピンにする（`windows-latest` は指す OS が動くため、推奨区分と
+    # して何を踏んでいるかが暗黙になる）。将来 OS のカナリアは ci.yml 側の
+    # build-and-test-latest が担い、本 workflow には置かない——1 実行 30 分規模のため、
+    # `windows-latest` が現在 Server 2025 を指す間は純粋な重複コストになる。
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-2022]
+        os: [windows-2025, windows-2022]
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
