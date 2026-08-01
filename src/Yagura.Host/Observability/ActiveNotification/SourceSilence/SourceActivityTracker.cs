@@ -6,7 +6,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Observability.ActiveNotification.SourceSilence;
 
 /// <summary>
-/// ウォッチリスト登録済み送信元の最終受信時刻を追跡する（ADR-0018 決定 3・委任 7）。
+/// ウォッチリスト登録済み送信元の最終受信時刻を追跡する（ADR-0018 決定 3）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -53,7 +53,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         internal long LastActivityTimestamp;
 
         /// <summary>
-        /// 実受信（受信段・drain 合流点）を一度でも観測したか（0/1。Issue #381）。
+        /// 実受信（受信段・drain 合流点）を一度でも観測したか（0/1）。
         /// 0 の間は <see cref="LastActivityTimestamp"/> が暫定基準（登録時点・再アーム時点）で
         /// あることを表し、起動時 seed（<see cref="SeedProvisionalBaseline"/>）だけが過去へ
         /// 置き換えられる。実受信の書き手は本フラグを先に立ててから時刻を更新する
@@ -62,7 +62,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         internal int HasObservedActivity;
 
         /// <summary>
-        /// 現在の基準時刻が再アーム（登録時点・起動時刻・受信断回復）由来か（0/1。Issue #382）。
+        /// 現在の基準時刻が再アーム（登録時点・起動時刻・受信断回復）由来か（0/1）。
         /// 1 の間、基準時刻は「実際に受信した時刻」ではない——1027 の最終受信時刻表示と
         /// 1028 の「再アーム起点の一斉発火かの別」の判定材料（表示・記録専用。判定は従来どおり
         /// 単調 tick の経過のみを見る）。実受信（<see cref="HasObservedActivity"/> と同じ書き手）と
@@ -190,7 +190,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
     }
 
     /// <summary>
-    /// 起動時 seed（決定 3。Issue #381）: DB 照会の最終受信時刻で、暫定基準（登録時点）を
+    /// 起動時 seed（決定 3）: DB 照会の最終受信時刻で、暫定基準（登録時点）を
     /// <b>過去へ</b>置き換える。実受信（受信段・drain 合流点）を一度でも観測したスロットには
     /// 適用しない——過去の DB 値が今の実績を引き戻さない。
     /// </summary>
@@ -198,7 +198,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
     /// <see cref="Seed"/>（max 更新 = 前方専用）とは向きが逆のため別メソッドにする。max 更新の
     /// ままでは、<see cref="ApplyWatchlist"/> が置く登録時点基準より古い DB 値が常に no-op となり、
     /// 「閾値 24h の装置がサーバ再起動の 23h 前に死んだ場合に最終受信 +24h で発火する」という
-    /// 決定 3 の設計が成立しない（Issue #381 の欠陥 1）。
+    /// 決定 3 の設計が成立しない。
     /// </remarks>
     internal void SeedProvisionalBaseline(IPAddress address, DateTimeOffset lastSeenAt)
     {
@@ -220,7 +220,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
             var current = Interlocked.Read(ref slot.LastActivityTimestamp);
             if (Interlocked.CompareExchange(ref slot.LastActivityTimestamp, target, current) == current)
             {
-                // DB の実績で置き換えた——基準は「実際に受信した時刻」になった（Issue #382）。
+                // DB の実績で置き換えた——基準は「実際に受信した時刻」になった。
                 Volatile.Write(ref slot.BaselineIsRearmed, 0);
                 return;
             }
@@ -237,7 +237,7 @@ internal sealed class SourceActivityTracker : ISourceActivityTracker
         GetActivityReading(address)?.Elapsed;
 
     /// <summary>
-    /// 経過時間 + 基準の由来（再アーム起点か）を返す（Issue #382——1027 の最終受信時刻表示・
+    /// 経過時間 + 基準の由来（再アーム起点か）を返す（1027 の最終受信時刻表示・
     /// 1028 の「再アーム起点の一斉発火かの別」の入力）。ウォッチリスト外なら <see langword="null"/>。
     /// </summary>
     internal (TimeSpan Elapsed, bool BaselineIsRearmed)? GetActivityReading(IPAddress address)

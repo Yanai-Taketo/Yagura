@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 namespace Yagura.Host.Observability.ActiveNotification.Email;
 
 /// <summary>
-/// メール通知チャネル自身が発するイベント ID（ADR-0017 決定 5・6。Issue #350）。
+/// メール通知チャネル自身が発するイベント ID（ADR-0017 決定 6）。
 /// 番号の正本は security.md §4.3 の表（additive-only）。
 /// </summary>
 /// <remarks>

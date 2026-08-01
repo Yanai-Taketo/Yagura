@@ -8,7 +8,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
-/// 拒否試行の集約記録（SEC-4。security.md §4.4。Issue #268）。<see cref="IAuditRecorder"/> の
+/// 拒否試行の集約記録（SEC-4。security.md §4.4）。<see cref="IAuditRecorder"/> の
 /// デコレータとして全監査記録の下流に挟まり、同一送信元・同一種別の拒否が短時間に反復する場合に
 /// 個別記録から集約記録（<see cref="AuditEventKind.RejectionAggregated"/>）へ切り替える。
 /// </summary>
@@ -50,7 +50,7 @@ public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, I
     private readonly ILogger<AggregatingAuditRecorder> _logger;
     private readonly ConcurrentDictionary<AggregationKey, AggregationState> _states = new();
 
-    /// <summary>現在追跡している集約キー数（テスト・可観測性用。#313 の掃引検証）。</summary>
+    /// <summary>現在追跡している集約キー数（テスト・可観測性用）。</summary>
     internal int TrackedStateCount => _states.Count;
     private readonly object _sync = new();
 
@@ -169,7 +169,7 @@ public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, I
                         // 閾値未満のまま集約窓が失効した散発的な状態。集約サマリは出さない
                         // （個別記録で既に出ている）。異なる送信元 IP から閾値未満の拒否が続くと
                         // (Kind, RemoteAddress) キーが恒久的に残り _states が単調増加するため回収する
-                        // （AdminAuthFailureDefense.SweepIdleIpRateLimitEntries #233 と同種の掃引）。
+                        // （AdminAuthFailureDefense.SweepIdleIpRateLimitEntries と同種の掃引）。
                         // 失効後に同一キーの試行が再来すれば RecordAsync が新しい窓で作り直す。
                         _states.TryRemove(key, out _);
                     }

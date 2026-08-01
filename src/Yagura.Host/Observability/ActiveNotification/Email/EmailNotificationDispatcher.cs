@@ -55,7 +55,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<EmailNotificationDispatcher>.Instance;
 
-        // 無効構成の間は投入自体を受け付けない（Issue #384。合成ルートの初期設定と同じ向き）。
+        // 無効構成の間は投入自体を受け付けない（合成ルートの初期設定と同じ向き）。
         _queue.SetEnabled(configuration is not null);
     }
 
@@ -63,7 +63,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
     /// 常設カード表示用の対（最終送信成功時刻・直近の失敗）。書き手は送信ループ、読み手は
     /// Blazor スレッド——<b>不変オブジェクトの参照 1 回の差し替え</b>で更新し、読み手が
     /// 「成功時刻と失敗が別々の時点の値」という不整合な対や torn read を見ない形にする
-    /// （Issue #371——プロパティ 2 本の個別更新は 2 回読みの間に送信ループが割り込み得た）。
+    /// （プロパティ 2 本の個別更新は 2 回読みの間に送信ループが割り込み得るため）。
     /// </summary>
     private sealed record DeliveryHealth(DateTimeOffset? LastSuccessAt, EmailSendResult? LastFailure);
 
@@ -89,7 +89,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             _configuration = configuration;
         }
 
-        // 無効の間は投入も受け付けない（Issue #384——有効化した瞬間に無効期間中の滞留分が
+        // 無効の間は投入も受け付けない（有効化した瞬間に無効期間中の滞留分が
         // 流量制御を経ずに一斉送信されるのを防ぐ。有効化後は以後の発生分から送信が始まる）。
         _queue.SetEnabled(configuration is not null);
 
@@ -151,7 +151,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             {
                 // 監視・通知のコンポーネントは黙って死んではならない（他の周期系と同じ規約）。
                 // 1025 の抑制窓（15 分。security.md §4.3）はこの経路にも等しく適用する
-                // （Issue #384——恒常的な例外で警告が毎周期〔5 秒間隔〕積み上がるのを防ぐ）。
+                // （恒常的な例外で警告が毎周期〔5 秒間隔〕積み上がるのを防ぐため）。
                 if (TryBeginSendFailureWarning())
                 {
                     _logger.LogWarning(
@@ -194,7 +194,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
 
         // 抑制状態の開始警告（1026。security.md §4.3——状態が続く間 1 回だけ）。発火点は
         // 受信ホットパス上のロギング呼び出しのため、キューは状態の予約のみを行い、
-        // ログはこの送信ループ側で書く（Issue #384）。
+        // ログはこの送信ループ側で書く。
         AnnounceSuppressionOnsetIfPending();
 
         while (!cancellationToken.IsCancellationRequested && _queue.TryDequeueReady() is { } request)
@@ -214,7 +214,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             {
                 // IEmailSender は「例外を投げない」契約だが、契約違反でも dequeue 済みの通知を
                 // 再試行なしに失わない——通常の失敗と同じ経路（LastFailure・再試行 1 回・
-                // 抑制窓付き警告）へ倒す（PR #366 レビュー対応）。
+                // 抑制窓付き警告）へ倒す。
                 result = EmailSendResult.Failure(EmailSendFailureKind.Other, ex.Message);
             }
 
@@ -226,7 +226,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
             }
 
             _deliveryHealth = _deliveryHealth with { LastFailure = result };
-            _metrics?.RecordSendFailure(); // 決定 5 のライブ計器（Issue #386。再試行を含む試行ごと）
+            _metrics?.RecordSendFailure(); // 決定 5 のライブ計器（再試行を含む試行ごと）
 
             // 再試行は 1 通あたり 1 回のみ（決定 5）。2 度目の失敗は破棄する——at-most-once。
             // 正本はイベントログと監査記録であり、届かないことを前提にした設計である。
@@ -235,7 +235,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
 
             if (result.FailureKind is EmailSendFailureKind.ConnectionFailed or EmailSendFailureKind.Timeout)
             {
-                // サーバへ到達できない間は当該 drain を打ち切る（Issue #371）——接続不能は
+                // サーバへ到達できない間は当該 drain を打ち切る——接続不能は
                 // 1 通あたり最大で接続タイムアウト（10 秒）を直列に消費するため、キューが深いと
                 // 1 回の drain の滞在時間が RetryDelay（5 分）を超え、序盤に失敗した通知の再試行が
                 // 同じ停止期間中に消費されて全滅する。打ち切れば再試行は次回以降の drain
@@ -249,7 +249,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
     /// <summary>
     /// 抑制状態の開始警告（1026）。キューが予約した「状態の開始」を 1 回だけ書き出す
     /// （security.md §4.3——抑制が発生している状態が続く間、イベントログへは 1 回だけ。
-    /// 状態解消〔抑制なしで再送間隔が経過〕で自然に再武装される。Issue #384）。
+    /// 状態解消〔抑制なしで再送間隔が経過〕で自然に再武装される）。
     /// </summary>
     private void AnnounceSuppressionOnsetIfPending()
     {
@@ -273,7 +273,7 @@ public sealed class EmailNotificationDispatcher : IAsyncDisposable
     /// <summary>
     /// 1025 の抑制窓（15 分。security.md §4.3）の共通判定。窓内なら <see langword="false"/>
     /// （警告を出さない）。送信失敗・部分拒否・送信ループの予期しない例外のすべての 1025 経路が
-    /// 同じ窓を通る（Issue #384——一部経路だけ毎回出る状態を作らない）。
+    /// 同じ窓を通る（一部経路だけ毎回出る状態を作らない）。
     /// </summary>
     private bool TryBeginSendFailureWarning()
     {

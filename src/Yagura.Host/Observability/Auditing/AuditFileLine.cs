@@ -33,20 +33,20 @@ internal sealed class AuditFileLine
     /// <summary>試行されたパス（拒否系事象のみ。管理操作では null）。</summary>
     public string? AttemptedPath { get; init; }
 
-    /// <summary>到達したリスナの実ポート番号（拒否系事象のみ。管理操作では null。M8-4 で nullable 化——additive）。</summary>
+    /// <summary>到達したリスナの実ポート番号（拒否系事象のみ。管理操作では null。additive で追加した nullable フィールド）。</summary>
     public int? ReachedListenerPort { get; init; }
 
-    /// <summary>事象の要約（変更キー・成否等。秘密情報は含まない——security.md §4.1。M8-4 で追加——additive）。</summary>
+    /// <summary>事象の要約（変更キー・成否等。秘密情報は含まない——security.md §4.1。additive で追加したフィールド）。</summary>
     public string? Detail { get; init; }
 
     /// <summary>
-    /// 認証方式（<c>"windows"</c> / <c>"app"</c>。ADR-0010 決定 3・6 で追加——additive。
+    /// 認証方式（<c>"windows"</c> / <c>"app"</c>。ADR-0010 決定 6 で追加——additive。
     /// 認証を経由しない操作では null。
     /// </summary>
     public string? AuthenticationScheme { get; init; }
 
     /// <summary>
-    /// 認証済み利用者名（ADR-0010 決定 3・6 で追加——additive。<see cref="AuthenticationScheme"/> と
+    /// 認証済み利用者名（ADR-0010 決定 6 で追加——additive。<see cref="AuthenticationScheme"/> と
     /// 組み合わせて命名空間つきの「誰が」表記になる）。
     /// </summary>
     public string? AuthenticatedPrincipal { get; init; }

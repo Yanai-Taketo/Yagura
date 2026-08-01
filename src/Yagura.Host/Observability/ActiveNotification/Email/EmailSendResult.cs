@@ -25,7 +25,7 @@ internal enum EmailSendFailureKind
 
     /// <summary>
     /// SMTP サーバ側で SMTP 認証（SMTP AUTH）自体が無効化されている（M365 の
-    /// <c>535 5.7.139 SmtpClientAuthentication is disabled</c> 等。委任 12。Issue #385）。
+    /// <c>535 5.7.139 SmtpClientAuthentication is disabled</c> 等。委任 12）。
     /// 資格情報の誤りと区別する——「打ち直しても解決しない」を案内するための分類。
     /// 判定は<b>サニタイズ前の生応答</b>で行う（<c>MailKitEmailSender</c> 参照）。
     /// </summary>
@@ -33,7 +33,7 @@ internal enum EmailSendFailureKind
 
     /// <summary>
     /// SMTP サーバが認証（AUTH）を提供していない（EHLO で AUTH を広告しないサーバへ
-    /// 資格情報つきで接続した。Issue #385）。社内リレー + 書きかけ設定で現実に起こる——
+    /// 資格情報つきで接続した）。社内リレー + 書きかけ設定で現実に起こる——
     /// 「STARTTLS 非対応」と誤案内しないための分類。
     /// </summary>
     AuthenticationNotOffered,
@@ -48,7 +48,7 @@ internal enum EmailSendFailureKind
     Other,
 }
 
-/// <summary>1 通の送信の結果（ADR-0017 決定 5・委任 7・委任 12）。</summary>
+/// <summary>1 通の送信の結果（ADR-0017 決定 5）。</summary>
 /// <param name="Succeeded">メッセージとして送信が成立したか。</param>
 /// <param name="FailureKind">失敗の分類（成功時は <see cref="EmailSendFailureKind.None"/>）。</param>
 /// <param name="FailureDetail">
@@ -57,7 +57,7 @@ internal enum EmailSendFailureKind
 /// <param name="RejectedRecipients">
 /// 受理されなかった宛先（<see cref="Succeeded"/> が <see langword="true"/> でも空とは限らない）。
 /// <b>一部拒否は「メッセージとしては送信成功・拒否宛先を警告ログ」とし再送しない</b>——
-/// 成功済み宛先への二重送信を作らないため（決定 5・委任 7）。
+/// 成功済み宛先への二重送信を作らないため（委任 7）。
 /// </param>
 internal sealed record EmailSendResult(
     bool Succeeded,

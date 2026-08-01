@@ -4,7 +4,7 @@ namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
 /// <see cref="AuditEventKind"/> から Windows イベントログ本文向けの日本語説明への対応表
-/// （2026-07-06 イベントログ日本語化。security.md §4.3 の意味とレベルの凍結は ID・レベルに
+/// （イベントログ日本語化。security.md §4.3 の意味とレベルの凍結は ID・レベルに
 /// 対する規約であり、本文の文言自体は additive-only の対象ではないため、既存 ID の説明文を
 /// 日本語化しても互換性を壊さない）。
 /// </summary>
@@ -67,11 +67,8 @@ internal static class AuditEventDescriptions
         AuditEventKind.StartupConfigurationChangeDetected => "前回稼働時から設定ファイルが変更された状態で起動",
         AuditEventKind.IngestionTlsCertificateConfigured => "TLS 受信の証明書設定を変更",
         AuditEventKind.ViewerHttpsConfigured => "閲覧 UI の HTTPS 設定を変更",
-        // 2021〜2023 は Issue #350/#351 実装時に本対応表への追随が漏れており、該当事象の
-        // イベントログ併記が Describe の例外（→ TryWriteEventLog の最終捕捉）で毎回縮退していた
-        // （アプリ記録ファイル側は無事）。Issue #263 実装時に発見し、Describe の網羅を
-        // ResolveEventId と同じ機械検証（Describe_MapsEveryAuditEventKind_WithoutFallback）の
-        // 対象に加えて再発を塞いだ。
+        // Describe の網羅性は ResolveEventId と同じ機械検証
+        // （Describe_MapsEveryAuditEventKind_WithoutFallback）で担保する（switch 追随漏れの検出）。
         AuditEventKind.EmailNotificationConfigured => "メール通知の設定を変更",
         AuditEventKind.EmailNotificationTestSent => "メール通知のテスト送信を実行",
         AuditEventKind.SourceSilenceWatchlistConfigured => "途絶検知のウォッチリストを変更",

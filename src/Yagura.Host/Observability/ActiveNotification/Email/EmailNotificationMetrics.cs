@@ -3,7 +3,7 @@ using System.Diagnostics.Metrics;
 namespace Yagura.Host.Observability.ActiveNotification.Email;
 
 /// <summary>
-/// メール通知チャネルのライブ計器（ADR-0017 決定 5。Issue #386）。
+/// メール通知チャネルのライブ計器（ADR-0017 決定 5）。
 /// </summary>
 /// <remarks>
 /// <para>

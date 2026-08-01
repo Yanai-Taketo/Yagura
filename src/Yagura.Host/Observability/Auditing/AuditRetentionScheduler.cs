@@ -7,7 +7,7 @@ using Yagura.Host.Retention;
 namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
-/// 監査記録の保持期間削除の定期実行スケジューラ（security.md §4.2 SEC-2。Issue #261）。
+/// 監査記録の保持期間削除の定期実行スケジューラ（security.md §4.2 SEC-2）。
 /// 保持期間（既定 365 日。<c>Audit:RetentionDays</c>）を超過した監査記録ファイルを削除する。
 /// </summary>
 /// <remarks>
@@ -133,7 +133,7 @@ public sealed class AuditRetentionScheduler : IHostedService, IAsyncDisposable
     public async ValueTask DisposeAsync() => await StopAsync(CancellationToken.None).ConfigureAwait(false);
 
     /// <summary>
-    /// 保持日数を実行中に更新する（設定ライブ再読み込み。CF-4 層1。Issue #262）。
+    /// 保持日数を実行中に更新する（設定ライブ再読み込み。CF-4 層1）。
     /// 削除試行は毎回フィールドを参照するため、次の実行（定期実行）から新値が使われる。
     /// 破れ読みの懸念は実害にならない——読み手は日次の判定 1 箇所のみで、旧値/新値のどちらで
     /// 判定されても次の日次実行で追いつく。

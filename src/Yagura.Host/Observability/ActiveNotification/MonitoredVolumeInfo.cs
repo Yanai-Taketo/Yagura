@@ -2,7 +2,7 @@ namespace Yagura.Host.Observability.ActiveNotification;
 
 /// <summary>
 /// 監視対象ボリューム 1 つ分の容量読み取り（architecture.md §4.6「データルートのボリュームを
-/// DriveInfo で監視」。Issue #149・PR #188 レビュー指摘によりスプール置き場所のボリュームも対象に含める）。
+/// DriveInfo で監視」。スプール置き場所のボリュームも対象に含める）。
 /// </summary>
 /// <param name="VolumeRoot">ボリュームのルート（例: <c>C:\</c>。警告メッセージ・抑制窓のキーに使う）。</param>
 /// <param name="TotalSizeBytes">ボリュームの総サイズ（バイト）。</param>
@@ -18,7 +18,7 @@ public interface IMonitoredVolumeInfo
     /// <summary>
     /// 現在の読み取りを返す（同一ボリュームに載る複数パスは 1 件に重複排除済み）。
     /// 取得できないパス（ドライブが準備できていない・UNC ルート・パス解決に失敗した等）は
-    /// 結果から除外する——安全側（警告を出さない）に倒す判断（本 Issue の実装判断。カウンタ・
+    /// 結果から除外する——安全側（警告を出さない）に倒す判断（カウンタ・
     /// ゲージは本監視と独立したチャネルとして残るため、本監視の取得不能自体が沈黙の唯一の経路には
     /// ならない）。
     /// </summary>
@@ -31,7 +31,7 @@ public interface IMonitoredVolumeInfo
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>複数パスを受け取り、ボリューム単位に重複排除する</b>（PR #188 レビュー指摘）:
+/// <b>複数パスを受け取り、ボリューム単位に重複排除する</b>:
 /// `Spool:Directory` は設定で独立に変更でき（configuration.md §8「スプール」区分）、データルートと
 /// 別ドライブに向き得る。その場合、スプールが実際に育っていく先のボリューム（architecture.md §4.6 が
 /// 名指しする「夜間にスプールが満ちていく最悪シナリオ」の現場）を監視対象から外さないよう、
