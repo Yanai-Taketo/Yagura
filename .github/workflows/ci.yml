@@ -15,100 +15,64 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # 推奨環境の 1 つ目（ADR-0024 決定 1）。**ラベルは明示ピンにする**——`windows-latest` は
-  # GitHub 側の都合で指す OS が動くため、推奨区分として何を踏んでいるかが暗黙になる。
-  # 実際、以前 `windows-latest` が Server 2022 だった頃の基準値が残ったまま実体が 2025 へ移り、
-  # 「推奨に挙げた Server 2022 がどのジョブでも踏まれていない」状態が生まれた（同 ADR 文脈節）。
-  # 明示ピンなら、推奨区分を変えるときに本ファイルも必ず直すことになり、ずれが沈黙しない。
-  # 将来 OS への追従は build-and-test-latest（カナリア）が別途担う。
+  # 推奨環境（ADR-0024 決定 1）の全バージョンでビルド・単体テストを行う。
   #
-  # ジョブ名は変えない——conventions.md が定めるブランチ保護の必須ステータスチェックが
-  # `build-and-test` のため。
-  build-and-test-2025:
-    runs-on: windows-2025
+  # ■ ランナーラベルは明示ピンにする
+  # `windows-latest` は GitHub の都合で指す OS が動くため、推奨区分として何を踏んでいるかが
+  # 暗黙になる。実際これは一度起きている——`windows-latest` が Server 2022 だった頃の基準値が
+  # 残ったまま実体が 2025 へ移り、「推奨に挙げた Server 2022 がどのジョブでも踏まれていない」
+  # 状態が生まれた。明示ピンなら推奨区分を変えるときに本ファイルも必ず直すことになり、
+  # ずれが沈黙しない。将来 OS への追従は build-and-test-canary が別の目的として担う。
+  #
+  # ■ 新しい OS を推奨区分へ加える手順（保守手順。ADR-0024 決定 5）
+  #   1. ADR-0024 決定 1 の表を更新する（推奨区分の定義が正）
+  #   2. 下の matrix へ 1 行足す
+  #   3. installer-e2e.yml の matrix へ 1 行足す
+  #   4. 外すときは同じ 3 か所から削る
+  # ブランチ保護の設定変更は要らない——必須チェックは末尾の集約ジョブ build-and-test に
+  # 固定されており、ゲートの構成は needs（= 本ジョブ全体）で表現されるため、matrix の増減に
+  # 自動的に追随する。
+  build-and-test-recommended:
+    strategy:
+      # 片方の失敗でもう片方を打ち切らない（どの OS で落ちたかを 1 回の run で知りたい）。
+      fail-fast: false
+      matrix:
+        include:
+          # bench: 回帰ベンチを担当する OS を 1 つだけ true にする。基準値ファイルは 1 本で
+          # ランナー OS 別の区分を持たず、複数 OS の分布を混ぜると M-5 v2 が実測で診断した
+          # 分布混合による誤較正を再現するため（architecture.md §5.2）。担当 OS を移すときは
+          # conventions.md「CI 回帰ベンチの基準値更新」の手続きで再較正すること。
+          - os: windows-2025
+            bench: true
+          - os: windows-2022
+            bench: false
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
+      - name: Build and test
+        uses: ./.github/actions/windows-build-test
 
-      # SQL Server 適合テスト（M5-3。Issue #47）の CI 実行手段。
-      #
-      # 実体検証（確認日 2026-07-05）: actions/runner-images の Windows2022-Readme.md を直接確認した。
-      # 「Installed Software > Databases」節は PostgreSQL・MongoDB のみを standalone サービスとして
-      # 掲載しており、SQL Server / LocalDB は掲載されない。一方「Visual Studio Enterprise 2022」の
-      # ワークロード構成要素として Microsoft.VisualStudio.Component.SQL.LocalDB.Runtime が含まれる
-      # （バージョン 17.14.36510.44）。これは VS のコンポーネントであり、独立した保証ではない。
-      #
-      # actions/runner-images issue #3691「Add SQL Server Express LocalDB」のメンテナ回答が
-      # 明確な結論を与える: sqllocaldb.exe の存在は保証せず、`sqllocaldb info MSSQLLocalDB` で
-      # 確認し、無ければ公式 MSI（SqlLocalDB.msi）をその場でダウンロード・サイレントインストール
-      # する防御的パターンを推奨している。本ステップはそのパターンをそのまま採用する
-      # （代替候補として検討した potatoqualitee/mssqlsuite アクションは不採用——本製品が必要と
-      # するのは LocalDB のみであり、追加の外部アクション依存を増やすほどの利益がないため、
-      # Microsoft 公式 MSI を直接叩く最小構成を選んだ）。
-      - name: Ensure SQL Server LocalDB is available
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          Write-Host "Checking for existing MSSQLLocalDB instance..."
-          $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
-          if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
-            Write-Host "MSSQLLocalDB not found. Downloading official SqlLocalDB.msi..."
-            Import-Module BitsTransfer
-            Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
-            Write-Host "Installing SqlLocalDB.msi..."
-            Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
-          } else {
-            Write-Host "MSSQLLocalDB instance already registered."
-          }
-
-          Write-Host "Starting MSSQLLocalDB instance..."
-          # sqllocaldb.exe はネイティブ実行ファイルであり -ErrorAction は使えない
-          # （PowerShell コマンドレット専用のパラメータのため）。インスタンスが既に存在する場合の
-          # "create" の失敗は無視してよいため、終了コードを見ずに実行を続ける。
-          sqllocaldb create MSSQLLocalDB
-          sqllocaldb start MSSQLLocalDB
-          sqllocaldb info MSSQLLocalDB
-
-      - name: Restore
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test --configuration Release --no-build
-
-      # CI 回帰ベンチ（M7-3。Issue #62。architecture.md §5.2）。
+      # CI 回帰ベンチ（M7-3。architecture.md §5.2）。
       #
       # 代表シナリオの短縮版を 2 本走らせ、tools/Yagura.Bench/baselines/ci-baseline.json の
       # 基準値と比較する（絶対値の合否は行わない——§5.2「CI の回帰判定は基準比とする」）。
-      # レートは開発機ではなく CI ランナー（windows-latest）の性能を前提に控えめに設定する
-      # （目安 5k/s。ランナー性能は開発機と別物のため）。追加時間の目安は 2〜3 分
-      # （SustainedZeroDrop 10 秒 + ProviderWriteCeiling(SQLite) 8 秒の負荷時間本体 + 起動/停止/
-      # ビルド出力コピー等のオーバーヘッド）。
+      # レートは CI ランナーの性能を前提に控えめに設定する（目安 5k/s）。追加時間の目安は 2〜3 分。
       #
-      # 判定モードは M-5 v2（2026-07-06。CI 7 標本。一次データ:
-      # tools/Yagura.Bench/results/2026-07-06-ci-windows-latest-m5/）で確定済み:
-      # GitHub ホストランナーはランナー個体差（ディスク性能）が支配的で、比判定は両シナリオとも
-      # blocking にできない（第 7 標本 run 28754273026 で ProviderWriteCeiling の保存率 22.4% を
-      # 観測——突合は成立しており製品は正常。初版の帯 0.15 は同一個体 5 標本の誤較正だった）。
-      # blocking は突合成立（送信数 = 保存 + 全カウンタ）のみ。数値は情報記録として artifact に残す。
+      # 判定モードは M-5 v2 で確定済み: GitHub ホストランナーはランナー個体差（ディスク性能）が
+      # 支配的で、比判定は両シナリオとも blocking にできない。blocking は突合成立
+      # （送信数 = 保存 + 全カウンタ）のみ。数値は情報記録として artifact に残す。
       # 性能退行の blocking 検知は M-6（基準環境での絶対値判定）の管轄。
-      # 帯・判定モードの変更手続きは conventions.md「CI 回帰ベンチの基準値更新」節。
       #
-      # グレースフル停止（Ctrl+C 経由。ConsoleCtrlSender）は CI のようなコンソールを持たない
-      # 実行環境では機能しない可能性がある。その場合は Yagura.Bench.HostProcess.BenchHostProcess が
-      # Kill にフォールバックする——本回帰ベンチが使う 2 シナリオはいずれも「送信数 = 保存件数」の
-      # 単純な等式（破棄・退避ゼロ想定）であり、drain 完了後に停止する設計のため、Kill
-      # フォールバックが発生してもカウンタの取りこぼしは判定に影響しない（M7-1 の煙テストで
-      # 確認済みの前例と同じ考え方）。
+      # グレースフル停止（Ctrl+C 経由）はコンソールを持たない実行環境では機能しない可能性があり、
+      # その場合は Kill にフォールバックする——本回帰ベンチの 2 シナリオはいずれも
+      # 「送信数 = 保存件数」の単純な等式（破棄・退避ゼロ想定）で drain 完了後に停止する設計のため、
+      # フォールバックが発生してもカウンタの取りこぼしは判定に影響しない。
       - name: Regression bench (SustainedZeroDrop)
+        if: matrix.bench
         run: >
           dotnet tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll
           SustainedZeroDrop --transport udp --rate 5000 --duration 10
@@ -116,6 +80,7 @@ jobs:
           --compare-baseline tools/Yagura.Bench/baselines/ci-baseline.json
 
       - name: Regression bench (ProviderWriteCeiling / SQLite)
+        if: matrix.bench
         run: >
           dotnet tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll
           ProviderWriteCeiling --rate 3000 --duration 8
@@ -123,124 +88,49 @@ jobs:
           --compare-baseline tools/Yagura.Bench/baselines/ci-baseline.json
 
       - name: Upload regression bench results
-        if: always()
+        if: always() && matrix.bench
         uses: actions/upload-artifact@v7
         with:
           name: regression-bench-results
           path: bench-results/
           if-no-files-found: ignore
 
-  # 推奨環境の 2 つ目（ADR-0024 決定 1・決定 5）。本ジョブが無いと Server 2022 は踏まれない。
-  #
-  # matrix ではなく OS ごとの独立ジョブにしたのは、matrix 化すると job 名に matrix 値が
-  # 付いて（`build-and-test (windows-2022)`）ブランチ保護の必須チェック名が動くため。
-  # 独立ジョブ + 集約ジョブ（本ファイル末尾の build-and-test）なら、ジョブ名で OS を明示しつつ
-  # 必須チェック名を安定させられる。
-  #
-  # 回帰ベンチは本ジョブでは走らせない。基準値ファイルは 1 本（ランナー OS 別の区分を持たない）
-  # であり、そこへ 2 つの OS の分布を混ぜると M-5 v2 が診断した分布混合による誤較正を再現する。
-  # ベンチの blocking 判定は突合成立のみで、これは全標本で成立した OS 非依存の機能保証である
-  # （architecture.md §5.2）。したがって OS を増やす価値は build・単体テスト側にある。
-  build-and-test-2022:
-    runs-on: windows-2022
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      # SQL Server 適合テストの実行手段（本ファイル冒頭のジョブと同じ防御的パターン。
-      # ランナー image は LocalDB の存在を保証しないため、無ければ公式 MSI を導入する）。
-      - name: Ensure SQL Server LocalDB is available
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
-          if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
-            Import-Module BitsTransfer
-            Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
-            Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
-          }
-
-          sqllocaldb create MSSQLLocalDB
-          sqllocaldb start MSSQLLocalDB
-          sqllocaldb info MSSQLLocalDB
-
-      - name: Restore
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test --configuration Release --no-build
-
   # 将来 OS のカナリア。推奨環境の表明（ADR-0024 決定 1）とは目的が別で、**何かを約束する
   # ジョブではない**——GitHub が `windows-latest` を次の Windows Server へ移したときに、
   # 非互換を「推奨区分へ入れる前に」検知するための先行警告である。
   #
-  # 必須ステータスチェックにはしない: ここが落ちても、それは Yagura が対応を表明していない
-  # OS の話であり、リリースを止める理由にならない。赤は「次の OS で困りそうな兆候が出た」
-  # という調査の合図として扱う（continue-on-error は使わない——緑に見えると兆候が埋もれる）。
+  # ゲート（集約ジョブ build-and-test の needs）には含めない: ここが落ちても、それは Yagura が
+  # 対応を表明していない OS の話であり、リリースを止める理由にならない。赤は「次の OS で
+  # 困りそうな兆候が出た」という調査の合図として扱う（continue-on-error は使わない——
+  # 緑に見えると兆候が埋もれるため、赤いまま非 blocking にする）。
   #
-  # 現在 `windows-latest` は Server 2025 を指すため build-and-test と実体が重複する。
-  # 本ジョブの価値は GitHub がラベルを移した日から生じる。重複期間のコストを許容できないと
-  # 判断した場合は、本ジョブだけを削ればよい（推奨環境の被覆は明示ピンの 2 ジョブが持つ）。
+  # 現在 `windows-latest` は Server 2025 を指すため推奨区分の 1 つと実体が重複する。
+  # 本ジョブの価値は GitHub がラベルを移した日から生じる。重複コストが見合わないと判断した
+  # 場合は本ジョブだけを削ればよい（推奨環境の被覆は明示ピンの matrix が持つ）。
   #
-  # ベンチを走らせないのは build-and-test-2022 と同じ理由（基準値は 1 本で OS 別の
-  # 区分を持たず、分布を混ぜると M-5 v2 の誤較正を再現するため）。
-  build-and-test-latest:
+  # ベンチを走らせないのは基準値ファイルが 1 本であるため（上記 matrix の bench 参照）。
+  build-and-test-canary:
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      - name: Ensure SQL Server LocalDB is available
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
-          if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
-            Import-Module BitsTransfer
-            Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
-            Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
-          }
-
-          sqllocaldb create MSSQLLocalDB
-          sqllocaldb start MSSQLLocalDB
-          sqllocaldb info MSSQLLocalDB
-
-      - name: Restore
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test --configuration Release --no-build
+      - name: Build and test
+        uses: ./.github/actions/windows-build-test
 
   # ブランチ保護の必須ステータスチェックの受け口（conventions.md が名指しする `build-and-test`）。
   #
-  # 実作業のジョブ名に OS を書くと、必須チェック名が OS に固定されて推奨区分を変えるたびに
-  # リポジトリ設定の変更が要る。逆に必須チェック側へ OS 名を出さないと、名前が「どの OS を
-  # 守っているか」を語らない。本ジョブを集約点として挟むことで、**ジョブ名は OS を明示しつつ、
-  # 必須チェック名は安定**という両立にする。ゲートの構成（どの OS の成功を要求するか）は
-  # needs で明示され、変更は本ファイルだけで完結する。
+  # ■ なぜ集約ジョブを挟むか
+  # 必須チェックは「ジョブ名」で指定され、その設定はリポジトリ設定（オーナー専有）にある。
+  # 実作業ジョブを直接指定すると、OS の増減やジョブ名の変更のたびにリポジトリ設定の更新が要り、
+  # 忘れると黙ってゲートが外れる。本ジョブを固定の受け口にすることで、**ゲートの構成
+  # （何の成功を要求するか）を workflow ファイル側に置ける**——変更は PR だけで完結し、
+  # 外部貢献者も推奨区分の増減に追随できる。
   #
-  # 対象は推奨区分の 2 つ（ADR-0024 決定 1 が「全機能」を約束する範囲）。カナリアは含めない
-  # ——対応を表明していない OS の失敗でリリースを止めないため。
+  # 対象は推奨区分のみ（ADR-0024 決定 1 が「全機能」を約束する範囲）。カナリアは含めない。
   build-and-test:
-    needs: [build-and-test-2025, build-and-test-2022]
+    needs: build-and-test-recommended
     if: always()
     runs-on: ubuntu-latest
 
@@ -248,9 +138,11 @@ jobs:
       - name: Verify recommended-environment jobs succeeded
         shell: bash
         run: |
-          echo "windows-2025: ${{ needs.build-and-test-2025.result }}"
-          echo "windows-2022: ${{ needs.build-and-test-2022.result }}"
-          # skipped / cancelled も success 以外として扱う（依存が走らなかったことを
-          # 「通った」と誤認させない）。
-          [ "${{ needs.build-and-test-2025.result }}" = "success" ] || exit 1
-          [ "${{ needs.build-and-test-2022.result }}" = "success" ] || exit 1
+          result='${{ needs.build-and-test-recommended.result }}'
+          echo "build-and-test-recommended: $result"
+          # skipped / cancelled も success 以外として扱う——依存が走らなかったことを
+          # 「通った」と誤認させない。matrix の 1 つでも失敗すれば result は success にならない。
+          if [ "$result" != "success" ]; then
+            echo "推奨環境のジョブが success ではありません。" >&2
+            exit 1
+          fi
