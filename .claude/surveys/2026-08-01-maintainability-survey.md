@@ -141,6 +141,19 @@
 - 検証: `dotnet build`(TreatWarningsAsErrors)警告ゼロで成功。テストは main と本ブランチで失敗集合が**完全一致**(Host 25・Ingestion 8・E2E 23・Bench 3・Conformance 77 — すべて DPAPI/Windows EventLog/SID/IPv6 デュアルスタック/SQL Server 実接続など Linux 実行環境起因の既存事象)。**回帰ゼロ**
 - 未実施(後続): tests/ 配下のコメント浄化(ADR 参照 280 件)、文字列リテラル内 Issue 番号の扱いの決定
 
+## 4.2 Phase 2 実施記録(2026-08-01・本ブランチで完了)
+
+低リスク 4 ファイルの partial class 分割。メソッド本体・SQL・doc・定数値は無変更の移動のみ(各分割で行/定数のマルチセット比較により無欠落を検証):
+
+- `SyslogParser.cs` → Rfc5424 / Rfc3164 / Shared の 4 ファイル(配置は実際の呼び出し関係で確定。パーサテスト 79 件全通過)
+- `SqlServerLogStore.cs` → Schema / Write / Query / Maintenance の 5 ファイル(Storage.Tests 85 件全通過)
+- `UiText.cs` → Dashboard / LogSearch / SystemStatus / AdminSetup / ForwarderKit + 共通の 6 ファイル(定数 578/578 一致、Web.Tests 512 件全通過)
+- `YaguraConfigurationLoader.cs` → Ingestion / Viewer / Admin / Storage / Notification + 本体の 6 ファイル(非空白行数完全一致)
+
+検証: ソリューション全体ビルド警告ゼロ。テスト失敗集合は main ベースライン(Linux 環境起因の既知事象)と完全一致 = 回帰ゼロ。
+
+未実施(後続 = Phase 3 以降): Storage 共通化、テスト基盤(Yagura.TestSupport)、TCP/TLS Accept ループ・証明書 3 画面の重複解消、中リスク分割(Program.cs の DI 登録切り出し等)。
+
 ## 5. 参考数値一覧
 
 | 指標 | 値 |
