@@ -1,0 +1,197 @@
+@namespace Yagura.Web.Components.Common
+@using Yagura.Abstractions.Administration
+
+@*
+    証明書一覧の選択パネル（証明書設定 3 画面——閲覧 HTTPS・TLS 受信・管理リモート HTTPS——の
+    共通部分。Phase 5 重複解消）。
+
+    3 画面は一覧の骨格（再確認ボタン・列挙失敗表示・空状態・拇印不一致警告・ラジオ一覧・
+    発行者/有効期間/拇印の行）は完全に同一だが、期限切れ・秘密鍵読取不可を Error（保存拒否）
+    にするか Warning（警告のみ）にするかは画面ごとに意図が異なる（閲覧・管理 HTTPS は期限切れ =
+    保存拒否、TLS 受信は「受信を止めない」原則により警告に留める、等）。この非対称は
+    <see cref="YaguraCertificateSeverityPolicy"/> として呼び出し側が明示し、本パネルでは固定しない。
+*@
+<MudPaper Elevation="1" Class="pa-4 mt-4">
+    <div class="d-flex align-center">
+        <MudText Typo="Typo.h6">@Title</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="OnRefresh">@RefreshButtonText</MudButton>
+    </div>
+
+    @HeaderExtra
+
+    @if (CertificateListError is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-2">
+            @string.Format(EnumerationFailedFormat, CertificateListError)
+        </MudAlert>
+    }
+    else if (Candidates.Count == 0)
+    {
+        <YaguraEmptyState Title="@EmptyTitle"
+                          Description="@EmptyDescription"
+                          Icon="@Icons.Material.Outlined.Badge">
+            <NextAction>
+                <MudText Typo="Typo.body2">@EmptyNextActionText</MudText>
+            </NextAction>
+        </YaguraEmptyState>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="mt-2">@CertificatesIntro</MudText>
+
+        @if (SelectedThumbprintMissingFromList)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @string.Format(ThumbprintNotInListFormat, SelectedThumbprint)
+            </MudAlert>
+        }
+
+        <MudRadioGroup T="string" Value="SelectedThumbprint" ValueChanged="SelectedThumbprintChanged" Class="mt-2">
+            <MudRadio T="string" Value="@string.Empty" Color="Color.Primary">@UiText.SelectNoneOption</MudRadio>
+            @foreach (var candidate in Candidates)
+            {
+                <div class="mt-2">
+                    <MudRadio T="string" Value="@candidate.Thumbprint" Color="Color.Primary">
+                        <div>
+                            <span class="d-inline-flex align-center" style="gap: 8px;">
+                                <MudText Typo="Typo.body1" Style="font-weight: 600;">@candidate.SubjectCommonName</MudText>
+                                @if (candidate.IsExpired)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="@ExpiredBadgeColor" Variant="Variant.Filled">@Policy!.ExpiredBadgeText</MudChip>
+                                }
+                                @if (!candidate.IsPrivateKeyReadable)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="@KeyUnreadableBadgeColor" Variant="Variant.Filled">@Policy!.KeyUnreadableBadgeText</MudChip>
+                                }
+                                @if (!candidate.IsExpired && candidate.IsPrivateKeyReadable)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">@Policy!.OkBadgeText</MudChip>
+                                }
+                            </span>
+                            <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertIssuerLabel: @candidate.Issuer</MudText>
+                            <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertValidityLabel: @YaguraTimeFormatter.FormatLocalDateRange(candidate.NotBefore, candidate.NotAfter)</MudText>
+                            <MudText Typo="Typo.body2" Style="font-family: monospace;">@UiText.AdminRemoteAccessCertThumbprintLabel: @candidate.Thumbprint</MudText>
+                        </div>
+                    </MudRadio>
+                    @if (candidate.IsExpired)
+                    {
+                        <MudAlert Severity="@ExpiredAlertSeverity" Dense="true" Class="ml-8 mt-1">
+                            @Policy!.ExpiredAlertText
+                            @if (Policy.ExpiredAlertSecondaryText is not null)
+                            {
+                                <br />
+                                @Policy.ExpiredAlertSecondaryText
+                            }
+                        </MudAlert>
+                    }
+                    @if (!candidate.IsPrivateKeyReadable)
+                    {
+                        <MudAlert Severity="@KeyUnreadableAlertSeverity" Dense="true" Class="ml-8 mt-1">
+                            @Policy!.KeyUnreadableAlertText
+                            @if (Policy.KeyUnreadableAlertSecondaryText is not null)
+                            {
+                                <br />
+                                @Policy.KeyUnreadableAlertSecondaryText
+                            }
+                        </MudAlert>
+                    }
+                </div>
+            }
+        </MudRadioGroup>
+    }
+</MudPaper>
+
+@code {
+    /// <summary>証明書一覧カードの見出し。</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>一覧の再取得ボタンの文言（画面ごとに異なる——「再確認」「一覧を更新」等）。</summary>
+    [Parameter, EditorRequired]
+    public string RefreshButtonText { get; set; } = string.Empty;
+
+    /// <summary>再取得ボタンのクリック処理（呼び出し側の LoadCertificates 相当を実行する）。</summary>
+    [Parameter]
+    public EventCallback<MouseEventArgs> OnRefresh { get; set; }
+
+    /// <summary>
+    /// 見出し行の直後に挿入する画面固有の内容（任意）。閲覧 HTTPS 画面の「管理リモート HTTPS と
+    /// 同じ証明書を使う」コピー導線など、証明書一覧そのものではない画面固有 UI をここへ渡す。
+    /// </summary>
+    [Parameter]
+    public RenderFragment? HeaderExtra { get; set; }
+
+    /// <summary>証明書列挙の失敗理由（null なら列挙は成功している）。</summary>
+    [Parameter]
+    public string? CertificateListError { get; set; }
+
+    /// <summary>列挙失敗時の表示文言。{0} に <see cref="CertificateListError"/> が入る。</summary>
+    [Parameter, EditorRequired]
+    public string EnumerationFailedFormat { get; set; } = string.Empty;
+
+    /// <summary>列挙された証明書候補。</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<CertificateCandidate> Candidates { get; set; } = [];
+
+    /// <summary>候補ゼロ件の空状態: 見出し。</summary>
+    [Parameter, EditorRequired]
+    public string EmptyTitle { get; set; } = string.Empty;
+
+    /// <summary>候補ゼロ件の空状態: 補足説明。</summary>
+    [Parameter, EditorRequired]
+    public string EmptyDescription { get; set; } = string.Empty;
+
+    /// <summary>候補ゼロ件の空状態: 次に取るべき行動。</summary>
+    [Parameter, EditorRequired]
+    public string EmptyNextActionText { get; set; } = string.Empty;
+
+    /// <summary>候補が 1 件以上あるときの導入文。</summary>
+    [Parameter, EditorRequired]
+    public string CertificatesIntro { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 選択中（または永続値の）拇印が <see cref="Candidates"/> に存在しないか
+    /// （<see cref="Yagura.Web.Administration.CertificateAdminScreenSupport.IsSelectedThumbprintMissingFromList"/>
+    /// で呼び出し側が判定して渡す）。
+    /// </summary>
+    [Parameter]
+    public bool SelectedThumbprintMissingFromList { get; set; }
+
+    /// <summary>拇印不一致警告の文言。{0} に <see cref="SelectedThumbprint"/> が入る。</summary>
+    [Parameter, EditorRequired]
+    public string ThumbprintNotInListFormat { get; set; } = string.Empty;
+
+    /// <summary>選択中の拇印（空文字列は「指定なし」）。</summary>
+    [Parameter, EditorRequired]
+    public string SelectedThumbprint { get; set; } = string.Empty;
+
+    /// <summary>選択変更の通知。</summary>
+    [Parameter]
+    public EventCallback<string> SelectedThumbprintChanged { get; set; }
+
+    /// <summary>
+    /// バッジ・注記の重大度と文言（画面ごとの製品仕様。<see cref="YaguraCertificateSeverityPolicy"/>
+    /// 参照）。
+    /// </summary>
+    [Parameter, EditorRequired]
+    public YaguraCertificateSeverityPolicy? Policy { get; set; }
+
+    private Color ExpiredBadgeColor => Policy!.ExpiredSeverity == YaguraCertificateIssueSeverity.Error
+        ? Color.Error
+        : Color.Warning;
+
+    private Color KeyUnreadableBadgeColor => Policy!.KeyUnreadableSeverity == YaguraCertificateIssueSeverity.Error
+        ? Color.Error
+        : Color.Warning;
+
+    private Severity ExpiredAlertSeverity => Policy!.ExpiredSeverity == YaguraCertificateIssueSeverity.Error
+        ? Severity.Error
+        : Severity.Warning;
+
+    private Severity KeyUnreadableAlertSeverity => Policy!.KeyUnreadableSeverity == YaguraCertificateIssueSeverity.Error
+        ? Severity.Error
+        : Severity.Warning;
+}

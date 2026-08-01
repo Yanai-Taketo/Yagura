@@ -77,97 +77,23 @@ else
         </div>
     </MudPaper>
 
-    @* 証明書の選択（管理 HTTPS 画面と同一の列挙契約を共有する） *@
-    <MudPaper Elevation="1" Class="pa-4 mt-4">
-        <div class="d-flex align-center">
-            <MudText Typo="Typo.h6">@UiText.IngestionTlsCertificatesTitle</MudText>
-            <MudSpacer />
-            <MudButton Variant="Variant.Outlined"
-                       StartIcon="@Icons.Material.Filled.Refresh"
-                       OnClick="RefreshCertificates">@UiText.IngestionTlsRefreshButton</MudButton>
-        </div>
-
-        @if (_certificateListError is not null)
-        {
-            <MudAlert Severity="Severity.Error" Class="mt-2">
-                @string.Format(UiText.IngestionTlsEnumerationFailedFormat, _certificateListError)
-            </MudAlert>
-        }
-        else if (_candidates.Count == 0)
-        {
-            <YaguraEmptyState Title="@UiText.IngestionTlsEmptyTitle"
-                              Description="@UiText.IngestionTlsEmptyDescription"
-                              Icon="@Icons.Material.Outlined.Badge">
-                <NextAction>
-                    <MudText Typo="Typo.body2">@UiText.IngestionTlsEmptyNextAction</MudText>
-                </NextAction>
-            </YaguraEmptyState>
-        }
-        else
-        {
-            <MudText Typo="Typo.body2" Class="mt-2">@UiText.IngestionTlsCertificatesIntro</MudText>
-
-            @if (SelectedThumbprintMissingFromList)
-            {
-                <MudAlert Severity="Severity.Warning" Class="mt-2">
-                    @string.Format(UiText.IngestionTlsThumbprintNotInListFormat, _selectedThumbprint)
-                </MudAlert>
-            }
-
-            <MudRadioGroup T="string" @bind-Value="_selectedThumbprint" Class="mt-2">
-                <MudRadio T="string" Value="@string.Empty" Color="Color.Primary">@UiText.SelectNoneOption</MudRadio>
-                @foreach (var candidate in _candidates)
-                {
-                    <div class="mt-2">
-                        <MudRadio T="string" Value="@candidate.Thumbprint" Color="Color.Primary">
-                            <div>
-                                <span class="d-inline-flex align-center" style="gap: 8px;">
-                                    <MudText Typo="Typo.body1" Style="font-weight: 600;">@candidate.SubjectCommonName</MudText>
-                                    @if (candidate.IsExpired)
-                                    {
-                                        @* TLS 受信では期限切れは「選べる」——保存も通る（管理 HTTPS と逆）。
-                                           したがってバッジも Error ではなく Warning にする *@
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">@UiText.IngestionTlsCertExpiredBadge</MudChip>
-                                    }
-                                    @if (!candidate.IsPrivateKeyReadable)
-                                    {
-                                        @* TLS 受信では秘密鍵の読取不可は保存の拒否理由（管理 HTTPS と逆）。
-                                           したがってバッジは Warning ではなく Error にする *@
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@UiText.IngestionTlsCertKeyUnreadableBadge</MudChip>
-                                    }
-                                    @if (!candidate.IsExpired && candidate.IsPrivateKeyReadable)
-                                    {
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">@UiText.IngestionTlsCertOkBadge</MudChip>
-                                    }
-                                </span>
-                                <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertIssuerLabel: @candidate.Issuer</MudText>
-                                <MudText Typo="Typo.body2">@UiText.AdminRemoteAccessCertValidityLabel: @YaguraTimeFormatter.FormatLocalDateRange(candidate.NotBefore, candidate.NotAfter)</MudText>
-                                <MudText Typo="Typo.body2" Style="font-family: monospace;">@UiText.AdminRemoteAccessCertThumbprintLabel: @candidate.Thumbprint</MudText>
-                            </div>
-                        </MudRadio>
-                        @if (candidate.IsExpired)
-                        {
-                            @* 期限切れ: 選択・保存とも可能。管理 HTTPS との挙動差分の説明を表示するのは
-                               受け入れ基準（決定 2） *@
-                            <MudAlert Severity="Severity.Warning" Dense="true" Class="ml-8 mt-1">
-                                @UiText.IngestionTlsCertExpiredWarning
-                            </MudAlert>
-                        }
-                        @if (!candidate.IsPrivateKeyReadable)
-                        {
-                            @* 秘密鍵の読取不可: 保存は拒否される。certlm.msc（CF-D2）の手順へ誘導し、
-                               「再確認」で付与後にその場で緑になることを確認できるようにする（決定 3） *@
-                            <MudAlert Severity="Severity.Error" Dense="true" Class="ml-8 mt-1">
-                                @UiText.IngestionTlsPrivateKeyUnreadableWarning
-                                <br />
-                                @UiText.IngestionTlsPrivateKeyGrantSteps
-                            </MudAlert>
-                        }
-                    </div>
-                }
-            </MudRadioGroup>
-        }
-    </MudPaper>
+    @* 証明書の選択（管理 HTTPS 画面と同一の列挙契約を共有する）。バッジ・注記の重大度は
+       CertificateSeverityPolicy（期限切れ = Warning・秘密鍵読取不可 = Error。管理 HTTPS と逆——
+       「受信を止めない」原則で期限切れを通し、秘密鍵読取不可は受信断になるため拒否する）。 *@
+    <YaguraCertificateSelectionPanel Title="@UiText.IngestionTlsCertificatesTitle"
+                                      RefreshButtonText="@UiText.IngestionTlsRefreshButton"
+                                      OnRefresh="RefreshCertificates"
+                                      CertificateListError="_certificateListError"
+                                      EnumerationFailedFormat="@UiText.IngestionTlsEnumerationFailedFormat"
+                                      Candidates="_candidates"
+                                      EmptyTitle="@UiText.IngestionTlsEmptyTitle"
+                                      EmptyDescription="@UiText.IngestionTlsEmptyDescription"
+                                      EmptyNextActionText="@UiText.IngestionTlsEmptyNextAction"
+                                      CertificatesIntro="@UiText.IngestionTlsCertificatesIntro"
+                                      SelectedThumbprintMissingFromList="SelectedThumbprintMissingFromList"
+                                      ThumbprintNotInListFormat="@UiText.IngestionTlsThumbprintNotInListFormat"
+                                      @bind-SelectedThumbprint="_selectedThumbprint"
+                                      Policy="CertificateSeverityPolicy" />
 
     @* 反映方式の常設注記（決定 4: 全受信断の明示 + バッチ適用の促し） *@
     <MudAlert Severity="Severity.Info" Class="mt-4">@UiText.IngestionTlsRestartNote</MudAlert>
@@ -219,13 +145,28 @@ else
     private bool _expiredAfterSave;
 
     /// <summary>
+    /// TLS 受信のバッジ・注記ポリシー: 期限切れ = Warning（「受信を止めない」原則で通す）・
+    /// 秘密鍵読取不可 = Error（受信断になるため拒否。管理 HTTPS とは逆——ADR-0019 決定 2）。
+    /// </summary>
+    private static readonly YaguraCertificateSeverityPolicy CertificateSeverityPolicy = new()
+    {
+        ExpiredSeverity = YaguraCertificateIssueSeverity.Warning,
+        ExpiredBadgeText = UiText.IngestionTlsCertExpiredBadge,
+        ExpiredAlertText = UiText.IngestionTlsCertExpiredWarning,
+        KeyUnreadableSeverity = YaguraCertificateIssueSeverity.Error,
+        KeyUnreadableBadgeText = UiText.IngestionTlsCertKeyUnreadableBadge,
+        KeyUnreadableAlertText = UiText.IngestionTlsPrivateKeyUnreadableWarning,
+        KeyUnreadableAlertSecondaryText = UiText.IngestionTlsPrivateKeyGrantSteps,
+        OkBadgeText = UiText.IngestionTlsCertOkBadge,
+    };
+
+    /// <summary>
     /// 選択中（または永続値の）拇印が列挙結果に存在しない場合 true（証明書の削除・条件不適合への
     /// 変化を隠さない）。列挙自体が失敗している間は判定しない（誤警告を避ける）。
     /// </summary>
     private bool SelectedThumbprintMissingFromList =>
-        _certificateListError is null &&
-        !string.IsNullOrEmpty(_selectedThumbprint) &&
-        !_candidates.Any(c => string.Equals(c.Thumbprint, _selectedThumbprint, StringComparison.OrdinalIgnoreCase));
+        CertificateAdminScreenSupport.IsSelectedThumbprintMissingFromList(
+            _certificateListError, _selectedThumbprint, _candidates);
 
     protected override async Task OnInitializedAsync()
     {
@@ -248,18 +189,8 @@ else
 
     private void LoadCertificates()
     {
-        _certificateListError = null;
-
-        try
-        {
-            _candidates = CertificateStoreReader.ListServerAuthCertificates();
-        }
-        catch (Exception ex)
-        {
-            // 列挙の例外を握り潰さない（管理 HTTPS 画面と同一方針）。
-            _candidates = [];
-            _certificateListError = ex.Message;
-        }
+        // 列挙の例外を握り潰さない（管理 HTTPS 画面と同一方針）。
+        (_candidates, _certificateListError) = CertificateAdminScreenSupport.LoadCertificates(CertificateStoreReader);
     }
 
     private async Task ApplyAsync()
@@ -286,34 +217,22 @@ else
             ApplyStatusToFields(_status);
             _expiredAfterSave = result.ExpiredWarning;
 
-            if (result.ChangedKeys.Count == 0)
-            {
-                // no-op（保存も監査も行われていない）——「保存された」と誤認させない。
-                Notifier.NotifyInfo(UiText.IngestionTlsSavedNoChanges);
-            }
-            else
-            {
-                // 変更キーの要約 + 再起動の必要性（決定 4）。通知は自動で消えるため画面にも残す。
-                _savedSummary = string.Format(
-                    UiText.IngestionTlsSavedFormat, string.Join("、", result.ChangedKeys));
-                Notifier.NotifyOk(_savedSummary);
-
-                // 保存を再起動待ちカードへ計上する（ADR-0019 委任 2）: カードの
-                // データ源は再読み込みの実行時にしか更新されないため、保存成功後に自動で
-                // 再読み込みを実行する（SetupWizard と同じ経路。監査は保存 2020 と
-                // 反映 2016 の 2 件が別々に残る——統合しない）。対象キーは
-                // すべて RestartRequired であり適用は伴わない——「再起動待ち」の計上だけが
-                // 起きるため、オプトアウトは置かない。
-                var reload = await ReloadService.ReloadAsync(
-                    CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
-                if (reload.Rejected)
-                {
-                    // 保存自体は成立している。計上できなかった旨のみ知らせる（再読み込み画面から
-                    // 手動で実行すれば計上される）。
-                    Notifier.NotifyWarning(string.Format(
-                        UiText.AdminSaveReloadRejectedFormat, reload.RejectionReason));
-                }
-            }
+            // 変更キーの要約 + 再起動の必要性（決定 4）。保存を再起動待ちカードへ計上する経路
+            // （ADR-0019 委任 2: カードのデータ源は再読み込みの実行時にしか更新されないため、
+            // 保存成功後に自動で再読み込みを実行する——SetupWizard と同じ経路。監査は保存 2020 と
+            // 反映 2016 の 2 件が別々に残る——統合しない）は共有ヘルパへ委譲する。対象キーはすべて
+            // RestartRequired であり適用は伴わない——「再起動待ち」の計上だけが起きるため、
+            // オプトアウトは置かない。
+            _savedSummary = await CertificateAdminScreenSupport.ApplyChangeSummaryAsync(
+                result.ChangedKeys,
+                UiText.IngestionTlsSavedFormat,
+                UiText.IngestionTlsSavedNoChanges,
+                UiText.AdminSaveReloadRejectedFormat,
+                Notifier,
+                ReloadService,
+                CircuitContext.RemoteAddress,
+                operatorScheme,
+                operatorPrincipal);
         }
         catch (WizardValidationException ex)
         {

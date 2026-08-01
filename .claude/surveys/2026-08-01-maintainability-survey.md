@@ -173,6 +173,17 @@ Storage プロバイダ間の共通化(3 プロバイダ化の露払い)。挙�
 - テストコード正味 約 -600 行(共有資産 +223 行)
 - 未実施(後続候補): 否定証明×固定 Delay のフレーク源是正(`IngestionPipelineBindRetryTests` 等)、Ingestion.Tests への FakeTimeProvider 浸透(プロダクション側の設計変更を伴うため別判断)、`Assert.True/False` へのメッセージ付与
 
+## 4.5 Phase 5 実施記録(2026-08-01・本ブランチで完了)
+
+残存重複の解消(最終フェーズ)。挙動・表示・並行処理の意味は不変:
+
+- **TCP/TLS Accept ループ**: 両リスナーで 1 バイトも違わない約 90 行 × 2 を `TcpConnectionAcceptLoop`(接続処理デリゲート注入)へ統合。同時接続数デクリメントは実行位置が TCP/TLS で異なるため薄い委譲メソッドとして従来位置に残す。Outcome 分岐はログ文言差のため各リスナーに残す
+- **証明書設定 3 画面**: `YaguraCertificateSelectionPanel` + `YaguraCertificateSeverityPolicy` を新設し、画面ごとの Error/Warning 非対称(閲覧 HTTPS: 期限切れ Error / TLS 受信: Warning / 管理リモート: 秘密鍵不可 Warning)を明示的パラメータとして保持。LoadCertificates・拇印不一致判定・保存後処理も静的ヘルパへ。3 画面計 -236 行
+- **申し送り**: 3 画面のバッジ非対称を固定するレンダリングテストは存在しない(既存テストは証明書 0 件のフェイクのみ)。非対称仕様の回帰はテストで検知できないため、目視確認またはテスト追加を推奨
+- 検証: ビルド警告ゼロ、全テストプロジェクトでベースライン一致(回帰ゼロ)
+
+全 5 フェーズ完了。調査報告(§3)のうち未着手で残るのは: 文字列リテラル内 Issue 番号の扱い(要オーナー判断)、テストのフレーク源是正・Assert メッセージ付与、中リスク分割(Program.cs の DI 登録切り出し・ForwarderKitScreen 分割・ActiveNotificationMonitor 分割)、`.editorconfig` の強制力引き上げ、空 catch 8 件の意図明示。
+
 ## 5. 参考数値一覧
 
 | 指標 | 値 |
