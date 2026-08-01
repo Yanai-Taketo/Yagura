@@ -19,16 +19,15 @@ namespace Yagura.Abstractions.Administration;
 /// 閲覧リスナ側コンポーネントから参照してはならない）。
 /// </para>
 /// <para>
-/// <b>ADR-0011 決定 3・6 の応答統一と決定 5.1 の意図的例外</b>: <see cref="AppAuthenticationResult"/> は
-/// 実在アカウントのバックオフ待機・非実在ユーザー名・IP レート制限拒否・グローバルトークンバケット
-/// 涸渇のいずれでも同一の <see cref="AppAuthenticationResult.Denied"/> を返す。アカウント実在性に
-/// 相関しうる層（<see cref="AdminAuthDenialLayer.Backoff"/>）と非実在ユーザー名は、呼び出し元が
-/// 応答をバイト単位で統一し、利用者応答で区別してはならない。一方
-/// <see cref="AdminAuthDenialLayer.IpRateLimit"/> / <see cref="AdminAuthDenialLayer.GlobalBucket"/> は
-/// 送信元 IP・プロセス全体の状態のみで判定し、ユーザー名の実在有無に依存しない（決定 4）ため、
-/// 決定 5.1・6 によりこの層に限り 429 + 有限 Retry-After +
+/// <b>応答統一（ADR-0011 決定 6）</b>: <see cref="AppAuthenticationResult"/> は実在アカウントの
+/// バックオフ待機・非実在ユーザー名・IP レート制限拒否・グローバルトークンバケット涸渇のいずれでも
+/// 同一の <see cref="AppAuthenticationResult.Denied"/> を返す。アカウント実在性に相関しうる層
+/// （<see cref="AdminAuthDenialLayer.Backoff"/>）と非実在ユーザー名は、呼び出し元が応答をバイト単位で
+/// 統一し利用者応答で区別してはならない。一方 <see cref="AdminAuthDenialLayer.IpRateLimit"/> /
+/// <see cref="AdminAuthDenialLayer.GlobalBucket"/> は送信元 IP・プロセス全体の状態のみで判定し
+/// ユーザー名の実在有無に依存しないため、この層に限り 429 + 有限 Retry-After +
 /// <see cref="AppAuthenticationOutcome.WaitSeconds"/> による待機表示で応答してよい
-/// （この層がクライアントから識別可能になるのは意図的であり、列挙シグナルにはならない）。
+/// （識別可能になるのは意図的であり、列挙シグナルにはならない）。
 /// </para>
 /// </remarks>
 public interface IAppAdminAuthenticator : IYaguraWriteService
@@ -61,19 +60,19 @@ public enum AppAuthenticationResult
     InvalidCredentials,
 
     /// <summary>
-    /// 拒否（ADR-0011 決定 3・6）: 実在アカウントのバックオフ待機・IP レート制限・グローバル
+    /// 拒否（ADR-0011 決定 6）: 実在アカウントのバックオフ待機・IP レート制限・グローバル
     /// トークンバケット涸渇のいずれか。原因は <see cref="AppAuthenticationOutcome.DenialLayer"/> を
     /// 用いて監査記録で区別する。利用者応答はバックオフ層と非実在ユーザー名で統一し、レート制限層
     /// （<see cref="AdminAuthDenialLayer.IpRateLimit"/> /
-    /// <see cref="AdminAuthDenialLayer.GlobalBucket"/>）のみ待機応答を返す（決定 5.1・6）。
+    /// <see cref="AdminAuthDenialLayer.GlobalBucket"/>）のみ待機応答を返す。
     /// </summary>
     Denied,
 
     /// <summary>
     /// 保存先（アカウント台帳）が到達不能なため、アプリ独自認証が**一時的に利用できない**
-    /// （ADR-0023 決定 1。Issue #466）。資格情報の正誤とは無関係であり、
+    /// （ADR-0023 決定 1）。資格情報の正誤とは無関係であり、
     /// <see cref="InvalidCredentials"/> と同じ扱いにしてはならない——「パスワードを間違えた」と
-    /// 誤読した利用者がリセットを試み、それも失敗して混乱するため（ペルソナレビュー 佐藤の指摘）。
+    /// 誤読した利用者がリセットを試み、それも失敗して混乱するため。
     /// </summary>
     /// <remarks>
     /// <b>列挙耐性（ADR-0011 決定 3）との関係</b>: 本結果はアカウントの存否ではなく**サーバ側の

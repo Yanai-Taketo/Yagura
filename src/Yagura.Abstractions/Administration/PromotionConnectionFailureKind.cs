@@ -2,7 +2,7 @@ namespace Yagura.Abstractions.Administration;
 
 /// <summary>
 /// SQL Server 接続検証の失敗の分類（database.md §6.1——原因別の次の一手を画面に示すための
-/// 構造化。分類の根拠 = Microsoft Learn 公式ドキュメント確認 2026-07-07）。
+/// 構造化。分類の根拠は Microsoft Learn 公式ドキュメントの確認）。
 /// </summary>
 /// <remarks>
 /// 分類できない失敗は <see cref="Unclassified"/> に落とし、画面は生のエラーメッセージ +

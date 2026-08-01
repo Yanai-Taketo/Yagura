@@ -11,8 +11,8 @@ namespace Yagura.Abstractions.Administration;
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// <b>管理リモート HTTPS</b>（<c>Admin:Https:CertificateThumbprint</c>。ADR-0010 Phase 2 決定 4・
-/// ADR-0012）——ブラウザ → Yagura の管理画面閲覧用。
+/// <b>管理リモート HTTPS</b>（<c>Admin:Https:CertificateThumbprint</c>。ADR-0010 Phase 2 決定 4）
+/// ——ブラウザ → Yagura の管理画面閲覧用。
 /// </description></item>
 /// <item><description>
 /// <b>TLS 受信</b>（<c>Ingestion:Tls:CertificateThumbprint</c>。RFC 5425。ADR-0019）——
@@ -33,7 +33,7 @@ namespace Yagura.Abstractions.Administration;
 /// </para>
 /// <para>
 /// 拇印の手入力・<c>yagura.json</c> 手編集を不要にするための「証明書ストア列挙 + 選択」UI
-/// （ADR-0012 決定 1・2）の基盤。<b>副作用のない読み出し面</b>であり、書き込み系の
+/// （ADR-0012 決定 2）の基盤。<b>副作用のない読み出し面</b>であり、書き込み系の
 /// <see cref="IYaguraWriteService"/> は継承しない（ADR-0012 決定 3「列挙・検証は副作用なし」）。
 /// 秘密鍵 ACL 付与は本契約では行わない（決定 3 は lab 実測で (b) = UI は読取検証と誘導のみ、に確定）。
 /// </para>

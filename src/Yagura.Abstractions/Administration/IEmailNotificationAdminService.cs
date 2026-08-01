@@ -77,8 +77,8 @@ public interface IEmailNotificationAdminService : IYaguraWriteService
 /// <param name="ClearPassword">
 /// 保存済みのパスワードを削除する（明示操作）。「空欄 = 変更しない」に固定した帰結として、
 /// 削除には専用の口が要る——これがないと、一度パスワードを保存した構成は SMTP 認証を
-/// やめられなくなる（ユーザー名を消すと決定 3 の「両方あり/両方なし」検証に必ず落ちる。
-/// PR #366 レビュー対応）。<paramref name="Password"/> との同時指定は拒否される。
+/// やめられなくなる（ユーザー名を消すと決定 3 の「両方あり/両方なし」検証に必ず落ちる）。
+/// <paramref name="Password"/> との同時指定は拒否される。
 /// テスト送信では「保存済みパスワードへのフォールバックをしない」の意味になる。
 /// </param>
 public sealed record EmailNotificationSettings(
@@ -113,7 +113,7 @@ public sealed record EmailNotificationSettings(
 /// </param>
 /// <param name="ConfigurationFileError">
 /// 設定ファイル全体の検証がメール通知と<b>無関係なキーの不正</b>で失敗し、実効状態を判定
-/// できなかった場合の説明（Issue #370）。非 <see langword="null"/> の間、
+/// できなかった場合の説明。非 <see langword="null"/> の間、
 /// <see cref="DisabledByInvalidConfiguration"/> は判定不能のため <see langword="false"/> を
 /// 返し、保存後の即時反映も見送られる（稼働中の送信設定は変更前のまま——設定ファイルの
 /// 問題を解消して再読み込みすれば反映される）。保存自体の成否とは独立である。
@@ -156,7 +156,7 @@ public sealed record EmailNotificationConfigureResult(
     EmailNotificationStatus Status);
 
 /// <summary>
-/// テスト送信の結果（ADR-0017 決定 8・委任 12）。
+/// テスト送信の結果（ADR-0017 決定 8）。
 /// </summary>
 /// <param name="Guidance">
 /// 失敗時の<b>平易な日本語の説明と次の一手</b>。生の SMTP 応答だけを見せると、原因に辿り着けない

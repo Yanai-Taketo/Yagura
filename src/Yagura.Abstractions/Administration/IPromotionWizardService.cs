@@ -1,7 +1,7 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// 本番昇格（SQLite → SQL Server）ウィザードの契約（database.md §6.1・ui.md §4。M8-4。Issue #71）。
+/// 本番昇格（SQLite → SQL Server）ウィザードの契約（database.md §6.1・ui.md §4）。
 /// 書き込み系サービスであるため <see cref="IYaguraWriteService"/> を実装する（security.md §1 L-5）。
 /// </summary>
 /// <remarks>
@@ -26,13 +26,12 @@ namespace Yagura.Abstractions.Administration;
 /// ない）。いずれの呼び出しも検証済み状態・実行トークンをリセットする。
 /// </para>
 /// <para>
-/// <b>M8-4 骨格の範囲</b>: 切替本番の手順①〜④（書き込み停止 → システムイベント複写 →
-/// 差し替え → drain。database.md §6.1）の実行時無瞬断切替は本骨格に含まれない。
+/// <b>現時点の実装範囲</b>: 切替本番の手順①〜④（書き込み停止 → システムイベント複写 →
+/// 差し替え → drain。database.md §6.1）の実行時無瞬断切替は対象外。
 /// <see cref="ExecuteAsync"/> は検証済み接続を設定ファイルへ保存し、現時点の実効の反映方式
 /// （サービス再起動。configuration.md §8 の <c>Storage:Provider</c> 行）を結果として返す。
-/// 旧・組み込み DB ファイルの処分（退避 / 削除）は選択の記録と監査までを骨格とし、
-/// 実ファイル操作・退避先の存在/書込可否の事前検証は切替の実行時手順の実装（後続 Issue）に
-/// 含める。
+/// 旧・組み込み DB ファイルの処分（退避 / 削除）は選択の記録と監査までを対象とし、
+/// 実ファイル操作・退避先の存在/書込可否の事前検証は切替の実行時手順の実装で扱う。
 /// </para>
 /// </remarks>
 public interface IPromotionWizardService : IYaguraWriteService
@@ -79,8 +78,7 @@ public interface IPromotionWizardService : IYaguraWriteService
     /// 失敗時は原因の分類と、ログイン失敗・データベース不在の場合は修復 SQL を返す
     /// （<b>提示のみでありサーバは実行しない</b>——database.md §5.2）。実際の接続試行は
     /// 接続検証の抽象（<c>Yagura.Host.Administration.ISqlServerConnectionValidator</c>）へ
-    /// 委譲される——SQL Server のない開発機でもテスト実装で経路を検証できる形にする
-    /// （Issue #71 の要件）。
+    /// 委譲される——SQL Server のない開発機でもテスト実装で経路を検証できる形にする。
     /// </summary>
     /// <param name="operatorAddress">操作者の接続元アドレス（監査記録用。security.md §4.1）。</param>
     /// <param name="operatorScheme">操作者の認証方式（ADR-0010 決定 6。未認証では <see langword="null"/>）。</param>

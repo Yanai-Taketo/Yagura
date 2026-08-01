@@ -6,8 +6,8 @@ namespace Yagura.Abstractions.Administration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>設定動線を GUI へ寄せる</b>: ADR-0021 の起案元（Issue #440）は、機能到達までに GUI・
-/// 設定ファイル手編集・ターミナルの 3 操作面をまたぐことを問題にした。本サービスは手編集
+/// <b>設定動線を GUI へ寄せる</b>: 機能到達までに GUI・設定ファイル手編集・ターミナルの
+/// 3 操作面をまたぐことを問題視した（ADR-0021）。本サービスは手編集
 /// （手順 4）を GUI へ移す——残るターミナル操作は ACE 付与のみになる（書き込み口の物理的開閉を
 /// OS レベルの身元保証に残す構造は ADR-0020 決定 2 の核心であり、UI 化しない）。
 /// </para>
@@ -72,7 +72,7 @@ public interface IForwarderMsiUploadAdminService : IYaguraWriteService
 /// </param>
 /// <param name="AppAccountUpdatedAtUtc">直近の変更時刻（同上）。</param>
 /// <param name="AppAccountLastLoginAtUtc">
-/// 直近の成功ログイン時刻（Issue #458 で追加）。**スキーマ v3 より前から存在するアカウントでも
+/// 直近の成功ログイン時刻。**スキーマ v3 より前から存在するアカウントでも
 /// 値が入る**ため、作成・変更時刻が不明なアップグレード環境で点検の唯一の手がかりになる
 /// （「使われていないのに存在するアカウント」の判断材料）。未ログインなら <see langword="null"/>。
 /// </param>

@@ -4,7 +4,7 @@ namespace Yagura.Abstractions.Administration;
 
 /// <summary>
 /// 送信元の途絶検知（ADR-0018。opt-in・既定無効）のウォッチリスト設定
-/// （管理画面 <c>/admin/source-silence</c> の書き込み系サービス。Issue #351）。
+/// （管理画面 <c>/admin/source-silence</c> の書き込み系サービス）。
 /// </summary>
 /// <remarks>
 /// <para>

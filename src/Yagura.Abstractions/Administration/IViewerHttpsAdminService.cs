@@ -2,7 +2,7 @@ namespace Yagura.Abstractions.Administration;
 
 /// <summary>
 /// 閲覧 UI の HTTPS（ADR-0022。opt-in。8514 同一ポート切替）の設定を管理 UI から
-/// 保存・検証する契約（決定 3・4・9・10。Issue #455 段階 ②）。
+/// 保存・検証する契約（決定 3）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,7 +18,7 @@ namespace Yagura.Abstractions.Administration;
 /// Yagura〕用）。
 /// </para>
 /// <para>
-/// <b>保存前 fail-closed 検証（決定 3・4——ADR-0019 決定 2 の二分宣言の型）</b>:
+/// <b>保存前 fail-closed 検証（決定 4——ADR-0019 決定 2 の二分宣言の型）</b>:
 /// </para>
 /// <list type="table">
 /// <item>

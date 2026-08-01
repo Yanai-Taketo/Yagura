@@ -1,8 +1,8 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// TLS 受信（syslog over TLS。RFC 5425。opt-in。Issue #137）の設定を管理 UI から
-/// 保存・検証する契約（ADR-0019 決定 1・2）。
+/// TLS 受信（syslog over TLS。RFC 5425。opt-in）の設定を管理 UI から
+/// 保存・検証する契約（ADR-0019 決定 2）。
 /// </summary>
 /// <remarks>
 /// <para>

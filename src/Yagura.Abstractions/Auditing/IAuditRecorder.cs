@@ -5,14 +5,12 @@ namespace Yagura.Abstractions.Auditing;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>配置（M8-4 で <c>Yagura.Storage.Auditing</c> から移設）</b>: 本インターフェースは
-/// <c>Yagura.Web</c>（リスナガード・circuit 管理）と <c>Yagura.Host</c>（ウィザードサービス・
-/// 実体の結線）の両方が使うモジュール横断契約であり、監査記録の実体はログ本体の永続化
-/// （provider 抽象 = Storage の管轄）とは独立した「ホスト管轄のローカルファイル + Windows
-/// イベントログ併記」である（security.md §4.2）。architecture.md §1.1 の M6-4 申し送り
-/// 「<c>IAuditRecorder</c> 等、現在 <c>Yagura.Storage</c> にある横断契約の移設も M8 で判断する」を
-/// 「移設する」で決着させた。実体（<c>Yagura.Host.Observability.Auditing.FileAuditRecorder</c>）は
-/// 引き続き <c>Yagura.Host</c> が DI で結線する。
+/// <b>配置</b>: 本インターフェースは <c>Yagura.Web</c>（リスナガード・circuit 管理）と
+/// <c>Yagura.Host</c>（ウィザードサービス・実体の結線）の両方が使うモジュール横断契約であり、
+/// 監査記録の実体はログ本体の永続化（provider 抽象 = Storage の管轄）とは独立した
+/// 「ホスト管轄のローカルファイル + Windows イベントログ併記」である（security.md §4.2）。
+/// 実体（<c>Yagura.Host.Observability.Auditing.FileAuditRecorder</c>）は <c>Yagura.Host</c> が
+/// DI で結線する。
 /// </para>
 /// <para>
 /// <b>失敗しても要求処理を妨げない契約</b>（ADR-0004 決定 7・security.md §4.2）:
