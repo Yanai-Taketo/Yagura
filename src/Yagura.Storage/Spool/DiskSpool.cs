@@ -40,7 +40,7 @@ public sealed class DiskSpool : IDisposable
 
     /// <summary>
     /// アクティブセグメントの <see cref="FileStream"/> を生成する。テストで
-    /// 「<c>Dispose</c> が失敗するストリーム」を注入するための差し替え口（Issue #360）。
+    /// 「<c>Dispose</c> が失敗するストリーム」を注入するための差し替え口。
     /// 既定は実ファイルを開く。
     /// </summary>
     private readonly Func<string, FileStream> _segmentStreamFactory;
@@ -56,7 +56,7 @@ public sealed class DiskSpool : IDisposable
         new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
 
     /// <summary>
-    /// テスト専用の生成口（Issue #360）。封止（<c>Dispose</c>）が I/O 障害で失敗する状況を
+    /// テスト専用の生成口。封止（<c>Dispose</c>）が I/O 障害で失敗する状況を
     /// 再現するため、セグメントの <see cref="FileStream"/> 生成を差し替えられるようにする。
     /// ディスク満杯は実機でしか作れないが、その帰結（<c>Dispose</c> の失敗）はここで注入できる。
     /// </summary>
@@ -72,8 +72,8 @@ public sealed class DiskSpool : IDisposable
     }
 
     /// <summary>
-    /// ディスク使用量の上限（バイト）を実行中に更新する（設定ライブ再読み込み。CF-4 層1。
-    /// Issue #262）。上限判定は追記ごとに本値を読むため、次の追記から新値が使われる。
+    /// ディスク使用量の上限（バイト）を実行中に更新する（設定ライブ再読み込み。CF-4 層1）。
+    /// 上限判定は追記ごとに本値を読むため、次の追記から新値が使われる。
     /// 縮小方向の更新で既存使用量が新上限を超えた場合も、既存セグメントは破棄しない
     /// （新規退避分が上限判定で破棄されるだけ——drain の消化で自然に新上限内へ収束する）。
     /// </summary>
@@ -97,8 +97,8 @@ public sealed class DiskSpool : IDisposable
     /// （単調増加。プロセス内累積のみで再起動をまたぐ永続化はしない）。
     /// </summary>
     /// <remarks>
-    /// 自己検証タイムアウトのバックログ起因判別（architecture.md §3.2.5。Issue #202・PR #211
-    /// レビュー対応）が「drain の進捗」の観測に使う。<see cref="CurrentUsageBytes"/> の周期
+    /// 自己検証タイムアウトのバックログ起因判別（architecture.md §3.2.5）が「drain の進捗」の
+    /// 観測に使う。<see cref="CurrentUsageBytes"/> の周期
     /// サンプリング差分（純増減）では、持続的な速度不足（追記速度が消化速度を恒常的に上回る
     /// 状態。§3.2.2）下で drain が実際にセグメントを消化していても純減少が一度も観測されず
     /// 「進捗なし」に誤分類されるため、追記と混ざらない単調増加の累積カウンタとして分離した。
@@ -279,7 +279,7 @@ public sealed class DiskSpool : IDisposable
     /// アクティブセグメントを封止する（以後の追記は新しいセグメントへ向かう）。
     /// </summary>
     /// <remarks>
-    /// <b>先に状態をクリアしてから <c>Dispose</c> する</b>（Issue #360）。<see cref="FileStream.Dispose()"/>
+    /// <b>先に状態をクリアしてから <c>Dispose</c> する</b>。<see cref="FileStream.Dispose()"/>
     /// はバッファのフラッシュに失敗すると <see cref="IOException"/> を投げうる（ディスク満杯・I/O 障害）。
     /// 従来のように <c>Dispose</c> を先に呼ぶと、失敗時に <c>_activeSegmentStream</c> が非 null のまま残り、
     /// 次の追記が <see cref="EnsureActiveSegmentUnderGate"/> で「アクティブセグメントあり」と判断して
@@ -311,7 +311,7 @@ public sealed class DiskSpool : IDisposable
     /// <b>本メソッドは環境要因で例外を投げる</b>（<see cref="IOException"/>・
     /// <see cref="UnauthorizedAccessException"/>）——封止の <c>Dispose</c> がフラッシュに失敗する場合
     /// （ディスク満杯・I/O 障害）と、ディレクトリ列挙が失敗する場合がある。呼び出し側で捕捉すること
-    /// （<see cref="ReadSegmentRecords"/> と同じ扱い。Issue #360 以前は <c>Try</c> 接頭辞を持ちながら
+    /// （<see cref="ReadSegmentRecords"/> と同じ扱い。以前は <c>Try</c> 接頭辞を持ちながら
     /// 失敗チャネルが無く、呼び出し側が保護を省いていたため drain タスクが恒久停止しうる状態だった）。
     /// <para>
     /// 封止が失敗した場合でも<b>状態は整合している</b>（<see cref="SealActiveSegmentUnderGate"/> の
@@ -335,7 +335,7 @@ public sealed class DiskSpool : IDisposable
     /// （architecture.md §3.2.1「レコード単位の破損検出」）。破損した末尾を検出した場合は
     /// <paramref name="corruptTailDetected"/> に <c>true</c> を返す（それ以前の正常な
     /// レコードは全件回収済みで返す）。<paramref name="corruptTailBytes"/> は読み捨てた
-    /// 破損末尾のバイト数（Issue #201。<see cref="SpoolSegmentReader.ReadValidRecords"/> 参照）。
+    /// 破損末尾のバイト数（<see cref="SpoolSegmentReader.ReadValidRecords"/> 参照）。
     /// drain オーケストレーション（Yagura.Ingestion 側）がフレーム形式の内部実装
     /// （<see cref="SpoolSegmentReader"/>）を直接参照せずに済むよう、本クラスがその窓口になる。
     /// </summary>

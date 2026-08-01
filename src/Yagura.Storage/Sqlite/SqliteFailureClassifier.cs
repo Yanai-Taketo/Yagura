@@ -9,11 +9,10 @@ namespace Yagura.Storage.Sqlite;
 /// <remarks>
 /// <para>
 /// 対応表の出典は SQLite 公式ドキュメント「Result and Error Codes」
-/// （www.sqlite.org/rescode.html。確認日 2026-07-05）の primary result code 一覧。
+/// （www.sqlite.org/rescode.html）の primary result code 一覧。
 /// <see cref="SqliteException.SqliteErrorCode"/> は SQLite の primary result code
 /// （下位 8 ビット。extended result code ではない）を返す
-/// （Microsoft.Data.Sqlite 公式ドキュメント "SqliteException.SqliteErrorCode" の記載どおり。
-/// 確認日 2026-07-05）。
+/// （Microsoft.Data.Sqlite 公式ドキュメント "SqliteException.SqliteErrorCode" の記載どおり）。
 /// </para>
 /// <para>
 /// | primary result code | 値 | 意味（SQLite 公式) | 本分類 |

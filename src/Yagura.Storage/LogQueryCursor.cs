@@ -3,7 +3,7 @@ namespace Yagura.Storage;
 /// <summary>
 /// カーソル（キーセット）ページングの位置（database.md §1.2「対話的検索」・DB-11）。
 /// 「最後に表示した行」の複合キー <c>(ReceivedAt, Id)</c> を表す——並び順
-/// <c>ORDER BY ReceivedAt DESC, Id DESC</c>（Issue #144）と同じキーで、複合索引
+/// <c>ORDER BY ReceivedAt DESC, Id DESC</c> と同じキーで、複合索引
 /// <c>IX_LogRecords_ReceivedAt_Id</c> に乗るシーク（keyset pagination）を実現する。
 /// </summary>
 /// <remarks>

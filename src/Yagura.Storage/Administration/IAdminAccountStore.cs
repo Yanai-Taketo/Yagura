@@ -46,7 +46,7 @@ namespace Yagura.Storage.Administration;
 public interface IAdminAccountStore
 {
     /// <summary>スキーマを初期化する（冪等。<see cref="ILogStore.InitializeAsync"/> と同じ規約。
-    /// ADR-0011 決定 8 の削除マイグレーション〔v1 → v2〕と ADR-0021 の時刻列追加〔v2 → v3〕を
+    /// ADR-0011 決定 8 の列削除マイグレーションと ADR-0021 の時刻列追加マイグレーションを
     /// 含む）。</summary>
     Task InitializeAsync(CancellationToken cancellationToken = default);
 

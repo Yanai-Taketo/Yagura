@@ -2,7 +2,7 @@ namespace Yagura.Storage;
 
 /// <summary>
 /// <see cref="ILogStore"/> の「書き込みは単一 writer が呼び出す」契約（<see cref="ILogStore"/>
-/// 冒頭の doc コメント参照）を実配線で満たすための、プロセス内書き込みゲート（Issue #151）。
+/// 冒頭の doc コメント参照）を実配線で満たすための、プロセス内書き込みゲート。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,7 +24,7 @@ namespace Yagura.Storage;
 /// <b>設置場所の設計判断</b>: ホスト（<c>Yagura.Host.Program</c>）が単一のインスタンスを
 /// 構築し、3 経路すべて（<c>IngestionPipeline</c> 経由の <c>PersistenceWriter</c>・
 /// <c>SpoolDrainCoordinator</c>、および <c>RetentionScheduler</c>）へ同じインスタンスを渡す
-/// ——Issue #151 が挙げるもう一方の代替案（<see cref="ILogStore"/> 実装内に排他を持たせる）は
+/// ——もう一方の代替案（<see cref="ILogStore"/> 実装内に排他を持たせる）は
 /// 採らない。理由: 排他は provider の実装詳細ではなく「呼び出し側が直列化する」という
 /// 既存契約（<see cref="ILogStore"/> の doc コメント）をそのまま体現でき、かつ provider ごとに
 /// 同じ排他コードを重複させずに済むため。クラス自体は <see cref="ILogStore"/> にのみ依存し
@@ -60,7 +60,7 @@ namespace Yagura.Storage;
 /// 未消化のまま残り）、削除完了後に通常どおり drain で回収される——データは失われない。
 /// 分割実行の粒度（<c>RetentionConstants.DeleteBatchMaxSize</c>。既定 1,000 件）を小さく保つ
 /// ことで、1 回の保持期間削除がゲートを保持する実時間は実務上有限に収まる想定だが、
-/// 大量のキャッチアップ削除（Issue #150）ではこの保持時間が長くなり得ることを申し送る
+/// 大量のキャッチアップ削除ではこの保持時間が長くなり得ることを申し送る
 /// （将来、チャンク単位のゲート解放が必要になった場合は <see cref="ILogStore"/> の契約拡張を
 /// 検討する）。
 /// </para>

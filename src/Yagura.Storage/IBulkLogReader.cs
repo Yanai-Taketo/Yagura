@@ -1,8 +1,8 @@
 namespace Yagura.Storage;
 
 /// <summary>
-/// 一括読み出し操作（database.md §1.2「契約拡張の予約 (a)」の実体化。§6.2 蓄積ログ移行・
-/// Issue #266）。<see cref="ILogStore"/> 本体には載せない optional 契約——対話検索の防御
+/// 一括読み出し操作（database.md §1.2「契約拡張の予約 (a)」の実体化。§6.2 蓄積ログ移行）。
+/// <see cref="ILogStore"/> 本体には載せない optional 契約——対話検索の防御
 /// （上限・タイムアウトの必須化）を**適用しない**代わりに、呼び出し経路を管理操作
 /// （移行・エクスポート）に限定する（予約 (a) の条件どおり。閲覧経路から到達させない）。
 /// provider が対応するかは <c>store is IBulkLogReader</c> の capability 検出で判定する。

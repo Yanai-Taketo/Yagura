@@ -8,7 +8,7 @@
 /// スプールのレコード単位破損検出（architecture.md §3.2.1「レコード単位の破損検出
 /// （チェックサム）」）に使う。BCL には CRC-32 の実装がなく（<c>System.IO.Hashing.Crc32</c>
 /// は別 NuGet パッケージであり BCL ではない。<c>dotnet package search System.IO.Hashing
-/// --exact-match</c> で nuget.org 上の独立パッケージであることを確認済み、2026-07-05）、
+/// --exact-match</c> で nuget.org 上の独立パッケージであることを確認済み）、
 /// 本機構は「追加パッケージは原則 BCL のみ」（依頼条件）のため、公知のアルゴリズムを
 /// 自前実装する（外部依存として追加しない——ライブ検証や Vendored 記録は不要）。
 /// </para>
