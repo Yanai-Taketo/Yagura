@@ -14,8 +14,7 @@ using Yagura.Web.ForwarderKit;
 namespace Yagura.Web;
 
 /// <summary>
-/// Yagura.Web（管理リスナ）を Host から組み込むための拡張メソッド（M6-1。Issue #51 →
-/// M8-4。Issue #71 で管理画面の実体を実装）。
+/// Yagura.Web（管理リスナ）を Host から組み込むための拡張メソッド。
 /// </summary>
 /// <remarks>
 /// <b>管理系ルートの帰属宣言は本クラスに集約する</b>（<see cref="YaguraWebViewerExtensions.MapYaguraWebViewer"/>
@@ -67,7 +66,7 @@ public static class YaguraAdminExtensions
 
         services.AddSingleton<ICircuitManagementService, Administration.CircuitManagementService>();
         services.TryAddSingleton<INicCandidateSource, SystemNicCandidateSource>();
-        // フォワーダ MSI 配置の確定・破棄・削除 + 監査（ADR-0020 決定 3・4。circuit 発の操作——
+        // フォワーダ MSI 配置の確定・破棄・削除 + 監査（ADR-0020 決定 3。circuit 発の操作——
         // ICircuitManagementService と同じ役割分担）。IForwarderMsiStore の実体は配置フォルダの
         // 実パスを知る Host 側が結線する。
         services.AddSingleton<Administration.IForwarderMsiPlacementService, Administration.ForwarderMsiPlacementService>();
@@ -93,7 +92,7 @@ public static class YaguraAdminExtensions
     /// <para>
     /// <b>付与の仕組み</b>: Razor Components の各ページエンドポイントは
     /// <see cref="ComponentTypeMetadata"/>（ページコンポーネントの型）をメタデータに持つ
-    /// （.NET 10.0.9 の公開型として実機確認済み。2026-07-06）。その型の名前空間が
+    /// （.NET 10.0.9 の公開型として実機確認済み）。その型の名前空間が
     /// <see cref="AdminScreenNamespacePrefix"/> 配下なら <see cref="ListenerPortGuardEndpointMetadata.Admin"/>
     /// を追加する——以降は M6-1 以来の <see cref="ListenerPortGuardMiddleware"/> がそのまま
     /// 効き、閲覧リスナ（8514）経由の直接到達は 404 + 監査記録（3001）になる。
@@ -177,7 +176,7 @@ public static class YaguraAdminExtensions
     }
 
     /// <summary>
-    /// フォワーダ配布キットのダウンロードエンドポイント（ADR-0008 設計条件 7・9・委任 #1〜#3・#5・#7）。
+    /// フォワーダ配布キットのダウンロードエンドポイント（ADR-0008 設計条件 7）。
     /// Razor Components のページではなく素の <c>MapGet</c> であるため、
     /// <see cref="ListenerPortGuardEndpointMetadata.Admin"/> は名前空間規約
     /// （<see cref="AdminScreenNamespacePrefix"/> 由来の自動付与）の対象外——ここで明示的に
@@ -188,7 +187,7 @@ public static class YaguraAdminExtensions
     /// 一時ファイルも書かない（<see cref="ForwarderKitBuilder"/> の remarks 参照。MSI 同梱時は
     /// 配置済みファイルを読み取って封入するのみ）。検証失敗は 400、成功時は
     /// <c>application/zip</c> で応答する。生成操作は監査記録（2000 番台 ID 2005。
-    /// ADR-0008 設計条件 6・9）の対象とする。<c>includeMsi=true</c> のとき、配置フォルダが
+    /// ADR-0008 設計条件 6）の対象とする。<c>includeMsi=true</c> のとき、配置フォルダが
     /// 単一検出でなければ 400（画面の二段階確認を通っていない版不一致は
     /// <see cref="ForwarderKitRequest.TryCreate(string?, int, string?, ForwarderMsiBundle?, out ForwarderKitRequest?, out ForwarderKitValidationError?)"/>
     /// 側の最終防御で 400 になる）。
@@ -265,7 +264,7 @@ public static class YaguraAdminExtensions
             // 打ち切らない——生成した事実は応答の成否に関わらず記録する
             // （ListenerPortGuardMiddleware と同じ判断。ADR-0004 決定 7）。
             // 「誰が」欄（ADR-0010 決定 6）: 認証を経由した操作（loopback 認証 opt-in 有効時等）は
-            // 認証済み利用者名を併記する。未認証（既定の loopback 無認証）は従来どおり接続元のみ。
+            // 認証済み利用者名を併記する。未認証（既定の loopback 無認証）は接続元のみ。
             var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(context.User);
             await auditRecorder.RecordAsync(
                 new AuditEvent(
@@ -307,8 +306,7 @@ public static class YaguraAdminExtensions
     };
 
     /// <summary>
-    /// MSI 配置フォルダの検出状態が単一でない場合の応答文言（ADR-0008 設計条件 9・
-    /// ADR-0009 決定7・委任 #4——検出パターンをアーキ別に出す）。
+    /// MSI 配置フォルダの検出状態が単一でない場合の応答文言（ADR-0009 決定 7——検出パターンをアーキ別に出す）。
     /// </summary>
     private static string FormatMsiLookupError(ForwarderMsiLookupState state, ForwarderMsiArchitecture architecture)
     {
@@ -323,8 +321,8 @@ public static class YaguraAdminExtensions
 
     /// <summary>
     /// クエリ文字列の <c>architecture</c> を <see cref="ForwarderMsiArchitecture"/> へ解決する
-    /// （ADR-0009 決定7・委任 #4）。未指定・空文字は x64（既定。「迷ったら x64」——ADR-0009
-    /// 委任 #7 と同じ既定思想）として扱い後方互換を保つ。<c>x64</c>/<c>win64</c> と
+    /// （ADR-0009 決定 7）。未指定・空文字は x64（既定。「迷ったら x64」という既定思想）として
+    /// 扱い後方互換を保つ。<c>x64</c>/<c>win64</c> と
     /// <c>arm64</c>/<c>winarm64</c> のみを受理し、大文字小文字は区別しない。
     /// </summary>
     private static bool TryParseArchitecture(string? value, out ForwarderMsiArchitecture architecture)
@@ -347,13 +345,13 @@ public static class YaguraAdminExtensions
     }
 
     /// <summary>
-    /// クエリ文字列の <c>mode</c> を <see cref="ForwarderKitMode"/> へ解決する（Issue #156）。
+    /// クエリ文字列の <c>mode</c> を <see cref="ForwarderKitMode"/> へ解決する。
     /// 未指定・空文字・未知の値は既定（<see cref="ForwarderKitMode.Udp"/>）として扱う——
     /// <see cref="TryParseArchitecture"/> と異なり、モードは新規追加のクエリパラメータであり、
     /// 既に配布済みの URL（mode 未指定）が既定と同じ挙動になることが後方互換そのものであるため、
     /// 「未知の値をエラーにする」必要性が薄い(URL を手打ちする利用者は想定しない——画面からの
-    /// 遷移のみを正規経路とする)。TLS 送信はキットから除外済み（オーナー決定 2026-07-11。
-    /// security.md §6.1）のため、<c>tls</c> は認識せず既定の UDP へ落とす。
+    /// 遷移のみを正規経路とする)。TLS 送信はキットから除外済み（security.md §6.1）のため、
+    /// <c>tls</c> は認識せず既定の UDP へ落とす。
     /// </summary>
     private static ForwarderKitMode ParseForwardMode(string? value) => value?.Trim().ToLowerInvariant() switch
     {
@@ -362,7 +360,7 @@ public static class YaguraAdminExtensions
     };
 
     /// <summary>
-    /// 監査 Detail の構造化文字列（ADR-0008 設計条件 6・9・委任 #5）。既存の host/port/channels に
+    /// 監査 Detail の構造化文字列（ADR-0008 設計条件 6）。既存の host/port/channels に
     /// 加え、MSI 同梱時は msiVersion・msiSha256・officialHashMatch・versionMismatchAcknowledged を
     /// 記録する（秘密情報は含めない——値は来歴情報のみ）。
     /// </summary>

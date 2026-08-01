@@ -8,7 +8,7 @@ namespace Yagura.Web.ReverseDns;
 /// </summary>
 /// <remarks>
 /// <para>
-/// ADR-0007 の検証記録（2026-07-06 実測）に基づく制約: ①本 API は逆引きに加えて前方解決も
+/// ADR-0007 の検証記録（実測）に基づく制約: ①本 API は逆引きに加えて前方解決も
 /// 行う（PTR は登録済みだが前方登録が欠ける名前は取得できない場合がある）、
 /// ②<see cref="CancellationToken"/> は進行中の OS 解決を中断しない（打ち切りは呼び出し側
 /// <see cref="ReverseDnsResolver"/> が「待つのをやめる」方式で行う）、③失敗（未登録を含む）は

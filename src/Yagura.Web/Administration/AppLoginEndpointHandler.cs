@@ -7,8 +7,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// アプリ独自 ID/パスワードのログイン POST の共通処理（ADR-0010 決定 3・ADR-0011 三層防御・
-/// ADR-0013 決定 1 の単一 Cookie）。管理ログイン（<c>/admin/login/app</c>）と閲覧ログイン
+/// アプリ独自 ID/パスワードのログイン POST の共通処理（ADR-0011 三層防御）。管理ログイン（<c>/admin/login/app</c>）と閲覧ログイン
 /// （<c>/login/app</c>。ADR-0010 Phase 4——アプリ独自アカウントは管理役割のみのため閲覧リスナ経由でも
 /// 管理セッションを発行し、管理 ⊇ 閲覧で閲覧できる）で共有する。
 /// </summary>
@@ -58,8 +57,8 @@ internal static class AppLoginEndpointHandler
             return;
         }
 
-        // 三層防御（ADR-0011 決定 2〜4）の loopback 判定は、認可バイパスの判定と同一の判定点を共有する
-        // （決定 4）。閲覧リスナ経由（:8514。管理 loopback ポートではない）は loopback 免除の対象外＝
+        // 三層防御（ADR-0011 決定 4）の loopback 判定は、認可バイパスの判定と同一の判定点を共有する。
+        // 閲覧リスナ経由（:8514。管理 loopback ポートではない）は loopback 免除の対象外＝
         // IP レート制限・グローバルバケットが効く（LAN 公開面への総当たり防御。適切）。
         var isLoopback = AdminAuthenticationExtensions.IsLoopbackAdminConnection(context);
         var attemptContext = new AdminAuthAttemptContext(context.Connection.RemoteIpAddress, isLoopback);
@@ -70,8 +69,8 @@ internal static class AppLoginEndpointHandler
         switch (outcome.Result)
         {
             case AppAuthenticationResult.Success:
-                // 認証成立後は方式に依らない単一の認証セッション Cookie を発行する（ADR-0013 決定 1・5）。
-                // アプリ独自アカウントは常に「管理」役割（決定 5）——管理セッションクレームを焼き込む。
+                // 認証成立後は方式に依らない単一の認証セッション Cookie を発行する（ADR-0013 決定 1）。
+                // アプリ独自アカウントは常に「管理」役割——管理セッションクレームを焼き込む。
                 var principal = AdminAuthenticationExtensions.CreateAdminSessionPrincipal(
                     AdminAuthenticationExtensions.AppAuthMethod, outcome.Username, generationStore.CurrentGeneration);
                 var appProps = AdminAuthenticationExtensions.BuildSessionSignInProperties(
@@ -94,14 +93,14 @@ internal static class AppLoginEndpointHandler
 
             case AppAuthenticationResult.Denied:
                 // 応答種別・利用者向け文言は原因（バックオフ待機/IP レート制限/グローバルバケット）で
-                // 区別しない（ADR-0011 決定 3・6）。原因の別は監査記録にのみ残す（決定 9）。
+                // 区別しない（ADR-0011 決定 3）。原因の別は監査記録にのみ残す。
                 await RecordDenialAuditAsync(auditRecorder, context, now, outcome).ConfigureAwait(false);
 
                 if (outcome.DenialLayer is AdminAuthDenialLayer.IpRateLimit or AdminAuthDenialLayer.GlobalBucket)
                 {
                     // 決定 5.1: レート制限層は待たせず即座に拒否し、有限 Retry-After を返す。送信元 IP 単位・
-                    // プロセス全体の状態のみで判定し、ユーザー名の実在有無に依存しない（決定 4）ため列挙
-                    // シグナルにならない——この層に限り待機表示（決定 6）を出す。
+                    // プロセス全体の状態のみで判定し、ユーザー名の実在有無に依存しないため列挙
+                    // シグナルにならない——この層に限り待機表示を出す。
                     await WriteRateLimitedResponseAsync(context, outcome.WaitSeconds ?? 0, loginPath, loginTitle).ConfigureAwait(false);
                     return;
                 }
@@ -114,9 +113,9 @@ internal static class AppLoginEndpointHandler
             case AppAuthenticationResult.StoreUnavailable:
                 // ADR-0023 決定 1: 保存先が到達不能でアプリ独自認証が一時的に使えない。
                 // **InvalidCredentials と同じ扱いにしない**——資格情報の誤りと読み違えた利用者が
-                // パスワードリセットを試み、それも失敗して混乱するため（佐藤の指摘）。
+                // パスワードリセットを試み、それも失敗して混乱するため。
                 // 監査も 3004（ログイン失敗）へ相乗りさせない（資格情報の検証に到達していない事象を
-                // 混ぜると security.md §4.3 の意味凍結に反する）——専用の 3015 に記録する。
+                // 混ぜると意味が曖昧になる）——専用の 3015 に記録する。
                 await auditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: now,
                     Kind: AuditEventKind.AdminAccountStoreUnavailableRejected,
@@ -125,7 +124,7 @@ internal static class AppLoginEndpointHandler
                     AttemptedPath: context.Request.Path,
                     ReachedListenerPort: context.Connection.LocalPort,
                     // 試行されたユーザー名は残す（誰が困ったかの追跡）。保存先名・例外文字列は
-                    // 応答にも監査 Detail にも出さない（round 2 田中の指摘 2）。
+                    // 応答にも監査 Detail にも出さない。
                     Detail: $"username={outcome.Username}"),
                     CancellationToken.None).ConfigureAwait(false);
 
@@ -134,7 +133,7 @@ internal static class AppLoginEndpointHandler
 
             case AppAuthenticationResult.InvalidCredentials:
                 // 失敗理由の種別は監査記録にのみ残し、利用者への応答では区別しない（ユーザー列挙耐性——
-                // ADR-0010 決定 3・security.md §4.3）。バックオフ層と完全に同一の Location を返す。
+                // ADR-0010 決定 3）。バックオフ層と完全に同一の Location を返す。
                 await auditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: now,
                     Kind: AuditEventKind.AppAuthenticationLoginFailed,
@@ -147,10 +146,9 @@ internal static class AppLoginEndpointHandler
                 context.Response.Redirect($"{loginPath}?error=1");
                 return;
 
-            // default 節は置かない（ADR-0023 決定 1 の実装時に判明した落とし穴）: 以前は
-            // `case InvalidCredentials: default:` と同居しており、AppAuthenticationResult へ
-            // 新しい値を足しても**コンパイルは通り、黙って 3004 として記録される**状態だった。
-            // 網羅を外したことで、将来の追加はここでコンパイルエラーになる。
+            // default 節は置かない（ADR-0023 決定 1 の実装時に判明した落とし穴）: `case InvalidCredentials: default:`
+            // のように同居させると、AppAuthenticationResult へ新しい値を足しても**コンパイルは通り、
+            // 黙って 3004 として記録される**——網羅を外すことで、将来の追加はここでコンパイルエラーになる。
         }
 
         throw new InvalidOperationException(
@@ -161,7 +159,7 @@ internal static class AppLoginEndpointHandler
     /// <summary>
     /// <see cref="AppAuthenticationResult.Denied"/> の監査記録（ADR-0011 決定 9）。バックオフ層は通常の
     /// 失敗ログイン（3004）に加え cap 到達時のみ 3006 を、IP レート制限/グローバルバケット層は 3007 を記録する
-    /// （利用者応答では区別しない——決定 3）。
+    /// （利用者応答では区別しない）。
     /// </summary>
     private static async Task RecordDenialAuditAsync(
         IAuditRecorder auditRecorder, HttpContext context, DateTimeOffset now, AppAuthenticationOutcome outcome)

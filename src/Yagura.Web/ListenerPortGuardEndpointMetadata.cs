@@ -1,7 +1,7 @@
 namespace Yagura.Web;
 
 /// <summary>
-/// エンドポイントが「どのリスナ（ポート）に帰属するか」を宣言するメタデータ（M6-1。Issue #51）。
+/// エンドポイントが「どのリスナ（ポート）に帰属するか」を宣言するメタデータ（M6-1）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -10,7 +10,7 @@ namespace Yagura.Web;
 /// 直後・エンドポイント実行の前）で行う。管理系エンドポイント（<see cref="YaguraAdminExtensions.MapYaguraAdmin"/>
 /// が登録するもの）には <see cref="Admin"/> を付与し、閲覧リスナ（LAN 公開ポート）経由の接続では
 /// 到達できないようにする——閲覧リスナに到達した管理系要求は 404 になる（security.md §1 L-3b の
-/// 「実行されない」構造。「拒否 + 監査記録」自体は後続 Issue #52 のスコープ）。
+/// 「実行されない」構造。「拒否 + 監査記録」自体は後続のスコープ）。
 /// </para>
 /// <para>
 /// <b>RequireHost を採らなかった理由</b>: ASP.NET Core の <c>RequireHost</c> は HTTP

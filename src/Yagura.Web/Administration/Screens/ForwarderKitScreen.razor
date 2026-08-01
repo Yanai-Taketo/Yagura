@@ -235,7 +235,7 @@
         </ul>
         <MudText Typo="Typo.caption">@UiText.ForwarderMsiUploadDisabledManualGuide</MudText>
 
-        @* opt-in の有効化トグル（ADR-0021 決定 4 = 委任 2。設定ファイル手編集を GUI へ移す）。
+        @* opt-in の有効化トグル（ADR-0021 決定 4。設定ファイル手編集を GUI へ移す）。
            トグル自体の認可はアップロード操作と同格——未サインインでは操作させない。 *@
         @if (!_operationAuthenticated)
         {
@@ -265,7 +265,7 @@
                 </MudText>
                 @if (_uploadSetting.AppAccountCreatedAtUtc is null && _uploadSetting.AppAccountUpdatedAtUtc is null)
                 {
-                    @* アップグレード環境の既存アカウント（Issue #458）: 時刻が記録されていない理由と、
+                    @* アップグレード環境の既存アカウント: 時刻が記録されていない理由と、
                        最終ログインを手がかりにした判断・対処まで案内する（「壊れている」と読ませない）。 *@
                     <MudText Typo="Typo.caption" Color="Color.Warning" role="note" Class="d-block mt-1">
                         @UiText.ForwarderMsiUploadEnableInventoryLegacyNotice
@@ -441,7 +441,7 @@
     private bool _channelSecurity;
     private string? _errorText;
 
-    // ---- MSI オプトイン同梱（ADR-0008 設計条件 9・ADR-0009 決定7・委任 #4） ----
+    // ---- MSI オプトイン同梱（ADR-0008 設計条件 9） ----
     private ForwarderMsiArchitecture _selectedArchitecture = ForwarderMsiArchitecture.Win64;
     private ForwarderMsiLookup? _msiLookup;
     private bool _includeMsi;
@@ -449,7 +449,7 @@
     private string? _effectiveVersion;
     private bool _versionMismatch;
 
-    // ---- MSI アップロード（ADR-0020。配置経路 (b)。Issue #283） ----
+    // ---- MSI アップロード（ADR-0020。配置経路 (b)） ----
     private ForwarderMsiWriteAccess? _writeAccess;
     private ElementReference _fileInput;
     private IJSObjectReference? _uploadModule;
@@ -463,7 +463,7 @@
     private bool _deleteAcknowledged;
     private bool _operationAuthenticated;
 
-    // ---- opt-in トグル（ADR-0021 決定 4 = 委任 2） ----
+    // ---- opt-in トグル（ADR-0021 決定 4） ----
     private Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus? _uploadSetting;
     private bool _enableInventoryAcknowledged;
     private bool _settingInProgress;
@@ -474,7 +474,7 @@
         _candidates = NicCandidateSource.GetCandidates();
         RefreshMsiLookup();
 
-        // アップロード系操作の専用認可（ADR-0021 決定 1・4）。判定は HTTP 側ポリシーと同じ
+        // アップロード系操作の専用認可（ADR-0021 決定 1）。判定は HTTP 側ポリシーと同じ
         // 単一実装（IsForwarderMsiUploadOperationAllowed）——UI の出し分けと実行可否
         // （ForwarderMsiPlacementService の最終防衛線・stage エンドポイントの 401・
         // opt-in トグルサービス）を食い違わせない。機能が無効な構成でもトグルの認可判定に
@@ -484,7 +484,7 @@
 
         _uploadSetting = await UploadSettingService.GetStatusAsync();
 
-        // 書き込み可否の実挙動検出（ADR-0020 決定 2・委任 2）。画面表示のたびに 1 回——
+        // 書き込み可否の実挙動検出（ADR-0020 決定 2）。画面表示のたびに 1 回——
         // 周期の ACL 監視（1033/1034）とは別に、利用者が今まさに操作できるかを実書き込み
         // プローブで確かめる（頻度が低いため SACL 汚染の懸念は周期監視と異なり許容）。
         // 未サインイン時は省略する（操作 UI を出さないため。プローブの SACL 痕跡も残さない）。
@@ -544,7 +544,7 @@
     /// アカウント点検の時刻表示（ui.md §6 の契約どおり <see cref="YaguraTimeFormatter"/> へ委譲する）。
     /// </summary>
     /// <remarks>
-    /// **UTC 生表記にしてはいけない**（Issue #462）: 本表示は「最終ログインを手がかりに、心当たりの
+    /// **UTC 生表記にしてはいけない**: 本表示は「最終ログインを手がかりに、心当たりの
     /// ないアカウントならパスワード再設定または削除を検討する」という判断材料として出している。
     /// UTC のまま出すと、JST の管理者には 9 時間前の出来事に見え、**判断材料が判断を誤らせる**。
     /// 画面側に残すのは「記録なし」の分岐だけで、整形は契約の実装位置に集約する。
@@ -556,7 +556,7 @@
 
     /// <summary>
     /// 選択中のアーキテクチャで <see cref="IForwarderMsiSource.Lookup(ForwarderMsiArchitecture)"/>
-    /// を呼び直す（ADR-0009 決定7・委任 #4。<see cref="Lookup(ForwarderMsiArchitecture)"/> は
+    /// を呼び直す（ADR-0009 決定 7。<see cref="Lookup(ForwarderMsiArchitecture)"/> は
     /// 指定アーキの MSI のみを候補とするため、アーキを切り替えるたびに検出結果も切り替わる）。
     /// </summary>
     private void RefreshMsiLookup()
@@ -607,8 +607,8 @@
     }
 
     /// <summary>
-    /// 転送方式を切り替える（Issue #156）。UDP・TCP はいずれも既定ポート 514 のため、ポート欄の
-    /// 追従は不要（TLS 送信はキットから除外済み——オーナー決定 2026-07-11。security.md §6.1）。
+    /// 転送方式を切り替える。UDP・TCP はいずれも既定ポート 514 のため、ポート欄の
+    /// 追従は不要（TLS 送信はキットから除外済み——security.md §6.1）。
     /// </summary>
     private void SelectForwardMode(ForwarderKitMode mode)
     {
@@ -668,10 +668,10 @@
     /// ダウンロードエンドポイントへ渡すクエリ文字列を組み立てる（テスト固定のため static に分離）。
     /// </summary>
     /// <remarks>
-    /// <b>msiVersionMismatchAcknowledged の付与は回帰防止の対象</b>: 本パラメータは以前この画面の
-    /// URL 組み立てに含まれておらず、版不一致時に画面の確認チェックを入れてもサーバ側
+    /// <b>msiVersionMismatchAcknowledged の付与は回帰防止の対象</b>: 本パラメータが URL 組み立てから
+    /// 欠落すると、版不一致時に画面の確認チェックを入れてもサーバ側
     /// （<c>ForwarderKitRequest.TryCreate</c> の最終防御）で常に「未確認」扱いになり 400 で
-    /// 生成に失敗していた（PR #222 レビューで確認された既存不具合。同 PR で修正）。
+    /// 生成に失敗する。
     /// <c>ForwarderKitScreenDownloadQueryTests</c> が本メソッドの出力を固定する。
     /// </remarks>
     internal static string BuildDownloadQuery(

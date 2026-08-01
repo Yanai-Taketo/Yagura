@@ -1,7 +1,7 @@
 namespace Yagura.Web.Circuits;
 
 /// <summary>
-/// circuit 統治の既定値（security.md §2.2。M8-4。Issue #71）。
+/// circuit 統治の既定値（security.md §2.2。M8-4）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -61,7 +61,7 @@ public static class CircuitGovernanceDefaults
 
     /// <summary>
     /// 認証失効後の閲覧 circuit の読み取り専用表示を継続する猶予の上限（SEC-6 **確定値: 15 分**。
-    /// 2026-07-17 オーナー裁定。security.md §2.3。Issue #267）。掲示用途の一時的な失効
+    /// security.md §2.3）。掲示用途の一時的な失効
     /// （グループ変更の反映遅延等）を吸収しつつ、失効者が新着ログを見続けられる窓
     /// （§2.3 が明記する対価——猶予中はライブ購読が継続する）を小さく保つバランス。
     /// 漏洩対応は緊急全失効（ADR-0013 決定 2）が本猶予をバイパスして即時に全切断する。

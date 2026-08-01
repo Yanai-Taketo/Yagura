@@ -5,7 +5,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// Kerberos-only モード（ADR-0010 決定 2・委任事項 12）の NTLM トークン遮断ミドルウェア。
+/// Kerberos-only モード（ADR-0010 決定 2）の NTLM トークン遮断ミドルウェア。
 /// </summary>
 /// <remarks>
 /// <see cref="AdminAuthenticationExtensions"/> の remarks に記したライブ検証結果のとおり、

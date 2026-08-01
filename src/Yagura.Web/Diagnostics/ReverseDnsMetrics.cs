@@ -75,7 +75,7 @@ public sealed class ReverseDnsMetrics : IDisposable
         _skipped = _meter.CreateCounter<long>(
             SkippedInstrumentName,
             unit: "{lookup}",
-            description: "キャッシュ件数上限による逆引き解決の見送り件数（ADR-0007 決定 3・6）。");
+            description: "キャッシュ件数上限による逆引き解決の見送り件数（ADR-0007 決定 3）。");
     }
 
     /// <summary>解決成功を 1 件計上する。</summary>

@@ -4,7 +4,7 @@ namespace Yagura.Web.Theming;
 
 /// <summary>
 /// ui.md §2 のデザイントークンを MudBlazor テーマ機構へ割り当てた、実装側の唯一のテーマ定義
-/// （M8-1。Issue #68。UI-8）。
+/// （M8-1。UI-8）。
 /// </summary>
 /// <remarks>
 /// <para>

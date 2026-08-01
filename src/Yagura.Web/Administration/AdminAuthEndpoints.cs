@@ -13,7 +13,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// 管理 UI ログイン/ログアウトの HTTP エンドポイント（ADR-0010 Phase 1・委任事項 9）。
+/// 管理 UI ログイン/ログアウトの HTTP エンドポイント（ADR-0010 Phase 1）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -82,7 +82,7 @@ internal static class AdminAuthEndpoints
 
             var newGeneration = generationStore.Bump();
 
-            // 即時の全切断（security.md §2.3「漏洩対応」・Issue #267）: 世代バンプ（次要求で拒否）に
+            // 即時の全切断（security.md §2.3「漏洩対応」）: 世代バンプ（次要求で拒否）に
             // 加え、生きている全 circuit へ協調切断を要求する——SEC-6 の閲覧猶予もバイパスする
             // （猶予は通常運用の失効向けであり、明示の緊急全失効はそれより強い）。
             var disconnected = await context.RequestServices
@@ -111,7 +111,7 @@ internal static class AdminAuthEndpoints
     }
 
     /// <summary>
-    /// Windows 統合認証のログイン経路（ADR-0013 決定 1・4）。選択式ログインの Windows 経路として、
+    /// Windows 統合認証のログイン経路（ADR-0013 決定 1）。選択式ログインの Windows 経路として、
     /// Negotiate チャレンジをこの 2 エンドポイントにのみ閉じ込める（他の管理画面へ波及させない）。
     /// </summary>
     /// <remarks>
@@ -134,7 +134,7 @@ internal static class AdminAuthEndpoints
         {
             var user = context.User;
 
-            // SEC-9（ADR-0010 決定 5・委任事項 8）: 既定の 544 判定に加え、設定された管理グループ SID との
+            // SEC-9（ADR-0010 決定 5）: 既定の 544 判定に加え、設定された管理グループ SID との
             // 交差も管理者と認可する（Admin:Authentication:Windows:AdminGroups）。
             if (!AdminAuthenticationExtensions.IsWindowsAdministrator(user, groups.AdminGroupSids))
             {
@@ -193,7 +193,7 @@ internal static class AdminAuthEndpoints
 
             await context.SignInAsync(AdminAuthenticationExtensions.AppAuthenticationScheme, principal, props).ConfigureAwait(false);
 
-            // サインイン成功の監査（ADR-0010 決定 6・ADR-0013 決定 3: 「成功」= 認証セッション発行時点）。
+            // サインイン成功の監査（ADR-0013 決定 3: 「成功」= 認証セッション発行時点）。
             await auditRecorder.RecordAsync(new AuditEvent(
                 OccurredAt: now,
                 Kind: AuditEventKind.AdminLoginSucceeded,
@@ -217,7 +217,7 @@ internal static class AdminAuthEndpoints
         IAuditRecorder auditRecorder, HttpContext context, TimeProvider timeProvider)
     {
         // Negotiate は成立したが BUILTIN\Administrators ではない（認証成功 ≠ 管理権限。ADR-0010 決定 5）。
-        // 事象種別は AdminAuthorizationDenied（3008）——握手失敗（3003）と切り分けて記録する（issue #237）。
+        // 事象種別は AdminAuthorizationDenied（3008）——握手失敗（3003）と切り分けて記録する。
         await auditRecorder.RecordAsync(new AuditEvent(
             OccurredAt: timeProvider.GetUtcNow(),
             Kind: AuditEventKind.AdminAuthorizationDenied,

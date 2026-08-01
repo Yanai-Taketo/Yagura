@@ -10,7 +10,7 @@
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
 
 @*
-    メール通知の設定画面（ADR-0017 決定 4・5・8、委任 12。Issue #350）。
+    メール通知の設定画面（ADR-0017 決定 4）。
 
     - opt-in・既定無効（決定 1）。ゼロ設定ファーストランでは存在すら意識させないため、
       この画面に来るのは「メールで受け取りたい」と決めた利用者だけである
@@ -40,7 +40,7 @@ else
         <MudAlert Severity="Severity.Error" Class="mt-4">@UiText.EmailNotificationDisabledByInvalidConfiguration</MudAlert>
     }
 
-    @* 設定ファイル全体がメール通知と無関係なキーの不正で検証に落ちている状態（Issue #370）。
+    @* 設定ファイル全体がメール通知と無関係なキーの不正で検証に落ちている状態。
        保存はできるが即時反映は見送られる——ファイル側の問題として別に見せる。 *@
     @if (_status.Health.ConfigurationFileError is { } configurationFileError)
     {
@@ -116,7 +116,7 @@ else
             </div>
 
             @* 「空欄 = 変更しない」に固定した帰結として、削除には専用の口が要る——これがないと
-               一度パスワードを保存した構成は SMTP 認証をやめられない（PR #366 レビュー対応） *@
+               一度パスワードを保存した構成は SMTP 認証をやめられない *@
             @if (_status.PasswordConfigured)
             {
                 <div class="mt-2">
@@ -146,7 +146,7 @@ else
         <MudAlert Severity="Severity.Success" Class="mt-4">@_savedSummary</MudAlert>
     }
 
-    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する。 *@
     <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
     </YaguraButton>
@@ -360,7 +360,7 @@ else
 
                 if (result.PlaintextCredentialWarning)
                 {
-                    // 決定 3 の能動警告を保存結果でも出す（Issue #385——ライブバナー〔フォーム値
+                    // 決定 3 の能動警告を保存結果でも出す（ライブバナー〔フォーム値
                     // 由来〕とは別に、実際に保存された構成が推奨から逸脱していることを通知する）。
                     Notifier.NotifyWarning(UiText.EmailNotificationPlaintextCredentialWarning);
                 }
@@ -373,7 +373,7 @@ else
         catch (Exception ex)
         {
             // 楽観競合（別画面・手編集との同時変更）等を circuit エラーにしない——読める形で
-            // 表示し、再読み込みで解消できるようにする（Issue #370）。
+            // 表示し、再読み込みで解消できるようにする。
             _errorMessage = string.Format(UiText.EmailNotificationSaveFailedFormat, ex.Message);
         }
     }

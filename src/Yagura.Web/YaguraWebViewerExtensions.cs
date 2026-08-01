@@ -56,7 +56,7 @@ public static class YaguraWebViewerExtensions
         // ISnackbar（AddMudServices が Scoped 登録）に合わせて Scoped。
         services.AddScoped<Components.Common.IYaguraNotifier, Components.Common.YaguraSnackbarNotifier>();
 
-        // ---- circuit 統治（M8-4。Issue #71。security.md §2）----
+        // ---- circuit 統治（M8-4。security.md §2）----
         //
         // - CircuitRegistry: プロセス内の全 circuit の台帳（一覧・上限・回収の共通基盤）
         // - YaguraCircuitContext / YaguraCircuitHandler: circuit スコープの帰属・切断伝達。
@@ -73,7 +73,7 @@ public static class YaguraWebViewerExtensions
         services.AddScoped<CircuitHandler, YaguraCircuitHandler>();
         services.AddHostedService<CircuitIdleReclaimService>();
 
-        // ---- circuit 認証状態の明示的な汲み直し（ADR-0010 決定 2・委任事項 2）----
+        // ---- circuit 認証状態の明示的な汲み直し（ADR-0010 決定 2）----
         //
         // YaguraCircuitAuthenticationStateProvider は circuit スコープ（YaguraCircuitContext と
         // 同じ Scoped 登録）。AuthenticationStateProvider として登録することで
@@ -150,8 +150,8 @@ public static class YaguraWebViewerExtensions
     /// （<c>/login/*</c>）を登録する。既定 <see langword="false"/>＝現状維持（認証なし）。
     /// </param>
     /// <param name="appAuthAvailable">
-    /// 閲覧ログインでアプリ独自 ID/パスワードも受けるか（<c>Admin:Authentication:App:Enabled</c>。
-    /// オーナー決定 2026-07-12）。<c>/login/app</c> の登録可否を制御する。
+    /// 閲覧ログインでアプリ独自 ID/パスワードも受けるか（<c>Admin:Authentication:App:Enabled</c>）。
+    /// <c>/login/app</c> の登録可否を制御する。
     /// </param>
     public static RazorComponentsEndpointConventionBuilder MapYaguraWebViewer(
         this IEndpointRouteBuilder endpoints,
@@ -169,14 +169,14 @@ public static class YaguraWebViewerExtensions
         // 不変条件（ui.md §4）を破らない。
         endpoints.MapStaticAssets(staticAssetsManifestPath);
 
-        // 外形監視・LB 用の liveness エンドポイント（Issue #126。2026-07-09 オーナー決定:
-        // 採用。認証なし・内部情報を一切持たない固定レスポンス限定）。DB・カウンタ・バージョン等の
+        // 外形監視・LB 用の liveness エンドポイント（認証なし・内部情報を一切持たない固定レスポンス限定）。
+        // DB・カウンタ・バージョン等の
         // 内部状態には一切触れない純粋な生存確認——攻撃面の最小化（security.md §1 L-5 の許可リスト
         // 方針）と外形監視の要望のトレードオフを、公開して問題のない情報範囲（200 + 固定文字列のみ）
         // に絞ることで両立する。circuit を要しない静的応答であり、読み取り専用（GET/HEAD のみ）——
         // 閲覧リスナの「書き込みエンドポイントを持たない」不変条件を破らない。L-5 許可リストに登録済み。
         //
-        // HEAD も受ける理由（PR #164 レビュー指摘）: 外形監視・LB ツールには帯域節約のため既定で
+        // HEAD も受ける理由: 外形監視・LB ツールには帯域節約のため既定で
         // HEAD を送るものがあり、MapGet（GET のみ登録。HEAD へ自動フォールバックせず 405 になる）
         // では本エンドポイントの目的自体が一部のツール構成で達成できない。HTTP セマンティクス上
         // HEAD は「GET と同一ヘッダ・本文なし」であり、Kestrel が HEAD 応答の本文送出を抑止する
@@ -207,7 +207,7 @@ public static class YaguraWebViewerExtensions
             return Results.Content(html, "text/html; charset=utf-8");
         });
 
-        // ログ検索結果の CSV エクスポート（Issue #157）。読み取り専用の GET のみ——
+        // ログ検索結果の CSV エクスポート。読み取り専用の GET のみ——
         // 書き込みエンドポイントではない。L-5 許可リスト（ViewerEndpointAllowlistTests）に
         // 登録済み。閲覧認証有効時は閲覧画面と同じ認可判定（ViewerPolicy）を課す
         // （「画面で読めるものはエクスポートでも読める、以上の緩和をしない」——ADR-0010 決定 7）。
@@ -251,7 +251,7 @@ public static class YaguraWebViewerExtensions
     }
 
     /// <summary>
-    /// 検索結果 CSV エクスポートの上限件数（Issue #157）。ログ検索画面の表示上限
+    /// 検索結果 CSV エクスポートの上限件数。ログ検索画面の表示上限
     /// （<c>LogSearch.SearchLimit</c>）と同じ 10,000 件——architecture.md §6 M-10 の仮値を
     /// そのまま踏襲し、画面に表示されている以上の件数を CSV へ出力しない（「件数上限の明示」を
     /// 独自の新しい仮値で増やさない判断。値の見直しは M-10 の確定と歩調を合わせる）。
@@ -278,14 +278,14 @@ public static class YaguraWebViewerExtensions
     private const string CsvTruncatedHeaderName = "X-Yagura-Csv-Truncated";
 
     /// <summary>
-    /// ログ検索結果の CSV エクスポート（Issue #157）。閲覧リスナの GET のみ——書き込みを
+    /// ログ検索結果の CSV エクスポート。閲覧リスナの GET のみ——書き込みを
     /// 一切行わない。
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>検索条件との対応</b>: クエリパラメータ（<c>from</c>・<c>to</c>・<c>source</c>・
     /// <c>severity</c>・<c>facility</c>・<c>parseStatus</c>・<c>q</c>）は <c>LogSearch.razor</c> の
-    /// 検索 URL（Issue #148 の URL 共有形式——<c>BuildQueryParameters</c>）と同一のキー・値形式で
+    /// 検索 URL（URL 共有形式——<c>BuildQueryParameters</c>）と同一のキー・値形式で
     /// あり、<see cref="LogQuery"/> の対応フィールド（<c>severity</c> → <see cref="LogQuery.SeverityAtMost"/>
     /// の閾値・<c>facility</c> → 完全一致・<c>parseStatus</c> → enum 名・<c>q</c> → 自由文）へ
     /// 変換する。<b>不正な値は検索画面と同じく例外を出さず「条件なし」に安全側で丸める</b>
@@ -298,7 +298,7 @@ public static class YaguraWebViewerExtensions
     /// <see cref="LogRecordCsvWriter"/>／<see cref="CsvField"/> が担う。<b>UTF-8 BOM</b> は本メソッドが
     /// <see cref="StreamWriter"/> に BOM 付与ありの <see cref="UTF8Encoding"/>
     /// （<c>encoderShouldEmitUTF8Identifier: true</c>）を渡すことで付与する（Excel の日本語文字化け
-    /// 耐性——Issue #157 の受け入れ条件）。
+    /// 耐性——受け入れ条件）。
     /// </para>
     /// <para>
     /// <b>メモリ節約</b>: CSV 全体を文字列へ組み立てず、<see cref="LogRecordCsvWriter.WriteAsync"/>

@@ -10,8 +10,7 @@
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 
 @*
-    本番昇格（SQLite → SQL Server）ウィザード（database.md §6.1・ui.md §4。M8-4 骨格 = Issue #71、
-    接続組み立て・認証トグル・修復 SQL 提示の UX 完成 = PR #102）。
+    本番昇格（SQLite → SQL Server）ウィザード（database.md §6.1）。
 
     - 準備（接続検証）と本番（切替実行）を分離する（§6.1。準備は何度でも中断・再開できる）
     - 接続は項目入力を既定とし、接続文字列はサーバ側で組み立てる。直接入力は上級者向けに併存
@@ -200,7 +199,7 @@ else
     </MudPaper>
 }
 
-@* 蓄積ログの移行（database.md §6.2。DB-5。Issue #266）: 昇格 + 再起動の後にだけ現れる。
+@* 蓄積ログの移行（database.md §6.2。DB-5）: 昇格 + 再起動の後にだけ現れる。
    移行中も受信は継続する（書き込みゲートのバッチ単位直列化——LogMigrationService 参照）。 *@
 @if (_migrationStatus is { } migrationStatus && migrationStatus.Availability != LogMigrationAvailability.NotPromoted)
 {
@@ -441,7 +440,7 @@ else
     private async Task<(string? Scheme, string? Principal)> ResolveOperatorAsync() =>
         AuditActorResolver.Resolve((await AuthStateProvider.GetAuthenticationStateAsync()).User);
 
-    // ---- 蓄積ログの移行（database.md §6.2。DB-5。Issue #266）----
+    // ---- 蓄積ログの移行（database.md §6.2。DB-5）----
 
     private LogMigrationStatus? _migrationStatus;
     private LogMigrationProgress? _migrationProgress;

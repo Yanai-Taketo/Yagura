@@ -13,7 +13,7 @@
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
 
 @*
-    送信元の途絶検知のウォッチリスト設定画面（ADR-0018 決定 4・5・6、委任 5。Issue #351）。
+    送信元の途絶検知のウォッチリスト設定画面（ADR-0018 決定 4）。
 
     - 登録は既知送信元からの候補選択を主経路とする（決定 4）——IP の転記ミスによる
       「形式は正しいが違うアドレス」の黙った空振りを構造的に減らす。手入力は
@@ -23,7 +23,7 @@
       分の直打ちを強要しない（委任 5）
     - 一覧への追加・編集・削除はローカル編集で、「適用する」でまとめて保存する
       （保存 1 回 = 監査 2023 が 1 件——差分のエントリ列挙つき）
-    - 閲覧面（ダッシュボード）には登録導線を置かない（#286 の閲覧/管理分離の裁定）
+    - 閲覧面（ダッシュボード）には登録導線を置かない（閲覧/管理分離の方針）
 *@
 <PageTitle>@UiText.SourceSilenceTitle - Yagura</PageTitle>
 
@@ -141,8 +141,7 @@ else
     }
 
     <MudText Typo="Typo.caption" Class="mt-4 d-block">@UiText.SourceSilencePendingChangesNote</MudText>
-    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372。
-       画面独自の _saveInFlight ガードは共通化に伴い撤去)。 *@
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する。 *@
     <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-1" OnClick="ApplyAsync">
         @UiText.SourceSilenceApplyButton
     </YaguraButton>
@@ -221,7 +220,7 @@ else
             return;
         }
 
-        // 閾値の省略を保持できるようにする（Issue #383）: 既存エントリの編集で閾値欄を空に
+        // 閾値の省略を保持できるようにする: 既存エントリの編集で閾値欄を空に
         // すると「省略のまま」書き戻す。新規登録では省略を許さない（決定 4——閾値の明示確定必須）。
         // 省略のまま書き戻せないと、表示名だけ直したいケースでも閾値が既定値の明示指定へ
         // 黙って置き換わり、変更なしのつもりが監査 2023 に載る。
@@ -279,7 +278,7 @@ else
         _candidateAddress = null;
         _labelInput = row.Label ?? string.Empty;
 
-        // 省略エントリは閾値欄を空にする（Issue #383）——既定値を埋めて明示指定へ変えない。
+        // 省略エントリは閾値欄を空にする——既定値を埋めて明示指定へ変えない。
         // 空のまま更新すれば「省略のまま」書き戻される（表示名だけの編集で閾値が変わらない）。
         if (row.ThresholdMinutes is { } minutes)
         {

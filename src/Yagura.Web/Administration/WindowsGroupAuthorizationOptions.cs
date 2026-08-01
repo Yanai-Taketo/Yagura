@@ -1,7 +1,7 @@
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5・7・委任事項 8）の解決済み SID 集合を
+/// AD グループ → 役割マッピング（SEC-9。ADR-0010 決定 5）の解決済み SID 集合を
 /// Web 層へ供給する DI 用ラッパー（<see cref="YaguraAdminListenerPort"/> と同じ「Host が解決した値を
 /// 専用型で Web へ渡す」パターン）。
 /// </summary>

@@ -8,7 +8,7 @@ using Yagura.Web.ForwarderKit;
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// フォワーダ MSI アップロードの HTTP エンドポイント（ADR-0020 決定 1・3。配置経路 (b)）。
+/// フォワーダ MSI アップロードの HTTP エンドポイント（ADR-0020 決定 1。配置経路 (b)）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -109,8 +109,8 @@ internal static class ForwarderMsiUploadEndpoints
             if (!result.Success)
             {
                 var reason = FormatStageError(result.Error!.Value);
-                // 中断（クライアント切断）も含め、失敗・拒否はすべて監査に残す（ADR-0004 決定 7・
-                // ADR-0020 決定 4）。CancellationToken.None: 切断済みでも記録は打ち切らない。
+                // 中断（クライアント切断）も含め、失敗・拒否はすべて監査に残す（ADR-0004 決定 7）。
+                // CancellationToken.None: 切断済みでも記録は打ち切らない。
                 await RecordRejectionAsync(
                     auditRecorder, timeProvider, context, msiArchitecture, reason, detailSuffix: null)
                     .ConfigureAwait(false);

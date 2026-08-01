@@ -5,7 +5,7 @@ namespace Yagura.Web.Administration;
 
 /// <summary>
 /// フォワーダ MSI 配置の確定・破棄・削除と監査記録をまとめる circuit 向けサービス
-/// （ADR-0020 決定 3・4。<see cref="ICircuitManagementService"/>——2004——と同じ
+/// （ADR-0020 決定 3。<see cref="ICircuitManagementService"/>——2004——と同じ
 /// 「操作の実体 + 監査記録」の役割分担。ファイル本文を運ぶ stage だけが HTTP エンドポイント
 /// ——<see cref="ForwarderMsiUploadEndpoints"/>——で、確認後の操作は circuit から本サービスを呼ぶ）。
 /// </summary>

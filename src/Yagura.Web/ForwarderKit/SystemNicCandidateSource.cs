@@ -3,7 +3,7 @@ using System.Net.NetworkInformation;
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// OS の NIC 列挙による宛先候補検出の実体（ADR-0008 設計条件 1・委任 #6）。
+/// OS の NIC 列挙による宛先候補検出の実体（ADR-0008 設計条件 1）。
 /// 除外判定そのものは <see cref="NicCandidateFilter"/>（純粋関数）に委譲し、本クラスは
 /// <see cref="NetworkInterface.GetAllNetworkInterfaces"/> の列挙・説明名の組み立てのみを担う。
 /// </summary>

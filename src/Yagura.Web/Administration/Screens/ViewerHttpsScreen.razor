@@ -12,13 +12,13 @@
 @inject IConfigurationReloadService ReloadService
 
 @*
-    閲覧 UI の HTTPS 設定画面（ADR-0022 決定 3・4・6・9・10。Issue #455 段階 ②）。
+    閲覧 UI の HTTPS 設定画面（ADR-0022 決定 3）。
 
     - 証明書設定の 3 画面目（管理リモート HTTPS /admin/remote-access・TLS 受信 /admin/ingestion-tls）。
       相互リンクを置き、見出し・説明文で用途を書き分ける（「LAN のブラウザ → Yagura の閲覧用」）
     - 対象は Viewer:Https:Enabled / :CertificateThumbprint の 2 キーのみ。ポートは増えない
       （8514 同一ポート切替——決定 1）
-    - 検証ポリシー（決定 3・4）: 期限切れ・秘密鍵読取不可・EKU 不適合は保存拒否（管理 HTTPS と
+    - 検証ポリシー（決定 3）: 期限切れ・秘密鍵読取不可・EKU 不適合は保存拒否（管理 HTTPS と
       同じ停止面の扱い。TLS 受信との差分理由も表示する）。SAN ホスト名不整合のみ「警告して通す」
       ——検査結果と「警告なしになる見込みの URL」を具体的に提示し、保存後も確認できる
     - 決定 6: 有効化の保存時に (a) 反映は再起動後 (b) 新 URL (c) 旧 URL 断絶の周知依頼
@@ -240,7 +240,7 @@ else
         </MudPaper>
     }
 
-    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する。 *@
     <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
     </YaguraButton>
@@ -267,7 +267,7 @@ else
         !_candidates.Any(c => string.Equals(c.Thumbprint, _selectedThumbprint, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// 「警告なしになる見込みの閲覧 URL」（決定 4・6）。SAN の dNSName（ワイルドカードを除く）から
+    /// 「警告なしになる見込みの閲覧 URL」（決定 4）。SAN の dNSName（ワイルドカードを除く）から
     /// 組み立てる。ポートは永続値（未設定は既定 8514）——環境変数上書きは画面から見えないため
     /// 注記で補う。
     /// </summary>
@@ -364,8 +364,7 @@ else
                 // 旧 URL 断絶が起きないため出さない）。
                 _showAfterEnableGuidance = _enabled;
 
-                // 保存を再起動待ちカードへ計上する（決定 1 の受信断レール。TLS 受信画面と同じ経路——
-                // ADR-0019 委任 2 / Issue #388 の確定に追随）。
+                // 保存を再起動待ちカードへ計上する（決定 1 の受信断レール。TLS 受信画面と同じ経路）。
                 var reload = await ReloadService.ReloadAsync(
                     CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
                 if (reload.Rejected)
@@ -377,7 +376,7 @@ else
         }
         catch (WizardValidationException ex)
         {
-            // 保存前 fail-closed 検証の拒否理由（決定 3・4）: メッセージは画面へそのまま表示できる
+            // 保存前 fail-closed 検証の拒否理由（決定 3）: メッセージは画面へそのまま表示できる
             // 日本語（是正手順への誘導つき）。
             _errorMessage = ex.Message;
         }

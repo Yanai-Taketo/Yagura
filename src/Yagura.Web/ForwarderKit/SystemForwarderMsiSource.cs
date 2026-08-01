@@ -5,7 +5,7 @@ namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
 /// 配置フォルダ（データルート配下 <c>forwarder</c>）を実際に読み取る
-/// <see cref="IForwarderMsiSource"/> の実体（ADR-0008 設計条件 9・委任 #7）。
+/// <see cref="IForwarderMsiSource"/> の実体（ADR-0008 設計条件 9）。
 /// 列挙・ハッシュ計算・版取得の I/O のみを担い、判定（パターン一致・版比較・ハッシュ照合）は
 /// <see cref="ForwarderMsiFilter"/>（純粋関数）に委譲する——<see cref="SystemNicCandidateSource"/> /
 /// <see cref="NicCandidateFilter"/> と同じ設計。
@@ -81,7 +81,7 @@ public sealed class SystemForwarderMsiSource : IForwarderMsiSource
     /// <b>設計条件 9 は「MSI の ProductVersion を優先」を要求する</b>。ProductVersion は
     /// Windows Installer プロパティテーブル（MSI 自体は OLE 構造化ストレージ）に格納されており、
     /// <c>msi.dll</c> の <c>MsiOpenDatabase</c>（読み取り専用）+ Property テーブル参照で読む
-    /// （方式の詳細・<c>MsiGetFileVersion</c> を使ってはならない理由 = Issue #436 は
+    /// （方式の詳細・<c>MsiGetFileVersion</c> を使ってはならない理由は
     /// <see cref="ForwarderMsiProductVersionReader"/> を参照）。汎用のファイルバージョンリソース
     /// API（<c>System.Diagnostics.FileVersionInfo</c>）は実行可能ファイル（EXE/DLL）の
     /// リソースセクションを読むものであり、MSI には使えない。

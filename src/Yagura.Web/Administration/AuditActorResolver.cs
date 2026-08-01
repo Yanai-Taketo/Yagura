@@ -4,8 +4,8 @@ namespace Yagura.Web.Administration;
 
 /// <summary>
 /// 監査記録の「誰が」欄（<c>AuditEvent.AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c>。
-/// ADR-0010 決定 6）へ渡す値を <see cref="ClaimsPrincipal"/> から導出する（PR #217 レビュー
-/// 指摘 1 の実装——方式識別子の表記を 1 箇所に固定する）。
+/// ADR-0010 決定 6）へ渡す値を <see cref="ClaimsPrincipal"/> から導出する（方式識別子の表記を
+/// 1 箇所に固定する）。
 /// </summary>
 /// <remarks>
 /// 方式識別子は ADR-0010 決定 3 の「命名空間つき表記」の接頭辞: <c>"windows"</c>（Windows 統合
@@ -23,7 +23,7 @@ public static class AuditActorResolver
     /// <c>DOMAIN\user</c> とアプリ名の衝突を防ぐ。管理セッション（<c>admin_session</c>）・閲覧セッション
     /// （<c>viewer_session</c>。ADR-0010 Phase 4）のいずれの標識クレームも持たない認証状態は未認証扱い
     /// （fail-closed——方式・利用者名を偽装/喪失させない）。閲覧経路の監査点（将来）でも「誰が」欄が空に
-    /// ならないよう、閲覧セッションも解決対象に含める（田中のセキュリティレビュー指摘）。
+    /// ならないよう、閲覧セッションも解決対象に含める。
     /// </remarks>
     public static (string? Scheme, string? Principal) Resolve(ClaimsPrincipal? user)
     {

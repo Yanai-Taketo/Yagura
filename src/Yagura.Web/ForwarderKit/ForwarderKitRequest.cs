@@ -1,7 +1,7 @@
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// フォワーダキット生成の要求（ADR-0008 設計条件 1〜3・9）。宛先・ポート・収集チャネル・
+/// フォワーダキット生成の要求。宛先・ポート・収集チャネル・
 /// MSI 同梱の要否を保持する。生成される <c>fluent-bit-yagura.conf</c> への注入文字列に
 /// 任意の値を許さないため、構築時に必ず <see cref="TryCreate"/> の検証を経由させる
 /// （設計条件 5「設定ファイルへの任意文字列注入を作らない」）。
@@ -29,7 +29,7 @@ public sealed class ForwarderKitRequest
     public int Port { get; }
 
     /// <summary>
-    /// 転送方式（既定 <see cref="ForwarderKitMode.Udp"/>。TCP は Issue #156 で追加）。
+    /// 転送方式（既定 <see cref="ForwarderKitMode.Udp"/>）。
     /// </summary>
     public ForwarderKitMode Mode { get; }
 
@@ -80,7 +80,7 @@ public sealed class ForwarderKitRequest
 
     /// <summary>
     /// <see cref="TryCreate(string?, int, string?, ForwarderMsiBundle?, out ForwarderKitRequest?, out ForwarderKitValidationError?)"/>
-    /// の転送方式指定版（Issue #156 で UDP/TCP を選択可能にした）。
+    /// の転送方式指定版（UDP/TCP を選択可能にした）。
     /// </summary>
     /// <param name="mode">転送方式（既定 <see cref="ForwarderKitMode.Udp"/>）。</param>
     public static bool TryCreate(
@@ -190,18 +190,18 @@ public sealed class ForwarderKitRequest
 /// <c>@@MODE@@</c> と同じ語彙を使う）。
 /// </summary>
 /// <remarks>
-/// <b>TLS 送信は見送り（オーナー決定 2026-07-11。Issue #137）</b>: Yagura は RFC 5425 準拠の
+/// <b>TLS 送信は見送り</b>: Yagura は RFC 5425 準拠の
 /// syslog over TLS 受信に対応するが、Fluent Bit の <c>out_syslog</c> は TLS 有効時も RFC 6587
 /// octet-counting フレーミングを実装しないため、キットから TLS 送信を提供すると「選ぶと無音で
 /// 失う」組み合わせを生む。Fluent Bit が octet-counting に対応するまでキットの TLS 送信は
-/// 導入しない（再評価トリガ。security.md §6.1・ADR-0008 改訂履歴 3）。
+/// 導入しない（再評価トリガ。security.md §6.1）。
 /// </remarks>
 public enum ForwarderKitMode
 {
-    /// <summary>UDP（既定。MTU 超のフラグメンテーション損失に注意——Issue #156）。</summary>
+    /// <summary>UDP（既定。MTU 超のフラグメンテーション損失に注意）。</summary>
     Udp,
 
-    /// <summary>TCP（RFC 6587 の LF 区切り。octet-counting 非対応——Issue #156 の既知の制約）。</summary>
+    /// <summary>TCP（RFC 6587 の LF 区切り。octet-counting 非対応——既知の制約）。</summary>
     Tcp,
 }
 

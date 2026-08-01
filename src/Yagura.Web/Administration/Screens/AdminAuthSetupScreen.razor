@@ -15,7 +15,7 @@
 @inject PersistentComponentState ApplicationState
 
 @*
-    管理 UI 認証の設定画面（ADR-0010 決定 1・3。Phase 1）。
+    管理 UI 認証の設定画面（ADR-0010 決定 1。Phase 1）。
 
     - Windows 統合認証（Negotiate）・Kerberos-only opt-in・アプリ独自認証の有効化を切り替える
     - 最初の管理者アカウント（ユーザー名/パスワード）を loopback 中に設定する
@@ -69,7 +69,7 @@ else
         <MudAlert Severity="Severity.Error" Class="mt-4">@_errorMessage</MudAlert>
     }
 
-    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する。 *@
     <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
     </YaguraButton>

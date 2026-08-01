@@ -2,9 +2,9 @@ namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
 /// 配置フォルダ（データルート配下 <c>forwarder</c>）への MSI の配置（アップロード）・削除を担う
-/// 書き込み側の契約（ADR-0020 決定 2・3。配置経路 (b)）。読み取り側（<see cref="IForwarderMsiSource"/>）
+/// 書き込み側の契約（ADR-0020 決定 2。配置経路 (b)）。読み取り側（<see cref="IForwarderMsiSource"/>）
 /// とは契約を分離する——読み取りは既定構成で常に使われるのに対し、書き込みは
-/// 「認証有効 + loopback 認証 opt-in + 機能 opt-in + 管理者の明示 ACE 付与」（ADR-0020 決定 1〜2）が
+/// 「認証有効 + loopback 認証 opt-in + 機能 opt-in + 管理者の明示 ACE 付与」が
 /// 揃った構成でのみ意味を持つため。
 /// </summary>
 /// <remarks>
@@ -35,7 +35,7 @@ public interface IForwarderMsiStore
     string FolderPath { get; }
 
     /// <summary>
-    /// 書き込み経路が開放されているか（ACE 付与済みか）を実挙動で検出する（ADR-0020 決定 2・委任 2）。
+    /// 書き込み経路が開放されているか（ACE 付与済みか）を実挙動で検出する（ADR-0020 決定 2）。
     /// プローブファイル（検出パターン非一致・即削除）の作成試行で判定する。
     /// </summary>
     ForwarderMsiWriteAccess CheckWriteAccess();

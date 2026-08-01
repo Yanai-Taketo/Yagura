@@ -9,7 +9,7 @@ using Yagura.Web.Diagnostics;
 namespace Yagura.Web.Circuits;
 
 /// <summary>
-/// circuit 確立経路のガード（M8-4。Issue #71）: origin 検証（security.md §2.1）と
+/// circuit 確立経路のガード（M8-4）: origin 検証（security.md §2.1）と
 /// circuit 数上限（同 §2.2。SEC-1 仮値）。
 /// </summary>
 /// <remarks>

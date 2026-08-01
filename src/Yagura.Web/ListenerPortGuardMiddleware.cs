@@ -6,7 +6,7 @@ namespace Yagura.Web;
 
 /// <summary>
 /// 管理系エンドポイント（<see cref="ListenerPortGuardEndpointMetadata.Admin"/> を持つもの）が
-/// 管理リスナ以外のポートから実行されないことを強制するミドルウェア（M6-1。Issue #51）。
+/// 管理リスナ以外のポートから実行されないことを強制するミドルウェア（M6-1）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -35,7 +35,7 @@ namespace Yagura.Web;
 /// 存在自体を非 loopback クライアントへ漏らさない）。
 /// </para>
 /// <para>
-/// <b>拒否の監査記録（M6-2。Issue #52。security.md §1 L-3b「拒否 + 監査記録」）</b>:
+/// <b>拒否の監査記録（M6-2。security.md §1 L-3b「拒否 + 監査記録」）</b>:
 /// 拒否時に <see cref="IAuditRecorder"/>（実体は <c>Yagura.Host</c> が DI で結線する
 /// <c>FileAuditRecorder</c>）へ 1 件記録し、<see cref="WebGuardMetrics"/> へ拒否カウンタを
 /// 計上する。監査記録の書き込みは非同期だが、**応答（404）は監査記録の完了を待たずに返す

@@ -6,7 +6,7 @@ using System.Text;
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// フォワーダ配布キット（ZIP）の組み立て（ADR-0008 設計条件 3・4・7・8・9）。
+/// フォワーダ配布キット（ZIP）の組み立て（ADR-0008 設計条件 7）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -110,7 +110,7 @@ public static class ForwarderKitBuilder
             // conf・install.ps1・uninstall.ps1・Lua は Fluent Bit（または PowerShell）が
             // パースする実行時アーティファクトのため BOM なし（WriteEntry 既定。下記参照）。
             // README・GENERATED.txt は人間が読む専用の生成物のため BOM 付きにする
-            // （Issue #127: Windows PowerShell 5.1 の Get-Content や既定コードページの
+            // （Windows PowerShell 5.1 の Get-Content や既定コードページの
             // コンソールで日本語が文字化けするのを防ぐ）。
             WriteEntry(archive, EntryNames.Conf, conf, generatedAt);
             WriteEntry(archive, EntryNames.InstallScript, installScript, generatedAt);
@@ -314,7 +314,7 @@ public static class ForwarderKitBuilder
     /// パースする実行時アーティファクトであり、install.ps1 の設定書き出し（BOM なし UTF-8。
     /// Fluent Bit のパーサが BOM を想定しない）と同じ判断を適用する。
     /// <c>README.md</c> ・ <c>GENERATED.txt</c> は人間が読む専用の生成物であり、これらの
-    /// プログラムはパースしないため <see langword="true"/> を渡す（Issue #127: Windows
+    /// プログラムはパースしないため <see langword="true"/> を渡す（Windows
     /// PowerShell 5.1 の既定 <c>Get-Content</c> や既定コードページのコンソールで日本語が
     /// 文字化けするのを防ぐ。BOM があれば PowerShell 5.1 も UTF-8 と正しく認識する）。
     /// </param>
