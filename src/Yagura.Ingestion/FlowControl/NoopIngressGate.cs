@@ -8,7 +8,7 @@ namespace Yagura.Ingestion.FlowControl;
 /// <remarks>
 /// 流量制御を opt-out（<c>Ingestion:FlowControl:Enabled = false</c>）した構成、および
 /// 流量制御を伴わないテスト・ベンチの既定として使う。既定有効の本実装は
-/// <see cref="TokenBucketIngressGate"/>（Issue #260）。
+/// <see cref="TokenBucketIngressGate"/>。
 /// </remarks>
 public sealed class NoopIngressGate : IIngressGate
 {

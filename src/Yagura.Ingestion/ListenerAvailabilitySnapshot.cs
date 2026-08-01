@@ -1,7 +1,7 @@
 namespace Yagura.Ingestion;
 
 /// <summary>
-/// 受信リスナの「今この瞬間の受信可否」のスナップショット（ADR-0018 委任 6。Issue #351）。
+/// 受信リスナの「今この瞬間の受信可否」のスナップショット（ADR-0018 委任 6）。
 /// <see cref="IngestionPipeline.ListenerAvailability"/> が返す。
 /// </summary>
 /// <remarks>

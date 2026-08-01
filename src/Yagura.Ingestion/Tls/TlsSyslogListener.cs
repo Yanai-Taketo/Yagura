@@ -16,21 +16,21 @@ using Yagura.Storage;
 namespace Yagura.Ingestion.Tls;
 
 /// <summary>
-/// syslog over TLS の受信段（RFC 5425。TCP 6514。opt-in・既定無効。security.md §6。Issue #137）。
+/// syslog over TLS の受信段（RFC 5425。TCP 6514。opt-in・既定無効。security.md §6）。
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>既存 TCP パイプラインとの関係</b>: Accept ループ・同時接続数上限・IPv4/IPv6 デュアルスタック
 /// bind（<see cref="DualStackTcpListenerFactory"/>）は <see cref="Yagura.Ingestion.Tcp.TcpSyslogListener"/>
 /// と同一の実装を共有する。Accept 後、平文 TCP は <c>NetworkStream</c> をそのまま読むのに対し、
-/// 本クラスは <see cref="SslStream"/> でラップしてサーバ認証（相互 TLS はスコープ外——security.md §6・
-/// Issue #137 のオーナー決定 2026-07-10「サーバ認証のみ」）のハンドシェイクを行ってから、
+/// 本クラスは <see cref="SslStream"/> でラップしてサーバ認証（相互 TLS はスコープ外——security.md §6
+/// 「サーバ認証のみ」）のハンドシェイクを行ってから、
 /// 同じ読み取りループ（<see cref="Yagura.Ingestion.Tcp.TcpFramedConnectionProcessor"/>）へ渡す。
 /// </para>
 /// <para>
 /// <b>octet-counting の強制</b>（RFC 5425 §4.3）: <see cref="TcpFrameDecoderOptions.RequireOctetCounting"/>
 /// を <c>true</c> にして構成する——non-transparent-framing を検出した接続は最初のチャンクで
-/// 即座に切断する（PR #169 の A+B 天井を含む既存 <see cref="Yagura.Ingestion.Tcp.TcpFrameDecoder"/>
+/// 即座に切断する（A+B 天井を含む既存 <see cref="Yagura.Ingestion.Tcp.TcpFrameDecoder"/>
 /// をそのまま流用。<see cref="Yagura.Ingestion.Tcp.TcpFrameDecoderOptions"/> 参照）。
 /// </para>
 /// <para>
@@ -220,7 +220,7 @@ public sealed class TlsSyslogListener : IAsyncDisposable
 
                 await using var sslStream = new SslStream(networkStream, leaveInnerStreamOpen: false);
 
-                // TLS ハンドシェイクの完了猶予（PR #225 レビュー指摘 High——未認証 DoS の遮断）:
+                // TLS ハンドシェイクの完了猶予（未認証 DoS の遮断）:
                 // ClientHello を送らない（または途中で黙る）接続がハンドシェイク段階のまま同時接続枠を
                 // 占有し続けることを防ぐ。アイドル・フレーミング進捗タイムアウトはハンドシェイク成功後の
                 // 読み取りループにしか効かないため、ハンドシェイク専用の天井を張る（TlsSyslogListenerOptions
@@ -234,8 +234,8 @@ public sealed class TlsSyslogListener : IAsyncDisposable
 
                 try
                 {
-                    // サーバ認証のみ（相互 TLS はスコープ外。security.md §6・Issue #137 オーナー決定
-                    // 2026-07-10）。期限切れの証明書であっても提示し続ける——止めない判断は
+                    // サーバ認証のみ（相互 TLS はスコープ外。security.md §6）。
+                    // 期限切れの証明書であっても提示し続ける——止めない判断は
                     // クラス remarks のとおり。TLS 1.2 以上・1.3 優先（configuration.md §6・
                     // security.md §2.5 の管理 UI HTTPS と同じ固定値）。
                     var authOptions = new SslServerAuthenticationOptions

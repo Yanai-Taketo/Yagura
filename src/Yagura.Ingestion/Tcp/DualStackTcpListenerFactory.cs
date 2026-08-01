@@ -7,11 +7,11 @@ namespace Yagura.Ingestion.Tcp;
 
 /// <summary>
 /// IPv6 ワイルドカード（<c>::</c>）向けの DualMode <see cref="TcpListener"/> を作成する共通処理
-/// （Issue #133 で <see cref="TcpSyslogListener"/> 向けに実装されたものを、TLS 受信リスナ
-/// （<see cref="Yagura.Ingestion.Tls.TlsSyslogListener"/>。Issue #137）と共有するために抽出した）。
+/// （<see cref="TcpSyslogListener"/> 向けに実装されたものを、TLS 受信リスナ
+/// （<see cref="Yagura.Ingestion.Tls.TlsSyslogListener"/>）と共有するために抽出した）。
 /// </summary>
 /// <remarks>
-/// IPv6 スタックが無効な環境（PR #193 レビュー指摘 Major）の分岐は UDP 側
+/// IPv6 スタックが無効な環境の分岐は UDP 側
 /// （<c>UdpSyslogListener.CreateDualModeUdpClientOrFallBack</c>）と対称: 既定値
 /// （<paramref name="bindAddressIsExplicit"/> = <c>false</c>）なら IPv4 ワイルドカードへ自動縮小して
 /// 警告ログを出し、明示指定なら復旧手順を含むエラーで起動を失敗させる。
@@ -36,7 +36,7 @@ internal static class DualStackTcpListenerFactory
         {
             listener = new TcpListener(IPAddress.IPv6Any, port);
 
-            // DualMode ソケット（Issue #133）。TcpListener.Server は Start() 前であれば
+            // DualMode ソケット。TcpListener.Server は Start() 前であれば
             // 直接設定できる（.NET の確立されたパターン——Kestrel 側の同種の扱いは
             // Yagura.Host.ListenerBindPlan の remarks 参照）。
             listener.Server.DualMode = true;

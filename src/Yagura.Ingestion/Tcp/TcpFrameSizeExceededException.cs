@@ -7,16 +7,15 @@ namespace Yagura.Ingestion.Tcp;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Issue #143 での再スコープ</b>: 当初は 1 メッセージのバイト数上限
-/// （<see cref="TcpFrameDecoderOptions.MaxMessageLength"/>）超過もこの例外で表していたが、
+/// <b>スコープ</b>: 1 メッセージのバイト数上限
+/// （<see cref="TcpFrameDecoderOptions.MaxMessageLength"/>）超過はこの例外では表さない——
 /// 上限超過は「MSG-LEN 自体は正しく読み取れている」「1 行の長さが分かっている」ため再同期
-/// 可能であり、接続を切断するほどの安全側判断は過剰と判断した。現在はサイズ上限超過（octet-
+/// 可能であり、接続を切断するほどの安全側判断は過剰である。サイズ上限超過（octet-
 /// counting・non-transparent-framing のいずれも）は<b>当該メッセージのみを破棄して接続を維持する
 /// </b>（<see cref="TcpFrameDecoder.OversizedMessagesDiscardedCount"/> で計上。呼び出し元の
 /// カウンタ・ログへの反映は <see cref="TcpSyslogListener"/> が担う）。本例外は、フレーム境界の
 /// 手がかり自体を失う「再同期不能な深刻な破損」と、再同期の見込みがないまま読み捨てが続く
-/// 「再同期バイト数上限超過」（PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09）に用途を
-/// 絞った。
+/// 「再同期バイト数上限超過」に用途を絞る。
 /// </para>
 /// <para>
 /// 呼び出し元（<see cref="TcpSyslogListener"/>）はこの例外を「安全側」として扱い、接続を
@@ -46,7 +45,7 @@ public sealed class TcpFrameSizeExceededException : Exception
 
     /// <summary>
     /// 例外送出までに、同一の <see cref="TcpFrameDecoder.Push"/> 呼び出し内で境界が確定していた
-    /// 正常メッセージの一覧（PR #169 レビュー指摘への対応）。呼び出し元
+    /// 正常メッセージの一覧。呼び出し元
     /// （<see cref="TcpSyslogListener"/>）は接続を切断する前にこれらを Q1 へ流す——例外とともに
     /// 確定済みメッセージまで黙って失うと、Q1 未到達かつどのカウンタにも現れない無計上の
     /// 喪失経路になり、「損失は必ずどれかのカウンタに計上される」（architecture.md §3.1・§4.1）
@@ -68,8 +67,7 @@ public enum TcpFrameViolationKind
 
     /// <summary>
     /// 再同期バイト数上限（<see cref="TcpFrameDecoderOptions.MaxResyncBytes"/>）の超過——
-    /// 有効なメッセージが 1 件も確定しないまま読み捨てたバイト数が上限を超えた
-    /// （PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09）。
+    /// 有効なメッセージが 1 件も確定しないまま読み捨てたバイト数が上限を超えた。
     /// </summary>
     ResyncByteLimitExceeded,
 }

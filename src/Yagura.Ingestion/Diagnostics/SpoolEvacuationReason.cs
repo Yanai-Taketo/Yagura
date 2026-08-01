@@ -1,7 +1,7 @@
 namespace Yagura.Ingestion.Diagnostics;
 
 /// <summary>
-/// スプール退避の契機（architecture.md §3.2.1 の 2 形態 + 停止時ドレイン。Issue #271 / M-7）。
+/// スプール退避の契機（architecture.md §3.2.1 の 2 形態 + 停止時ドレイン）。
 /// <c>yagura.ingestion.spool.evacuated</c> カウンタの <c>reason</c> タグ値になる。
 /// </summary>
 /// <remarks>

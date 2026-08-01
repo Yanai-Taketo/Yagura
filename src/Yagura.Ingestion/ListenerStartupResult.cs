@@ -1,9 +1,8 @@
 namespace Yagura.Ingestion;
 
 /// <summary>
-/// 受信リスナ起動（<see cref="IngestionPipeline.StartListenerAsync"/>）の結果
-/// （Issue #291。#141 原子的起動の反転——2026-07-16 オーナー裁定）。
-/// 環境要因の bind 失敗はもはや起動全体を失敗させず、開けたリスナで縮小継続する。
+/// 受信リスナ起動（<see cref="IngestionPipeline.StartListenerAsync"/>）の結果。
+/// 環境要因の bind 失敗は起動全体を失敗させず、開けたリスナで縮小継続する。
 /// </summary>
 /// <param name="Udp">UDP リスナの帰結。</param>
 /// <param name="Tcp">TCP リスナの帰結。</param>
@@ -42,7 +41,7 @@ public enum ListenerStartupStatus
 }
 
 /// <summary>
-/// bind 再試行（CF-6）による受信再開の通知（Issue #291）。ホスト側が受信断区間
+/// bind 再試行（CF-6）による受信再開の通知。ホスト側が受信断区間
 /// （<c>downtime.listener-bind-retry</c>）のシステムイベント記録に使う。
 /// </summary>
 /// <param name="ProtocolLabel">リスナの別（"UDP" / "TCP" / "TLS"）。</param>

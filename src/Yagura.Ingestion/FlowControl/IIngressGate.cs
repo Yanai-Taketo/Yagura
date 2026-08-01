@@ -8,7 +8,7 @@ namespace Yagura.Ingestion.FlowControl;
 /// </summary>
 /// <remarks>
 /// 実装は 2 つ: 送信元単位の token bucket による判定・破棄を行う
-/// <see cref="TokenBucketIngressGate"/>（既定有効。ADR-0002 決定 2。Issue #260）と、
+/// <see cref="TokenBucketIngressGate"/>（既定有効。ADR-0002 決定 2）と、
 /// 無条件で通す <see cref="NoopIngressGate"/>（<c>Ingestion:FlowControl:Enabled = false</c> の
 /// opt-out 構成用）。どちらを結線するかはホスト（<c>Yagura.Host.Program</c>）が設定から選ぶ。
 /// </remarks>

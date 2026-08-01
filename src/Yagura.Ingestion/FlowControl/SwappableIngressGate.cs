@@ -3,7 +3,7 @@ using System.Net;
 namespace Yagura.Ingestion.FlowControl;
 
 /// <summary>
-/// 実装を実行中に差し替えられる <see cref="IIngressGate"/> のラッパー（CF-4 層1。Issue #262）。
+/// 実装を実行中に差し替えられる <see cref="IIngressGate"/> のラッパー（CF-4 層1）。
 /// 設定ライブ再読み込みで <c>Ingestion:FlowControl:*</c> を無瞬断で反映するための差し込み口。
 /// </summary>
 /// <remarks>
