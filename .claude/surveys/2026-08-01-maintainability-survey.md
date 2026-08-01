@@ -132,6 +132,15 @@
 - **Phase 4: テスト基盤(E)** — `Yagura.TestSupport` 新設 → FindRepositoryRoot / 一時パス / Fake 集約 → 否定証明フレーク源の是正
 - **Phase 5: 残存重複(C)と中リスク分割(D の 5〜9)** — 個別判断。`IngestionPipeline` は触らない
 
+## 4.1 Phase 1 実施記録(2026-08-01・本ブランチで完了)
+
+- conventions.md に「コードコメント規約」を追記(コミット 2c4b3d9)
+- src/ 全 5 プロジェクトをディレクトリ分担の 9 エージェントで浄化し、範囲ごとにコミット(Program.cs / Abstractions / Web·Components / Storage / Host·Configuration / Host·その他 / Host·Observability / Ingestion / Web·その他)
+- 総差分: **233 ファイル、-1,845 行 / +1,595 行**(全てコメント行のみ。文字列リテラル・コードは無変更)
+- 残存する禁止パターン: コメント内はゼロ。残る数件は (a) ログ/通知/SQL の**文字列リテラル内**の Issue 番号(挙動に関わるため本 Phase では対象外。後続判断)、(b) ベンチ実測フォルダ名・時刻表示例など正当な日付、(c) 「ブロックリスト」が「クリス」に部分一致する等の誤検出
+- 検証: `dotnet build`(TreatWarningsAsErrors)警告ゼロで成功。テストは main と本ブランチで失敗集合が**完全一致**(Host 25・Ingestion 8・E2E 23・Bench 3・Conformance 77 — すべて DPAPI/Windows EventLog/SID/IPv6 デュアルスタック/SQL Server 実接続など Linux 実行環境起因の既存事象)。**回帰ゼロ**
+- 未実施(後続): tests/ 配下のコメント浄化(ADR 参照 280 件)、文字列リテラル内 Issue 番号の扱いの決定
+
 ## 5. 参考数値一覧
 
 | 指標 | 値 |
