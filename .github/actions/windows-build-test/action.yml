@@ -1,0 +1,61 @@
+# Windows ランナー上のビルド・単体テストの共通手順（ci.yml の推奨区分マトリクスとカナリアが共用）。
+#
+# OS ごとにジョブを分けると本体が丸ごと重複するため、手順側を 1 か所に集約する。
+# これにより「推奨区分へ OS を 1 つ足す」操作が ci.yml の matrix へ 1 行足すだけで済み、
+# ジョブ本体のコピーが増えない（ADR-0024 決定 5 の保守手順）。
+name: Windows build and test
+description: .NET のセットアップ・SQL Server LocalDB の確保・restore・build・test を行う。
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        global-json-file: global.json
+
+    # SQL Server 適合テスト（M5-3）の CI 実行手段。
+    #
+    # 実体検証（確認日 2026-07-05）: actions/runner-images の Windows イメージ README は
+    # SQL Server / LocalDB を standalone サービスとして掲載しない（Visual Studio の
+    # ワークロード構成要素としては含まれるが、これは VS のコンポーネントであり独立した保証ではない）。
+    # actions/runner-images issue #3691 のメンテナ回答が結論を与える: sqllocaldb.exe の存在は
+    # 保証せず、`sqllocaldb info` で確認して無ければ公式 MSI をその場で導入する防御的パターンを
+    # 推奨している。本ステップはそれをそのまま採る（potatoqualitee/mssqlsuite 等の外部アクションは
+    # 不採用——必要なのは LocalDB のみで、依存を増やすほどの利益がない）。
+    #
+    # ランナー image は OS ごとに構成が異なるため、本パターンは新しい OS を足したときの
+    # 「LocalDB が入っていない」差異を自動的に吸収する。
+    - name: Ensure SQL Server LocalDB is available
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Continue"
+        Write-Host "Checking for existing MSSQLLocalDB instance..."
+        $instanceExists = & sqllocaldb info MSSQLLocalDB 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $instanceExists) {
+          Write-Host "MSSQLLocalDB not found. Downloading official SqlLocalDB.msi..."
+          Import-Module BitsTransfer
+          Start-BitsTransfer -Source https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SqlLocalDB.msi -Destination SqlLocalDB.msi
+          Write-Host "Installing SqlLocalDB.msi..."
+          Start-Process -FilePath "SqlLocalDB.msi" -Wait -ArgumentList "/qn", "/norestart", "/l*v SqlLocalDBInstall.log", "IACCEPTSQLLOCALDBLICENSETERMS=YES"
+        } else {
+          Write-Host "MSSQLLocalDB instance already registered."
+        }
+
+        # sqllocaldb.exe はネイティブ実行ファイルであり -ErrorAction は使えない。
+        # インスタンスが既に存在する場合の "create" の失敗は無視してよいため終了コードを見ない。
+        sqllocaldb create MSSQLLocalDB
+        sqllocaldb start MSSQLLocalDB
+        sqllocaldb info MSSQLLocalDB
+
+    - name: Restore
+      shell: pwsh
+      run: dotnet restore
+
+    - name: Build
+      shell: pwsh
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Test
+      shell: pwsh
+      run: dotnet test --configuration Release --no-build
