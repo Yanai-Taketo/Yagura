@@ -72,10 +72,7 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         }
 
         var recordedVersion = await ReadSchemaVersionAsync(connection, cancellationToken).ConfigureAwait(false);
-
-        // 版表なし + 表が既存 = バージョン管理導入前（v1 相当）。版表なし + 表も新規 = 上の DDL が
-        // 最新形状で作ったため移行不要。
-        var fromVersion = recordedVersion ?? (adminAccountsExistedBefore ? 1 : CurrentSchemaVersion);
+        var fromVersion = SchemaMigrationRunner.ResolveMigrationStartVersion(recordedVersion, adminAccountsExistedBefore, CurrentSchemaVersion);
 
         await ApplyMigrationsAsync(connection, fromVersion, cancellationToken).ConfigureAwait(false);
 
@@ -239,7 +236,7 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         command.CommandText =
             "SELECT Username, PasswordHash, LastLoginAtUtc, CreatedAtUtc, UpdatedAtUtc FROM dbo.AdminAccounts " +
             "WHERE UsernameNormalized = @normalized;";
-        command.Parameters.AddWithValue("@normalized", Normalize(username));
+        command.Parameters.AddWithValue("@normalized", AdminUsernameNormalization.Normalize(username));
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -283,7 +280,7 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
             WHEN NOT MATCHED THEN INSERT (UsernameNormalized, Username, PasswordHash, LastLoginAtUtc, CreatedAtUtc, UpdatedAtUtc)
                 VALUES (@normalized, @username, @hash, NULL, @at, @at);
             """;
-        command.Parameters.AddWithValue("@normalized", Normalize(username));
+        command.Parameters.AddWithValue("@normalized", AdminUsernameNormalization.Normalize(username));
         command.Parameters.AddWithValue("@username", username);
         command.Parameters.AddWithValue("@hash", passwordHash);
         command.Parameters.AddWithValue("@at", atUtc.UtcDateTime);
@@ -300,9 +297,7 @@ public sealed class SqlServerAdminAccountStore : IAdminAccountStore
         await using var command = connection.CreateCommand();
         command.CommandText = "UPDATE dbo.AdminAccounts SET LastLoginAtUtc = @at WHERE UsernameNormalized = @normalized;";
         command.Parameters.AddWithValue("@at", atUtc.UtcDateTime);
-        command.Parameters.AddWithValue("@normalized", Normalize(username));
+        command.Parameters.AddWithValue("@normalized", AdminUsernameNormalization.Normalize(username));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
-
-    private static string Normalize(string username) => username.Trim().ToLowerInvariant();
 }

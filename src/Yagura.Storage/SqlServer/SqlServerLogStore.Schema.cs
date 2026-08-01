@@ -139,22 +139,15 @@ public sealed partial class SqlServerLogStore
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            var recordedVersion = await ReadSchemaVersionAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
-
-            if (recordedVersion is null)
-            {
-                // 新規作成: 上の DDL が直接 v2 形状（NVARCHAR(MAX)・COLLATE 済み）で作成しているため、
-                // 列の移行作業は不要——現行バージョンをそのまま記録する。
-                await RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else if (recordedVersion.Value < CurrentSchemaVersion)
-            {
-                await ApplyMigrationsAsync(connection, transaction, recordedVersion.Value, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            // recordedVersion.Value == CurrentSchemaVersion の場合: 既に適用済みのため列移行は行わない。
+            // 新規作成（上の DDL が直接 v2 形状で作成済み）なら列の移行は不要で現行版をそのまま
+            // 記録し、既存データベースからの移行なら列移行ステップを適用する
+            // （SchemaMigrationRunner 参照）。
+            await SchemaMigrationRunner.RunAsync(
+                () => ReadSchemaVersionAsync(connection, transaction, cancellationToken),
+                CurrentSchemaVersion,
+                recordFreshVersion: () => RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken),
+                applyMigrationsFrom: fromVersion => ApplyMigrationsAsync(connection, transaction, fromVersion, cancellationToken))
+                .ConfigureAwait(false);
 
             // 索引の作成は列の COLLATE/長さが確定した後でなければならない（SourceAddress を含む
             // 複合索引を先に作ると、後続の ALTER COLUMN が「索引がこの列に依存している」として

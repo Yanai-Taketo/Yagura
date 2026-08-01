@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Configuration;
+using Yagura.Storage;
 
 namespace Yagura.Host.Administration;
 
@@ -83,7 +84,7 @@ public sealed class PromotionWizardService : IPromotionWizardService
         _connectionValidator = connectionValidator;
         _auditRecorder = auditRecorder;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _serviceAccountName = serviceAccountName ?? ResolveCurrentAccountName();
+        _serviceAccountName = serviceAccountName ?? CurrentProcessAccount.ResolveName();
         _lastActivityAt = _timeProvider.GetUtcNow();
     }
 
@@ -571,16 +572,6 @@ public sealed class PromotionWizardService : IPromotionWizardService
         PromotionConnectionFailureKind.DatabaseNotFound => "データベース不在",
         _ => "分類不能",
     };
-
-    /// <summary>
-    /// サービスの実行アカウント名（Windows 統合認証で SQL Server 側に見える名前——画面表示と
-    /// 修復 SQL の実値に使う。database.md §6.1）。本製品は Windows 専用（ADR-0001）であり、
-    /// 非 Windows 分岐は CA1416（プラットフォーム互換性解析）を満たすためのガード。
-    /// </summary>
-    private static string ResolveCurrentAccountName() =>
-        OperatingSystem.IsWindows()
-            ? System.Security.Principal.WindowsIdentity.GetCurrent().Name
-            : Environment.UserName;
 
     /// <summary>
     /// 検証済み状態・実行トークンの無効化（入力の変更・タイムアウト・完了時。検証は「現に

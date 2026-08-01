@@ -179,28 +179,14 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            var recordedVersion = await ReadSchemaVersionAsync(connection, transaction, cancellationToken)
+            // 初回作成（DDL が既に v2 形状で作成済み）なら現行版をそのまま記録し、既存 v1
+            // データベースからの移行なら移行ステップを適用する（SchemaMigrationRunner 参照）。
+            await SchemaMigrationRunner.RunAsync(
+                () => ReadSchemaVersionAsync(connection, transaction, cancellationToken),
+                CurrentSchemaVersion,
+                recordFreshVersion: () => RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken),
+                applyMigrationsFrom: fromVersion => ApplyMigrationsAsync(connection, transaction, fromVersion, cancellationToken))
                 .ConfigureAwait(false);
-
-            if (recordedVersion is null)
-            {
-                // 初回作成（このデータベースファイルが今回新規に作られた）。上の DDL ブロックが
-                // 既に v2 形状（複合索引を含む）で作成済みのため、現行バージョンをそのまま記録する。
-                await RecordSchemaVersionAppliedAsync(connection, transaction, CurrentSchemaVersion, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else if (recordedVersion.Value < CurrentSchemaVersion)
-            {
-                // 既存 v1 データベースからの移行。将来のバージョン追加時は、ここに
-                // recordedVersion から CurrentSchemaVersion までの移行ステップを順に適用し、
-                // 最後に SchemaVersion.Version を更新する（適用済み移行の再適用を避ける冪等性は、
-                // この version 比較そのものが担保する）。
-                await ApplyMigrationsAsync(connection, transaction, recordedVersion.Value, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            // recordedVersion.Value == CurrentSchemaVersion の場合: 既に適用済みのため何もしない
-            // （冪等性——database.md §1.2「既に適用済みなら何もしない」）。
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
