@@ -6,6 +6,7 @@ using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Ingestion.Tests.Persistence;
 
@@ -16,26 +17,23 @@ namespace Yagura.Ingestion.Tests.Persistence;
 /// </summary>
 public sealed class PersistenceWriterSpoolWriteFailedNotificationTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-spoolwritefail-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _spoolDirectory = new("spoolwritefail-tests");
 
     public void Dispose()
     {
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _spoolDirectory.Dispose();
     }
 
     [Fact]
     public async Task SpoolWriteAlwaysFails_WarnsWithEventId1005_SuppressesWithinWindow_WarnsAgainAfterWindow()
     {
-        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(spool);
 
         // TryOpen 直後にディレクトリ自体を消し、以降の追記（FileStream の CreateNew）が
         // DirectoryNotFoundException（IOException のサブクラス）で必ず失敗する状況を作る
         // （DiskSpool.AppendFrameUnderGate はリトライ後に SpoolAppendResult.WriteFailed を返す）。
-        Directory.Delete(_spoolDirectory, recursive: true);
+        Directory.Delete(_spoolDirectory.Path, recursive: true);
 
         var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
         {
@@ -103,7 +101,7 @@ public sealed class PersistenceWriterSpoolWriteFailedNotificationTests : IDispos
         // ADR-0017 委任 10（Issue #369）: 恒久障害の開始通知は EventId 1030 を持つ——
         // 採番なし（= 0）のままだとメール通知プロバイダが構造的に捕捉できず、
         // イベントログの機械照合もできない。
-        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(spool);
 
         var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)
@@ -150,7 +148,7 @@ public sealed class PersistenceWriterSpoolWriteFailedNotificationTests : IDispos
         // ADR-0015 決定 5（Issue #418）: Windows 統合認証の接続失敗と分類できた恒久障害は、
         // 実行主体と失敗種別を含む 1031 を出し、同一例外で 1030 と二重警告にしない。
         // 抑制窓は 1030 と共有する（単一の窓が両 ID を律速する）。
-        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(spool);
 
         var q2 = Channel.CreateBounded<LogRecord>(new BoundedChannelOptions(16)

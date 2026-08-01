@@ -3,6 +3,7 @@ using Yagura.Ingestion.Diagnostics;
 using Yagura.Ingestion.Persistence;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Ingestion.Tests.Persistence;
 
@@ -14,14 +15,11 @@ namespace Yagura.Ingestion.Tests.Persistence;
 /// </summary>
 public sealed class PersistenceWriterResilienceTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-spool-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _spoolDirectory = new("spool-tests");
 
     public void Dispose()
     {
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _spoolDirectory.Dispose();
     }
 
     [Fact]
@@ -36,7 +34,7 @@ public sealed class PersistenceWriterResilienceTests : IDisposable
 
         // 1 回目の WriteBatchAsync は例外、2 回目以降は成功する ILogStore スタブ。
         var store = new ThrowOnceLogStore();
-        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _);
+        var spool = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _);
         Assert.NotNull(spool);
 
         using var metrics = new IngestionMetrics();

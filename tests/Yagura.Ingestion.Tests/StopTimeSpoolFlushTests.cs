@@ -5,6 +5,7 @@ using Yagura.Ingestion.Tcp;
 using Yagura.Ingestion.Udp;
 using Yagura.Storage;
 using Yagura.Storage.Spool;
+using Yagura.TestSupport;
 
 namespace Yagura.Ingestion.Tests;
 
@@ -16,14 +17,11 @@ namespace Yagura.Ingestion.Tests;
 /// </summary>
 public sealed class StopTimeSpoolFlushTests : IDisposable
 {
-    private readonly string _spoolDirectory = Path.Combine(Path.GetTempPath(), $"yagura-stopflush-tests-{Guid.NewGuid():N}");
+    private readonly TestTempDirectory _spoolDirectory = new("stopflush-tests");
 
     public void Dispose()
     {
-        if (Directory.Exists(_spoolDirectory))
-        {
-            Directory.Delete(_spoolDirectory, recursive: true);
-        }
+        _spoolDirectory.Dispose();
     }
 
     [Fact]
@@ -35,7 +33,7 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
         // メモリ上の未永続化ログがスプールへ退避されることを確認する。
         var neverCompletingStore = new NeverCompletingLogStore();
 
-        using (var spool1 = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out var openFailure1))
+        using (var spool1 = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out var openFailure1))
         {
             Assert.NotNull(spool1);
             Assert.Null(openFailure1);
@@ -71,7 +69,7 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
 
         // --- 前回退避分がスプールに残っていることを確認する（起動手順 1 の「前回退避分の
         // 存在確認」に相当）。
-        using (var reopened = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _))
+        using (var reopened = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _))
         {
             Assert.NotNull(reopened);
             Assert.True(reopened!.CurrentUsageBytes > 0);
@@ -80,7 +78,7 @@ public sealed class StopTimeSpoolFlushTests : IDisposable
         // --- 2 回目の「起動」: 正常に書き込める DB で drain し、スプール分が届くことを確認する。
         var recoveredStore = new RecordingLogStore();
 
-        using (var spool2 = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory }, out _))
+        using (var spool2 = DiskSpool.TryOpen(new DiskSpoolOptions { Directory = _spoolDirectory.Path }, out _))
         {
             Assert.NotNull(spool2);
 

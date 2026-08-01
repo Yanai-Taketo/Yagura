@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Yagura.Ingestion\Yagura.Ingestion.csproj" />
     <ProjectReference Include="..\..\src\Yagura.Storage\Yagura.Storage.csproj" />
+    <ProjectReference Include="..\Yagura.TestSupport\Yagura.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>
