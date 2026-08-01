@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Yagura.Web\Yagura.Web.csproj" />
+    <ProjectReference Include="..\Yagura.TestSupport\Yagura.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>

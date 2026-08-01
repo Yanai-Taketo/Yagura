@@ -1,5 +1,6 @@
 using System.Text;
 using Yagura.Storage;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.Tests.ArchitectureTests;
 
 namespace Yagura.Web.Tests.Export;
@@ -222,10 +223,9 @@ public sealed class LogSearchCsvExportEndpointTests
     /// <summary>
     /// <see cref="ILogStore"/> のフェイク（Issue #157 のエンドポイントテスト専用）。
     /// <see cref="QueryAsync"/> だけを実体化し、渡された <see cref="LogQuery"/> を
-    /// <see cref="LastQuery"/> として記録する。他メンバーは本テストの対象外
-    /// （<c>ViewerHostHarness.NoopLogStore</c> と同じ流儀で <see cref="NotSupportedException"/>）。
+    /// <see cref="LastQuery"/> として記録する。
     /// </summary>
-    private sealed class FakeLogStore : ILogStore
+    private sealed class FakeLogStore : LogStoreTestDouble
     {
         private readonly IReadOnlyList<LogRecordSummary> _records;
         private readonly bool _returnExactlyLimit;
@@ -244,15 +244,9 @@ public sealed class LogSearchCsvExportEndpointTests
 
         public LogQuery? LastQuery { get; private set; }
 
-        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public override Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default)
+        public override Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default)
         {
             LastQuery = query;
 
@@ -264,29 +258,5 @@ public sealed class LogSearchCsvExportEndpointTests
 
             return Task.FromResult(_records);
         }
-
-        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(DateTimeOffset cutoff, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
-
-        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("本フェイクは QueryAsync 専用。");
     }
 }

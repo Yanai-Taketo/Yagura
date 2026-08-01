@@ -3,6 +3,7 @@ using Yagura.Bench.LoadGeneration;
 using Yagura.Bench.Reporting;
 using Yagura.Bench.Verification;
 using Yagura.Ingestion.Diagnostics;
+using Yagura.TestSupport;
 
 namespace Yagura.Bench.Tests;
 
@@ -186,7 +187,7 @@ public sealed class BaselineComparatorTests
     {
         // リポジトリの実ファイル（tools/Yagura.Bench/baselines/ci-baseline.json）が
         // 実際にパース可能であることを確認する（CI がこのファイルを読めなくなる回帰の防止）。
-        var repoRoot = FindRepositoryRoot();
+        var repoRoot = RepositoryPaths.FindRoot();
         var baselinePath = Path.Combine(repoRoot, "tools", "Yagura.Bench", "baselines", "ci-baseline.json");
 
         Assert.True(File.Exists(baselinePath), $"基準値ファイルが見つからない: {baselinePath}");
@@ -214,17 +215,5 @@ public sealed class BaselineComparatorTests
         Assert.False(baselineFile.Scenarios["SustainedZeroDrop"].EnforceRatio, "SustainedZeroDrop の比判定は情報表示（M-5 実測の双峰性が根拠）。");
         Assert.True(baselineFile.Scenarios["ProviderWriteCeiling"].RequireReconciled);
         Assert.True(baselineFile.Scenarios["SustainedZeroDrop"].RequireReconciled);
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
     }
 }

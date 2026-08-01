@@ -27,6 +27,7 @@
       ResolveYaguraHostDllPath が AppContext.BaseDirectory から Yagura.Host.dll を解決するため）。
     -->
     <ProjectReference Include="..\..\tools\Yagura.Bench\Yagura.Bench.csproj" />
+    <ProjectReference Include="..\Yagura.TestSupport\Yagura.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>

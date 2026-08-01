@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.ForwarderKit;
 using Yagura.Web.Tests.ArchitectureTests;
 
@@ -276,12 +277,5 @@ public sealed class ForwarderKitDownloadEndpointTests
         var path = Path.Combine(directory, fileName);
         File.WriteAllBytes(path, [1, 2, 3, 4, 5]);
         return path;
-    }
-
-    private sealed class FakeForwarderMsiSource(string folderPath, ForwarderMsiLookup lookup) : IForwarderMsiSource
-    {
-        public string FolderPath => folderPath;
-
-        public ForwarderMsiLookup Lookup(ForwarderMsiArchitecture architecture) => lookup;
     }
 }

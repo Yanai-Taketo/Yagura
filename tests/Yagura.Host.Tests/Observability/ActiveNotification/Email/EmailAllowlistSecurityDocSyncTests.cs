@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Yagura.Host.Observability.ActiveNotification.Email;
+using Yagura.TestSupport;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification.Email;
 
@@ -72,7 +73,7 @@ public sealed class EmailAllowlistSecurityDocSyncTests
 
     private static List<DocumentedRow> ParseMailColumn()
     {
-        var path = Path.Combine(FindRepositoryRoot(), "docs", "design", "security.md");
+        var path = Path.Combine(RepositoryPaths.FindRoot(), "docs", "design", "security.md");
         var rows = new List<DocumentedRow>();
 
         foreach (var line in File.ReadLines(path))
@@ -106,17 +107,5 @@ public sealed class EmailAllowlistSecurityDocSyncTests
         }
 
         return rows;
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Yagura.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir?.FullName
-            ?? throw new InvalidOperationException("Yagura.sln を含むリポジトリルートが見つからない。");
     }
 }

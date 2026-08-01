@@ -4,6 +4,7 @@ using Yagura.Abstractions.Observability;
 using Yagura.Host.Configuration;
 using Yagura.Host.Observability.ActiveNotification.SourceSilence;
 using Yagura.Storage;
+using Yagura.TestSupport.Fakes;
 
 namespace Yagura.Host.Tests.Observability.ActiveNotification.SourceSilence;
 
@@ -279,51 +280,14 @@ public sealed class SourceSilenceAdminServiceTests : IDisposable
     }
 
     /// <summary>候補選択（QuerySourceActivityAsync）だけを差し替える最小の ILogStore。</summary>
-    private sealed class FakeLogStore : ILogStore
+    private sealed class FakeLogStore : LogStoreTestDouble
     {
         internal IReadOnlyList<SourceActivity> SourceActivities { get; set; } = [];
 
-        public Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
+        public override Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(
             int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<SourceActivity>>([.. SourceActivities.Take(limit)]);
 
-        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-        public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(
-            int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<LogRecordSummary>> QueryAsync(
-            LogQuery query, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task WriteSystemEventAsync(SystemEvent systemEvent, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<DeleteOlderThanResult> DeleteOlderThanAsync(
-            DateTimeOffset cutoff, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
-            DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(
-            DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(
-            DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+        public override Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

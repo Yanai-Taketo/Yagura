@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Yagura.TestSupport.Fakes;
 using Yagura.Web.Administration.Screens;
 using Yagura.Web.Components.Common;
 using Yagura.Web.ForwarderKit;
@@ -166,13 +167,6 @@ public sealed class ForwarderKitScreenRenderTests
     private sealed class FakeNicCandidateSource(IReadOnlyList<NicCandidate> candidates) : INicCandidateSource
     {
         public IReadOnlyList<NicCandidate> GetCandidates() => candidates;
-    }
-
-    private sealed class FakeForwarderMsiSource(string folderPath, ForwarderMsiLookup lookup) : IForwarderMsiSource
-    {
-        public string FolderPath => folderPath;
-
-        public ForwarderMsiLookup Lookup(ForwarderMsiArchitecture architecture) => lookup;
     }
 
     private sealed class FakeForwarderMsiStore : IForwarderMsiStore
