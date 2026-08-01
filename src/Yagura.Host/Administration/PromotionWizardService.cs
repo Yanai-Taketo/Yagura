@@ -6,8 +6,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Administration;
 
 /// <summary>
-/// 本番昇格（SQLite → SQL Server）ウィザードの実体（<see cref="IPromotionWizardService"/>。
-/// M8-4 骨格 = Issue #71。接続組み立て・失敗分類・修復 SQL 提示の UX 完成 = PR #102）。
+/// 本番昇格（SQLite → SQL Server）ウィザードの実体（<see cref="IPromotionWizardService"/>。M8-4）。
 /// </summary>
 /// <remarks>
 /// <para>

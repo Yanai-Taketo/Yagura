@@ -6,7 +6,7 @@ namespace Yagura.Host.Administration.AdminAuthentication;
 
 /// <summary>
 /// AD グループ指定（名 <c>DOMAIN\Group</c> または SID <c>S-1-...</c>）を SID 集合へ解決する
-/// （SEC-9。ADR-0010 決定 5・7・委任事項 8）。起動時に一度だけ実行し、結果を
+/// （SEC-9。ADR-0010 決定 5）。起動時に一度だけ実行し、結果を
 /// <see cref="Yagura.Web.Administration.WindowsGroupAuthorizationOptions"/> として DI へ供給する。
 /// </summary>
 /// <remarks>
@@ -67,7 +67,7 @@ public static class WindowsSecurityGroupResolver
             // 既に SID 形式（S-1-...）で与えられた指定は変換問い合わせを発さずに正規化して受理する。
             // ただし「S- で始まるが正しい SID ではない」場合はここで捨てず、名解決へフォールバックする——
             // 「S-」で始まる実在グループ名（ドメイン修飾なし）を SID 形式の誤りと誤判定して黙殺しないため
-            // （SEC-9 レビュー指摘）。
+            // （SEC-9）。
             if (trimmed.StartsWith("S-", StringComparison.OrdinalIgnoreCase) && TryParseSidValue(trimmed, out var sidValue))
             {
                 result.Add(sidValue);
@@ -86,7 +86,7 @@ public static class WindowsSecurityGroupResolver
     }
 
     /// <summary>
-    /// 名（<c>DOMAIN\Group</c> 等）→ SID 変換の全体タイムアウト（レビュー指摘: 鈴木）。<c>NTAccount.Translate</c> は
+    /// 名（<c>DOMAIN\Group</c> 等）→ SID 変換の全体タイムアウト。<c>NTAccount.Translate</c> は
     /// DC/LSA へ同期問い合わせを発し、DC 不達時は最悪数十秒ブロックしうる。この解決は起動シーケンス上
     /// リスナ bind より前に走るため、無制限だと <b>syslog 受信の開始をブロックする（ロス窓）</b>。全名を並列に
     /// 解決し、単一のこの締切で有界化する——締切超過分は解決不能として除外（認可を付与しない安全側）し、

@@ -8,7 +8,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Administration.Https;
 
 /// <summary>
-/// <see cref="IAdminRemoteAccessAdminService"/> の実体（ADR-0012 決定 1・4・7。B2 増分）。
+/// <see cref="IAdminRemoteAccessAdminService"/> の実体（ADR-0012 決定 4。B2 増分）。
 /// 管理リスナのリモートバインド + HTTPS の既存 4 キーを、保存前 fail-closed 検証つきで
 /// <c>yagura.json</c> へ保存し、監査記録（イベント ID 2011/2012）する。
 /// </summary>

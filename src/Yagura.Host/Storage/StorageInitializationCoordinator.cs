@@ -12,15 +12,14 @@ namespace Yagura.Host.Storage;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>なぜ起動経路から外すのか</b>: 従来は <c>Program.cs</c> が <c>app.RunAsync()</c> の前に
-/// <see cref="IAdminAccountStore.InitializeAsync"/> を、<c>IngestionHostedService</c> が
-/// 消費ループ開始の前に <see cref="ILogStore.InitializeAsync"/> を、いずれも try/catch なしで
-/// 待っていた。保存先が SQL Server で到達不能だと <c>SqlException</c> が未処理例外となり
-/// プロセスが即死する（Issue #466）——受信パイプラインは同じ障害でスプールへ正しく縮退するのに、
-/// 初期化だけが縮退せず「DB 障害中は再起動できない」状態を作っていた。
+/// <b>なぜ起動経路から外すのか</b>: 初期化を起動経路（<c>Program.cs</c> の <c>app.RunAsync()</c> 前や
+/// <c>IngestionHostedService</c> の消費ループ開始前）で try/catch なしに待つと、保存先が SQL Server で
+/// 到達不能な場合に <c>SqlException</c> が未処理例外となりプロセスが即死する——受信パイプラインは
+/// 同じ障害でスプールへ正しく縮退するのに、初期化だけが縮退せず「DB 障害中は再起動できない」
+/// 状態を作ってしまう。
 /// </para>
 /// <para>
-/// <b>接続の天井だけでは足りない</b>（ADR-0023 決定 1・round 2 鈴木の指摘）: 初期化は接続確認では
+/// <b>接続の天井だけでは足りない</b>（ADR-0023 決定 1）: 初期化は接続確認では
 /// なく DDL + スキーマ移行であり、<c>SqlServerLogStore</c> は移行コマンドに
 /// <c>CommandTimeout = 0</c>（無制限。DB-10 の実測が根拠）を明示している。接続に上限を課しても
 /// 移行が起動経路に残れば SCM の起動待ち（30 秒）は破れる。したがって**初期化そのものを
@@ -36,7 +35,7 @@ namespace Yagura.Host.Storage;
 /// <para>
 /// <b>回復契機は周期監視のみ</b>: 「利用時（ログイン要求）」を契機にした再試行は行わない——
 /// 未認証の要求で任意に保存先への接続試行を誘発でき、接続・スレッドの占有と保存先への増幅に
-/// なるため（ADR-0023 決定 1。田中・クリスの指摘）。本クラスを呼ぶのは
+/// なるため（ADR-0023 決定 1）。本クラスを呼ぶのは
 /// <c>ActiveNotificationMonitor</c> だけである。
 /// </para>
 /// </remarks>

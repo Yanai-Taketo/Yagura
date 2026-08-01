@@ -16,7 +16,7 @@ namespace Yagura.Web.ForwarderKit;
 /// （MSI 自体は OLE 構造化ストレージ）に格納されており、この経路が正攻法である。
 /// </para>
 /// <para>
-/// <b>MsiGetFileVersion を使ってはならない（Issue #436。実測で確定）</b>: 初版実装は
+/// <b>MsiGetFileVersion を使ってはならない（実測で確定）</b>: 初版実装は
 /// 「<c>MsiGetFileVersionW</c> を MSI ファイル自身に呼び出すと ProductVersion 相当を返す」という
 /// 前提だったが、この前提は実機（Windows Server 2025）で成立しない——公式 fluent-bit MSI・
 /// WiX 7 製 MSI のいずれに対しても <c>ERROR_FILE_INVALID</c> (1006) を返した。

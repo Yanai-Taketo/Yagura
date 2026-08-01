@@ -1,7 +1,7 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// 本番昇格後の蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5。Issue #266）。
+/// 本番昇格後の蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5）。
 /// 昇格ウィザードの切替実行 + サービス再起動の**後**に、旧 SQLite ファイルに残った蓄積ログを
 /// 現行 provider（SQL Server）へ移送する管理操作。
 /// </summary>

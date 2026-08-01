@@ -1,8 +1,8 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// 初期セットアップウィザードの契約（configuration.md §3〜§7・ui.md §4「設定（ウィザード群）」。
-/// M8-4。Issue #71）。書き込み系サービスであるため <see cref="IYaguraWriteService"/> を実装する
+/// 初期セットアップウィザードの契約（configuration.md §3〜§7・ui.md §4「設定（ウィザード群）」）。
+/// 書き込み系サービスであるため <see cref="IYaguraWriteService"/> を実装する
 /// （security.md §1 L-5 の参照分離検査の対象——閲覧リスナ側コンポーネントから参照してはならない）。
 /// </summary>
 /// <remarks>
@@ -35,7 +35,7 @@ public interface ISetupWizardService : IYaguraWriteService
 
     /// <summary>
     /// 直前に確定したステップの確定を取り消し、そのステップへ戻る（前進専用ではなく、確定済みの
-    /// 前ステップを再編集できるようにする——オーナー指摘）。確定済みの入力値は保持し、戻り先ステップの
+    /// 前ステップを再編集できるようにする）。確定済みの入力値は保持し、戻り先ステップの
     /// フォームに再表示できるようにする。取り消すのは「最後に確定した 1 ステップ」のみ。確認ステップを
     /// 取り消す場合は発行済みの適用用冪等トークンも破棄する（前ステップの値が変わり得るため確認は再度行う）。
     /// </summary>
@@ -45,7 +45,7 @@ public interface ISetupWizardService : IYaguraWriteService
     Task<SetupWizardSnapshot> GoBackAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 適用済みの設定の再編集を開始する（Issue #248——適用完了後の画面を行き止まりにしない）。
+    /// 適用済みの設定の再編集を開始する（適用完了後の画面を行き止まりにしない）。
     /// 現在の設定ファイル（yagura.json）の内容をウィザードの入力値へ写像し、3 つの入力ステップを
     /// 確定済み扱いで再開する（次ステップは <see cref="SetupWizardStep.Review"/>——編集したい
     /// ステップへは確定済みステップとして任意に移動できる）。適用ロック（適用済み状態）は解除され、

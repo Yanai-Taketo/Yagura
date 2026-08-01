@@ -18,14 +18,14 @@ internal enum EmailEnqueueOutcome
     SuppressedByRateLimit,
 
     /// <summary>
-    /// メール通知が無効構成のため受け付けなかった（Issue #384——無効期間中の蓄積を作らない。
+    /// メール通知が無効構成のため受け付けなかった（無効期間中の蓄積を作らない。
     /// カウンタも増やさない）。
     /// </summary>
     Disabled,
 }
 
 /// <summary>
-/// メール通知の有界キュー + 流量制御（ADR-0017 決定 5・6。委任 11）。
+/// メール通知の有界キュー + 流量制御（ADR-0017 委任 11）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -80,7 +80,7 @@ internal sealed class EmailNotificationQueue
     }
 
     /// <summary>
-    /// メール通知が有効構成か（Issue #384）。無効の間は <see cref="TryEnqueue"/> を受け付けない
+    /// メール通知が有効構成か。無効の間は <see cref="TryEnqueue"/> を受け付けない
     /// ——無効期間中もキューへ蓄積すると、後日 UI で有効化した瞬間に滞留分（数日前の事象を
     /// 含み得る）が流量制御を経ずに一斉送信される（抑制・流量上限は投入時にのみ評価されるため、
     /// 送信時には効かない）。決定 5 の「無効への即時反映時はキュー破棄」と対で、無効「期間中」の
@@ -100,9 +100,9 @@ internal sealed class EmailNotificationQueue
     /// <summary>
     /// 送信されずに破棄された通知の累積数（常設カードの表示用）。<b>キュー溢れ（64 件超過）
     /// だけではない</b>——①キュー溢れ時の最古破棄 ②流量上限時に初報が押しのけた再送
-    /// ③再試行を戻す枠が無かった通知、の 3 経路の合計である（Issue #371——「キュー溢れ」と
+    /// ③再試行を戻す枠が無かった通知、の 3 経路の合計である（「キュー溢れ」と
     /// 表示すると、キューが一度も満杯になっていなくても計上され、存在しないキュー飽和を
-    /// 運用者に疑わせる。表示名も「送信されず破棄」へ揃えた）。
+    /// 運用者に疑わせるため。表示名も「送信されず破棄」へ揃えた）。
     /// </summary>
     internal int DroppedCount
     {
@@ -121,7 +121,7 @@ internal sealed class EmailNotificationQueue
 
     /// <summary>直近に抑制が発生した時刻（<see langword="null"/> = 一度も発生していない）。</summary>
     /// <remarks>書き込みは <see cref="_gate"/> 下で行われる。<see cref="DateTimeOffset"/> の
-    /// 非アトミック性による torn read を避けるため、読み取りも同じロック下で行う（Issue #371）。</remarks>
+    /// 非アトミック性による torn read を避けるため、読み取りも同じロック下で行う。</remarks>
     internal DateTimeOffset? LastSuppressedAt
     {
         get { lock (_gate) { return _lastSuppressedAt; } }
@@ -132,7 +132,7 @@ internal sealed class EmailNotificationQueue
     /// <summary>
     /// 抑制された EventId ごとの回数（常設カードの内訳表示用）。
     /// <b>累積回数だけでは「先週の 1 回の障害でついた数字」と「毎晩じわじわ増えている」が
-    /// 区別できず、何が届かなかったかも特定できない</b>（ADR-0017 決定 5。改訂 1 の指摘）。
+    /// 区別できず、何が届かなかったかも特定できない</b>（ADR-0017 決定 5）。
     /// </summary>
     internal IReadOnlyDictionary<int, int> SuppressedCountByEventId
     {
@@ -148,7 +148,7 @@ internal sealed class EmailNotificationQueue
     {
         if (!_acceptEnqueues)
         {
-            // 無効構成の間は受け付けない（Issue #384）。抑制・破棄のカウンタも増やさない——
+            // 無効構成の間は受け付けない。抑制・破棄のカウンタも増やさない——
             // 一度も有効化していない環境の常設カードに「抑制 N 件」が出て、無効な機能の
             // 保護動作を運用者に疑わせないため。
             return EmailEnqueueOutcome.Disabled;
@@ -307,7 +307,7 @@ internal sealed class EmailNotificationQueue
 
     private void RecordSuppressionUnderGate(EventId eventId, DateTimeOffset now)
     {
-        // 「抑制が発生している状態」の開始判定（Issue #384——1026 は状態が続く間 1 回だけ出す。
+        // 「抑制が発生している状態」の開始判定（1026 は状態が続く間 1 回だけ出す。
         // security.md §4.3）: 直前の抑制から再送間隔（60 分）以上空いていれば新しい状態の開始と
         // みなし、警告の持ち出しを予約する。窓内で抑制が続く限りは同一状態として追加予約しない
         // （状態解消 = 抑制なしで再送間隔が経過、で自然に再武装される）。
@@ -328,7 +328,7 @@ internal sealed class EmailNotificationQueue
     private int _lastSuppressedEventId;
 
     /// <summary>
-    /// 抑制状態の開始警告（1026）を 1 回だけ持ち出す（Issue #384）。発火はロギング呼び出し
+    /// 抑制状態の開始警告（1026）を 1 回だけ持ち出す。発火はロギング呼び出し
     /// （受信ホットパス上）ではなく送信ループ側で行うため、ここでは状態の受け渡しのみを行う
     /// ——ロック中・ロギング呼び出し中にログを書かない（本クラスの「ブロックせず・例外を
     /// 漏らさない」契約を保つ）。

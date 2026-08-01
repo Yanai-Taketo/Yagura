@@ -44,9 +44,8 @@ internal static class EmailSendFailureGuidance
             "SMTP サーバの証明書を検証できませんでした。社内 CA や自己署名の証明書を使っている場合、"
             + "その CA 証明書をこのサーバの「信頼されたルート証明機関」に取り込む必要があります。",
 
-        // SMTP AUTH 無効化の検出は送信層がサニタイズ前の生応答で行う（委任 12。Issue #385——
-        // 従来この分岐の中で detail の部分一致を試みていたが、detail は常に固定文言へ置換済みで
-        // 到達不能だった）。ここでは分類に応じた案内を返すだけにする。
+        // SMTP AUTH 無効化の検出は送信層がサニタイズ前の生応答で行う（委任 12）。
+        // ここでは分類に応じた案内を返すだけにする。
         EmailSendFailureKind.AuthenticationDisabledByServer =>
             "SMTP サーバ側で SMTP 認証（SMTP AUTH）自体が無効化されています。"
             + "**パスワードの誤りではないため、入力し直しても解決しません**"

@@ -7,7 +7,7 @@ namespace Yagura.Host.Observability.ActiveNotification.Email;
 /// <para>
 /// <see cref="ActiveNotificationConstants"/> と同じ運用——すべて「実測で確定するまでの
 /// 暫定値」である。ただし本クラスの値は、他の暫定値と違い<b>設定キーとして公開しない</b>
-/// （2026-07-18 オーナー決定。ADR-0017 改訂 1-E・configuration.md §8）。理由は 2 つ:
+/// （ADR-0017・configuration.md §8）。理由は 2 つ:
 /// ①未実測の仮値に設定面を作ると、後から既定を直したときに明示指定した利用者だけが
 /// 古い値に取り残される（キーは追加より削除・既定変更のほうが高くつく）②「簡単に導入できる」
 /// という製品の前提は設定キーの総数に直接効く。

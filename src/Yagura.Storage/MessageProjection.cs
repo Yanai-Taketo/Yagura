@@ -2,7 +2,7 @@
 
 /// <summary>
 /// 一覧射影用のメッセージ切り詰め（database.md §2.1「一覧は先頭 N 文字の射影」）。
-/// SQLite・SQL Server 両 provider で同一のロジックを使う（コードレビューで指摘された重複を解消）。
+/// SQLite・SQL Server 両 provider で同一のロジックを使う（重複実装を避ける）。
 /// </summary>
 internal static class MessageProjection
 {

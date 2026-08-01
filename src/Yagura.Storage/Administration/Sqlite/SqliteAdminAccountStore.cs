@@ -15,12 +15,10 @@ namespace Yagura.Storage.Administration.Sqlite;
 public sealed class SqliteAdminAccountStore : IAdminAccountStore, IAsyncDisposable
 {
     /// <summary>
-    /// 現行のスキーマバージョン。
-    /// v1（黙示。PR #217 まで）は <c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> を持つ形。
-    /// v2（ADR-0011 決定 8）: 両列を削除した（ハードロックアウトからバックオフ + レート制限への
-    /// supersession。失敗試行の判定はインメモリの <c>AdminAuthFailureDefense</c> に一本化）。
-    /// v3（ADR-0021 決定 1）: <c>CreatedAtUtc</c>/<c>UpdatedAtUtc</c> を追加した（アップロード機能の
-    /// 切替時点検が「既存アカウントの有無・最終変更時刻」を提示するため。既存行は NULL = 不明）。
+    /// 現行のスキーマバージョン。<c>AdminAccounts</c> テーブルは <c>UsernameNormalized</c>（主キー）・
+    /// <c>Username</c>・<c>PasswordHash</c>・<c>LastLoginAtUtc</c>・<c>CreatedAtUtc</c>・
+    /// <c>UpdatedAtUtc</c> の 6 列を持つ形が現行（<c>FailedAttemptCount</c>/<c>LockoutUntilUtc</c> は
+    /// 持たない——失敗試行の判定はインメモリの <c>AdminAuthFailureDefense</c> に一本化している）。
     /// <see cref="Yagura.Storage.Sqlite.SqliteLogStore.CurrentSchemaVersion"/>
     /// と同じ「バージョン表 + 移行ステップ」の作法を、<c>AdminAccounts</c> 専用の版管理テーブル
     /// （<c>AdminAccountsSchemaVersion</c>）で独立に持つ——<c>LogRecords</c> の
@@ -46,11 +44,11 @@ public sealed class SqliteAdminAccountStore : IAdminAccountStore, IAsyncDisposab
     /// <summary>
     /// スキーマを初期化する（冪等）。新規データベースは最新形状（v3）で直接作成する。既存
     /// データベースには記録済み版から現行版までの移行ステップを順に適用する
-    /// （<see cref="ApplyMigrationsAsync"/>）——PR #217 以前の v1 形状（ロックアウト 2 列を持つ）から
+    /// （<see cref="ApplyMigrationsAsync"/>）——ロックアウト 2 列を持つ旧形状（v1）から
     /// 上げる場合は v1 → v2（列削除。ADR-0011 決定 8）と v2 → v3（時刻列追加。ADR-0021 決定 1）が
     /// 順に走る。<c>AdminAccountsSchemaVersion</c> 表が存在しない場合でも、<c>AdminAccounts</c> 表が
     /// 既に存在すれば「バージョン管理導入前の v1 データベース」と判定して同じ移行を適用する
-    /// （バージョン表の導入は PR #217 が初めてのため、「バージョン表なし」は「新規」と
+    /// （バージョン表が存在しない世代のデータベースがあり得るため、「バージョン表なし」は「新規」と
     /// 「v1 からの無版数アップグレード」の両方を意味し得る——両者を <c>AdminAccounts</c> 表の
     /// 実在有無で区別する）。
     /// </summary>

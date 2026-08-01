@@ -17,8 +17,8 @@ namespace Yagura.Ingestion.Parsing;
 /// である（architecture.md §3.1・§3.2.1「容量: Q2 が満杯で新規投入分を受け取れない」）。
 /// <see cref="ChannelWriter{T}.TryWrite"/> を使い、Q2 が満杯で即座に書けない場合は
 /// ブロックせずスプールへ退避する（M2 時点の暫定挙動——Q2 の <c>WriteAsync</c> を
-/// await してバックプレッシャをかける実装——を本 M4-3 で置き換える。PR #28 オーナー
-/// 確認事項 1 の解消）。停止時（<see cref="RunAsync"/> の <c>stoppingToken</c> キャンセル後）
+/// await してバックプレッシャをかける実装——を本 M4-3 で置き換える）。停止時
+/// （<see cref="RunAsync"/> の <c>stoppingToken</c> キャンセル後）
 /// も同じスプール退避経路を使い、Q1 の残り・処理中の 1 件を DB を待たず退避する（§1.3 手順 2）。
 /// </remarks>
 public sealed class ParsingStage
@@ -35,7 +35,7 @@ public sealed class ParsingStage
     /// <param name="spool">Q2 満杯・停止時の退避先（縮退運転時は <see langword="null"/>）。</param>
     /// <param name="metrics">計測点。</param>
     /// <param name="defaultRfc3164TimeZone">
-    /// RFC 3164 TIMESTAMP の既定タイムゾーン（Issue #134。<see cref="SyslogParser.Parse"/> へ
+    /// RFC 3164 TIMESTAMP の既定タイムゾーン（<see cref="SyslogParser.Parse"/> へ
     /// そのまま渡す）。<see langword="null"/> は UTC（現状互換）。
     /// </param>
     /// <param name="logger">ロガー。</param>
@@ -70,7 +70,7 @@ public sealed class ParsingStage
 
     /// <summary>
     /// RFC 3164 TIMESTAMP の既定タイムゾーンを実行中に更新する（設定ライブ再読み込み。
-    /// CF-4 層1。Issue #262）。解析は 1 データグラムごとに本フィールドを読んで
+    /// CF-4 層1）。解析は 1 データグラムごとに本フィールドを読んで
     /// <see cref="SyslogParser.Parse"/> へ渡すため、参照の交換だけで次のデータグラムから
     /// 新しい解釈が使われる（解析途中のデータグラムは旧値で一貫して解釈される）。
     /// </summary>
@@ -144,7 +144,7 @@ public sealed class ParsingStage
 
     /// <summary>
     /// 1 データグラムを解析し、解析結果の異常（解析失敗・不完全）を計器へ計上する
-    /// （architecture.md §4.1「解析失敗（保存済み）」「TCP 不完全メッセージ」。Issue #270）。
+    /// （architecture.md §4.1「解析失敗（保存済み）」「TCP 不完全メッセージ」）。
     /// どちらも生データのまま保存され損失ではないが、「破棄・異常は必ず計上する」原則に従い
     /// 発生を計測可能にする。計上は解析直後の単一点で行い、後段（Q2 投入・スプール退避）の
     /// 経路によらず二重計上・計上漏れが起きないようにする。

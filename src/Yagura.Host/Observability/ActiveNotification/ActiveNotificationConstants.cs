@@ -2,7 +2,7 @@ namespace Yagura.Host.Observability.ActiveNotification;
 
 /// <summary>
 /// 能動通知の背景監視（<see cref="ActiveNotificationMonitor"/>）の暫定定数
-/// （architecture.md §9 実測待ち一覧 M-16。Issue #149）。
+/// （architecture.md §9 実測待ち一覧 M-16）。
 /// </summary>
 /// <remarks>
 /// <see cref="Yagura.Ingestion.PipelineConstants"/>・<see cref="Yagura.Storage.Spool.SpoolConstants"/>
@@ -51,7 +51,7 @@ public static class ActiveNotificationConstants
     /// 設定上の上限まで育つ前にディスクが枯渇し得るため、この値を安全側の閾値とした
     /// （実測未実施。ディスク全体に対する比率ではなく絶対値にしたのは、ターゲット環境の
     /// ディスクサイズが多様であり、比率だと大容量ディスクでは閾値が実質無意味に大きくなる
-    /// ため——本 Issue の実装判断）。
+    /// ため）。
     /// </summary>
     public const long MonitoredVolumeFreeSpaceMinBytes = 1L * 1024 * 1024 * 1024;
 
@@ -63,7 +63,7 @@ public static class ActiveNotificationConstants
     public const double ExpressNearLimitRatio = 0.8;
 
     /// <summary>
-    /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）が合成レコードを投入する周期
+    /// スプールの定期自己検証（architecture.md §3.2.5）が合成レコードを投入する周期
     /// （仮値: 1 日 1 回。architecture.md §9 M-11 で既に確定済みの仮値をそのまま採用する）。
     /// </summary>
     public static readonly TimeSpan SelfTestInterval = TimeSpan.FromDays(1);
@@ -83,8 +83,8 @@ public static class ActiveNotificationConstants
     /// <summary>
     /// サーバ証明書の有効期限接近を警告し始める残余期間（暫定値: 30 日）。管理リスナのリモート
     /// HTTPS（ADR-0010 Phase 2 決定 4。EventId 1014）と TLS 受信（security.md §6。EventId 1017）の
-    /// 両用途で共有する（#359 で命名を中立化した——同じ目的の閾値であり、用途別の値を採用すべき
-    /// 設計上の根拠が無い）。商用 CA・社内 CA の一般的な更新リードタイム（申請〜発行〜
+    /// 両用途で共有する（同じ目的の閾値であり、用途別の値を採用すべき
+    /// 設計上の根拠が無いため）。商用 CA・社内 CA の一般的な更新リードタイム（申請〜発行〜
     /// 差し替えに数日〜数週間）を吸収でき、かつ「まだ 1 か月ある」段階からの警告が抑制窓
     /// （<see cref="SuppressionWindow"/>）により 15 分に 1 回に留まることを踏まえた選定
     /// （実測・実運用フィードバック未実施——他の M-16 系仮値と同じ扱い）。

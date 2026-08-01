@@ -24,7 +24,7 @@ namespace Yagura.Ingestion.Udp;
 /// <see cref="IngestionMetrics.RecordInternalBufferDropped"/> で計上する。
 /// </para>
 /// <para>
-/// <b>受信エラー（SocketException）時の扱い（Issue #142）</b>: 個々の <c>ReceiveAsync</c>
+/// <b>受信エラー（SocketException）時の扱い</b>: 個々の <c>ReceiveAsync</c>
 /// 失敗（Windows の UDP では、直前の送信に対する ICMP ポート到達不能の反映等、環境依存の
 /// 一過性エラーが発生し得る）は読み取りループを止めない（§2.1「受信段はソケットからの読み取りに
 /// 専念する」）が、無言では握り潰さない。<see cref="IngestionMetrics.RecordUdpReceiveError"/>
@@ -34,7 +34,7 @@ namespace Yagura.Ingestion.Udp;
 /// 密ループによる CPU 浪費を防ぐ（単発エラーは backoff しない）。
 /// </para>
 /// <para>
-/// <b>IPv4/IPv6 デュアルスタック受信（Issue #133）</b>: <see cref="UdpSyslogListenerOptions.BindAddress"/>
+/// <b>IPv4/IPv6 デュアルスタック受信</b>: <see cref="UdpSyslogListenerOptions.BindAddress"/>
 /// が IPv6 ワイルドカード（<c>::</c>。既定値）のときは、<see cref="Socket.DualMode"/> を有効にした
 /// 単一ソケットで bind し、IPv4・IPv6 双方の送信元から受信する（<see cref="DualStackBindAddress"/>
 /// 参照）。DualMode ソケットが受ける IPv4 由来のデータグラムは <c>RemoteEndPoint.Address</c> が
@@ -46,20 +46,20 @@ namespace Yagura.Ingestion.Udp;
 public sealed class UdpSyslogListener : IAsyncDisposable
 {
     /// <summary>
-    /// 受信エラーログの抑制ウィンドウ（Issue #142）。この間隔内に発生した同種のログは
+    /// 受信エラーログの抑制ウィンドウ。この間隔内に発生した同種のログは
     /// 1 回にまとめ、抑制した件数を添えて出力する（持続的エラー時のログ溢れを防ぐ）。
     /// </summary>
     internal static readonly TimeSpan ReceiveErrorLogThrottleWindow = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// 連続受信エラー時の backoff の初期値（ミリ秒。Issue #142）。1 回目のエラーでは
+    /// 連続受信エラー時の backoff の初期値（ミリ秒）。1 回目のエラーでは
     /// backoff しない（<see cref="ComputeReceiveErrorBackoff"/> 参照）ため、2 回目の
     /// エラーで最初に適用される値になる。
     /// </summary>
     internal const int ReceiveErrorBackoffBaseMilliseconds = 10;
 
     /// <summary>
-    /// 連続受信エラー時の backoff の上限値（ミリ秒。Issue #142）。持続的エラー時の密ループに
+    /// 連続受信エラー時の backoff の上限値（ミリ秒）。持続的エラー時の密ループに
     /// よる CPU 浪費を防ぎつつ、過大な遅延で受信段の応答性を損なわないための上限。
     /// </summary>
     internal const int ReceiveErrorBackoffMaxMilliseconds = 1000;
@@ -74,7 +74,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     private Task? _receiveLoopTask;
     private CancellationTokenSource? _stoppingCts;
 
-    // 受信エラー時の backoff・ログ抑制の状態（Issue #142）。読み取りループ（単一タスク）
+    // 受信エラー時の backoff・ログ抑制の状態。読み取りループ（単一タスク）
     // からのみ更新される想定だが、直接ハンドラを呼ぶ単体テストからも呼ばれ得るため
     // 複数回呼び出しの直列実行のみを前提とする（並行呼び出しは想定しない）。
     private int _consecutiveReceiveErrors;
@@ -109,7 +109,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     public int BoundPort { get; private set; }
 
     /// <summary>
-    /// 現在の連続受信エラー回数（テスト用。Issue #142）。「受信が 1 回成立するたびに
+    /// 現在の連続受信エラー回数（テスト用）。「受信が 1 回成立するたびに
     /// 連続エラー回数がリセットされる」という <see cref="ReceiveLoopAsync"/> の中核挙動を
     /// 単体テストから観測するために internal 公開する。
     /// </summary>
@@ -149,7 +149,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
 
     /// <summary>
     /// IPv6 ワイルドカード（<c>::</c>）向けの DualMode ソケットを作成する。IPv6 スタックが
-    /// 無効な環境（PR #193 レビュー指摘 Major）では:
+    /// 無効な環境では:
     /// 既定値（<see cref="UdpSyslogListenerOptions.BindAddressIsExplicit"/> = <c>false</c>）なら
     /// IPv4 ワイルドカードへ自動縮小して警告ログを出し、明示指定なら復旧手順を含むエラーで
     /// 起動を失敗させる（<see cref="DualStackBindAddress.ShouldFallBackToIPv4Wildcard"/> の
@@ -163,7 +163,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             return HandleIPv6Unavailable(socketException: null);
         }
 
-        // DualMode ソケット（Issue #133）。UdpClient(IPEndPoint) は指定エンドポイントの
+        // DualMode ソケット。UdpClient(IPEndPoint) は指定エンドポイントの
         // アドレスファミリ単独のソケットを作るため、DualMode を有効にするには
         // AddressFamily 指定のコンストラクタで未 bind のソケットを作ってから
         // 明示的に DualMode を立て、その後 Bind する必要がある。
@@ -327,7 +327,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             {
                 // 個々のデータグラムでの受信エラーは読み取りループを止めない
                 // （§2.1「受信段はソケットからの読み取りに専念する」——エラーで停滞させない）。
-                // ただし無言では握り潰さない——ログ・メトリクス・backoff を行う（Issue #142）。
+                // ただし無言では握り潰さない——ログ・メトリクス・backoff を行う。
                 if (!await HandleReceiveErrorAsync(ex, stoppingToken).ConfigureAwait(false))
                 {
                     // backoff の待機中に停止要求（トークンのキャンセル）を受けた。
@@ -338,8 +338,8 @@ public sealed class UdpSyslogListener : IAsyncDisposable
                 continue;
             }
 
-            // 受信が成立したので連続エラーのカウントをリセットする（Issue #142。
-            // 次に SocketException が起きても「連続」の 1 回目からやり直す）。
+            // 受信が成立したので連続エラーのカウントをリセットする
+            // （次に SocketException が起きても「連続」の 1 回目からやり直す）。
             // Volatile.Write は ConsecutiveReceiveErrors（テスト用の観測点）が別スレッドから
             // リセットを確実に観測できるようにするため。
             Volatile.Write(ref _consecutiveReceiveErrors, 0);
@@ -348,12 +348,12 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             var receivedAt = DateTimeOffset.UtcNow;
 
             // DualMode ソケットが受けた IPv4 送信元は ::ffff:x.x.x.x として現れるため、
-            // 判定・記録の前に正規化する（Issue #133。DualStackBindAddress の remarks 参照）。
+            // 判定・記録の前に正規化する（DualStackBindAddress の remarks 参照）。
             var remoteAddress = DualStackBindAddress.NormalizeSourceAddress(result.RemoteEndPoint.Address);
 
             if (!_ingressGate.ShouldAdmit(remoteAddress, result.Buffer))
             {
-                // 流量制御による破棄（TokenBucketIngressGate。Issue #260）。破棄は必ず計上する
+                // 流量制御による破棄（TokenBucketIngressGate）。破棄は必ず計上する
                 // （「発火は必ず計測される」architecture.md §3.3）。
                 _metrics.RecordFlowControlDropped();
                 continue;
@@ -375,7 +375,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     }
 
     /// <summary>
-    /// UDP 受信ソケットの受信エラー（<see cref="SocketException"/>）を処理する（Issue #142）:
+    /// UDP 受信ソケットの受信エラー（<see cref="SocketException"/>）を処理する:
     /// メトリクスへ計上し、抑制付きでログ出力し、連続失敗の度合いに応じた backoff を待つ。
     /// </summary>
     /// <returns>
@@ -389,7 +389,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     /// </remarks>
     internal async Task<bool> HandleReceiveErrorAsync(SocketException ex, CancellationToken stoppingToken)
     {
-        // int.MaxValue で頭打ちにする（PR #163 レビュー指摘 2）: 無条件インクリメントだと
+        // int.MaxValue で頭打ちにする: 無条件インクリメントだと
         // 折り返し（オーバーフロー）で負値 → ComputeReceiveErrorBackoff の
         // consecutiveErrorCount <= 1 判定に該当し、持続的エラーの真っ最中に backoff が
         // 突然ゼロへ戻る。実務上は到達しない回数（最大 backoff 1000ms 換算で数十年オーダー）
@@ -422,7 +422,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     }
 
     /// <summary>
-    /// 連続受信エラー回数から backoff 時間を求める（Issue #142）。1 回目（単発）のエラーは
+    /// 連続受信エラー回数から backoff 時間を求める。1 回目（単発）のエラーは
     /// backoff しない——transient な単発エラーを不必要に遅延させないため。2 回目のエラーで
     /// 最初の backoff <see cref="ReceiveErrorBackoffBaseMilliseconds"/>（10ms）が適用され、
     /// 以降は指数的に伸ばし、<see cref="ReceiveErrorBackoffMaxMilliseconds"/> で頭打ちにする
@@ -435,8 +435,8 @@ public sealed class UdpSyslogListener : IAsyncDisposable
             return TimeSpan.Zero;
         }
 
-        // 指数は「2 回目 = 底値そのもの（シフト 0）」を起点にする（PR #163 レビュー指摘 1:
-        // 「10ms 起点」という文言と、実際に発生する最小 backoff を一致させる）。
+        // 指数は「2 回目 = 底値そのもの（シフト 0）」を起点にする——
+        // 「10ms 起点」という文言と、実際に発生する最小 backoff を一致させる。
         // シフト量はオーバーフロー防止のため頭打ちにする（上限到達後は Math.Min が効くため
         // 大きすぎるシフト量そのものは結果に影響しない）。
         var exponent = Math.Min(consecutiveErrorCount - 2, 10);
@@ -448,7 +448,7 @@ public sealed class UdpSyslogListener : IAsyncDisposable
     }
 
     /// <summary>
-    /// 受信エラーを抑制付きでログ出力する（Issue #142）。<see cref="ReceiveErrorLogThrottleWindow"/>
+    /// 受信エラーを抑制付きでログ出力する。<see cref="ReceiveErrorLogThrottleWindow"/>
     /// 内に発生した同種のログは 1 回にまとめ、抑制した件数を添えて出力する。
     /// </summary>
     private void LogReceiveErrorThrottled(SocketException ex, int consecutiveErrorCount)

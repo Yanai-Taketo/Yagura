@@ -1,8 +1,8 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// 管理リスナのリモートバインド + HTTPS（ADR-0010 Phase 2 決定 1・4）の設定を管理 UI から
-/// 保存・検証する契約（ADR-0012 決定 1・4）。
+/// 管理リスナのリモートバインド + HTTPS（ADR-0010 Phase 2 決定 1）の設定を管理 UI から
+/// 保存・検証する契約（ADR-0012 決定 4）。
 /// </summary>
 /// <remarks>
 /// <para>

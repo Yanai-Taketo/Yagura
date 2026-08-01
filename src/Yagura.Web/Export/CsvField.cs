@@ -1,8 +1,8 @@
 namespace Yagura.Web.Export;
 
 /// <summary>
-/// CSV フィールド 1 個のエスケープ（RFC 4180 準拠）と CSV インジェクション対策（Issue #157。
-/// ログ検索結果の CSV エクスポートで監査提出・Excel 取り込みに使われることを想定した対策）。
+/// CSV フィールド 1 個のエスケープ（RFC 4180 準拠）と CSV インジェクション対策
+/// （ログ検索結果の CSV エクスポートで監査提出・Excel 取り込みに使われることを想定した対策）。
 /// </summary>
 /// <remarks>
 /// <para>

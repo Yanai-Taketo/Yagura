@@ -8,7 +8,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Host.Configuration;
 
 /// <summary>
-/// サービス実行アカウントの証跡化（ADR-0015 決定 8。Issue #263。security.md §4.1・§4.3、
+/// サービス実行アカウントの証跡化（ADR-0015 決定 8。security.md §4.1・§4.3、
 /// configuration.md §4.4）:
 /// ①インストーラが書く構成記録（<c>service-account.ini</c>）の初回起動時のイベントログ転記
 /// （監査 2024。<see cref="Firewall.FirewallStartupInspector"/> の 2017 と同型のインストーラ由来

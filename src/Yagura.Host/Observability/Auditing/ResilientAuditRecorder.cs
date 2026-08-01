@@ -7,13 +7,13 @@ using Yagura.Web.Diagnostics;
 namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
-/// 監査チャネル障害中の事象保持・復旧後の書き戻し（SEC-10。security.md §4.2。Issue #269）。
+/// 監査チャネル障害中の事象保持・復旧後の書き戻し（SEC-10。security.md §4.2）。
 /// <see cref="FileAuditRecorder"/> をラップし、アプリ記録ファイルへの書き込みが失敗した事象を
 /// メモリ内に保持して、チャネル復旧後にファイルへ書き戻す。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>責務分界（Issue #52・#269）</b>: <see cref="FileAuditRecorder"/> は「1 事象を 2 チャネルへ
+/// <b>責務分界</b>: <see cref="FileAuditRecorder"/> は「1 事象を 2 チャネルへ
 /// 1 回書く」単責務に留め、失敗中の保持・書き戻しは本デコレータが担う（内側の
 /// <see cref="FileAuditRecorder.TryRecord"/> が返す書き込み成否で「アプリ記録ファイルへ確実に
 /// 残ったか」を判定する）。

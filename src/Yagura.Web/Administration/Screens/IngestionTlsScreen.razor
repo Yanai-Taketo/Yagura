@@ -12,7 +12,7 @@
 @inject IConfigurationReloadService ReloadService
 
 @*
-    TLS 受信の証明書設定画面（ADR-0019 決定 1・2・3・4・5b。Issue #349）。
+    TLS 受信の証明書設定画面（ADR-0019 決定 1）。
 
     - 管理リモート HTTPS（/admin/remote-access）とは別画面とし、相互リンクを置く（決定 1）。
       同じ証明書一覧が出る 2 画面の取り違えを防ぐため、見出し・説明文で用途を書き分ける
@@ -25,7 +25,7 @@
         秘密鍵が読めない : 管理 HTTPS = 警告   / TLS 受信 = 拒否
       「受信が止まる側を拒否し、止まらない側を警告に倒す」（決定 2）。画面はこの差分の理由も表示する
     - 反映は再起動（決定 4）。TLS だけでなく全受信が止まることを明示し、他画面の変更と
-      まとめて 1 回の再起動で反映するよう促す（再起動待ちキーの常設表示（#286）へ合流する）
+      まとめて 1 回の再起動で反映するよう促す（再起動待ちキーの常設表示へ合流する）
     - 証明書差し替え後の「全送信元が再接続できたか」の確認導線を置く（決定 5b。新しい観測機構は
       作らず、既存のダッシュボード・システム状態へのリンクのみ）
 *@
@@ -148,7 +148,7 @@ else
                         @if (candidate.IsExpired)
                         {
                             @* 期限切れ: 選択・保存とも可能。管理 HTTPS との挙動差分の説明を表示するのは
-                               受け入れ基準（決定 2・委任 4） *@
+                               受け入れ基準（決定 2） *@
                             <MudAlert Severity="Severity.Warning" Dense="true" Class="ml-8 mt-1">
                                 @UiText.IngestionTlsCertExpiredWarning
                             </MudAlert>
@@ -188,7 +188,7 @@ else
         <MudAlert Severity="Severity.Warning" Class="mt-4">@UiText.IngestionTlsCertExpiredWarning</MudAlert>
     }
 
-    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する(Issue #372)。 *@
+    @* 実行中の無効化(二重送信ガード)と例外の受け皿は YaguraButton が内蔵する。 *@
     <YaguraButton Role="YaguraButtonRole.Primary" Class="mt-4" OnClick="ApplyAsync">
         適用する
     </YaguraButton>
@@ -298,12 +298,12 @@ else
                     UiText.IngestionTlsSavedFormat, string.Join("、", result.ChangedKeys));
                 Notifier.NotifyOk(_savedSummary);
 
-                // 保存を再起動待ちカードへ計上する（ADR-0019 委任 2。Issue #388）: カード（#286）の
+                // 保存を再起動待ちカードへ計上する（ADR-0019 委任 2）: カードの
                 // データ源は再読み込みの実行時にしか更新されないため、保存成功後に自動で
-                // 再読み込みを実行する（#287 の SetupWizard と同じ経路。監査は保存 2020 と
-                // 反映 2016 の 2 件が別々に残る——#287 の裁定どおり統合しない）。対象キーは
+                // 再読み込みを実行する（SetupWizard と同じ経路。監査は保存 2020 と
+                // 反映 2016 の 2 件が別々に残る——統合しない）。対象キーは
                 // すべて RestartRequired であり適用は伴わない——「再起動待ち」の計上だけが
-                // 起きるため、#287 のようなオプトアウトは置かない。
+                // 起きるため、オプトアウトは置かない。
                 var reload = await ReloadService.ReloadAsync(
                     CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
                 if (reload.Rejected)

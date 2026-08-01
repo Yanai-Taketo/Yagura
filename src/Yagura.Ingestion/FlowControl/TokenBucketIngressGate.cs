@@ -5,7 +5,7 @@ namespace Yagura.Ingestion.FlowControl;
 
 /// <summary>
 /// 送信元単位の token bucket による流量制御（architecture.md §3.3。ADR-0002 決定 2 の
-/// 「送信元単位の流量制御（既定有効）」の実装。Issue #260）。
+/// 「送信元単位の流量制御（既定有効）」の実装）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -149,7 +149,7 @@ public sealed class TokenBucketIngressGate : IIngressGate, IFlowControlRejection
                 return true;
             }
 
-            // 送信元別の拒否カウント（Issue #288——「どの送信元が制限に達しているか」の可視化）。
+            // 送信元別の拒否カウント（「どの送信元が制限に達しているか」の可視化）。
             // 総数の計上（yagura.ingestion.flow_control.dropped）は従来どおり呼び出し元の責務。
             bucket.RejectedCount++;
             return false;
@@ -237,7 +237,7 @@ public sealed class TokenBucketIngressGate : IIngressGate, IFlowControlRejection
                 {
                     // 満杯のバケットは削除しても次の到着時に満杯で再生成されるため、
                     // 削除が判定結果を変えることはない（remarks「並行性」の過剰許可の議論参照）。
-                    // 拒否カウント（Issue #288）もバケットごと消える——これは意図した設計
+                    // 拒否カウントもバケットごと消える——これは意図した設計
                     // （可視化のために有界化を崩さない。IFlowControlRejectionReader remarks）。
                     // 「制限なく受信できる状態がしばらく続いた送信元は一覧から消える」として
                     // 表示側の説明文にも明示する。
@@ -264,7 +264,7 @@ public sealed class TokenBucketIngressGate : IIngressGate, IFlowControlRejection
         public long LastRefillTimestamp { get; set; } = createdTimestamp;
 
         /// <summary>
-        /// 本バケット生成からの拒否（破棄）件数（Issue #288。読み書きとも <see cref="SyncRoot"/> の
+        /// 本バケット生成からの拒否（破棄）件数（読み書きとも <see cref="SyncRoot"/> の
         /// lock 内で行う）。バケットの生存期間と同じ寿命——スイープでバケットごと消える
         /// （<see cref="IFlowControlRejectionReader"/> remarks 参照）。
         /// </summary>

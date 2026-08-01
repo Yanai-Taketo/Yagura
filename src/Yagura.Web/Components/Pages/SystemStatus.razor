@@ -5,7 +5,7 @@
 @inject Yagura.Web.Diagnostics.ReverseDnsMetrics ReverseDnsMetrics
 
 @*
-    システム状態（ui.md §4。M8-3。Issue #70）: 全カウンタ・ゲージの一覧・通知履歴・受信断履歴。
+    システム状態（ui.md §4。M8-3）: 全カウンタ・ゲージの一覧・通知履歴・受信断履歴。
     - カウンタは平易語（ui.md §7 用語対応表）と識別子（開発用語側のキー = 計器名）を併記する
       ——試用報告と設計文書を機械的に突合できるようにする準備（コピー様式は UI-7 で確定）
     - OS 受信破棄ゲージは値を表示しない（M8-3 の設計判断——検証済み環境で受信・破棄を一切
@@ -54,7 +54,7 @@
                 <MudTd DataLabel="@UiText.CounterColumnValue">@counter.Value.ToString("N0", CultureInfo.InvariantCulture)</MudTd>
             </RowTemplate>
         </YaguraTable>
-        @* OS 受信破棄の常時可視の説明（値の非表示 + 説明。計器自体も ADR-0016 決定 3 で撤去済み。ui.md §5.5） *@
+        @* OS 受信破棄の常時可視の説明（値の非表示 + 説明。ui.md §5.5） *@
         <div class="mt-2">
             <YaguraSystemNotice Severity="YaguraNoticeSeverity.Info"
                                 Message="@UiText.OsUdpDiscardExplanation"

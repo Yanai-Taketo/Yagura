@@ -1,11 +1,11 @@
 namespace Yagura.Host.Observability.ActiveNotification;
 
 /// <summary>
-/// サーバ証明書の現在の状態を照会する契約（PR #224 レビュー指摘 #2・#3 への対応）。
+/// サーバ証明書の現在の状態を照会する契約。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>用途は 1 つではない</b>（#359 で命名を中立化した）。実装は 2 つあり、
+/// <b>用途は 1 つではない</b>。実装は 2 つあり、
 /// <see cref="ActiveNotificationMonitor"/> が 2 系統を別々に結線する:
 /// </para>
 /// <list type="bullet">

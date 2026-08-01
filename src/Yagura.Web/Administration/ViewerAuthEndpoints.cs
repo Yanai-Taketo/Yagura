@@ -12,7 +12,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// 閲覧 UI ログイン/ログアウトの HTTP エンドポイント（ADR-0010 Phase 4 決定 7・SEC-9）。
+/// 閲覧 UI ログイン/ログアウトの HTTP エンドポイント（ADR-0010 Phase 4 決定 7）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,7 +22,7 @@ namespace Yagura.Web.Administration;
 /// :8514 では 404 になり、閲覧者のログイン経路にならない）。ルートは <c>/login</c> 系（<c>/admin/login</c> 系とは別）。
 /// </para>
 /// <para>
-/// <b>役割判定（決定 7・SEC-9）</b>: Windows ログインは AD グループ所属で役割を決める——閲覧の
+/// <b>役割判定（決定 7）</b>: Windows ログインは AD グループ所属で役割を決める——閲覧の
 /// 管理グループ（<c>Viewer:...:AdminGroups</c>）または 544 に該当すれば管理セッション（管理 ⊇ 閲覧）、
 /// 閲覧グループ（<c>Viewer:...:ViewerGroups</c>）に該当すれば閲覧セッション、いずれにも非所属なら拒否。
 /// アプリ独自ログイン（<c>/login/app</c>）は管理役割のみ（決定 5）——閲覧リスナ経由でも管理セッションを
@@ -202,7 +202,7 @@ internal static class ViewerAuthEndpoints
     }
 
     /// <summary>
-    /// Windows ログインの役割判定（ADR-0010 決定 7・SEC-9）: 管理グループ（<c>Viewer:...:AdminGroups</c> または 544）
+    /// Windows ログインの役割判定（ADR-0010 決定 7）: 管理グループ（<c>Viewer:...:AdminGroups</c> または 544）
     /// が優先（管理 ⊇ 閲覧）、次いで閲覧グループ（<c>Viewer:...:ViewerGroups</c>）、いずれも非所属なら
     /// <see cref="WindowsRole.None"/>。
     /// </summary>
@@ -224,7 +224,7 @@ internal static class ViewerAuthEndpoints
     private static async Task RecordViewerAuthorizationDeniedAsync(
         IAuditRecorder auditRecorder, HttpContext context, TimeProvider timeProvider)
     {
-        // Negotiate は成立したが閲覧/管理いずれのグループにも非所属（認証成功 ≠ 閲覧権限。決定 7・SEC-9）。
+        // Negotiate は成立したが閲覧/管理いずれのグループにも非所属（認証成功 ≠ 閲覧権限。決定 7）。
         // 管理側の AdminAuthorizationDenied（3008）と対をなす ViewerAuthorizationDenied（3009）。
         await auditRecorder.RecordAsync(new AuditEvent(
             OccurredAt: timeProvider.GetUtcNow(),

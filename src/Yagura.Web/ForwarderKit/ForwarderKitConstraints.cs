@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// フォワーダキット生成の置換値検証・版表明の単一ソース（ADR-0008 設計条件 5・委任 #2/#3）。
+/// フォワーダキット生成の置換値検証・版表明の単一ソース（ADR-0008 設計条件 5）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -65,10 +65,10 @@ public static class ForwarderKitConstraints
 }
 
 /// <summary>
-/// MSI オプトイン同梱（ADR-0008 設計条件 9・委任 #7）の定数。配置フォルダ・ファイル名パターン・
+/// MSI オプトイン同梱（ADR-0008 設計条件 9）の定数。配置フォルダ・ファイル名パターン・
 /// 公式配布 SHA256 の器を <see cref="ForwarderKitConstraints"/> とは別クラスに分離する
-/// ——設計条件 9 は既存の設計条件 1〜8 とは別の改訂（2026-07-07 amendment）で追加された事項であり、
-/// 将来 security.md へ実装細部を一本化する際（ADR-0008 改訂履歴 1 の申し送り）に本クラス単位で
+/// ——設計条件 9 は既存の設計条件 1〜8 とは別の改訂で追加された事項であり、
+/// 将来 security.md へ実装細部を一本化する際に本クラス単位で
 /// 移動しやすくする狙いもある。
 /// </summary>
 public static class ForwarderMsiConstraints
@@ -84,14 +84,14 @@ public static class ForwarderMsiConstraints
     /// MSI ファイル名パターン（x64。ADR-0008 設計条件 9）。実際の判定は
     /// <see cref="ForwarderMsiFilter.IsCandidateFileName(string)"/>（正規表現をコンパイル済みで保持）。
     /// ここでは人が読める表記として残す。ARM64 は <see cref="FileNamePatternArm64"/>
-    /// （ADR-0009 決定7・委任 #4）。
+    /// （ADR-0009 決定 7）。
     /// </summary>
     public const string FileNamePattern = "fluent-bit-*-win64.msi";
 
     /// <summary>
-    /// MSI ファイル名パターン（ARM64。ADR-0009 決定7・委任 #4）。Fluent Bit は公式に Windows
+    /// MSI ファイル名パターン（ARM64。ADR-0009 決定 7）。Fluent Bit は公式に Windows
     /// ARM64 向け MSI を <c>winarm64</c> サフィックスで配布している
-    /// （<c>https://packages.fluentbit.io/windows/</c>、2026-07-10 ライブ確認）。
+    /// （<c>https://packages.fluentbit.io/windows/</c> で確認済み）。
     /// </summary>
     public const string FileNamePatternArm64 = "fluent-bit-*-winarm64.msi";
 
@@ -101,7 +101,7 @@ public static class ForwarderMsiConstraints
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>2026-07-10 ライブ検証で確定</b>: <c>https://packages.fluentbit.io/windows/</c>
+    /// <b>ライブ検証で確定</b>: <c>https://packages.fluentbit.io/windows/</c>
     /// （公式配布ドメイン・HTTPS/TLS 検証済み）から <c>fluent-bit-5.0.8-win64.msi</c> を取得し、
     /// <c>Get-FileHash -Algorithm SHA256</c> で算出した値。Fluent Bit は個別パッケージ向けの
     /// 署名済みチェックサムファイル（<c>.sha256</c> 等）を公開していないため、「公式ハッシュ」の
@@ -123,7 +123,7 @@ public static class ForwarderMsiConstraints
     /// 検証済み Fluent Bit 版に対応する公式配布 MSI（ARM64）の SHA256（16 進小文字）。
     /// </summary>
     /// <remarks>
-    /// <b>2026-07-10 ライブ検証で確定</b>（ADR-0009 決定7・委任 #4）: 同日
+    /// <b>ライブ検証で確定</b>（ADR-0009 決定 7）:
     /// <c>https://packages.fluentbit.io/windows/fluent-bit-5.0.8-winarm64.msi</c>
     /// （23,796,327 バイト）を取得し、<c>Get-FileHash -Algorithm SHA256</c> で算出した値。
     /// 検証手順・根拠は <see cref="OfficialSha256ForVerifiedVersion"/> の remarks と同じ

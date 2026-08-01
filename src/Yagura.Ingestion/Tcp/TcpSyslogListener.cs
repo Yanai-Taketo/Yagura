@@ -33,8 +33,8 @@ namespace Yagura.Ingestion.Tcp;
 /// 停止中に接続数が無限に積み上がることを防ぐ有限化である。
 /// </para>
 /// <para>
-/// <b>アイドルタイムアウト</b>（§4.5・<see cref="TcpSyslogListenerOptions.IdleTimeout"/>。
-/// Issue #140）: 同時接続数上限は「読み取り停止中も接続を保持する」設計の帰結として必要な
+/// <b>アイドルタイムアウト</b>（§4.5・<see cref="TcpSyslogListenerOptions.IdleTimeout"/>）:
+/// 同時接続数上限は「読み取り停止中も接続を保持する」設計の帰結として必要な
 /// 有限化だが、それ自体が無言・低速な接続（何も送らない、または 1 バイトだけ送って黙る）に
 /// 占有され続けると、正常な送信元の新規接続が拒否され続ける（slowloris 型の資源枯渇）。
 /// 本実装は最後にバイトを読み取ってから <see cref="TcpSyslogListenerOptions.IdleTimeout"/> が
@@ -42,7 +42,7 @@ namespace Yagura.Ingestion.Tcp;
 /// <see cref="IngestionMetrics.RecordTcpConnectionIdleTimeout"/> で計上する。
 /// </para>
 /// <para>
-/// <b>1 メッセージの逸脱への耐性</b>（§4.5。Issue #143）: octet-counting のフレーム間に紛れた
+/// <b>1 メッセージの逸脱への耐性</b>（§4.5）: octet-counting のフレーム間に紛れた
 /// LF/CR は <see cref="TcpFrameDecoder"/> が寛容にスキップして再同期し、1 メッセージのサイズ
 /// 上限超過（octet-counting・non-transparent-framing とも）は当該メッセージのみを破棄して
 /// 接続を維持する（<see cref="TcpFrameDecoder.OversizedMessagesDiscardedCount"/> の差分を
@@ -50,7 +50,7 @@ namespace Yagura.Ingestion.Tcp;
 /// フレーミング違反（<see cref="TcpFrameSizeExceededException"/>）のときのみ接続を切断する。
 /// </para>
 /// <para>
-/// <b>寛容化の天井</b>（§4.5。PR #169 レビュー指摘 3 へのオーナー決定 2026-07-09）: 上記の
+/// <b>寛容化の天井</b>（§4.5）: 上記の
 /// 寛容化は、業界主流（rsyslog・syslog-ng・Fluent Bit 等のフレーミングエラー即切断）が持つ
 /// 一次防御を外した状態になるため、2 つの天井との組で同等の防御水準を保つ——
 /// ①<b>再同期バイト数上限</b>（<see cref="TcpSyslogListenerOptions.MaxResyncBytes"/>。有効な
@@ -69,12 +69,12 @@ namespace Yagura.Ingestion.Tcp;
 /// <see cref="RawDatagram.Incomplete"/> = <c>true</c> として Q1 へ流す（捨てない）。
 /// </para>
 /// <para>
-/// <b>TCP 接続断の計上</b>（§4.5。Issue #140）: 理由を問わず、接続が終了するたびに
+/// <b>TCP 接続断の計上</b>（§4.5）: 理由を問わず、接続が終了するたびに
 /// <see cref="IngestionMetrics.RecordTcpConnectionClosed"/> を 1 件計上する（損失ではなく
 /// 解釈の手がかり。アイドルタイムアウト由来の切断はこれに加えて専用カウンタも計上する）。
 /// </para>
 /// <para>
-/// <b>IPv4/IPv6 デュアルスタック受信（Issue #133）</b>: <see cref="TcpSyslogListenerOptions.BindAddress"/>
+/// <b>IPv4/IPv6 デュアルスタック受信</b>: <see cref="TcpSyslogListenerOptions.BindAddress"/>
 /// が IPv6 ワイルドカード（<c>::</c>。既定値）のときは、<see cref="Socket.DualMode"/> を有効にした
 /// 単一ソケットで bind し、IPv4・IPv6 双方からの接続を受け付ける（<see cref="DualStackBindAddress"/>
 /// 参照）。DualMode ソケットが受ける IPv4 由来の接続は <c>RemoteEndPoint.Address</c> が
@@ -121,8 +121,8 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         _metrics = metrics;
         _logger = logger;
         // フレーミング進捗タイムアウト（§4.5 の B）の経過時間判定に使う時計。テストが
-        // FakeTimeProvider を注入して実時間なしで決定的に検証できるようにする（Issue #215。
-        // UdpSyslogListener の backoff 検証と同じ注入パターン）。
+        // FakeTimeProvider を注入して実時間なしで決定的に検証できるようにする
+        // （UdpSyslogListener の backoff 検証と同じ注入パターン）。
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -150,7 +150,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         var bindAddress = IPAddress.Parse(_options.BindAddress);
         if (DualStackBindAddress.IsIPv6Wildcard(bindAddress))
         {
-            // Issue #137: TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）と共有する
+            // TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）と共有する
             // 共通処理へ委譲した（DualStackTcpListenerFactory の remarks 参照）。
             _tcpListener = DualStackTcpListenerFactory.CreateOrFallBack(_options.Port, _options.BindAddressIsExplicit, _logger);
         }
@@ -257,13 +257,13 @@ public sealed class TcpSyslogListener : IAsyncDisposable
     {
         var remoteEndPoint = client.Client.RemoteEndPoint as IPEndPoint;
         // DualMode ソケットが受けた IPv4 接続は ::ffff:x.x.x.x として現れるため正規化する
-        // （Issue #133。DualStackBindAddress の remarks 参照）。
+        // （DualStackBindAddress の remarks 参照）。
         var remoteAddress = remoteEndPoint is null ? null : DualStackBindAddress.NormalizeSourceAddress(remoteEndPoint.Address);
         var sourceAddress = remoteAddress?.ToString() ?? "unknown";
         var sourcePort = remoteEndPoint?.Port ?? 0;
 
         // 読み取りループ本体は TLS 受信リスナ（Yagura.Ingestion.Tls.TlsSyslogListener）と共有する
-        // （Issue #137。TcpFramedConnectionProcessor の remarks 参照——ソケット取得後は Stream の
+        // （TcpFramedConnectionProcessor の remarks 参照——ソケット取得後は Stream の
         // 抽象メンバーのみに依存するため、平文/TLS で複製する理由がない）。
         var processor = new TcpFramedConnectionProcessor(_q1Writer, _ingressGate, _metrics, _logger, _timeProvider);
 
@@ -294,7 +294,7 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         {
             Interlocked.Decrement(ref _currentConnectionCount);
 
-            // architecture.md §4.5「TCP 接続断」（Issue #140）: 理由を問わず接続終了を 1 件計上する。
+            // architecture.md §4.5「TCP 接続断」: 理由を問わず接続終了を 1 件計上する。
             _metrics.RecordTcpConnectionClosed();
         }
 
@@ -309,21 +309,21 @@ public sealed class TcpSyslogListener : IAsyncDisposable
         }
         else if (outcome.ResyncLimitExceeded)
         {
-            // オーナー決定 2026-07-09 の A: 再同期バイト数上限超過による切断（内訳計上。
+            // 再同期バイト数上限超過による切断（内訳計上。
             // ログは検出箇所で出力済み）。
             _metrics.RecordTcpConnectionResyncLimitExceeded();
         }
         else if (outcome.FramingProgressTimedOut)
         {
-            // オーナー決定 2026-07-09 の B: フレーミング進捗タイムアウトによる切断
+            // フレーミング進捗タイムアウトによる切断
             // （内訳計上。ログは検出箇所で出力済み）。
             _metrics.RecordTcpConnectionFramingTimeout();
         }
     }
 
     /// <summary>
-    /// 読み取り 1 回分のアイドルタイマー付きキャンセルソースを生成する（Issue #140。PR #169
-    /// レビュー指摘 1 への対応）。前回の読み取りで使ったソース（<paramref name="previous"/>）は
+    /// 読み取り 1 回分のアイドルタイマー付きキャンセルソースを生成する。前回の読み取りで
+    /// 使ったソース（<paramref name="previous"/>）は
     /// ——タイマー発火と読み取り成功が僅差で競合してキャンセル済みになっていたとしても——
     /// ここで必ず破棄され、新しいソースに置き換わる。「キャンセル済みソースへの
     /// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> は no-op」という .NET の仕様に

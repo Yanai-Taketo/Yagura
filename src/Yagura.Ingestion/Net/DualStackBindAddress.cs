@@ -4,7 +4,7 @@ using System.Net.Sockets;
 namespace Yagura.Ingestion.Net;
 
 /// <summary>
-/// UDP/TCP 受信リスナの bind 先解釈と、送信元アドレス表現の正規化を集約する（Issue #133）。
+/// UDP/TCP 受信リスナの bind 先解釈と、送信元アドレス表現の正規化を集約する。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,7 +14,7 @@ namespace Yagura.Ingestion.Net;
 /// 同じ仕組み。<see cref="Yagura.Host.ListenerBindPlan"/> の remarks 参照）。それ以外の明示指定
 /// （<c>0.0.0.0</c> = IPv4 ワイルドカードのみ、特定の IPv4/IPv6 アドレス）は、指定されたアドレス
 /// ファミリ単独のソケットで bind する——<c>0.0.0.0</c> 明示指定は IPv4 専用にとどまる後方互換の
-/// 逃げ道として維持する（Issue #133 の設計判断）。
+/// 逃げ道として維持する。
 /// </para>
 /// <para>
 /// <b>送信元アドレスの表現</b>: DualMode ソケットで IPv4 の送信元から受信すると、
@@ -53,7 +53,7 @@ internal static class DualStackBindAddress
 
     /// <summary>
     /// IPv6 ワイルドカード bind が成立しないとき、IPv4 ワイルドカード（<c>0.0.0.0</c>）へ
-    /// 自動で縮小してよいかを判定する（Issue #133・PR #193 レビュー指摘 Major への対応）。
+    /// 自動で縮小してよいかを判定する。
     /// </summary>
     /// <remarks>
     /// <para>

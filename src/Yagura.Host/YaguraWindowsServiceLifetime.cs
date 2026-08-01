@@ -10,7 +10,7 @@ namespace Yagura.Host;
 
 /// <summary>
 /// SCM カスタム制御コードで設定の再読み込みを受け付ける Windows サービスライフタイム
-/// （CF-5 確定 = 2026-07-16 オーナー裁定。configuration.md §3・§9。Issue #262）。
+/// （CF-5 確定。configuration.md §3・§9）。
 /// <c>sc control Yagura 128</c>（<see cref="ReloadConfigurationControlCode"/>）で
 /// <see cref="IConfigurationReloadService.ReloadAsync"/> を起動する。
 /// </summary>

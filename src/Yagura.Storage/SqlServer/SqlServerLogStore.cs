@@ -12,7 +12,7 @@ namespace Yagura.Storage.SqlServer;
 /// 接続の分離レベルを明示的に変更せず、<b>SQL Server の既定分離レベル（READ COMMITTED、かつ
 /// <c>READ_COMMITTED_SNAPSHOT</c> データベースオプションは既定 OFF）</b>のまま動作する。
 /// この既定構成では、Microsoft Learn 公式ドキュメント「SET TRANSACTION ISOLATION LEVEL
-/// (Transact-SQL)」（確認日 2026-07-05）の記載どおり:
+/// (Transact-SQL)」の記載どおり:
 /// <c>"If READ_COMMITTED_SNAPSHOT is set to OFF (the default on SQL Server), the Database Engine
 /// uses shared locks to prevent other transactions from modifying rows while the current
 /// transaction is running a read operation. The shared locks also block the statement from
@@ -43,7 +43,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
 {
     /// <summary>
     /// 現行のスキーマバージョン（<see cref="Sqlite.SqliteLogStore.CurrentSchemaVersion"/> と同じ意味）。
-    /// v2（Issue #145・#147・#146。database.md §8 DB-6 決定・§5.4）: 絞り込み列の複合索引の追加、
+    /// v2（database.md §5.4）: 絞り込み列の複合索引の追加、
     /// ヘッダ列（Hostname/AppName/ProcId/MsgId）の NVARCHAR(MAX) 化、対象 NVARCHAR 列への
     /// COLLATE <see cref="SearchCollation"/> の明示を行う。
     /// </summary>
@@ -59,14 +59,14 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     internal const string SearchCollation = "Latin1_General_100_CI_AS_KS_WS_SC";
 
     // SERVERPROPERTY('EngineEdition') の値（Microsoft Learn "SERVERPROPERTY (Transact-SQL)" の
-    // Edition テーブル。確認日 2026-07-05）: "4 = Express (For Express, Express with Tools, and
+    // Edition テーブル）: "4 = Express (For Express, Express with Tools, and
     // Express with Advanced Services)"。
     private const int EngineEditionExpress = 4;
 
     private readonly string _connectionString;
 
     // Windows 統合認証の接続か（イベントログ警告 1031 の分類は統合認証の接続に限って行う——
-    // ADR-0015 決定 5。Issue #418。SQL 認証の 18456/4060 は統合認証の切り分け対象ではない）。
+    // ADR-0015 決定 5。SQL 認証の 18456/4060 は統合認証の切り分け対象ではない）。
     private readonly bool _integratedAuthentication;
 
     /// <summary>
@@ -150,15 +150,15 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
             // 並行初期化の直列化: 複数の呼び出しが同時に InitializeAsync へ到達した場合、
             // IF OBJECT_ID 判定と CREATE TABLE / ALTER COLUMN の間に他者が割り込むと
             // 「既に存在する」エラーや競合が起こり得る。sp_getapplock（@LockOwner = 'Transaction' は
-            // トランザクション終了時に自動解放される——Microsoft Learn "sp_getapplock (Transact-SQL)"。
-            // 確認日 2026-07-10）でスキーマ管理全体を排他し、後着は先着の完了を待ってから
+            // トランザクション終了時に自動解放される——Microsoft Learn "sp_getapplock (Transact-SQL)"）
+            // でスキーマ管理全体を排他し、後着は先着の完了を待ってから
             // 冪等判定（適用済みなら何もしない）に入る。
             await using (var lockCommand = connection.CreateCommand())
             {
                 lockCommand.Transaction = transaction;
                 // スキーマ管理は対話的検索のようなタイムアウト予算（M-10）を持たない管理経路
                 // （database.md §1.2「契約拡張の予約」・対話的検索の防御は管理経路に適用しない）。
-                // DB-10 実測（tools/Yagura.Bench SchemaMigrationDdl。2026-07-10・1000 万行規模）で、
+                // DB-10 実測（tools/Yagura.Bench SchemaMigrationDdl。1000 万行規模）で、
                 // ADO.NET 既定の CommandTimeout（30 秒）のまま大規模データへ ALTER COLUMN を
                 // 適用すると "実行タイムアウトの期限が切れました" で移行そのものが失敗することを
                 // 確認した——本メソッド内の全コマンドを無制限（0）にし、呼び出し側が渡す
@@ -315,9 +315,9 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     {
         if (fromVersion < 2)
         {
-            // v1 -> v2（Issue #146・#147・database.md §5.4）: 対象 NVARCHAR 列へ COLLATE を明示し、
+            // v1 -> v2（database.md §5.4）: 対象 NVARCHAR 列へ COLLATE を明示し、
             // ヘッダ列（Hostname/AppName/ProcId/MsgId）は同時に NVARCHAR(MAX) へ拡張する
-            // （Issue #147。列ごとに sys.columns で適用済みかを確認してから ALTER する——
+            // （列ごとに sys.columns で適用済みかを確認してから ALTER する——
             // database.md §5.2「現在の列照合順序を確認し、適用済みなら何もしない」の実体化。
             // 大テーブルでの ALTER COLUMN 1 回ごとの所要時間・ロック挙動は DB-10 で実機検証済み
             // （database.md §5.4）——単一トランザクション実行のまま採用し、分割実行は不要と判断した）。
@@ -390,7 +390,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
         var nullability = isNullable ? "NULL" : "NOT NULL";
         await using var alterCommand = connection.CreateCommand();
         alterCommand.Transaction = transaction;
-        // DB-10 実測（tools/Yagura.Bench SchemaMigrationDdl。2026-07-10）: 1000 万行規模で
+        // DB-10 実測（tools/Yagura.Bench SchemaMigrationDdl）: 1000 万行規模で
         // NVARCHAR(255)→NVARCHAR(MAX) を伴う列の ALTER COLUMN が ADO.NET 既定の 30 秒
         // CommandTimeout を超え、"実行タイムアウトの期限が切れました" で移行自体が失敗することを
         // 確認した（size-of-data 変更を伴う ALTER COLUMN は全ページ書き換えを要するため、
@@ -404,7 +404,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     }
 
     /// <summary>
-    /// v2 の索引集合を確定させる（Issue #145）。列の COLLATE/長さが確定した後（新規作成直後、
+    /// v2 の索引集合を確定させる。列の COLLATE/長さが確定した後（新規作成直後、
     /// または <see cref="ApplyMigrationsAsync"/> 完了後）に呼び出すこと——<see cref="EnsureColumnCollationAsync"/>
     /// のドキュメント参照。<c>IF (NOT) EXISTS</c> による冪等な収束のため、呼び出しごとに毎回
     /// 実行しても安全（かつ安価）。
@@ -505,9 +505,9 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     // SqlServerFailureClassifier.IsPermissionFailure が true を返すエラー番号のうち、
     // 4060（CannotOpenDatabase）は「DB 不在」と「ログインに CONNECT 権限がない」の 2 通りの
     // 原因が同一番号に重なる（Microsoft Learn "Database Engine events and errors" の
-    // 記載——確認日 2026-07-05——は原因を区別しない）。両者は提示すべき SQL が異なる
+    // 記載は原因を区別しない）。両者は提示すべき SQL が異なる
     // （前者は CREATE DATABASE から必要、後者はログイン作成・権限付与のみで足りる）ため、
-    // 提示 SQL を作る側で両方に対応できる形にする（コードレビューで指摘・確認済み）。
+    // 提示 SQL を作る側で両方に対応できる形にする。
     private const int CannotOpenDatabaseErrorNumber = 4060;
 
     /// <summary>
@@ -643,7 +643,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
             var deviceTimestamp = command.Parameters.Add("@deviceTimestamp", System.Data.SqlDbType.DateTime2);
             var facility = command.Parameters.Add("@facility", System.Data.SqlDbType.Int);
             var severity = command.Parameters.Add("@severity", System.Data.SqlDbType.Int);
-            // Issue #147: Hostname/AppName/ProcId/MsgId は NVARCHAR(MAX) 列（v2 スキーマ）のため
+            // Hostname/AppName/ProcId/MsgId は NVARCHAR(MAX) 列（v2 スキーマ）のため
             // パラメータの Size 指定も撤廃する（Size=255 のまま残すと、DDL 側を MAX 化しても
             // パラメータ側で 255 文字に黙って切り詰められる——ADO.NET のパラメータ長は列長と独立に
             // 効くため、両方を揃える必要がある）。
@@ -683,7 +683,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
         {
             // 統合認証フラグを渡すのは本経路のみ: 1031 の発火点（PersistenceWriter——恒久障害の
             // 抑制窓を持つ場所）が消費するのは WriteBatchAsync の失敗だけであり、閲覧系の失敗に
-            // 分類を付けても読み手がいない（Issue #418）。
+            // 分類を付けても読み手がいない。
             throw ex.ToLogStoreWriteException(
                 $"ログレコードのバッチ書き込み ({records.Count} 件)", _integratedAuthentication);
         }
@@ -765,11 +765,11 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
             if (query.SearchText is { Length: > 0 } searchText)
             {
                 // 自由文検索: Message に対する部分一致・大文字小文字を区別しない
-                // （database.md §1.2 DB-6。2026-07-09 オーナー決定で規則は確定済み）。
+                // （database.md §1.2 DB-6）。
                 // v2 スキーマで Message 列に COLLATE Latin1_General_100_CI_AS_KS_WS_SC を明示した
                 // ため（database.md §5.4）、LIKE の大文字小文字非区別（かつアクセント・かな種・
                 // 全角/半角は区別する）はサーバの既定照合順序に依存せず列単位で保証される
-                // （Issue #146 の解消——配備先の既定照合順序が CS でも本クエリの挙動は変わらない）。
+                // （配備先の既定照合順序が CS でも本クエリの挙動は変わらない）。
                 whereClauses.Add("Message LIKE @searchText ESCAPE '\\'");
                 command.Parameters.Add("@searchText", System.Data.SqlDbType.NVarChar, -1).Value =
                     "%" + EscapeLikePattern(searchText) + "%";
@@ -777,11 +777,11 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
 
             if (query.Cursor is { } cursor)
             {
-                // カーソル（キーセット）ページング（database.md §1.2・DB-11。Issue #144）:
+                // カーソル（キーセット）ページング（database.md §1.2・DB-11）:
                 // 複合索引 IX_LogRecords_ReceivedAt_Id（ReceivedAt DESC, Id DESC）と同じ並びで
                 // 「カーソルより過去」の行だけに絞るシーク条件。OFFSET は使わない。
                 //
-                // 述語の形（PR #221 レビュー起点の実行計画実測。2026-07-10・SqlLocalDB・200 万行）:
+                // 述語の形（実行計画実測。SqlLocalDB・200 万行）:
                 // 素朴な OR 分解 (ReceivedAt < @c OR (ReceivedAt = @c AND Id < @i)) は最適化器の
                 // 計画選択が不安定で、統計サンプリングの揺れにより Clustered Index Scan + Sort
                 // （全該当行を読んでからソート——中間カーソルで実際に約 100 万行を走査し 1 クエリ
@@ -801,7 +801,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
             // FORCESEEK テーブルヒント（カーソル指定時のみ）: 上記のとおり計画選択が不安定な
             // コスト境界領域にあるため、「索引シークのみを許す」ヒントで計画を固定する
             // （Microsoft Learn "Table hints (Transact-SQL)" が FORCESEEK の用途として挙げる
-            // 「推定の問題でシークではなくスキャンが選ばれる場合」そのもの。確認日 2026-07-10）。
+            // 「推定の問題でシークではなくスキャンが選ばれる場合」そのもの）。
             // カーソル指定時は常にシーク可能な範囲条件（ReceivedAt <= @c）が WHERE に含まれる
             // ためコンパイル不能にはならない（他フィルタ——Severity 閾値・LIKE——との併用も
             // 実行計画で確認済み。database.md §8 DB-11）。実測: シーク計画はカーソル深度に
@@ -812,7 +812,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
                 ? "FROM dbo.LogRecords WITH (FORCESEEK)"
                 : "FROM dbo.LogRecords";
 
-            // Id DESC のタイブレーク（Issue #144）: ReceivedAt 単独では同一時刻（同一ミリ秒）の
+            // Id DESC のタイブレーク: ReceivedAt 単独では同一時刻（同一ミリ秒）の
             // 行の相対順序が SQL 上未定義になる——UDP バースト・スタックトレースの分割送信等、
             // syslog では同一時刻多発が日常的に起きる。Id は採番順（挿入順）と一致するため、
             // 同時刻内は「新しく挿入された行が先」という決定的な順序になる。
@@ -858,8 +858,8 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
         {
             // Microsoft.Data.SqlClient は CancellationToken によるキャンセルを OperationCanceledException
             // ではなく SqlException（メッセージ "Operation cancelled by user" 相当。ロケール依存で
-            // 翻訳される）として送出する（dotnet/SqlClient の公開 Issue #26・#2424 で maintainer が
-            // ".NET Framework と同一の挙動であり、変更予定はない" と明言——確認日 2026-07-05）。
+            // 翻訳される）として送出する（dotnet/SqlClient の maintainer が
+            // ".NET Framework と同一の挙動であり、変更予定はない" と明言している）。
             // 上の catch (OperationCanceledException) 節だけではこのキャンセル経路を捕捉できないため、
             // SqlException 側でも同じタイムアウト条件（timeoutCts が発火し、かつ外部キャンセルではない）
             // を判定し、TimeoutException へ変換する。この節は次の catch (SqlException ex) より
@@ -944,7 +944,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
 
     /// <inheritdoc />
     /// <remarks>
-    /// 一括読み出し（IBulkLogReader。database.md §1.2 予約 (a) の実体化。Issue #266）。
+    /// 一括読み出し（IBulkLogReader。database.md §1.2 予約 (a) の実体化）。
     /// 昇順キーセット反復。述語は DB-11 と同じ書き換え形（先頭 conjunct が単独でシーク述語に
     /// なる形）を昇順へ反転して使う。移行・エクスポートは対話検索と異なり深度依存の
     /// レイテンシが問題にならないため FORCESEEK は付与しない。
@@ -1084,7 +1084,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
                 command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = toValue.UtcDateTime;
             }
 
-            // 種別の完全一致フィルタ（Issue #150。ILogStore の契約参照）。
+            // 種別の完全一致フィルタ（ILogStore の契約参照）。
             if (kind is not null)
             {
                 whereClauses.Add("Kind = @kind");
@@ -1144,7 +1144,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
         int limit,
         TimeSpan timeout,
         CancellationToken cancellationToken = default) =>
-        // 新しい順（候補選択用。Issue #383——打ち切りで切り捨てるのは「古い側」）。
+        // 新しい順（候補選択用。打ち切りで切り捨てるのは「古い側」）。
         QuerySourceActivityCoreAsync(limit, timeout, mostRecentFirst: true, cancellationToken);
 
     private async Task<IReadOnlyList<SourceActivity>> QuerySourceActivityCoreAsync(
@@ -1223,7 +1223,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
 
             await using var command = connection.CreateCommand();
             // 索引済みの ReceivedAt 範囲へ先に絞り込んでから集計する（ILogStore の契約参照。
-            // Issue #145——Severity 列に索引が無いための窓必須化）。
+            // Severity 列に索引が無いための窓必須化）。
             command.CommandText =
                 """
                 SELECT Severity, COUNT_BIG(*) AS RecordCount
@@ -1425,7 +1425,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     /// </para>
     /// <para>
     /// <b>計測対象は割当ファイルサイズ</b>（<c>sys.database_files.size</c>。8-KB ページ単位。
-    /// Microsoft Learn "sys.database_files (Transact-SQL)" の記載——確認日 2026-07-05:
+    /// Microsoft Learn "sys.database_files (Transact-SQL)" の記載:
     /// "Current size of the file, in 8-KB pages"）。行データ・ログファイルの合計を返す。
     /// <b>DB-4 の実機検証で未確定の点</b>: 削除後にこの値が縮小するか（自動 shrink は既定で
     /// 行われないため、削除後も割当サイズは維持され続ける可能性が高い——実機確認は DB-4 に委ねる）。
@@ -1436,7 +1436,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     /// <para>
     /// <b>Express エディション検出</b>（database.md §5.3 の必須要件）:
     /// <c>SERVERPROPERTY('EngineEdition')</c> が <c>4</c>（Express。Microsoft Learn
-    /// "SERVERPROPERTY (Transact-SQL)" の EngineEdition テーブル——確認日 2026-07-05:
+    /// "SERVERPROPERTY (Transact-SQL)" の EngineEdition テーブル:
     /// "4 = Express (For Express, Express with Tools, and Express with Advanced Services)"）の
     /// 場合、<see cref="LogStoreStatistics.DatabaseSizeBytes"/> と
     /// <see cref="ExpressMaxDatabaseSizeBytes"/>（10 GB。database.md §5.3 出典 Microsoft Learn
@@ -1462,7 +1462,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
             long databaseSizeBytes;
             await using (var sizeCommand = connection.CreateCommand())
             {
-                // sys.database_files.size は 8-KB ページ単位（Microsoft Learn 確認日 2026-07-05）。
+                // sys.database_files.size は 8-KB ページ単位（Microsoft Learn）。
                 sizeCommand.CommandText = "SELECT SUM(CAST(size AS BIGINT)) * 8192 FROM sys.database_files;";
                 var sizeResult = await sizeCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
                 databaseSizeBytes = sizeResult is null or DBNull ? 0 : Convert.ToInt64(sizeResult, CultureInfo.InvariantCulture);
@@ -1482,7 +1482,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
 
     /// <summary>
     /// SQL Server Express の DB 最大サイズ（database.md §5.3。Microsoft Learn
-    /// "Editions and supported features of SQL Server 2022" の記載。確認日 2026-07-04）。
+    /// "Editions and supported features of SQL Server 2022" の記載）。
     /// </summary>
     public const long ExpressMaxDatabaseSizeBytes = 10L * 1024 * 1024 * 1024;
 
@@ -1491,7 +1491,7 @@ public sealed class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposa
     /// を含む）かどうかを判定する（database.md §5.3 の必須要件）。
     /// </summary>
     /// <remarks>
-    /// <c>SERVERPROPERTY('EngineEdition')</c> を用いる（確認日 2026-07-05。<see cref="GetStatisticsAsync"/>
+    /// <c>SERVERPROPERTY('EngineEdition')</c> を用いる（<see cref="GetStatisticsAsync"/>
     /// のドキュメント参照）。LocalDB は SQL Server Express の一種として配布される実行形態だが、
     /// <c>EngineEdition</c> は LocalDB でも <c>4</c>（Express）を返す（LocalDB は Express の
     /// インストール不要な変種であり、エンジン自体は同一——本判定はテスト環境の LocalDB でも

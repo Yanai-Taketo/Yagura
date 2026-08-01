@@ -5,7 +5,7 @@ namespace Yagura.Web.Circuits;
 
 /// <summary>
 /// circuit 単位の認証状態を明示的に汲み直す <see cref="AuthenticationStateProvider"/>
-/// （ADR-0010 決定 2・委任事項 2）。
+/// （ADR-0010 決定 2）。
 /// </summary>
 /// <remarks>
 /// <para>

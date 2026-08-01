@@ -1,7 +1,7 @@
 namespace Yagura.Web.Circuits;
 
 /// <summary>
-/// circuit 1 本分のスコープ付きコンテキスト（M8-4。Issue #71）。
+/// circuit 1 本分のスコープ付きコンテキスト（M8-4）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,7 +20,7 @@ namespace Yagura.Web.Circuits;
 /// 要求を circuit 内のコンポーネント（<c>CircuitGovernor</c>）へ伝える。ASP.NET Core は
 /// circuit をサーバ側から直接終了させる公開 API を持たない（<c>Circuit</c> 型の公開メンバーは
 /// <c>Id</c> のみ——.NET 10.0.9 の <c>Microsoft.AspNetCore.Components.Server</c> を実機で
-/// リフレクション確認済み。2026-07-06）ため、circuit 内のコンポーネントが強制の全ページ
+/// リフレクション確認済み）ため、circuit 内のコンポーネントが強制の全ページ
 /// 再読み込み（circuit を要しない案内ページへの遷移）を行う協調方式を採る。</item>
 /// </list>
 /// </remarks>

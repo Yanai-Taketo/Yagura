@@ -41,7 +41,7 @@ public static class PipelineConstants
     public static readonly TimeSpan WriteBatchTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// <see cref="Yagura.Storage.LogStoreWriteGate"/>（Issue #151。ライブ・drain・保持期間削除の
+    /// <see cref="Yagura.Storage.LogStoreWriteGate"/>（ライブ・drain・保持期間削除の
     /// 3 経路を直列化する書き込みゲート）の取得を待つ時間上限。<b><see cref="WriteBatchTimeout"/>
     /// より意図的に大きくする</b>——ゲート取得の待ち時間を DB 操作そのもののタイムアウトと
     /// 同じ予算で縛ると、保持期間削除がゲートを長く保持している間、ライブ書き込みの毎バッチが

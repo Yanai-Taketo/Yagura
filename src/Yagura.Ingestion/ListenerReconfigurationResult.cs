@@ -1,7 +1,7 @@
 namespace Yagura.Ingestion;
 
 /// <summary>
-/// 無瞬断リスナ再構成（CF-4 層2。Issue #262）1 回の結果。UDP・TCP それぞれの帰結を持つ。
+/// 無瞬断リスナ再構成（CF-4 層2）1 回の結果。UDP・TCP それぞれの帰結を持つ。
 /// </summary>
 /// <param name="Udp">UDP リスナの帰結。</param>
 /// <param name="Tcp">TCP リスナの帰結。</param>

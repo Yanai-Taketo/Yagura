@@ -4,9 +4,7 @@ namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
 /// Windows イベントログの監査系イベント ID 採番表（security.md §4.3。SEC-5。
-/// 2000 番台 = 管理操作の監査（レベル: 情報）/ 3000 番台 = 拒否・セキュリティ事象（レベル: 警告）。
-/// M6-2（Issue #52）で 3001 を、M8-4（Issue #71）で 2001〜2004・3002 を、
-/// ADR-0008 実装で 2005 を採番）。
+/// 2000 番台 = 管理操作の監査（レベル: 情報）/ 3000 番台 = 拒否・セキュリティ事象（レベル: 警告））。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,10 +13,8 @@ namespace Yagura.Host.Observability.Auditing;
 /// 追記すること（意味の変更・転用は行わない）。
 /// </para>
 /// <para>
-/// <b>例外記録（v0.1 期の訂正。issue #237）</b>: 3003（<see cref="WindowsAuthenticationHandshakeFailed"/>）は
-/// 当初「握手失敗」と「認証成功だが管理者権限なし」の両方を含めていたが、issue #237 で後者を
-/// <see cref="AdminAuthorizationDenied"/>（3008）へ分離し、3003 を握手失敗のみへ narrow した
-/// （名実の乖離を早期に正す意図的な意味変更。v0.1 期・オーナー承認のうえの例外。security.md §4.3 参照）。
+/// <b>例外</b>: 3003（<see cref="WindowsAuthenticationHandshakeFailed"/>）は v0.1 期に意味を
+/// 狭めた唯一の例外（現在の意味は本 ID の説明を参照。security.md §4.3 参照）。
 /// v1.0 での ID 凍結以降は同種の意味変更を行わない。
 /// </para>
 /// </remarks>
@@ -41,7 +37,7 @@ public static class AuditEventIds
     /// <summary>フォワーダ配布キットの生成（ADR-0008）。レベルは情報。</summary>
     public static readonly EventId ForwarderKitGenerated = new(2005, "ForwarderKitGenerated");
 
-    /// <summary>管理 UI 認証設定の変更（ADR-0010 決定 1・3）。レベルは情報。</summary>
+    /// <summary>管理 UI 認証設定の変更（ADR-0010 決定 1）。レベルは情報。</summary>
     public static readonly EventId AdminAuthenticationConfigured = new(2006, "AdminAuthenticationConfigured");
 
     /// <summary>アプリ独自認証の管理者アカウントの作成・パスワード変更（ADR-0010 決定 3）。レベルは情報。</summary>
@@ -64,7 +60,7 @@ public static class AuditEventIds
     /// <summary>
     /// TLS 受信（RFC 5425。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ付与した
     /// （security.md §6。<see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型。
-    /// 付与対象・拇印を記録し秘密鍵そのものは記録しない。Issue #137）。レベルは情報。
+    /// 付与対象・拇印を記録し秘密鍵そのものは記録しない）。レベルは情報。
     /// </summary>
     public static readonly EventId IngestionTlsCertificatePrivateKeyAccessGranted =
         new(2010, "IngestionTlsCertificatePrivateKeyAccessGranted");
@@ -97,43 +93,43 @@ public static class AuditEventIds
     public static readonly EventId ViewerLoginSucceeded = new(2014, "ViewerLoginSucceeded");
 
     /// <summary>
-    /// 監査記録の保持期間削除の実行（security.md §4.2 SEC-2。Issue #261）。証跡の削除自体を
+    /// 監査記録の保持期間削除の実行（security.md §4.2 SEC-2）。証跡の削除自体を
     /// 証跡に残す——イベントログ併記により、監査ファイル側が消されても削除の事実が残る。
     /// レベルは情報。
     /// </summary>
     public static readonly EventId AuditRetentionApplied = new(2015, "AuditRetentionApplied");
 
     /// <summary>
-    /// 設定ファイルのライブ再読み込みの実行（configuration.md §3。CF-4 層1。Issue #262）。
+    /// 設定ファイルのライブ再読み込みの実行（configuration.md §3。CF-4 層1）。
     /// レベルは情報。
     /// </summary>
     public static readonly EventId ConfigurationReloaded = new(2016, "ConfigurationReloaded");
 
     /// <summary>
     /// インストール記録（firewall-rules.ini）の初回起動時のイベントログ転記
-    /// （configuration.md §4.3。Issue #265）。レベルは情報。
+    /// （configuration.md §4.3）。レベルは情報。
     /// </summary>
     public static readonly EventId InstallationRecordTranscribed = new(2017, "InstallationRecordTranscribed");
 
-    /// <summary>蓄積ログ移行の実行（database.md §6.2。Issue #266）。レベルは情報。</summary>
+    /// <summary>蓄積ログ移行の実行（database.md §6.2）。レベルは情報。</summary>
     public static readonly EventId LogMigrationExecuted = new(2018, "LogMigrationExecuted");
 
     /// <summary>
     /// 前回稼働時から設定ファイルが変更された状態で起動した（起動時の設定差分照合。
-    /// security.md §4.1・configuration.md §3。Issue #329）。レベルは情報。
+    /// security.md §4.1・configuration.md §3）。レベルは情報。
     /// </summary>
     public static readonly EventId StartupConfigurationChangeDetected =
         new(2019, "StartupConfigurationChangeDetected");
 
     /// <summary>
-    /// TLS 受信の証明書設定の変更（ADR-0019 決定 5。Issue #349）。レベルは情報。
+    /// TLS 受信の証明書設定の変更（ADR-0019 決定 5）。レベルは情報。
     /// 管理リモート HTTPS 版の <see cref="AdminHttpsCertificateConfigured"/>（2012）と対になる。
     /// </summary>
     public static readonly EventId IngestionTlsCertificateConfigured =
         new(2020, "IngestionTlsCertificateConfigured");
 
     /// <summary>
-    /// メール通知設定の変更（ADR-0017 決定 4。Issue #350）。レベルは情報。
+    /// メール通知設定の変更（ADR-0017 決定 4）。レベルは情報。
     /// </summary>
     /// <remarks>
     /// <b>変更キーだけでなく新値も記録する</b>（<c>Smtp:Password</c> は変更の事実のみ）。
@@ -159,7 +155,7 @@ public static class AuditEventIds
         new(2022, "EmailNotificationTestSent");
 
     /// <summary>
-    /// 送信元の途絶検知のウォッチリスト変更（ADR-0018 決定 5。Issue #351）。レベルは情報。
+    /// 送信元の途絶検知のウォッチリスト変更（ADR-0018 決定 5）。レベルは情報。
     /// </summary>
     /// <remarks>
     /// Detail には追加・削除・変更されたエントリ（アドレスと表示名）を含める——ウォッチリストは
@@ -170,7 +166,7 @@ public static class AuditEventIds
         new(2023, "SourceSilenceWatchlistConfigured");
 
     /// <summary>
-    /// サービス実行アカウントの構成の初回起動時転記（ADR-0015 決定 8。Issue #263）。
+    /// サービス実行アカウントの構成の初回起動時転記（ADR-0015 決定 8）。
     /// インストーラ由来転記レール（<see cref="InstallationRecordTranscribed"/> = 2017 と同型）。
     /// レベルは情報。
     /// </summary>
@@ -178,20 +174,20 @@ public static class AuditEventIds
         new(2024, "ServiceAccountTranscribed");
 
     /// <summary>
-    /// サービス実行アカウントが前回起動時から変化した状態で起動した（ADR-0015 決定 8。
-    /// Issue #263）。製品外の <c>sc config</c> 切替も次回起動で証跡化する。レベルは情報。
+    /// サービス実行アカウントが前回起動時から変化した状態で起動した（ADR-0015 決定 8）。
+    /// 製品外の <c>sc config</c> 切替も次回起動で証跡化する。レベルは情報。
     /// </summary>
     public static readonly EventId ServiceAccountChangeDetected =
         new(2025, "ServiceAccountChangeDetected");
 
     /// <summary>
-    /// フォワーダ MSI を管理画面から配置（アップロード）した（ADR-0020 決定 3・4。Issue #283。
+    /// フォワーダ MSI を管理画面から配置（アップロード）した（ADR-0020 決定 3。
     /// 配置経路 (b)）。レベルは情報。
     /// </summary>
     public static readonly EventId ForwarderMsiPlaced = new(2026, "ForwarderMsiPlaced");
 
     /// <summary>
-    /// 配置済みのフォワーダ MSI を管理画面から削除した（ADR-0020 決定 3・4。Issue #283）。
+    /// 配置済みのフォワーダ MSI を管理画面から削除した（ADR-0020 決定 3）。
     /// 削除前の SHA256 を Detail に残す。レベルは情報。
     /// </summary>
     public static readonly EventId ForwarderMsiDeleted = new(2027, "ForwarderMsiDeleted");
@@ -209,7 +205,7 @@ public static class AuditEventIds
 
     /// <summary>
     /// 閲覧 UI の HTTPS 設定（<c>Viewer:Https:Enabled</c>・<c>Viewer:Https:CertificateThumbprint</c>）の
-    /// 変更（ADR-0022 決定 10。Issue #455）。2012（管理リモート HTTPS）・2020（TLS 受信）の閲覧版。
+    /// 変更（ADR-0022 決定 10）。2012（管理リモート HTTPS）・2020（TLS 受信）の閲覧版。
     /// レベルは情報。採番: 2000 番台の次の空き番号 2029。
     /// </summary>
     public static readonly EventId ViewerHttpsConfigured =
@@ -239,19 +235,19 @@ public static class AuditEventIds
     public static readonly EventId AdminAccountLockedOut = new(3005, "AdminAccountLockedOut");
 
     /// <summary>
-    /// アプリ独自認証のアカウント単位バックオフが cap（上限遅延）に到達（ADR-0011 決定 3・9）。
+    /// アプリ独自認証のアカウント単位バックオフが cap（上限遅延）に到達（ADR-0011 決定 3）。
     /// レベルは警告。
     /// </summary>
     public static readonly EventId AdminAuthBackoffCapReached = new(3006, "AdminAuthBackoffCapReached");
 
     /// <summary>
-    /// IP レート制限またはグローバルトークンバケットによる拒否（ADR-0011 決定 2・4・5.1・9）。
+    /// IP レート制限またはグローバルトークンバケットによる拒否（ADR-0011 決定 2）。
     /// レベルは警告。
     /// </summary>
     public static readonly EventId AdminAuthRateLimited = new(3007, "AdminAuthRateLimited");
 
     /// <summary>
-    /// 認証成功後の認可拒否（管理者権限なし。ADR-0010 決定 6・issue #237）。レベルは警告。
+    /// 認証成功後の認可拒否（管理者権限なし。ADR-0010 決定 6）。レベルは警告。
     /// プロトコル握手失敗（<see cref="WindowsAuthenticationHandshakeFailed"/>=3003）とは別事象として分離する。
     /// </summary>
     public static readonly EventId AdminAuthorizationDenied = new(3008, "AdminAuthorizationDenied");
@@ -264,7 +260,7 @@ public static class AuditEventIds
     public static readonly EventId ViewerAuthorizationDenied = new(3009, "ViewerAuthorizationDenied");
 
     /// <summary>
-    /// 認証失効後の閲覧 circuit の継続を猶予として許容（SEC-6。security.md §2.3。Issue #267）。
+    /// 認証失効後の閲覧 circuit の継続を猶予として許容（SEC-6。security.md §2.3）。
     /// レベルは警告。
     /// </summary>
     public static readonly EventId CircuitRevocationGraceGranted = new(3010, "CircuitRevocationGraceGranted");
@@ -273,20 +269,19 @@ public static class AuditEventIds
     public static readonly EventId CircuitRevocationGraceEnded = new(3011, "CircuitRevocationGraceEnded");
 
     /// <summary>
-    /// 拒否試行の集約記録（SEC-4。security.md §4.4。Issue #268）。レベルは警告。
-    /// 3010・3011 は Issue #267 が予約済みのため 3012 を採る（additive-only。番号は付け替えない）。
+    /// 拒否試行の集約記録（SEC-4。security.md §4.4）。レベルは警告。
+    /// 3010・3011 は既に予約済みのため 3012 を採る（additive-only。番号は付け替えない）。
     /// </summary>
     public static readonly EventId RejectionAggregated = new(3012, "RejectionAggregated");
 
     /// <summary>
-    /// 監査チャネルの復旧・障害中事象の書き戻し完了（SEC-10。security.md §4.2。Issue #269）。
+    /// 監査チャネルの復旧・障害中事象の書き戻し完了（SEC-10。security.md §4.2）。
     /// レベルは警告（監査の欠落可能性を既定の監視で拾えるようにする）。
     /// </summary>
     public static readonly EventId AuditChannelRecovered = new(3013, "AuditChannelRecovered");
 
     /// <summary>
-    /// フォワーダ MSI のアップロード・削除の失敗/拒否（ADR-0020 決定 4。Issue #283。
-    /// ADR-0004 決定 7「拒否された試行も監査対象」）。レベルは警告。§4.4 の集約対象。
+    /// フォワーダ MSI のアップロード・削除の失敗/拒否（ADR-0020 決定 4）。レベルは警告。§4.4 の集約対象。
     /// </summary>
     public static readonly EventId ForwarderMsiUploadRejected = new(3014, "ForwarderMsiUploadRejected");
 

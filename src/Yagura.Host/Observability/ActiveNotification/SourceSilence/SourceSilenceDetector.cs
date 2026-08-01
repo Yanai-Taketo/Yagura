@@ -9,13 +9,13 @@ namespace Yagura.Host.Observability.ActiveNotification.SourceSilence;
 /// <param name="Threshold">適用された実効閾値。</param>
 /// <param name="Elapsed">最終受信からの経過時間。</param>
 /// <param name="LastSeenAt">
-/// 基準時刻の壁時計表示（Issue #382——1027 の Detail が約束する「最終受信時刻（壁時計表示）」）。
+/// 基準時刻の壁時計表示（1027 の Detail が約束する「最終受信時刻（壁時計表示）」）。
 /// 判定に使う単調 tick の経過を評価時点の壁時計から差し引いた換算値（表示・記録専用。
 /// 決定 3 の「壁時計は表示・記録にのみ使う」）。<see cref="BaselineIsRearmed"/> が真の間は
 /// 実受信の時刻ではなく再アーム起点を指す。
 /// </param>
 /// <param name="BaselineIsRearmed">
-/// 基準が再アーム（登録時点・起動時刻・受信断回復）由来か（Issue #382——1028 の Detail が
+/// 基準が再アーム（登録時点・起動時刻・受信断回復）由来か（1028 の Detail が
 /// 約束する「起動後の再アーム起点の一斉発火かの別」の入力）。
 /// </param>
 internal sealed record SourceSilenceEvent(
@@ -80,7 +80,7 @@ public sealed class SourceSilenceDetector
     private readonly TimeProvider _timeProvider;
 
     /// <summary>
-    /// 全操作を直列化するロック（#351 第 5 段）。書き手は監視ループ
+    /// 全操作を直列化するロック。書き手は監視ループ
     /// （<see cref="Evaluate"/>・<see cref="RearmAfterReceptionRecovery"/>）だけでなく、
     /// 設定の即時反映（<see cref="ApplyWatchlist"/>——再読み込みスレッド・管理画面の保存）と
     /// UI の状態読み取り（<see cref="SnapshotEntryStatuses"/>——Blazor スレッド）が別スレッドから
@@ -139,7 +139,7 @@ public sealed class SourceSilenceDetector
                 _states.Remove(stale);
             }
 
-            // 閾値が変更されたエントリは途絶フラグを解除するのみ（決定 3。Issue #381 の欠陥 3）。
+            // 閾値が変更されたエントリは途絶フラグを解除するのみ（決定 3）。
             // 解除を Evaluate の復帰分岐に委ねると、実際には 1 件も受信していないのに
             // 「受信が再開した」（1029）が記録される——復帰の証跡は実受信でのみ出す。
             foreach (var entry in _watchlist)
@@ -157,7 +157,7 @@ public sealed class SourceSilenceDetector
     }
 
     /// <summary>
-    /// 起動時の初期値（seed。決定 3。Issue #381）を反映する。
+    /// 起動時の初期値（seed。決定 3）を反映する。
     /// <c>QuerySourceActivityAsync</c> の結果を受け取り、ウォッチリスト該当エントリの
     /// 暫定基準（起動時点）を DB の最終受信時刻へ置き換える。
     /// </summary>
@@ -262,7 +262,7 @@ public sealed class SourceSilenceDetector
             }
 
             var (elapsed, baselineIsRearmed) = reading.Value;
-            var lastSeenAt = now - elapsed; // 壁時計表示は換算値（表示・記録専用。Issue #382）
+            var lastSeenAt = now - elapsed; // 壁時計表示は換算値（表示・記録専用）
 
             if (!_states.TryGetValue(key, out var state))
             {
@@ -332,7 +332,7 @@ public sealed class SourceSilenceDetector
 
     /// <summary>
     /// 受信経路の回復時に、<b>保留中に閾値超過となったエントリ</b>を回復時刻で再アームする
-    /// （決定 3。委任 6。Issue #381 の欠陥 2）。再アームした件数を返す（ログ用）。
+    /// （決定 3）。再アームした件数を返す（ログ用）。
     /// </summary>
     /// <remarks>
     /// <para>

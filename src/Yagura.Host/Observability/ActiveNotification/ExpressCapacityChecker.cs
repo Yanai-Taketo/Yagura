@@ -23,7 +23,7 @@ public interface IExpressCapacityChecker
     /// <summary>
     /// 現在の provider が SQL Server Express でない場合、または判定自体が失敗した場合は
     /// <c>null</c> を返す（判定対象外・取得不能はどちらも「この周期は警告を出さない」で扱う。
-    /// 本 Issue の実装判断——ゲージ・カウンタは独立チャネルとして残るため、本監視の沈黙が
+    /// ゲージ・カウンタは独立チャネルとして残るため、本監視の沈黙が
     /// 唯一の観測経路にはならない）。
     /// </summary>
     Task<ExpressCapacityReading?> CheckAsync(CancellationToken cancellationToken = default);

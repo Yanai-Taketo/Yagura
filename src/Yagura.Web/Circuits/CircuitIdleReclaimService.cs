@@ -6,7 +6,7 @@ namespace Yagura.Web.Circuits;
 
 /// <summary>
 /// 無操作 circuit の定期回収（SEC-8。security.md §2.2「一定時間操作のない circuit を切断して
-/// 枠を解放する」。M8-4。Issue #71）。
+/// 枠を解放する」。M8-4）。
 /// </summary>
 /// <remarks>
 /// タイムアウト値・「操作」の定義は仮値（<see cref="CircuitGovernanceDefaults"/> の remarks）。

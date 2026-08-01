@@ -17,8 +17,8 @@ public sealed class LogStoreWriteException : Exception
     public LogStoreFailureKind FailureKind { get; }
 
     /// <summary>
-    /// Windows 統合認証での接続失敗と分類できた場合の詳細（それ以外は <see langword="null"/>。
-    /// Issue #418）。発火点（<c>PersistenceWriter</c>）はこれが非 null の恒久障害で 1030 の
+    /// Windows 統合認証での接続失敗と分類できた場合の詳細（それ以外は <see langword="null"/>）。
+    /// 発火点（<c>PersistenceWriter</c>）はこれが非 null の恒久障害で 1030 の
     /// 代わりに 1031 を出す——Storage 層はロガーを持たないため、失敗詳細を本例外に載せて
     /// 発火点まで運ぶ設計（database.md §6.1）。
     /// </summary>

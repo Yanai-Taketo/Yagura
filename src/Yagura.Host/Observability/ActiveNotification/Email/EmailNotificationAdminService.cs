@@ -8,7 +8,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Observability.ActiveNotification.Email;
 
 /// <summary>
-/// <see cref="IEmailNotificationAdminService"/> の実体（ADR-0017 決定 4・8。Issue #350）。
+/// <see cref="IEmailNotificationAdminService"/> の実体（ADR-0017 決定 4）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -115,8 +115,8 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         var beforeEmail = before.Notification?.Email;
 
         // パスワードは「空欄 = 変更しない」（UI に再表示しないため。決定 8）。削除は
-        // ClearPassword の明示操作でのみ行う——空欄に削除の意味を持たせない（PR #366 レビュー対応。
-        // これがないと SMTP 認証をやめる操作が決定 3 の対検証に必ず落ちる）。
+        // ClearPassword の明示操作でのみ行う——空欄に削除の意味を持たせない
+        // （これがないと SMTP 認証をやめる操作が決定 3 の対検証に必ず落ちる）。
         var storedPassword = beforeEmail?.Smtp?.Password;
         var passwordChanged = settings.ClearPassword
             ? !string.IsNullOrWhiteSpace(storedPassword)
@@ -183,7 +183,7 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         // 宛先・接続先は「通知がどこへ向かうか」= 流出経路そのものの定義であり、
         // キー名粒度（2016）では事後に追えない。
         //
-        // **CodeQL の cs/cleartext-storage-of-sensitive-information について（2026-07-19。PR #366）**:
+        // **CodeQL の cs/cleartext-storage-of-sensitive-information について**:
         // 本箇所は high 深刻度で報告されるが誤検知である。SmtpPasswordKey は設定キーの「名前」
         // （"Notification:Email:Smtp:Password" という定数文字列）であり、= の右に置くのは
         // 固定の marker 文字列のみ——パスワードの値も、その DPAPI 暗号化表現も、ここへは流れない。
@@ -324,7 +324,7 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
         }
         catch (OperationCanceledException)
         {
-            // 利用者の「中止」でも接続試行の事実は監査に残す（PR #366 レビュー対応）——
+            // 利用者の「中止」でも接続試行の事実は監査に残す——
             // 2022 を監査対象とした理由そのもの（未保存の値で任意ホストへ接続を試せる操作は
             // 内部ネットワークの到達性探査に転用し得る）が、接続開始直後の中止で証跡ゼロに
             // なるなら成立しない。失敗の記録と同じく、中止も結果の一種として記録する。
@@ -355,7 +355,7 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
 
         // 検証・DPAPI 復号・縮退の判断はすべて Loader に委ねる（保存経路が独自に解釈しない
         // ——UI 経由と起動時で解決結果が食い違う余地を作らない）。設定ファイル全体の検証が
-        // 無関係キーの不正で失敗した場合は反映を見送る（Issue #370——保存は成功しており、
+        // 無関係キーの不正で失敗した場合は反映を見送る（保存は成功しており、
         // 稼働中の送信設定は変更前のまま。状態は ToStatus の ConfigurationFileError が見せる）。
         if (TryLoadResolved(out var resolved, out _))
         {
@@ -367,7 +367,7 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
     /// 設定ファイル全体を Loader で解決する。メール通知と無関係なキーの「起動失敗」級の不正
     /// （<see cref="ConfigurationValidationException"/>）でもここでは例外にしない——保存後の
     /// 即時反映・状態取得の呼び出し元は、メール設定画面を circuit エラーで壊すのではなく
-    /// 「ファイルに別の問題がある」ことを読める形で見せる（Issue #370）。
+    /// 「ファイルに別の問題がある」ことを読める形で見せる。
     /// </summary>
     private bool TryLoadResolved(out ResolvedEmailNotification? resolved, out string? loadError)
     {
@@ -471,7 +471,7 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
 
         // 解釈不能な生値（手編集の "yes" 等）は既定値へ写像して比較しない——写像すると UI の
         // 表示値（既定）と一致した瞬間に no-op となり、ファイル上の不正値を保存操作で上書き
-        // できなくなる（「直したのに直らない」。Issue #370）。不正 → 有効値は常に変更として扱う。
+        // できなくなる（「直したのに直らない」）。不正 → 有効値は常に変更として扱う。
         var beforeEnabledRaw = Trimmed(before?.Enabled);
         var beforeEnabled = beforeEnabledRaw is null
             ? false
@@ -560,19 +560,18 @@ public sealed class EmailNotificationAdminService : IEmailNotificationAdminServi
 
         // 「有効にしたつもりで送られていない」状態（決定 2 の縮退）を画面が検出できるようにする。
         // 無関係キーの不正でファイル全体の検証が失敗した場合は縮退判定が不能のため、
-        // 誤った「送られていません」バナーは出さず、ファイル側の問題として別に見せる（Issue #370）。
+        // 誤った「送られていません」バナーは出さず、ファイル側の問題として別に見せる。
         var enabled = ParseBool(email?.Enabled);
         var loadSucceeded = TryLoadResolved(out var resolved, out var loadError);
 
         // LastFailure は 1 回だけ読んでから分類と説明を取り出す——2 回に分けて読むと、間に
-        // 送信ループの成功で null 化され「分類あり・説明 null」の不整合な対になり得る（Issue #371）。
+        // 送信ループの成功で null 化され「分類あり・説明 null」の不整合な対になり得る。
         var lastFailure = dispatcher?.LastFailure;
 
         var health = new EmailNotificationChannelHealth(
             LastSuccessAt: dispatcher?.LastSuccessAt,
             LastFailureKind: lastFailure?.FailureKind.ToString(),
-            // 常設カードにも平易な説明と次の一手を出す（委任 12。Issue #385——従来は生の
-            // 例外メッセージをそのまま表示しており、テスト送信結果だけが平易化されていた）。
+            // 常設カードにも平易な説明と次の一手を出す（委任 12）。
             LastFailureDetail: lastFailure is null
                 ? null
                 : EmailSendFailureGuidance.Describe(lastFailure.FailureKind, lastFailure.FailureDetail),

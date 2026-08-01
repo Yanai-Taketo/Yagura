@@ -1,7 +1,7 @@
 namespace Yagura.Abstractions.Observability;
 
 /// <summary>
-/// 閲覧画面（M8-3。Issue #70）がホスト管轄の観測値（カウンタ累積値・スプール状態・
+/// 閲覧画面がホスト管轄の観測値（カウンタ累積値・スプール状態・
 /// 判定済みの健康状態・保持期間の適用値・受信リスナの構成）を読むための読み取り専用契約。
 /// </summary>
 /// <remarks>
@@ -31,7 +31,7 @@ public interface IYaguraSystemStatusReader
     YaguraSystemStatusSnapshot ReadCurrent();
 
     /// <summary>
-    /// 流量制限の発火上位送信元を拒否数の多い順に返す（Issue #288。同期・軽量。DB へは
+    /// 流量制限の発火上位送信元を拒否数の多い順に返す（同期・軽量。DB へは
     /// アクセスしない。最大 <paramref name="maxCount"/> 件——実装は上限を安全側に丸めてよい）。
     /// 拒否カウントは流量制御ゲートの有界バケットに併せて保持される値であり、
     /// <b>サービス起動からの累計ではない</b>——制限なく受信できる状態が続いた送信元は
@@ -41,7 +41,7 @@ public interface IYaguraSystemStatusReader
     IReadOnlyList<YaguraFlowControlRejectionReading> ReadFlowControlRejections(int maxCount);
 
     /// <summary>
-    /// 送信元の途絶検知（ADR-0018。Issue #351）のウォッチリスト登録状況と途絶状態を返す
+    /// 送信元の途絶検知（ADR-0018）のウォッチリスト登録状況と途絶状態を返す
     /// （同期・軽量。DB へはアクセスしない）。ダッシュボードの送信元別受信状況（UI-4）が
     /// 登録済みマーク・途絶中の強調表示に使う。機能無効（ウォッチリスト未設定）の構成では常に空。
     /// アドレスは正規化済み（IPv4-mapped IPv6 は IPv4 表記）——照合側も同じ正規化を通すこと。
@@ -62,7 +62,7 @@ public sealed record YaguraSourceSilenceReading(
     TimeSpan Threshold,
     bool IsSilent);
 
-/// <summary>流量制限の発火上位送信元の 1 行（Issue #288。ダッシュボードのカード表示単位）。</summary>
+/// <summary>流量制限の発火上位送信元の 1 行（ダッシュボードのカード表示単位）。</summary>
 /// <param name="SourceAddress">
 /// 送信元アドレスの表示文字列（IPv4-mapped IPv6 は純粋な IPv4 表記へ正規化済み——
 /// configuration.md §4.1 の送信元アドレス表現の正規化と同じ規約）。
@@ -148,7 +148,7 @@ public enum YaguraHealthReason
     /// 現在、未消化のスプールデータが残っている（→ 警告あり）。判定は観測窓の増分ではなく
     /// スプールの現在ゲージ（<c>DiskSpool.CurrentUsageBytes &gt; 0</c>）で行う——退避したデータの
     /// DB 格納がすべて完了する（＝スプール使用量が 0 に戻る）と直ちに解除される「消化完了」に
-    /// よる復帰（Issue #132。実装: <c>Yagura.Host.Observability.SystemStatusReader</c>）。
+    /// よる復帰（実装: <c>Yagura.Host.Observability.SystemStatusReader</c>）。
     /// </summary>
     SpoolEvacuationObserved,
 

@@ -5,7 +5,7 @@ using Yagura.Storage.Administration;
 namespace Yagura.Host.Administration.AdminAuthentication;
 
 /// <summary>
-/// アプリ独自 ID/パスワード認証の実体（ADR-0010 決定 3。ADR-0011 決定 2〜7 の三層防御・
+/// アプリ独自 ID/パスワード認証の実体（ADR-0011 決定 2〜7 の三層防御・
 /// パスワード強度要件を実装する）。
 /// </summary>
 /// <remarks>
@@ -31,7 +31,7 @@ namespace Yagura.Host.Administration.AdminAuthentication;
 /// 実行することで、検証コスト（PBKDF2 の反復計算）による所要時間の差を縮める。**非実在ユーザー名には
 /// 個別のバックオフ状態を持たせない**（メモリ枯渇 DoS 回避。決定 3）——①②を通過した非実在名は
 /// 遅延なしで即座に <see cref="AppAuthenticationResult.InvalidCredentials"/> を返す。応答種別・
-/// 待機表示の統一（決定 3・6）は呼び出し元（ログイン HTTP ハンドラ）が
+/// 待機表示の統一（決定 3）は呼び出し元（ログイン HTTP ハンドラ）が
 /// <see cref="AppAuthenticationOutcome.DenialLayer"/> を利用者応答へ出さないことで担保する。
 /// </para>
 /// <para>
@@ -87,7 +87,7 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
         ArgumentNullException.ThrowIfNull(password);
         ArgumentNullException.ThrowIfNull(context);
 
-        // 評価順序 ①IP レート制限（決定 2・4・5）。
+        // 評価順序 ①IP レート制限（決定 2）。
         var ipDecision = _defense.CheckIpRateLimit(context.RemoteAddress, context.IsLoopback);
         if (!ipDecision.Allowed)
         {
@@ -98,22 +98,21 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
         // 評価順序 ①.5 保存先の縮退（ADR-0023 決定 1）。**位置が仕様である**:
         // - ①の**後**: リモート発の縮退応答を IP レート制限のカウント対象にする（①は判定と同時に
         //   カウントを進めるため、ここへ来た時点で計上済み）。無認証・無制限に叩ける
-        //   「保存先の死活オラクル」を作らないための措置（round 2 田中の指摘 2）。
-        //   loopback は ADR-0011 決定 4 のとおり①の対象外であり、復旧オペレータは妨げられない
+        //   「保存先の死活オラクル」を作らないための措置。
+        //   loopback は①の対象外であり、復旧オペレータは妨げられない
         // - ②の**前**: グローバルトークンバケットは消費しない（据え置きが要件）
         // - アカウント照会（FindByUsernameAsync）の**前**: 実在・非実在を問わず一律に同じ応答を
-        //   返す。ここを照会の後に置くと ADR-0011 決定 3 が閉じた per-name オラクルを縮退時だけ
-        //   再開することになる（田中の指摘 2）
+        //   返す。ここを照会の後に置くと per-name オラクルを縮退時だけ再開することになる
         // - `_defense.RecordFailure` を**呼ばない**: 資格情報の検証に到達していないため n を進めない
         //   （攻撃でバックオフを積み上げ、復旧後の正規管理者を巻き込む経路も塞ぐ）
         if (_storageAvailability is { IsAdminAccountStoreAvailable: false })
         {
-            // 応答には保存先名・例外文字列・再試行時刻を含めない（同指摘）。
+            // 応答には保存先名・例外文字列・再試行時刻を含めない（死活情報の外部露出を避けるため）。
             return new AppAuthenticationOutcome(
                 AppAuthenticationResult.StoreUnavailable, username, null, AdminAuthDenialLayer.None);
         }
 
-        // 評価順序 ②グローバルトークンバケット（決定 2・4・5.1）。
+        // 評価順序 ②グローバルトークンバケット（決定 2）。
         var bucketDecision = _defense.CheckGlobalBucket(context.IsLoopback, context.RemoteAddress);
         if (!bucketDecision.Allowed)
         {
@@ -151,7 +150,7 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
 
         if (delay > TimeSpan.Zero)
         {
-            // 今回の試行はバックオフ待機を伴った失敗——決定 3・6 の統一応答（Denied）を返す。
+            // 今回の試行はバックオフ待機を伴った失敗——統一応答（Denied）を返す（決定 3）。
             return new AppAuthenticationOutcome(
                 AppAuthenticationResult.Denied, account.Username, CeilingSeconds(delay), AdminAuthDenialLayer.Backoff, failure.CapReachedThisAttempt);
         }
@@ -161,7 +160,7 @@ public sealed class AppAdminAuthenticationService : IAppAdminAuthenticator
     }
 
     /// <summary>
-    /// 最初の管理者アカウントを作成、またはパスワードを変更する（ADR-0010 決定 3。ADR-0011 決定 7
+    /// 最初の管理者アカウントを作成、またはパスワードを変更する（ADR-0011 決定 7
     /// のパスワード強度要件を検証する）。
     /// </summary>
     /// <exception cref="AdminPasswordPolicyViolationException">

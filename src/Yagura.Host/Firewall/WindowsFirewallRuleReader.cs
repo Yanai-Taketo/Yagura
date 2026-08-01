@@ -5,7 +5,7 @@ namespace Yagura.Host.Firewall;
 
 /// <summary>
 /// Windows ファイアウォール（WFP）の規則を COM（<c>HNetCfg.FwPolicy2</c> = <c>INetFwPolicy2</c>）で
-/// 読み取る実体（CF-2。Issue #265）。
+/// 読み取る実体（CF-2）。
 /// </summary>
 /// <remarks>
 /// 読み取り専用——本クラスは規則を作成・変更しない（規則の作成はインストーラの責務。

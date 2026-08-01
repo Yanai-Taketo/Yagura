@@ -21,7 +21,7 @@ namespace Yagura.Host.Administration.Https;
 /// （委任 8 の条件どおり）。
 /// </para>
 /// <para>
-/// <b>検査の限界（決定 4・委任 4）</b>: 対象はホスト名（dNSName）のみ——IP アドレスでの
+/// <b>検査の限界</b>: 対象はホスト名（dNSName）のみ——IP アドレスでの
 /// アクセス・複数 NIC・エイリアス（CNAME）は射程外（助言であり網羅を約束しない）。ワイルド
 /// カード（<c>*.example.com</c>）は公的 CA の標準に合わせ<b>単一ラベルの展開のみ</b>整合と
 /// みなす（<c>a.example.com</c> は一致・<c>a.b.example.com</c> と短名 <c>a</c> は不一致）。

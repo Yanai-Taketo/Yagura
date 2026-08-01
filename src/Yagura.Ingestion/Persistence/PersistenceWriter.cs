@@ -50,7 +50,7 @@ public sealed class PersistenceWriter
     // 側は LogLevel.Error への格上げ（下記 WriteBatchWithTimeoutAsync 参照）で表現する。
     private static readonly TimeSpan PermanentFailureWarningSuppressionWindow = TimeSpan.FromMinutes(5);
 
-    // スプール書込失敗（architecture.md §4.6 の能動通知。Issue #149）の警告連発を抑制する
+    // スプール書込失敗（architecture.md §4.6 の能動通知）の警告連発を抑制する
     // 最小間隔。恒久障害警告と同じ抑制窓の考え方・同じ値を流用する（ディスク障害等、原因の
     // 性質が近いため。実測確定待ちの暫定値）。
     private static readonly TimeSpan SpoolWriteFailedWarningSuppressionWindow = TimeSpan.FromMinutes(5);
@@ -222,7 +222,7 @@ public sealed class PersistenceWriter
     /// 即座に打ち切りへつなげる。
     /// </summary>
     /// <remarks>
-    /// <b>書き込みゲート（Issue #151）</b>: <see cref="_writeGate"/> が設定されている場合、
+    /// <b>書き込みゲート</b>: <see cref="_writeGate"/> が設定されている場合、
     /// 実際の DB 呼び出しの前に <see cref="LogStoreWriteGate.AcquireAsync(TimeSpan, CancellationToken)"/>
     /// でゲートを取得する。ゲート待ちのタイムアウト（<see cref="PipelineConstants.WriteGateAcquireTimeout"/>）
     /// は DB 操作のタイムアウト（<see cref="PipelineConstants.WriteBatchTimeout"/>）とは独立した
@@ -340,7 +340,7 @@ public sealed class PersistenceWriter
                     {
                         if (ex.IntegratedAuthFailure is { } integratedAuthFailure)
                         {
-                            // EventId 1031（ADR-0015 決定 5。Issue #418）: Windows 統合認証の接続失敗と
+                            // EventId 1031（ADR-0015 決定 5）: Windows 統合認証の接続失敗と
                             // 分類できた恒久障害は、実行主体と失敗種別（DC 起因 / SQL Server 起因の
                             // 一次切り分け——SEC-14 lab 実測を根拠とする分類。database.md §6.1）を含む
                             // 専用 ID で出し、同一例外で 1030 と二重警告にしない（抑制窓は 1030 と共有
@@ -357,7 +357,7 @@ public sealed class PersistenceWriter
                         }
                         else
                         {
-                            // EventId 1030（ADR-0017 委任 10。Issue #369）: 採番なし（= 0）のままだと
+                            // EventId 1030（ADR-0017 委任 10）: 採番なし（= 0）のままだと
                             // メール通知プロバイダが構造的に捕捉できず、イベントログの機械照合もできない。
                             _logger.LogError(
                                 PersistenceEventIds.PermanentWriteFailure,
@@ -414,7 +414,7 @@ public sealed class PersistenceWriter
     }
 
     /// <summary>
-    /// スプール書込失敗（architecture.md §4.6 の能動通知。Issue #149）の警告を今出すべきか判定する。
+    /// スプール書込失敗（architecture.md §4.6 の能動通知）の警告を今出すべきか判定する。
     /// <see cref="SpoolWriteFailedWarningSuppressionWindow"/> 以内に既に出していれば抑制する
     /// （<see cref="ShouldEmitPermanentFailureWarning"/> と同じ設計）。
     /// </summary>
@@ -473,7 +473,7 @@ public sealed class PersistenceWriter
                 _metrics.RecordPersistenceFailed();
 
                 // architecture.md §4.6 の能動通知「スプール書込失敗」: 発生箇所からの即時通知
-                // （抑制窓付き。Issue #149）。QuotaExceeded（上限到達による新規破棄。§3.2.3）とは
+                // （抑制窓付き）。QuotaExceeded（上限到達による新規破棄。§3.2.3）とは
                 // 異なり、スプール自体への書き込み（ディスク I/O）が失敗したケースであり、
                 // ディスク障害等の一時的でない要因を示唆するため、恒久障害警告と同じ抑制窓の
                 // 考え方で即時に警告する。

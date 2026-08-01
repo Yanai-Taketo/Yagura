@@ -6,7 +6,7 @@ namespace Yagura.Host.Administration.ForwarderKitUpload;
 
 /// <summary>
 /// フォワーダ MSI 配置フォルダの ACL を読み取り、実効実行アカウントの書き込み ACE の有無を
-/// 判定する（ADR-0020 決定 2・委任 7。Issue #283）。
+/// 判定する（ADR-0020 決定 2）。
 /// </summary>
 /// <remarks>
 /// <para>

@@ -1,7 +1,7 @@
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// 管理画面の描画可否判定（M8-4。Issue #71）。
+/// 管理画面の描画可否判定（M8-4）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -56,7 +56,7 @@ public static class AdminScreenAccessPolicy
     }
 
     /// <summary>
-    /// 認証の充足を判定する（ADR-0010 決定 1・2）。リスナ帰属（<see cref="Decide"/>）で
+    /// 認証の充足を判定する（ADR-0010 決定 1）。リスナ帰属（<see cref="Decide"/>）で
     /// <see cref="AdminScreenAccess.Allowed"/> になった後の第二段判定として使う——両者は独立
     /// （認証は「誰が到達できるか」を絞る機構であり、「どの経路が存在するか」を検証する
     /// リスナ帰属検査とは直交する。security.md §1 決定 7 の整理と同じ考え方）。

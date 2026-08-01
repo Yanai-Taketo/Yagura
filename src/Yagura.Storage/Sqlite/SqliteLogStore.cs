@@ -10,14 +10,14 @@ namespace Yagura.Storage.Sqlite;
 /// <para>
 /// <b>読み書き分離の性質（database.md §1.2 契約表 末尾・§1.3 の文書化義務）</b>: WAL モードを
 /// 使用する。WAL では読み取りは書き込みをブロックせず、書き込みも読み取りをブロックしないが、
-/// writer は同時に 1 つである（SQLite 公式ドキュメント "Write-Ahead Logging" の記載。
-/// 確認日 2026-07-04）。<see cref="WriteBatchAsync"/> の呼び出しを直列化する契約は
+/// writer は同時に 1 つである（SQLite 公式ドキュメント "Write-Ahead Logging" の記載）。
+/// <see cref="WriteBatchAsync"/> の呼び出しを直列化する契約は
 /// <see cref="ILogStore"/> のドキュメントを参照。
 /// </para>
 /// <para>
 /// <b>付随する運用特性 — WAL ファイルの肥大</b>（database.md §4）: 読み取りが常に重なり続けると
 /// checkpoint が完了できず、WAL ファイルが際限なく成長し得る（checkpoint starvation。
-/// SQLite 公式ドキュメント "Write-Ahead Logging" §6 の記載。確認日 2026-07-04）。対話的検索の
+/// SQLite 公式ドキュメント "Write-Ahead Logging" §6 の記載）。対話的検索の
 /// タイムアウト（<see cref="LogQuery.Timeout"/>）が個々の読者の上限時間を画す。WAL ファイル
 /// サイズは <see cref="GetStatisticsAsync"/> が返す <see cref="LogStoreStatistics.WalSizeBytes"/>
 /// で観測できる（architecture.md §4.6 のゲージの入力）。
@@ -32,7 +32,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（database.md §1.2 契約 1「スキーマ管理」）。
-    /// v2（Issue #145・#147・#146 SQLite 側）: 絞り込み列の複合索引を追加した
+    /// v2: 絞り込み列の複合索引を追加した
     /// （database.md §8 DB-6 決定）。列長・COLLATE の変更は SQL Server 側のみ
     /// （SQLite の TEXT は既に無制限——database.md §4）。
     /// </summary>
@@ -96,7 +96,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
         // （SQLite 公式ドキュメント "Write-Ahead Logging"（www.sqlite.org/wal.html）:
         // "Unlike the other journaling modes, PRAGMA journal_mode=WAL is persistent.
         // If a process sets WAL mode, then closes and reopens the database, the
-        // database will come back in WAL mode." 確認日 2026-07-05）。
+        // database will come back in WAL mode."）。
         await using (var pragma = connection.CreateCommand())
         {
             pragma.CommandText = "PRAGMA journal_mode=WAL;";
@@ -236,12 +236,12 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
     {
         if (fromVersion < 2)
         {
-            // v1 -> v2（Issue #145・database.md §8 DB-6 決定）: 索引 DDL 自体は
+            // v1 -> v2（database.md §8 DB-6 決定）: 索引 DDL 自体は
             // InitializeAsync 冒頭の「スキーマ確認」ブロックで新規作成・既存 DB のどちらに対しても
             // 既に冪等に収束済み（CREATE INDEX IF NOT EXISTS / DROP INDEX IF EXISTS）。
             // このバージョン間移行で残る作業は SchemaVersion の更新と適用記録の追記のみ。
             // SQLite 側は列長・COLLATE の変更を伴わない（TEXT は元々無制限——database.md §4）。
-            // 自由文検索の非 ASCII 大文字小文字非区別は DB-9 の性能実測（2026-07-10）を経て
+            // 自由文検索の非 ASCII 大文字小文字非区別は DB-9 の性能実測を経て
             // アプリ定義比較関数方式で確定した（QueryAsync 参照）——スキーマ DDL は変更しない
             // （比較関数はクエリ実行時に登録するアプリケーション層の変更のため）。
             await RecordSchemaVersionAppliedAsync(connection, transaction, 2, cancellationToken)
@@ -437,9 +437,9 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
             if (query.SearchText is { Length: > 0 } searchText)
             {
                 // 自由文検索: Message に対する部分一致・大文字小文字を区別しない
-                // （database.md §1.2 DB-6 確定規則。2026-07-09 オーナー決定）。
+                // （database.md §1.2 DB-6 確定規則）。
                 // DB-9（database.md §4・§8）の性能実測（tools/Yagura.Bench QueryLatency。
-                // 2026-07-10。100 万行規模で UDF 方式の worst-case p95 が約 0.6〜0.8 秒——
+                // 100 万行規模で UDF 方式の worst-case p95 が約 0.6〜0.8 秒——
                 // 対話的検索のタイムアウト予算（architecture.md M-10 仮値 30 秒）の 3% 未満に
                 // 収まり、ネイティブ LIKE 比でも概ね 1〜1.6 倍の範囲だった）により、アプリ定義
                 // 比較関数方式（<see cref="RegisterFreeTextComparisonFunction"/>）を採用に確定した
@@ -452,16 +452,16 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             if (query.Cursor is { } cursor)
             {
-                // カーソル（キーセット）ページング（database.md §1.2・DB-11。Issue #144）:
+                // カーソル（キーセット）ページング（database.md §1.2・DB-11）:
                 // 複合索引 IX_LogRecords_ReceivedAt_Id（ReceivedAt DESC, Id DESC）と同じ並びで
                 // 「カーソルより過去」の行だけに絞るシーク条件。OFFSET は使わない。
                 //
                 // 述語の形は provider ごとに異なる（意味論は同一。database.md §8 DB-11 の実測記録）:
                 // SQLite はこの OR 分解形をそのまま索引シークへ変換できることを EXPLAIN QUERY PLAN
-                // で実測済み（PR #221 レビュー。200 万行で
+                // で実測済み（200 万行で
                 // `SEARCH LogRecords USING INDEX IX_LogRecords_ReceivedAt_Id (ReceivedAt<?)`——
                 // SCAN ではなく SEARCH）。一方 SQL Server の最適化器は同じ形をシークへ変換できず
-                // Clustered Index Scan + Sort に落ちるため（2026-07-10 実測）、SqlServerLogStore
+                // Clustered Index Scan + Sort に落ちるため（実測）、SqlServerLogStore
                 // 側は等価な書き換え形（ReceivedAt <= @c AND (ReceivedAt < @c OR Id < @i)）を
                 // 使う——各 provider の最適化器が確実にシークする形を実測で選ぶ（方言差の
                 // 封じ込め。database.md §1.1）。
@@ -474,7 +474,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             var whereSql = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
 
-            // Id DESC のタイブレーク（Issue #144）: ReceivedAt 単独では同一時刻（同一ミリ秒）の
+            // Id DESC のタイブレーク: ReceivedAt 単独では同一時刻（同一ミリ秒）の
             // 行の相対順序が SQL 上未定義になる——UDP バースト・スタックトレースの分割送信等、
             // syslog では同一時刻多発が日常的に起きる。Id は採番順（挿入順）と一致するため、
             // 同時刻内は「新しく挿入された行が先」という決定的な順序になる。
@@ -589,7 +589,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
     /// <inheritdoc />
     /// <remarks>
-    /// 一括読み出し（IBulkLogReader。database.md §1.2 予約 (a) の実体化。Issue #266）。
+    /// 一括読み出し（IBulkLogReader。database.md §1.2 予約 (a) の実体化）。
     /// 内部はカーソル（キーセット）の昇順バッチ反復——DB-11（QueryAsync の降順カーソル）と
     /// 同じ複合キー（ReceivedAt, Id）を逆向きに辿る。上限・タイムアウトの必須化は予約 (a) の
     /// 条件どおり適用しない（呼び出し経路は管理操作限定）。
@@ -729,7 +729,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
                 command.Parameters.Add("$to", SqliteType.Text).Value = toValue.UtcDateTime.ToString("O");
             }
 
-            // 種別の完全一致フィルタ（Issue #150。ILogStore の契約参照）。
+            // 種別の完全一致フィルタ（ILogStore の契約参照）。
             if (kind is not null)
             {
                 whereClauses.Add("Kind = $kind");
@@ -786,7 +786,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
         int limit,
         TimeSpan timeout,
         CancellationToken cancellationToken = default) =>
-        // 新しい順（候補選択用。Issue #383——打ち切りで切り捨てるのは「古い側」）。
+        // 新しい順（候補選択用。打ち切りで切り捨てるのは「古い側」）。
         QuerySourceActivityCoreAsync(limit, timeout, mostRecentFirst: true, cancellationToken);
 
     private async Task<IReadOnlyList<SourceActivity>> QuerySourceActivityCoreAsync(
@@ -862,7 +862,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
             await using var command = connection.CreateCommand();
             // 索引済みの ReceivedAt 範囲へ先に絞り込んでから集計する（ILogStore の契約参照。
-            // Issue #145——Severity 列に索引が無いための窓必須化）。
+            // Severity 列に索引が無いための窓必須化）。
             command.CommandText =
                 """
                 SELECT Severity, COUNT(*) AS RecordCount
@@ -963,14 +963,14 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
     /// <b>組み込み <c>LIKE</c> 演算子自体は上書きしない</b>: <c>Microsoft.Data.Sqlite</c> の
     /// <c>SqliteConnection.CreateFunction</c> は同名関数の再定義で <c>LIKE</c> 演算子の挙動そのものを
     /// グローバルに差し替えることも可能だが（Microsoft Learn "User-defined functions -
-    /// Microsoft.Data.Sqlite"。確認日 2026-07-09）、database.md §4 の方針どおり呼び出し経路を
+    /// Microsoft.Data.Sqlite"）、database.md §4 の方針どおり呼び出し経路を
     /// 自由文検索に限定した専用関数として実装する。
     /// </para>
     /// <para>
     /// <b>一致規則の実体</b>: <c>string.Contains(needle, StringComparison.OrdinalIgnoreCase)</c>。
     /// .NET の <c>OrdinalIgnoreCase</c> は不変カルチャの大小変換テーブルに基づく比較であり、
-    /// ASCII に限らない大小変換を行う（Microsoft Learn "Globalization invariant mode"。
-    /// 確認日 2026-07-09: Invariant Mode 下では「非 ASCII の大小変換は行われない」——裏を返せば
+    /// ASCII に限らない大小変換を行う（Microsoft Learn "Globalization invariant mode":
+    /// Invariant Mode 下では「非 ASCII の大小変換は行われない」——裏を返せば
     /// 通常モード（本方式の前提。同メソッド doc コメント参照）では非 ASCII も大小変換される）。
     /// これにより DB-6「折り畳むのは大文字小文字のみ」を過不足なく満たす:
     /// café/CAFÉ は同一視される一方、café/cafe（アクセントの有無）・あ/ア（かな種。大小の概念を
@@ -1026,7 +1026,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
     /// <c>DELETE ... LIMIT</c> を繰り返し、削除対象が尽きるまで続ける。SQLite の <c>DELETE</c> 文の
     /// <c>LIMIT</c> 句は既定ビルドでは無効（<c>SQLITE_ENABLE_UPDATE_DELETE_LIMIT</c> コンパイル
     /// オプションが必要——SQLite 公式ドキュメント "The UPDATE ... LIMIT ... The DELETE ... LIMIT"
-    /// (www.sqlite.org/lang_delete.html) の記載。確認日 2026-07-05。Microsoft.Data.Sqlite が
+    /// (www.sqlite.org/lang_delete.html) の記載。Microsoft.Data.Sqlite が
     /// 同梱する SQLitePCLRaw.lib.e_sqlite3 のビルドはこのオプションを有効化していない）ため、
     /// <c>rowid IN (SELECT rowid FROM LogRecords WHERE ... LIMIT n)</c> の副問い合わせ形で
     /// 同じ効果を得る。
@@ -1082,7 +1082,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
     /// <remarks>
     /// DB サイズは <c>PRAGMA page_count</c> * <c>PRAGMA page_size</c> で算出する
     /// （SQLite 公式ドキュメント "PRAGMA page_count" (www.sqlite.org/pragma.html#pragma_page_count):
-    /// "the total number of pages in the database file" の記載。確認日 2026-07-05。
+    /// "the total number of pages in the database file" の記載。
     /// メインの DB ファイルサイズであり、WAL ファイルは含まない——WAL は
     /// <see cref="LogStoreStatistics.WalSizeBytes"/> で別途返す）。
     /// </remarks>

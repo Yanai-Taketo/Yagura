@@ -5,7 +5,7 @@ using Yagura.Web.Components.Common;
 namespace Yagura.Web.Export;
 
 /// <summary>
-/// ログ検索結果（<see cref="LogRecordSummary"/>）の CSV 出力（Issue #157）。
+/// ログ検索結果（<see cref="LogRecordSummary"/>）の CSV 出力。
 /// RFC 4180 準拠の行組み立て（<see cref="CsvField"/>）を担う。UTF-8 BOM の付与は本クラスの責務
 /// ではなく、呼び出し側が BOM 付与を既定する <see cref="System.Text.Encoding"/>（既定の
 /// <c>Encoding.UTF8</c>）を持つ <see cref="StreamWriter"/> を渡すことで実現する
@@ -91,7 +91,7 @@ public static class LogRecordCsvWriter
     /// <summary>
     /// 解析状態の短形ラベル（CSV の 1 セルに収める表形式向け。<see cref="UiText.ParseFailedLabel"/> /
     /// <see cref="UiText.IncompleteLabel"/>・検索条件の選択肢ラベル
-    /// （<see cref="UiText.ParseStatusOptionParseFailed"/> 等。Issue #148）は括弧書きの説明を
+    /// （<see cref="UiText.ParseStatusOptionParseFailed"/> 等）は括弧書きの説明を
     /// 含む長文であり、CSV セルには先頭の短語のみを使う——用語は選択肢ラベルと一致させる）。
     /// </summary>
     private static string FormatParseStatus(ParseStatus status) => status switch

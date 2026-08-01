@@ -26,7 +26,7 @@ namespace Yagura.Ingestion.Parsing;
 /// 本クラスの private メソッド群のコメントを参照）。
 /// </para>
 /// <para>
-/// **解析失敗時のフィールド保持**（Issue #139）: ParseFailed になった原因より手前で既に
+/// **解析失敗時のフィールド保持**: ParseFailed になった原因より手前で既に
 /// 確定した値は破棄せず <see cref="LogRecord"/> に載せる（Raw は常に保持）。対象は
 /// CONTENT/MSG/STRUCTURED-DATA の非 UTF-8（このとき Message/StructuredData は null）に加え、
 /// TIMESTAMP 値の RFC 3339 不正（確定済みの HOSTNAME 等は保持し DeviceTimestamp のみ未設定）、
@@ -58,10 +58,10 @@ public static class SyslogParser
     /// <param name="datagram">受信済みの生データグラム。</param>
     /// <param name="defaultRfc3164TimeZone">
     /// RFC 3164 TIMESTAMP（年・タイムゾーンを持たない）の解釈に使う既定タイムゾーン
-    /// （Issue #134。configuration.md の <c>Ingestion:Rfc3164:DefaultTimeZone</c>）。
+    /// （configuration.md の <c>Ingestion:Rfc3164:DefaultTimeZone</c>）。
     /// <see langword="null"/> は UTC（<see cref="TimeZoneInfo.Utc"/>）——本引数を省略した既存の
     /// 呼び出し元との後方互換を保つ既定値。<b>優先順位</b>: TIMESTAMP に送信元付記の
-    /// タイムゾーン（Issue #135。Cisco の <c>show-timezone</c> 等）が取れた場合はそちらを優先し、
+    /// タイムゾーン（Cisco の <c>show-timezone</c> 等）が取れた場合はそちらを優先し、
     /// 取れない場合にのみ本引数を適用する（RFC 5424 の TIMESTAMP は ISO 8601 でタイムゾーンを
     /// 自己完結して持つため本引数の対象外）。
     /// </param>
@@ -164,7 +164,7 @@ public static class SyslogParser
     /// 既定はフィールド未分解（PRI 不在・HEADER 途中断など、値そのものが確定していない失敗）
     /// 用途だが、オプション引数で PRI・HEADER 側の確定済み値を渡せる——本文/STRUCTURED-DATA の
     /// 非 UTF-8 のように、HEADER より後段の失敗で HEADER 側の確定値まで破棄しないため
-    /// （Issue #139。database.md §2.1「解析失敗時のフィールド保持」）。
+    /// （database.md §2.1「解析失敗時のフィールド保持」）。
     /// </remarks>
     private static LogRecord Envelope(
         RawDatagram datagram,
@@ -230,12 +230,12 @@ public static class SyslogParser
             // ABNF に反する TIMESTAMP は HEADER 不正として ParseFailed とする（判断表参照）。
             // STRUCTURED-DATA より前に変換する——STRUCTURED-DATA/MSG の非 UTF-8 で ParseFailed
             // になった場合でも、確定済みの HEADER 値（本値を含む）を Envelope に渡せるようにする
-            // ため（Issue #139）。
+            // ため。
             if (!TryParseRfc3339(timestampField, out var parsedTimestamp))
             {
                 // TIMESTAMP の値だけが不正（RFC 3339 として解釈できない——時計設定が壊れた
                 // 機器等）。この時点で HOSTNAME・APP-NAME・PROCID・MSGID の 4 フィールドは
-                // 既に確定済みのため破棄しない（DeviceTimestamp のみ未設定。Issue #139・
+                // 既に確定済みのため破棄しない（DeviceTimestamp のみ未設定。
                 // database.md §2.1「解析失敗時のフィールド保持」——この失敗だけでホスト名
                 // 検索が成立しなくなる状態を避ける）。
                 return Fail5424WithHeader(
@@ -250,8 +250,8 @@ public static class SyslogParser
         if (!TryReadStructuredData(payload, ref pos, out var structuredData))
         {
             // SD-ELEMENT 内が非 UTF-8 で境界検出後のデコードに失敗した場合を含む。この時点で
-            // HEADER の 5 フィールドと TIMESTAMP は確定済みのため破棄しない（Issue #139。
-            // database.md §2.1「解析失敗時のフィールド保持」）。
+            // HEADER の 5 フィールドと TIMESTAMP は確定済みのため破棄しない
+            // （database.md §2.1「解析失敗時のフィールド保持」）。
             return Fail5424WithHeader(
                 datagram, deviceTimestamp, facility, severity, hostnameField, appNameField, procIdField, msgIdField);
         }
@@ -263,8 +263,8 @@ public static class SyslogParser
             if (payload[pos] != (byte)' ')
             {
                 // STRUCTURED-DATA の直後は SP + MSG か終端でなければならない。この構造違反の
-                // 時点で HEADER と STRUCTURED-DATA は確定済みのため破棄しない（Issue #139・
-                // database.md §2.1「解析失敗時のフィールド保持」）。
+                // 時点で HEADER と STRUCTURED-DATA は確定済みのため破棄しない
+                // （database.md §2.1「解析失敗時のフィールド保持」）。
                 return Fail5424WithHeader(
                     datagram, deviceTimestamp, facility, severity, hostnameField, appNameField, procIdField,
                     msgIdField, structuredData);
@@ -276,7 +276,7 @@ public static class SyslogParser
             {
                 // 非 UTF-8（BOM 明示時に限らず、本実装は MSG 全体を UTF-8 として扱う。
                 // 判断表「MSG 非 UTF-8」参照）——ログを失わないため ParseFailed + Raw 保持とするが、
-                // HEADER・STRUCTURED-DATA は確定済みのため破棄しない（Issue #139）。
+                // HEADER・STRUCTURED-DATA は確定済みのため破棄しない。
                 return Fail5424WithHeader(
                     datagram, deviceTimestamp, facility, severity, hostnameField, appNameField, procIdField,
                     msgIdField, structuredData);
@@ -308,7 +308,7 @@ public static class SyslogParser
     /// HEADER の一部または全部が既に確定した後の失敗（TIMESTAMP 値の RFC 3339 不正・
     /// STRUCTURED-DATA の不正または非 UTF-8・MSG の非 UTF-8・STRUCTURED-DATA 直後の構造違反）
     /// 用の ParseFailed 封筒。確定済みの値のみを渡し、失敗した項目より後は設定しない。
-    /// Message は設定せず、Raw は受信した生バイト列を保持する（Issue #139）。
+    /// Message は設定せず、Raw は受信した生バイト列を保持する。
     /// </summary>
     private static LogRecord Fail5424WithHeader(
         RawDatagram datagram,
@@ -460,7 +460,7 @@ public static class SyslogParser
     /// "T"・"Z" は大文字必須・小数秒は 1〜6 桁・うるう秒禁止——を含む）を解析する。
     /// </summary>
     /// <remarks>
-    /// ABNF を書式配列で明示した TryParseExact で解析する（Issue #361。従来の
+    /// ABNF を書式配列で明示した TryParseExact で解析する（従来の
     /// DateTimeOffset.TryParse は日付のみ・オフセット欠落・前後空白・独自日付形式など
     /// ABNF 非適合の入力まで受理し、クラス契約「HEADER が ABNF 違反なら ParseFailed」に
     /// 反していた）。うるう秒（60 秒）は RFC 5424 が明示的に禁じており（"Leap seconds
@@ -676,7 +676,7 @@ public static class SyslogParser
             // 保存するスキーマである。CONTENT が非 UTF-8（例: CP932/Shift-JIS を吐く日本の
             // 旧来機器）の場合は本文を安全に保持できないため ParseFailed + Raw 保持とする
             // （判断表「3164 の CONTENT 非 UTF-8」）。ただし PRI・TIMESTAMP・HOSTNAME・TAG など
-            // CONTENT より手前で既に確定した値は破棄しない（Issue #139。database.md §2.1
+            // CONTENT より手前で既に確定した値は破棄しない（database.md §2.1
             // 「解析失敗時のフィールド保持」）——この失敗だけでホスト名すら検索できなくなる
             // 状態を避けるため。
             return Envelope(
@@ -709,14 +709,14 @@ public static class SyslogParser
 
     /// <summary>
     /// RFC 3164 §4.1.2 TIMESTAMP（<c>Mmm dd hh:mm:ss</c>。日が 1 桁の場合は先頭を空白埋めした
-    /// 2 文字）を寛容リーダとして解析する（Issue #135）。年・タイムゾーンを持たないため、年は
+    /// 2 文字）を寛容リーダとして解析する。年・タイムゾーンを持たないため、年は
     /// 4 桁年変種（後述）が無い限り <paramref name="referenceTime"/>（= ReceivedAt。基準時刻は
     /// 1 回だけ読み取り、以後使い回す——年またぎ判定の内部で複数回現在時刻を読むと境界付近で
     /// 矛盾した年を選びうるため）から補完する（年またぎは <see cref="ResolveYear"/> 参照）。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>受理する逸脱（Issue #135。Cisco IOS 等のベンダ拡張）</b>: いずれも「厳密な
+    /// <b>受理する逸脱（Cisco IOS 等のベンダ拡張）</b>: いずれも「厳密な
     /// <c>Mmm dd hh:mm:ss</c> のみ受理」だった旧実装では HOSTNAME/TAG 分解ごと崩れていた形式。
     /// <list type="bullet">
     /// <item><b>先頭シーケンス番号</b>（<c>service sequence-numbers</c>。例: <c>45: Mar  1 ...</c>）:
@@ -740,7 +740,7 @@ public static class SyslogParser
     /// </list>
     /// </para>
     /// <para>
-    /// <b>タイムゾーンの優先順位（Issue #134・#135 の統合設計）</b>: ①TIMESTAMP に送信元付記の
+    /// <b>タイムゾーンの優先順位</b>: ①TIMESTAMP に送信元付記の
     /// TZ が取れた場合はそれを最優先で使う。②取れない場合は
     /// <paramref name="defaultRfc3164TimeZone"/>（configuration.md
     /// <c>Ingestion:Rfc3164:DefaultTimeZone</c>。既定は UTC = 現状互換）を適用する。
@@ -793,7 +793,7 @@ public static class SyslogParser
             TimeSpan offset;
             if (vendorOffset is { } vendor)
             {
-                // ①送信元付記の TZ が最優先（Issue #134・#135）。
+                // ①送信元付記の TZ が最優先。
                 offset = vendor;
             }
             else
@@ -821,7 +821,7 @@ public static class SyslogParser
 
     /// <summary>
     /// 先頭の数字列 + <c>:</c> + SP（例: <c>45: </c>）をシーケンス番号として読み飛ばす
-    /// （Cisco <c>service sequence-numbers</c>。Issue #135）。パターンに一致しない場合は
+    /// （Cisco <c>service sequence-numbers</c>）。パターンに一致しない場合は
     /// <paramref name="cursor"/> を変更しない——呼び出し元が TIMESTAMP 解析に失敗した際、
     /// 本メソッドで進めた分だけを含めて丸ごとロールバックできるようにするため。
     /// </summary>
@@ -903,7 +903,7 @@ public static class SyslogParser
     }
 
     /// <summary>
-    /// 4 桁の数字を年として読み取る（Issue #135 の 4 桁年変種）。数字 4 個の連続が見えなければ
+    /// 4 桁の数字を年として読み取る（4 桁年変種）。数字 4 個の連続が見えなければ
     /// <paramref name="cursor"/> を変更せず false を返す（通常形式の <c>hh:mm:ss</c> は 3 文字目が
     /// <c>:</c> のため取り違えない）。
     /// </summary>
@@ -929,7 +929,7 @@ public static class SyslogParser
     }
 
     /// <summary>
-    /// <c>hh:mm:ss</c> + 任意の小数秒（<c>.</c> + 1 桁以上の数字。Issue #135 の msec 拡張）を読み取る。
+    /// <c>hh:mm:ss</c> + 任意の小数秒（<c>.</c> + 1 桁以上の数字。msec 拡張）を読み取る。
     /// 小数部は tick 精度（7 桁）へ正規化する——7 桁を超える分は切り捨て、7 桁未満は末尾を 0 埋め
     /// する（例: <c>.345</c> → 3,450,000 ticks = 0.345 秒）。
     /// </summary>
@@ -1004,7 +1004,7 @@ public static class SyslogParser
 
     /// <summary>
     /// TIMESTAMP 直後の SP + トークンを送信元付記のタイムゾーンとして解決を試みる
-    /// （Issue #135。Cisco <c>show-timezone</c>）。数値オフセット（<c>+HH:MM</c>/<c>+HHMM</c>/
+    /// （Cisco <c>show-timezone</c>）。数値オフセット（<c>+HH:MM</c>/<c>+HHMM</c>/
     /// <c>Z</c>）または <see cref="KnownTimeZoneAbbreviations"/> に載る曖昧でない略号のみを
     /// 解決対象とする。認識できないトークンは TZ とみなさず <paramref name="cursor"/> を変更しない
     /// ——SP を含め未消費のまま返すことで、既存の HOSTNAME 解析（次の SP まで）にそのまま委ねる
@@ -1103,7 +1103,7 @@ public static class SyslogParser
     }
 
     /// <summary>
-    /// 曖昧でない TZ 略号のみを既知集合とする（Issue #135）。<b>意図的に含めない</b>: 米国の
+    /// 曖昧でない TZ 略号のみを既知集合とする。<b>意図的に含めない</b>: 米国の
     /// <c>CST</c>/<c>EST</c>/<c>PST</c>/<c>MST</c> 等は Cisco <c>clock timezone &lt;name&gt; &lt;offset&gt;</c>
     /// が任意の名称を任意のオフセットに割り当てられるため、略号だけからオフセットを断定できない
     /// （CLAUDE.md「技術的な同等性の主張は推測で書かない」の適用——確証のない略号を推測で
@@ -1115,7 +1115,7 @@ public static class SyslogParser
         {
             ["UTC"] = TimeSpan.Zero,
             ["GMT"] = TimeSpan.Zero,
-            ["JST"] = TimeSpan.FromHours(9), // Issue #135 の具体例（Cisco show-timezone）。DST 無し。
+            ["JST"] = TimeSpan.FromHours(9), // 具体例（Cisco show-timezone）。DST 無し。
         };
 
     private static bool TryParseKnownTimeZoneAbbreviation(ReadOnlySpan<byte> token, out TimeSpan offset)

@@ -11,18 +11,17 @@ namespace Yagura.Ingestion.Tcp;
 /// <summary>
 /// 1 接続分の「読み取り → <see cref="TcpFrameDecoder"/> によるフレーム境界確定 → Q1 投入」
 /// ループを、具体的な <see cref="Stream"/> の種類（平文の <see cref="System.Net.Sockets.NetworkStream"/>
-/// か、TLS の <see cref="System.Net.Security.SslStream"/> か）に依存せず実行する共通処理
-/// （Issue #137）。
+/// か、TLS の <see cref="System.Net.Security.SslStream"/> か）に依存せず実行する共通処理。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>抽出の経緯</b>: <see cref="TcpSyslogListener.HandleConnectionAsync"/>（M4-1・Issue #140・#143・
-/// PR #169 のオーナー決定 2026-07-09 を経て確立した、アイドルタイムアウト・再同期バイト数上限・
-/// フレーミング進捗タイムアウトの 3 天井を持つ読み取りループ）は、ソケット取得後は一貫して
-/// <see cref="Stream"/> の抽象メンバー（<c>ReadAsync</c>）のみに依存しており、<c>NetworkStream</c>
-/// 固有の API を使っていなかった。TLS 受信リスナ（<see cref="Yagura.Ingestion.Tls.TlsSyslogListener"/>）
-/// は「既存の TCP 受信パイプラインの上に <c>SslStream</c> を挟む」設計（security.md §6・Issue #137
-/// 依頼）のため、このループをそのまま共有できる——複製せず本クラスへ抽出し、両リスナから呼ぶ。
+/// <b>抽出の理由</b>: <see cref="TcpSyslogListener.HandleConnectionAsync"/>（アイドルタイムアウト・
+/// 再同期バイト数上限・フレーミング進捗タイムアウトの 3 天井を持つ読み取りループ）は、ソケット
+/// 取得後は一貫して <see cref="Stream"/> の抽象メンバー（<c>ReadAsync</c>）のみに依存しており、
+/// <c>NetworkStream</c> 固有の API を使っていなかった。TLS 受信リスナ
+/// （<see cref="Yagura.Ingestion.Tls.TlsSyslogListener"/>）は「既存の TCP 受信パイプラインの上に
+/// <c>SslStream</c> を挟む」設計（security.md §6）のため、このループをそのまま共有できる——複製せず
+/// 本クラスへ抽出し、両リスナから呼ぶ。
 /// </para>
 /// <para>
 /// 抽出されなかった部分（Accept ループ・同時接続数上限・bind/dual-stack・TLS ハンドシェイクの実行）は
@@ -211,7 +210,7 @@ internal sealed class TcpFramedConnectionProcessor
                 {
                     if (!_ingressGate.ShouldAdmit(remoteAddress ?? IPAddress.None, message))
                     {
-                        // 流量制御による破棄（TokenBucketIngressGate。Issue #260）。破棄は必ず計上する
+                        // 流量制御による破棄（TokenBucketIngressGate）。破棄は必ず計上する
                         // （「発火は必ず計測される」architecture.md §3.3）。
                         _metrics.RecordFlowControlDropped();
                         continue;

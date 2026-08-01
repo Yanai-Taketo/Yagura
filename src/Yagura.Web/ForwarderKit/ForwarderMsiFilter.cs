@@ -4,7 +4,7 @@ namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
 /// MSI 検出の判定（ファイル名パターン一致・版比較・公式ハッシュ照合）を担う純粋関数群
-/// （ADR-0008 設計条件 9・委任 #7）。列挙処理（<see cref="SystemForwarderMsiSource"/>）から
+/// （ADR-0008 設計条件 9）。列挙処理（<see cref="SystemForwarderMsiSource"/>）から
 /// 分離し、単体テストで境界を固定できるようにする（<see cref="NicCandidateFilter"/> と同じ設計）。
 /// </summary>
 public static partial class ForwarderMsiFilter
@@ -12,7 +12,7 @@ public static partial class ForwarderMsiFilter
     /// <summary>
     /// <see cref="ForwarderMsiConstraints.FileNamePattern"/> / <see cref="ForwarderMsiConstraints.FileNamePatternArm64"/>
     /// のコンパイル済み表現（大文字小文字を区別しない——Windows のファイル名は大文字小文字を
-    /// 区別しないため）。x64・ARM64 のどちらか一方に一致すればよい（ADR-0009 決定7・委任 #4）。
+    /// 区別しないため）。x64・ARM64 のどちらか一方に一致すればよい（ADR-0009 決定 7）。
     /// </summary>
     [GeneratedRegex(@"^fluent-bit-.*-(win64|winarm64)\.msi$", RegexOptions.IgnoreCase)]
     private static partial Regex FileNamePatternRegex();
@@ -32,7 +32,7 @@ public static partial class ForwarderMsiFilter
 
     /// <summary>
     /// 指定したファイル名が<b>指定アーキテクチャの</b>検出対象パターンに一致するか
-    /// （ADR-0009 決定7・委任 #4）。<see cref="IForwarderMsiSource.Lookup(ForwarderMsiArchitecture)"/>
+    /// （ADR-0009 決定 7）。<see cref="IForwarderMsiSource.Lookup(ForwarderMsiArchitecture)"/>
     /// が配置フォルダ内の候補をアーキごとに絞り込むために使う——同一フォルダに win64・ARM64 の
     /// MSI が混在していても、片方のアーキだけを検出対象にできる（誤アーキ配布への構造的な
     /// 牽制。詳細は <see cref="IForwarderMsiSource"/> の remarks 参照）。

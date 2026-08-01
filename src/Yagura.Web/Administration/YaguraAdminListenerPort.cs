@@ -1,7 +1,7 @@
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// 管理リスナの実ポート番号一式の DI 供給用ラッパー（M8-4。Issue #71。ADR-0010 Phase 2 決定 1 で
+/// 管理リスナの実ポート番号一式の DI 供給用ラッパー（M8-4。ADR-0010 Phase 2 決定 1 で
 /// 複数ポート対応に拡張——リモートバインド有効時は loopback 用ポートに加え、別ポートの
 /// リモート HTTPS エントリが加わる。<see cref="ListenerBindPlan"/>/<c>Program</c> 参照）。
 /// </summary>

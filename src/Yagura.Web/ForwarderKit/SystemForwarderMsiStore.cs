@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// <see cref="IForwarderMsiStore"/> の実体（ADR-0020 決定 2・3。配置経路 (b)）。
+/// <see cref="IForwarderMsiStore"/> の実体（ADR-0020 決定 2。配置経路 (b)）。
 /// ステージング → アトミックリネームの書き込み I/O を担い、判定（パターン一致・ハッシュ照合）は
 /// <see cref="ForwarderMsiFilter"/>（純粋関数）に委譲する——<see cref="SystemForwarderMsiSource"/> と
 /// 同じ設計。
@@ -108,7 +108,7 @@ public sealed partial class SystemForwarderMsiStore : IForwarderMsiStore
         }
 
         // --- 事前拒否: 空き容量（「書き込み完了後も 1006 の警告閾値を下回らない」。申告なしは
-        //     サイズ上限基準——ADR-0020 決定 3・委任 4） ---
+        //     サイズ上限基準——ADR-0020 決定 3） ---
         var requiredBytes = declaredLength ?? ForwarderMsiUploadConstraints.MaxUploadBytes;
         if (!HasSufficientFreeSpace(requiredBytes, out var freeSpaceReason))
         {

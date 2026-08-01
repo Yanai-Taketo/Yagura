@@ -17,10 +17,10 @@ namespace Yagura.Host.Configuration;
 /// （解析と検証は各キーの担当が行う——§8）。<c>AddJsonFile</c> は数値・真偽値を文字列へ平坦化して
 /// 渡すため元から通るが、<see cref="JsonSerializer"/> の既定は型が一致しないと
 /// <see cref="JsonException"/> を投げる。この差により、手編集で <c>"QuotaBytes": 4194304</c> と
-/// 数値を書いた設定ファイルがサービスを起動不能にする退行が生じていた（Issue #312）。
+/// 数値を書いた設定ファイルがサービスを起動不能にする退行が生じていた。
 /// </para>
 /// <para>
-/// <b>変換規則は実測に基づく</b>（2026-07-18 に <c>Microsoft.Extensions.Configuration.Json</c> 10.0.10 で確認）。
+/// <b>変換規則は実測に基づく</b>（<c>Microsoft.Extensions.Configuration.Json</c> 10.0.10 で確認）。
 /// 特に真偽値が <c>"True"</c> / <c>"False"</c>（先頭大文字）になる点と、数値が表記のまま
 /// （<c>514.0</c> → <c>"514.0"</c>）保たれる点は、推測で実装すると一致しない。
 /// </para>

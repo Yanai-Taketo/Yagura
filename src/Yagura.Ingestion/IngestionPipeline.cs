@@ -47,7 +47,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     private UdpSyslogListenerOptions _udpOptions;
     private TcpSyslogListenerOptions _tcpOptions;
 
-    // CF-6 再試行の共有状態（Issue #390）。_bindRetryCts と _bindRetryTasks の読み書き、および
+    // CF-6 再試行の共有状態。_bindRetryCts と _bindRetryTasks の読み書き、および
     // 停止開始フラグの判定は必ず _bindRetryGate の下で行う——cancel 側の Dispose と
     // StartBindRetryLoop の .Token 取得が競合すると ObjectDisposedException になり得るため、
     // 「CTS の取得（なければ生成）→ トークン取得 → タスク登録」と「CTS の取り外し → タスク一覧の
@@ -60,14 +60,14 @@ public sealed class IngestionPipeline : IAsyncDisposable
     // 停止（StopListenersAsync）が始まったら true（以後戻らない）。進行中の再構成の末尾
     // （RearmBindRetryForUntouchedDownListeners）や復旧失敗（RollBackOrRetryAsync）が
     // 停止完了「後」に StartBindRetryLoop を呼んでも、再試行ループを張り直さないための
-    // 構造的な保証（Issue #390——StopListenersAsync は _reconfigureGate を取らないため、
+    // 構造的な保証（StopListenersAsync は _reconfigureGate を取らないため、
     // 打ち切り（CancelBindRetryAsync）だけでは進行中の再構成による張り直しを防げない）。
     private bool _listenersStopping;
 
-    // リスナ別の現在の受信可否（ADR-0018 委任 6。Issue #351）。起動 Outcome・再構成 Outcome・
+    // リスナ別の現在の受信可否（ADR-0018 委任 6）。起動 Outcome・再構成 Outcome・
     // CF-6 再試行成功の 3 系統の帰結を現在状態へ畳む（ListenerAvailabilitySnapshot の remarks 参照）。
     // 書き手は起動/再構成の呼び出し元スレッドと CF-6 再試行のバックグラウンドスレッド、読み手は
-    // 能動通知の監視ループと再構成（Issue #373 の再アーム判定）——「受信可否 + 受信断の開始時刻」の
+    // 能動通知の監視ループと再構成（再アーム判定）——「受信可否 + 受信断の開始時刻」の
     // 対を崩さず読むため、小さなロックで直列化する（競合は起動・再構成・再試行成功時のみ。
     // 再構成中の旧リスナ停止〜新リスナ起動の短い瞬断は追わず、確定した帰結だけを反映する）。
     private readonly object _listenerStateGate = new();
@@ -77,7 +77,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     // 受信できなくなった時刻（リスナ別。受信可能な間は null）。CF-6 の再試行が受信を再開した
     // ときの受信断区間（ListenerBindRecovered → downtime.listener-bind-retry）の始端に使う——
-    // 再構成が再試行ループを張り直しても（Issue #373）、区間の始端は最初に bind できなくなった
+    // 再構成が再試行ループを張り直しても、区間の始端は最初に bind できなくなった
     // 時刻のまま保たれる。
     private DateTimeOffset? _udpGapStartedAt;
     private DateTimeOffset? _tcpGapStartedAt;
@@ -128,25 +128,25 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// 行わない」構成（保持期間スケジューラ未構成時）を表す。
     /// </param>
     /// <param name="defaultRfc3164TimeZone">
-    /// RFC 3164 TIMESTAMP の既定タイムゾーン（Issue #134。<see cref="ParsingStage"/> 経由で
+    /// RFC 3164 TIMESTAMP の既定タイムゾーン（<see cref="ParsingStage"/> 経由で
     /// <see cref="Parsing.SyslogParser.Parse"/> へそのまま渡す）。<c>null</c> は UTC（現状互換）。
     /// </param>
     /// <param name="writeGate">
-    /// ILogStore の書き込みゲート（Issue #151。<see cref="LogStoreWriteGate"/> 参照）。
+    /// ILogStore の書き込みゲート（<see cref="LogStoreWriteGate"/> 参照）。
     /// ライブ書き込み（<see cref="PersistenceWriter"/>）と drain（<see cref="SpoolDrainCoordinator"/>）
     /// へ同じインスタンスを渡し、保持期間削除（<c>Yagura.Host.Retention.RetentionScheduler</c>）と
     /// 直列化する。<c>null</c> はゲートなし（排他なし。テスト等で並行を意識しない構成向け——
     /// 本番結線（<c>Yagura.Host.Program</c>）は常に非 <c>null</c> を渡す）。
     /// </param>
     /// <param name="selfTestTracker">
-    /// 定期自己検証（architecture.md §3.2.5。Issue #152）の照合状態。<see cref="SpoolDrainCoordinator"/>
+    /// 定期自己検証（architecture.md §3.2.5）の照合状態。<see cref="SpoolDrainCoordinator"/>
     /// へそのまま渡し、drain が自己検証の合成レコードを破棄するたびに通知させる。投入側
     /// （<c>Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor</c>）と
     /// 同一インスタンスを呼び出し側（ホスト）が共有する想定。<c>null</c>（既定）は「自己検証を
     /// 行わない」構成（<paramref name="spool"/> が <c>null</c> の縮退運転時など）を表す。
     /// </param>
     /// <param name="tlsListenerOptions">
-    /// TLS 受信（RFC 5425。opt-in。Issue #137）の構成。<c>null</c>（既定）は「TLS 受信を構成しない」
+    /// TLS 受信（RFC 5425。opt-in）の構成。<c>null</c>（既定）は「TLS 受信を構成しない」
     /// ——設定で無効化されている、または起動時に証明書を解決できず縮小継続した構成を表す
     /// （呼び出し側のホストが判断する。security.md §6）。非 <c>null</c> の場合は
     /// <paramref name="tlsCertificateSelector"/> も必ず指定すること。
@@ -229,7 +229,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
             _metrics,
             loggerFactory?.CreateLogger<TcpSyslogListener>());
 
-        // TLS 受信（Issue #137）は opt-in——tlsListenerOptions が null の間は構成しない
+        // TLS 受信は opt-in——tlsListenerOptions が null の間は構成しない
         // （§4.1「受信は最初に開く」の対象から外れる。ホスト側が有効/無効を判断する）。
         _tlsListener = tlsListenerOptions is null
             ? null
@@ -288,7 +288,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     /// <summary>
     /// 実際に束縛された TLS 受信ポート（TLS 受信が構成されている場合のみ。<see cref="StartListenerAsync"/>
-    /// 後に有効。Issue #137）。TLS 受信が構成されていない場合は <c>null</c>。
+    /// 後に有効）。TLS 受信が構成されていない場合は <c>null</c>。
     /// </summary>
     public int? TlsBoundPort => _tlsListener?.BoundPort;
 
@@ -298,7 +298,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public IngestionMetrics Metrics => _metrics;
 
     /// <summary>
-    /// 受信リスナの現在の受信可否（ADR-0018 委任 6。Issue #351）。送信元の途絶検知が
+    /// 受信リスナの現在の受信可否（ADR-0018 委任 6）。送信元の途絶検知が
     /// 「サーバ都合の受信断」の保留判定と警告 Detail への受信経路の状態の併記に使う。
     /// <see cref="StartListenerAsync"/> より前はすべて受信不能として返る。
     /// </summary>
@@ -321,7 +321,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// <param name="gapStartedAt">
     /// 受信できなくなった時刻（<paramref name="receiving"/> が <see langword="false"/> のとき）。
     /// 既に受信断が記録済みの場合は<b>早い側を保持する</b>——再構成の失敗が重なっても、受信断
-    /// 区間の始端は最初に受信できなくなった時刻のまま報告する（Issue #373）。
+    /// 区間の始端は最初に受信できなくなった時刻のまま報告する。
     /// </param>
     private void SetListenerReceiving(string protocolLabel, bool receiving, DateTimeOffset? gapStartedAt = null)
     {
@@ -346,7 +346,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     }
 
     /// <summary>
-    /// リスナが現在受信不能かどうかと、その受信断の始端を返す（Issue #373 の再アーム判定用）。
+    /// リスナが現在受信不能かどうかと、その受信断の始端を返す（再アーム判定用）。
     /// </summary>
     private (bool IsDown, DateTimeOffset GapStartedAt) GetListenerDownState(string protocolLabel)
     {
@@ -371,22 +371,21 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>環境要因の bind 失敗は縮小継続 + 定期再試行</b>（Issue #291。2026-07-16 オーナー裁定。
-    /// configuration.md §4.1）: ポート競合・アドレス未確立（NIC の確立前にサービスが起動する
-    /// 再起動時競合）等の <see cref="SocketException"/> は、当該リスナを開かないまま起動を継続し、
-    /// CF-6 の定期再試行（<see cref="BindRetryInterval"/>）で受信再開を試み続ける。全リスナが
-    /// 開けなくても起動は継続する（管理リスナは loopback ゆえ常に開け、UI からの復旧動線が残る）。
-    /// 戻り値がリスナごとの帰結を返し、縮小継続はホスト側が警告（EventId 1022）として可視化する。
+    /// <b>環境要因の bind 失敗は縮小継続 + 定期再試行</b>（configuration.md §4.1）: ポート競合・
+    /// アドレス未確立（NIC の確立前にサービスが起動する再起動時競合）等の
+    /// <see cref="SocketException"/> は、当該リスナを開かないまま起動を継続し、CF-6 の定期再試行
+    /// （<see cref="BindRetryInterval"/>）で受信再開を試み続ける。全リスナが開けなくても起動は
+    /// 継続する（管理リスナは loopback ゆえ常に開け、UI からの復旧動線が残る）。戻り値が
+    /// リスナごとの帰結を返し、縮小継続はホスト側が警告（EventId 1022）として可視化する。
     /// </para>
     /// <para>
-    /// <b>原子的起動（Issue #141）は環境要因以外に限定して維持</b>: 本メソッドは当初、あらゆる
-    /// bind 失敗で起動済みリスナを全停止して起動全体を失敗させていた（「気づかれない部分起動の
-    /// 固定化」の防止）。Issue #291 でこの判断を環境要因について反転した——反転の根拠は
-    /// ①可視化基盤（イベントログ警告・能動通知・状態画面・loopback 管理 UI）が #141 時点と
-    /// 異なり整っていること ②再起動 → NIC 競合 → サービス死亡 → ログ全損という実害が
-    /// 対象利用者に重いこと。<see cref="SocketException"/> **以外**の失敗（IPv6 明示指定の
-    /// fail-fast——PR #193——等、環境の回復で直らない構成事故）は従来どおり全停止 + 例外送出の
-    /// 原子的起動のままにする。
+    /// <b>原子的起動は環境要因以外に限定する</b>: あらゆる bind 失敗で起動済みリスナを全停止し
+    /// 起動全体を失敗させる方式は「気づかれない部分起動の固定化」を防げる一方、再起動時の
+    /// NIC 未確立競合でサービスが起動不能になりログを全損するという実害が対象利用者に重い。
+    /// 可視化基盤（イベントログ警告・能動通知・状態画面・loopback 管理 UI）が用意されている
+    /// 前提のもと、環境要因の失敗だけは縮小継続を選ぶ。<see cref="SocketException"/> **以外**の
+    /// 失敗（IPv6 明示指定の fail-fast 等、環境の回復で直らない構成事故）は従来どおり全停止 +
+    /// 例外送出の原子的起動のままにする。
     /// </para>
     /// </remarks>
     public async Task<ListenerStartupResult> StartListenerAsync(CancellationToken cancellationToken = default)
@@ -447,7 +446,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            // SocketException 以外（構成事故——環境の回復で直らない失敗）は #141 の原子的起動を
+            // SocketException 以外（構成事故——環境の回復で直らない失敗）は原子的起動を
             // 維持する: 起動済みリスナ・再試行ループをすべて止めてから例外を再送出する。
             _logger?.LogError(
                 ex,
@@ -514,14 +513,14 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     /// <summary>
     /// RFC 3164 TIMESTAMP の既定タイムゾーンを実行中に更新する（設定ライブ再読み込み。
-    /// CF-4 層1。Issue #262。<see cref="ParsingStage.UpdateDefaultRfc3164TimeZone"/> への
+    /// CF-4 層1。<see cref="ParsingStage.UpdateDefaultRfc3164TimeZone"/> への
     /// パススルー——解析段はパイプラインの内部部品のため、ホストにはこの口だけを見せる）。
     /// </summary>
     public void UpdateDefaultRfc3164TimeZone(TimeZoneInfo? timeZone) =>
         _parsingStage.UpdateDefaultRfc3164TimeZone(timeZone);
 
     /// <summary>
-    /// UDP・TCP リスナを新しい構成で再構成する（CF-4 層2。Issue #262。configuration.md §3）。
+    /// UDP・TCP リスナを新しい構成で再構成する（CF-4 層2。configuration.md §3）。
     /// options に変更のないリスナには一切触れない（差分適用——瞬断なし）。
     /// </summary>
     /// <remarks>
@@ -544,7 +543,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     /// <para>
     /// <b>並行性</b>: 再構成は直列化される（<see cref="_reconfigureGate"/>）。進行中の CF-6
     /// 再試行は新しい再構成の開始で一旦打ち切られるが、<b>options に変更のないリスナが受信不能の
-    /// ままの場合は再構成の末尾で張り直す</b>（Issue #373——「望ましい構成が変わった」のは変更
+    /// ままの場合は再構成の末尾で張り直す</b>（「望ましい構成が変わった」のは変更
     /// されたリスナだけであり、無関係なキーの再構成が縮小継続中リスナの復旧を止めてはならない）。
     /// </para>
     /// </remarks>
@@ -560,7 +559,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         try
         {
             // 進行中の CF-6 再試行があれば打ち切る。打ち切りは全リスナ一括（単一 CTS）のため、
-            // options に変更のないリスナの再試行は下の再アームで張り直す（Issue #373）——
+            // options に変更のないリスナの再試行は下の再アームで張り直す——
             // 「望ましい構成が変わったため打ち切る」が成立するのは変更されたリスナだけであり、
             // 変わっていないリスナにとって望ましい構成は変わっていない。張り直しを忘れると、
             // 起動時縮小継続中のリスナが無関係なキーの再構成を巻き添えにサービス再起動まで
@@ -589,7 +588,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     /// <summary>
     /// 再構成で触れなかった（<see cref="ListenerReconfigurationStatus.NotChanged"/> の）リスナの
-    /// うち、受信不能のままのものへ CF-6 再試行を張り直す（Issue #373）。受信断区間の始端は
+    /// うち、受信不能のままのものへ CF-6 再試行を張り直す。受信断区間の始端は
     /// 最初に受信できなくなった時刻を引き継ぐ（<see cref="SetListenerReceiving"/> が保持）。
     /// TLS は本メソッドの再構成対象外（宣言どおり再起動反映——configuration.md §8）だが、
     /// 起動時縮小継続からの再試行は同じ一括打ち切りの巻き添えになるため、同様に張り直す。
@@ -658,8 +657,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
     {
         var oldOptions = _udpOptions;
 
-        // 受信断区間の始端: 既に受信不能なら、最初に受信できなくなった時刻を引き継ぐ（Issue #390。
-        // #373 の「始端は最初に bind できなくなった時刻のまま」を全経路に適用する）。起動時
+        // 受信断区間の始端: 既に受信不能なら、最初に受信できなくなった時刻を引き継ぐ
+        // （「始端は最初に bind できなくなった時刻のまま」を全経路に適用する）。起動時
         // 縮小継続中のリスナを再構成した場合、ここを再構成開始時刻にすると [起動時の bind 失敗,
         // 再構成開始) の区間が downtime 記録（Reconfigured/RolledBack の Outcome と CF-6 復旧の
         // ListenerBindRecovered の両方）から欠落する。受信中なら今回の停止が始端になる。
@@ -706,7 +705,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     {
         var oldOptions = _tcpOptions;
 
-        // 受信断区間の始端は既存の受信断があればそれを引き継ぐ（Issue #390。UDP 側の同箇所コメント参照）。
+        // 受信断区間の始端は既存の受信断があればそれを引き継ぐ（UDP 側の同箇所コメント参照）。
         var (wasDown, existingGapStartedAt) = GetListenerDownState("TCP");
         var gapStartedAt = wasDown ? existingGapStartedAt : DateTimeOffset.UtcNow;
         await _tcpListener.StopAsync().ConfigureAwait(false);
@@ -790,7 +789,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     }
 
     /// <summary>
-    /// bind 再試行（CF-6）による受信再開の通知（Issue #291）。ホスト側が購読して受信断区間
+    /// bind 再試行（CF-6）による受信再開の通知。ホスト側が購読して受信断区間
     /// （<c>downtime.listener-bind-retry</c>）のシステムイベント記録・復旧ログに使う。
     /// 発火は再試行ループのバックグラウンドスレッドから行われる。
     /// </summary>
@@ -798,8 +797,8 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     /// <summary>
     /// CF-6: bind 失敗後の定期再試行ループ（間隔は <see cref="BindRetryInterval"/> の仮値 30 秒。
-    /// configuration.md §4.1「bind 失敗後は定期的に再試行する」。起動時の縮小継続——Issue #291——と
-    /// 再構成失敗——Issue #262 層2——の両経路が使う）。成功またはパイプライン停止・次の再構成で
+    /// configuration.md §4.1「bind 失敗後は定期的に再試行する」。起動時の縮小継続と
+    /// 再構成失敗（CF-4 層2）の両経路が使う）。成功またはパイプライン停止・次の再構成で
     /// 終了する。複数リスナの再試行が同時に走り得る（UDP と TCP が同時に開けない再起動時競合等）。
     /// </summary>
     private void StartBindRetryLoop(string protocolLabel, Func<CancellationToken, Task> retryNew, DateTimeOffset gapStartedAt)
@@ -807,7 +806,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
         CancellationToken token;
         lock (_bindRetryGate)
         {
-            // 停止開始後は張り直さない（Issue #390。_listenersStopping のコメント参照）。
+            // 停止開始後は張り直さない（_listenersStopping のコメント参照）。
             // 打ち切り済みかどうかによらず、停止が始まった時点で「望ましい状態 = 全リスナ停止」で
             // あり、以後の再試行はどの経路（起動時縮小継続・再構成の再アーム・復旧失敗）でも無用。
             if (_listenersStopping)
@@ -855,7 +854,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
 
     private async Task CancelBindRetryAsync()
     {
-        // CTS の取り外しとタスク一覧の取り出しを 1 つのロック区間で行う（Issue #390）。
+        // CTS の取り外しとタスク一覧の取り出しを 1 つのロック区間で行う。
         // 取り外し後の _bindRetryCts は null のため、並行する StartBindRetryLoop が
         // Dispose 済み CTS の .Token に触れることはない（張り直しは新しい CTS で行われ、
         // それは次の打ち切りが回収する。停止中は _listenersStopping が張り直し自体を止める）。
@@ -910,7 +909,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     }
 
     /// <summary>
-    /// 消費ループを実行し、想定外の例外でループが死んだ事実を<b>必ず記録する</b>（Issue #360）。
+    /// 消費ループを実行し、想定外の例外でループが死んだ事実を<b>必ず記録する</b>。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -981,7 +980,7 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public async Task StopListenersAsync()
     {
         // CF-6 の再試行が走っていれば止める（停止後にリスナが勝手に復活しないように）。
-        // 先に停止開始フラグを立ててから打ち切る（Issue #390）: 本メソッドは _reconfigureGate を
+        // 先に停止開始フラグを立ててから打ち切る: 本メソッドは _reconfigureGate を
         // 取らない（停止を進行中の再構成の完了待ちでブロックしない）ため、打ち切りだけでは
         // 進行中の ReconfigureListenersAsync 末尾の再アームが停止完了後に再試行を張り直し得る。
         // フラグ判定と張り直しは同じ _bindRetryGate の下にあるため、フラグを立てた後に

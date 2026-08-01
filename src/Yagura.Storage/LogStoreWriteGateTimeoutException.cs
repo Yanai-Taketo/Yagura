@@ -1,7 +1,7 @@
 namespace Yagura.Storage;
 
 /// <summary>
-/// <see cref="LogStoreWriteGate"/> の取得が指定時間内に完了しなかったことを表す（Issue #151）。
+/// <see cref="LogStoreWriteGate"/> の取得が指定時間内に完了しなかったことを表す。
 /// </summary>
 /// <remarks>
 /// DB 呼び出し自体のタイムアウト（<see cref="LogStoreWriteException"/>）とは意図的に区別する

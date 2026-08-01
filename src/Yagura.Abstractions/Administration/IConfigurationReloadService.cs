@@ -1,7 +1,7 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// 設定ファイル（手編集）のライブ再読み込み（configuration.md §3。CF-4 層1。Issue #262）。
+/// 設定ファイル（手編集）のライブ再読み込み（configuration.md §3。CF-4 層1）。
 /// UI（管理リスナ）と SCM カスタム制御コード（CF-5。<c>sc control Yagura 128</c>）の両方から
 /// 同じ実装が呼ばれる。
 /// </summary>
@@ -28,7 +28,7 @@ public interface IConfigurationReloadService : IYaguraWriteService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 再起動待ちのまま残っているキーの現在スナップショットを返す（Issue #286。認証済み
+    /// 再起動待ちのまま残っているキーの現在スナップショットを返す（認証済み
     /// 管理面の常設表示用の読み取り口——再読み込みを実行せず、状態を変更しない）。
     /// キー昇順。空 = 再起動待ちなし（表示は再起動で自然に消える——プロセス内状態のため）。
     /// </summary>
@@ -36,7 +36,7 @@ public interface IConfigurationReloadService : IYaguraWriteService
 }
 
 /// <summary>
-/// 再起動待ちのまま残っている設定キー 1 件（Issue #286。管理面の常設表示の表示単位）。
+/// 再起動待ちのまま残っている設定キー 1 件（管理面の常設表示の表示単位）。
 /// </summary>
 /// <param name="Key">設定キー（JSON キーパス）。</param>
 /// <param name="DetectedAt">
@@ -61,7 +61,7 @@ public sealed record PendingRestartKey(string Key, DateTimeOffset DetectedAt);
 /// <param name="TypeCoercionNotes">
 /// 型を読み替えて受理したキー（数値・真偽値を文字列として受理）の説明文。警告ではなく情報
 /// ——受理は正常系であり、未知キー・既定値への差し替えと同じ場所に並べて表示する
-/// （configuration.md §1。Issue #334）。
+/// （configuration.md §1）。
 /// </param>
 public sealed record ConfigurationReloadResult(
     bool Rejected,

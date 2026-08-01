@@ -9,7 +9,7 @@ using Yagura.Storage.Sqlite;
 namespace Yagura.Host.Administration;
 
 /// <summary>
-/// 蓄積ログ移行（database.md §6.2。DB-5。Issue #266）の実体。旧 SQLite ファイルから
+/// 蓄積ログ移行（database.md §6.2。DB-5）の実体。旧 SQLite ファイルから
 /// 現行 provider（昇格後の SQL Server）へ、古い順にバッチで移送する。
 /// </summary>
 /// <remarks>
@@ -137,8 +137,8 @@ public sealed class LogMigrationService : ILogMigrationService
         }
         catch (Exception ex) when (status.Availability is LogMigrationAvailability.Ready)
         {
-            // レビュー指摘（fail-open 観点）: 移行の途中失敗（WriteBatchAsync 例外等）は移行先 DB を
-            // 実際に変更した管理操作でありながら無記録になっていた——失敗・部分適用こそ証跡価値が
+            // 監査の網羅性（fail-open 観点）: 移行の途中失敗（WriteBatchAsync 例外等）は移行先 DB を
+            // 実際に変更した管理操作であるため、無記録のままにしない——失敗・部分適用こそ証跡価値が
             // 高い。例外経路でも監査を残してから再送出する（チェックポイントは保持され再実行で
             // 追補できる。Detail に「途中失敗」と原因を含める）。実行不能状態（Ready 以外）での
             // 早期 throw は DB を変更しないため記録しない（when フィルタで除外）。
@@ -157,7 +157,7 @@ public sealed class LogMigrationService : ILogMigrationService
     /// 移行実行の監査記録（2018。イベントログ併記込み）。<b>記録失敗は移行の結果・失敗を
     /// 覆い隠してはならない</b>——監査シンク障害で移行報告が別の結果に化けないよう、
     /// <see cref="IAuditRecorder.RecordAsync"/>（例外を投げない契約）の呼び出し自体も
-    /// try/catch で保護する（レビュー指摘への対応）。
+    /// try/catch で保護する。
     /// </summary>
     private async Task RecordMigrationAuditAsync(
         string? operatorAddress, string? authenticationScheme, string? authenticatedPrincipal, string detailMessage)
@@ -301,7 +301,7 @@ public sealed class LogMigrationService : ILogMigrationService
 
     /// <summary>
     /// 書き込みゲート越しに 1 操作を実行する（要件①: ゲート保持をバッチ単位に限定し、
-    /// ライブ受信の永続化をバッチの合間に通す。ILogStore の単一 writer 契約——Issue #151）。
+    /// ライブ受信の永続化をバッチの合間に通す。ILogStore の単一 writer 契約）。
     /// </summary>
     private async Task WriteUnderGateAsync(Func<Task> writeOperation, CancellationToken cancellationToken)
     {

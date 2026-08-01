@@ -17,9 +17,8 @@ internal static class SourceSilenceConstants
     /// ウォッチリストの登録上限（仮値 1000 件。ADR-0018 決定 1）。
     /// </summary>
     /// <remarks>
-    /// 有界化はこの上限が担う。当初案 100 件は「数百台の配布現場・通信事業者規模で初日から
-    /// 不足する」というレビュー指摘を受けて引き上げた——エントリ実体は数十バイト・評価は
-    /// O(n) の時刻比較のみであり、技術コストは 100 件と変わらない。
+    /// 有界化はこの上限が担う——エントリ実体は数十バイト・評価は
+    /// O(n) の時刻比較のみであり、大きな上限でも技術コストは低い。
     /// </remarks>
     internal const int MaxWatchlistEntries = 1000;
 
@@ -47,7 +46,7 @@ internal static class SourceSilenceConstants
     internal static readonly TimeSpan EntrySuppressionWindow = TimeSpan.FromMinutes(15);
 
     /// <summary>
-    /// 起動時 seed（ADR-0018 決定 3。Issue #381）の DB 照会タイムアウト（仮値 5 秒。
+    /// 起動時 seed（ADR-0018 決定 3）の DB 照会タイムアウト（仮値 5 秒。
     /// 設定画面の候補照会と同じ水準）。超過時は seed を行わず起動時刻仮基準へフォールバックする。
     /// </summary>
     internal static readonly TimeSpan SeedQueryTimeout = TimeSpan.FromSeconds(5);
@@ -63,7 +62,7 @@ internal static class SourceSilenceConstants
     internal const int BurstAggregationThreshold = 5;
 
     /// <summary>
-    /// 集約警告（1028）の本文に列挙するエントリの上限（仮値 20 件。Issue #382）。
+    /// 集約警告（1028）の本文に列挙するエントリの上限（仮値 20 件）。
     /// 超過分は「ほか N 件」の総数表記に畳む。
     /// </summary>
     /// <remarks>

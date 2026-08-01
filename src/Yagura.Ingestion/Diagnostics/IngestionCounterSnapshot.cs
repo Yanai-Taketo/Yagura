@@ -17,24 +17,23 @@
 /// <param name="PersistenceFailed">永続化失敗の累積値。</param>
 /// <param name="FlowControlDropped">流量制御破棄の累積値。</param>
 /// <param name="TcpConnectionClosed">
-/// TCP 接続断の累積値（理由を問わない。Issue #140。既定 0——末尾への追加のため
+/// TCP 接続断の累積値（理由を問わない。既定 0——末尾への追加のため
 /// 旧バージョンのメタデータ領域ファイルにキーが無くても 0 として扱われる）。
 /// </param>
 /// <param name="TcpConnectionIdleTimeout">
-/// アイドルタイムアウトによる TCP 接続断の累積値（Issue #140。既定 0）。
+/// アイドルタイムアウトによる TCP 接続断の累積値（既定 0）。
 /// </param>
 /// <param name="TcpMessageOversizedDiscarded">
-/// 1 メッセージのサイズ上限超過により破棄した件数の累積値（Issue #143。既定 0）。
+/// 1 メッセージのサイズ上限超過により破棄した件数の累積値（既定 0）。
 /// </param>
 /// <param name="TcpConnectionResyncLimitExceeded">
-/// 再同期バイト数上限の超過による TCP 接続断の累積値（PR #169 レビュー指摘 3 への
-/// オーナー決定 2026-07-09。既定 0）。
+/// 再同期バイト数上限の超過による TCP 接続断の累積値（既定 0）。
 /// </param>
 /// <param name="TcpConnectionFramingTimeout">
 /// フレーミング進捗タイムアウトによる TCP 接続断の累積値（同上。既定 0）。
 /// </param>
 /// <param name="SpoolCorruptTailDiscardedBytes">
-/// スプールセグメント末尾の破損検出により読み捨てたバイト数の累積値（Issue #201。既定 0）。
+/// スプールセグメント末尾の破損検出により読み捨てたバイト数の累積値（既定 0）。
 /// 単位は他の破棄系カウンタと異なりレコード数ではなくバイト数（破損した末尾はフレーム境界が
 /// 保証されずレコード数を数えられないため。<see cref="IngestionMetrics"/> remarks 参照）。
 /// </param>

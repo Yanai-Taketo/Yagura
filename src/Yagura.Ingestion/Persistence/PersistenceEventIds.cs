@@ -22,28 +22,27 @@ public static class PersistenceEventIds
 
     /// <summary>
     /// 恒久障害（設定・スキーマ・権限——再試行で解消しない失敗）によりバッチ書き込みが失敗し、
-    /// スプールへの退避を開始した（database.md §1.2 契約 3。ADR-0017 委任 10。Issue #369）。
+    /// スプールへの退避を開始した（database.md §1.2 契約 3。ADR-0017 委任 10）。
     /// レベル: エラー。
     /// </summary>
     /// <remarks>
-    /// 従来は EventId なし（= 0）で書き出されており、イベントログでの機械照合ができず、
-    /// メール通知（ADR-0017）も構造的に捕捉できなかった（プロバイダは EventId 0 を対象外と
-    /// する契約）。恒久障害の開始は「放置すればスプールが満ちる」導火線の点火であり、
-    /// 1004（退避継続）経由の間接検知は継続判定（仮値 5 分）の後にしか出ず根本原因（DB 側の
-    /// 恒久失敗）も示さないため、採番して直接通知の対象にする——委任 10 の裁定。
+    /// EventId が 0 のままだと、イベントログでの機械照合ができず、メール通知も構造的に
+    /// 捕捉できない（プロバイダは EventId 0 を対象外とする契約）。恒久障害の開始は
+    /// 「放置すればスプールが満ちる」導火線の点火であり、1004（退避継続）経由の間接検知は
+    /// 継続判定（仮値 5 分）の後にしか出ず根本原因（DB 側の恒久失敗）も示さないため、
+    /// 直接通知の対象にする。
     /// </remarks>
     public static readonly EventId PermanentWriteFailure = new(1030, "PermanentWriteFailure");
 
     /// <summary>
     /// 稼働中の Windows 統合認証での DB 接続失敗によりバッチ書き込みが失敗した
-    /// （ADR-0015 決定 5 の観測性要件。database.md §6.1。Issue #418）。レベル: エラー。
+    /// （ADR-0015 決定 5 の観測性要件。database.md §6.1）。レベル: エラー。
     /// </summary>
     /// <remarks>
     /// 統合認証の接続失敗と分類できた恒久障害では、1030 の代わりに本 ID で**実行主体
     /// （実効実行アカウント名）と失敗種別（DC 起因 / SQL Server 起因の一次切り分け）**を残す
     /// ——同一例外で 1030 と二重警告にしない（抑制窓も 1030 と共有する。
-    /// <see cref="PersistenceWriter"/> 参照）。分類根拠は SEC-14 (a)/(c) の AD lab 実測
-    /// （2026-07-24。ADR-0015 改訂履歴 3）。
+    /// <see cref="PersistenceWriter"/> 参照）。分類根拠は SEC-14 (a)/(c) の AD lab 実測による。
     /// </remarks>
     public static readonly EventId IntegratedAuthConnectionFailed = new(1031, "IntegratedAuthConnectionFailed");
 }

@@ -9,7 +9,7 @@ using Yagura.Storage;
 namespace Yagura.Host.Observability.ActiveNotification.SourceSilence;
 
 /// <summary>
-/// <see cref="ISourceSilenceAdminService"/> の実体（ADR-0018 決定 4・5・6。Issue #351）。
+/// <see cref="ISourceSilenceAdminService"/> の実体（ADR-0018 決定 4）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -87,7 +87,7 @@ public sealed class SourceSilenceAdminService : ISourceSilenceAdminService
         // 候補選択では「いま送ってきている送信元」を上に出すのが目的（実在確認済みのアドレスから
         // 選ぶ。ADR-0018 決定 4）。QuerySourceActivityAsync（無音化検出用の昇順）を後から並べ替える
         // だけでは、送信元数が limit を超える環境で現役の送信元が DB 側の打ち切りで既に落ちている
-        // （Issue #383）——DB 側で新しい順に打ち切る QueryMostRecentlyActiveSourcesAsync を使う。
+        // ——DB 側で新しい順に打ち切る QueryMostRecentlyActiveSourcesAsync を使う。
         var activities = await _logStore
             .QueryMostRecentlyActiveSourcesAsync(limit, CandidateQueryTimeout, cancellationToken)
             .ConfigureAwait(false);

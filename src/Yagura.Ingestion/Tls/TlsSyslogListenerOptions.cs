@@ -3,7 +3,7 @@ using Yagura.Ingestion.Tcp;
 namespace Yagura.Ingestion.Tls;
 
 /// <summary>
-/// <see cref="TlsSyslogListener"/> の構成（syslog over TLS。RFC 5425。TCP 6514。opt-in。Issue #137）。
+/// <see cref="TlsSyslogListener"/> の構成（syslog over TLS。RFC 5425。TCP 6514。opt-in）。
 /// </summary>
 /// <remarks>
 /// <see cref="TcpSyslogListenerOptions"/> と構造を揃える（security.md §6「参照方式は Web UI の
@@ -14,7 +14,7 @@ namespace Yagura.Ingestion.Tls;
 /// </remarks>
 public sealed class TlsSyslogListenerOptions
 {
-    /// <summary>既定の bind アドレス。TCP と同じ既定（<c>::</c>。Issue #133 の DualMode 方式）。</summary>
+    /// <summary>既定の bind アドレス。TCP と同じ既定（<c>::</c>。DualMode 方式）。</summary>
     public const string DefaultBindAddress = "::";
 
     /// <summary>RFC 5425 の標準ポート。</summary>
@@ -30,7 +30,7 @@ public sealed class TlsSyslogListenerOptions
     public static readonly TimeSpan DefaultFramingProgressTimeout = TcpSyslogListenerOptions.DefaultFramingProgressTimeout;
 
     /// <summary>
-    /// TLS ハンドシェイクの完了猶予（仮値。PR #225 レビュー指摘 High）。
+    /// TLS ハンドシェイクの完了猶予（仮値）。
     /// </summary>
     /// <remarks>
     /// <b>未認証 DoS の遮断</b>: <see cref="TlsSyslogListener"/> は Accept 後にまず
@@ -76,7 +76,7 @@ public sealed class TlsSyslogListenerOptions
     /// <summary>
     /// TLS ハンドシェイクの完了猶予。既定は <see cref="DefaultHandshakeTimeout"/>。
     /// この時間内に <c>AuthenticateAsServerAsync</c> が完了しない接続は破棄し、TLS ハンドシェイク
-    /// 失敗として計上する（PR #225 レビュー指摘 High——未認証 DoS の遮断）。
+    /// 失敗として計上する（未認証 DoS の遮断）。
     /// <see cref="TimeSpan.Zero"/> 以下で無効化（主にテスト用途）。
     /// </summary>
     public TimeSpan HandshakeTimeout { get; init; } = DefaultHandshakeTimeout;

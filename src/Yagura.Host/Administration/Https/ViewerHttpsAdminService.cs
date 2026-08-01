@@ -7,7 +7,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Administration.Https;
 
 /// <summary>
-/// <see cref="IViewerHttpsAdminService"/> の実体（ADR-0022 決定 3・4・9・10。Issue #455 段階 ②）。
+/// <see cref="IViewerHttpsAdminService"/> の実体（ADR-0022 決定 3）。
 /// 閲覧 HTTPS の 2 キーを、保存前 fail-closed 検証 + SAN 助言検査つきで <c>yagura.json</c> へ保存し、
 /// 監査記録（イベント ID 2029）する。
 /// </summary>
@@ -19,7 +19,7 @@ namespace Yagura.Host.Administration.Https;
 /// 共有する（決定 3「三重実装しない」）。
 /// </para>
 /// <para>
-/// <b>検証ポリシー（決定 3・4——二分宣言）</b>: 拒否 = 拇印未設定（有効化時）・形式不正・証明書不在・
+/// <b>検証ポリシー（決定 3——二分宣言）</b>: 拒否 = 拇印未設定（有効化時）・形式不正・証明書不在・
 /// <b>期限切れ</b>（停止する面は拒否側——ADR-0019 決定 2 の非対称。管理 HTTPS と同じ側）・
 /// <b>秘密鍵読取不可</b>（読めないまま再起動すると閲覧リスナが縮小継続で開かず LAN 閲覧が止まる——
 /// 「止まる側を拒否に倒す」）・EKU 不適合。警告して通す = <b>SAN ホスト名不整合</b>（決定 4。

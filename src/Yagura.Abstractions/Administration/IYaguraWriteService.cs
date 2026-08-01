@@ -1,7 +1,7 @@
 namespace Yagura.Abstractions.Administration;
 
 /// <summary>
-/// 「書き込み系サービス」であることを宣言するマーカーインターフェース（M6-4。Issue #54。
+/// 「書き込み系サービス」であることを宣言するマーカーインターフェース（
 /// security.md §1 L-5 の覆域限界の節「閲覧リスナ側のコンポーネントから書き込み系サービスへ
 /// 到達できない分離を実装設計で定め、その分離自体もアーキテクチャテストの対象とする」の実装）。
 /// </summary>
@@ -13,13 +13,12 @@ namespace Yagura.Abstractions.Administration;
 /// ことで「書き込み系」であることをアーキテクチャテストに申告する。
 /// </para>
 /// <para>
-/// <b>M8-4（Issue #71）で検査は実効化した</b>: 本インターフェースを実装する契約
-/// （<see cref="ISetupWizardService"/>・<see cref="IPromotionWizardService"/>・
-/// <see cref="ICircuitManagementService"/>）と実装クラス（<c>Yagura.Host.Administration</c> の
-/// ウィザードサービス群・<c>Yagura.Web.Administration.CircuitManagementService</c>）が存在し、
-/// <c>Yagura.Web.Tests.ArchitectureTests.ViewerComponentReferenceIsolationTests</c> は
-/// 実在する書き込み系サービスへの誤参照を検出する状態にある（「違反ゼロで green」の
-/// 空虚な真ではないことは同テスト群が実装の実在も検証する）。
+/// 本インターフェースを実装する契約（<see cref="ISetupWizardService"/>・
+/// <see cref="IPromotionWizardService"/>・<see cref="ICircuitManagementService"/>）と実装クラス
+/// （<c>Yagura.Host.Administration</c> のウィザードサービス群・
+/// <c>Yagura.Web.Administration.CircuitManagementService</c>）が存在し、
+/// <c>Yagura.Web.Tests.ArchitectureTests.ViewerComponentReferenceIsolationTests</c> が
+/// 実在する書き込み系サービスへの誤参照を検出する。
 /// </para>
 /// <para>
 /// <b>マーカーインターフェース方式を採った理由</b>: 名前空間規約（例:
@@ -34,8 +33,7 @@ namespace Yagura.Abstractions.Administration;
 /// </para>
 /// <para>
 /// <b>配置（<c>Yagura.Abstractions</c>）</b>: モジュール横断契約の最下層プロジェクトに置く
-/// （Issue #54 の PR レビューでオーナー決定・2026-07-05。architecture.md §1.1 参照）。
-/// M8 で追加される書き込み系サービスの契約群も本名前空間が第一候補となる。
+/// （architecture.md §1.1）。将来追加される書き込み系サービスの契約群も本名前空間が第一候補となる。
 /// </para>
 /// </remarks>
 public interface IYaguraWriteService

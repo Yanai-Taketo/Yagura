@@ -5,7 +5,7 @@ using Yagura.Storage.Spool;
 namespace Yagura.Host.Observability;
 
 /// <summary>
-/// <see cref="IYaguraSystemStatusReader"/> のホスト実装（M8-3。Issue #70）:
+/// <see cref="IYaguraSystemStatusReader"/> のホスト実装:
 /// 閲覧画面（ダッシュボード・システム状態）へ、カウンタ累積値・スプール状態・健康状態の
 /// 判定結果を読み取り専用で公開する。
 /// </summary>
@@ -34,7 +34,7 @@ namespace Yagura.Host.Observability;
 /// 根拠とし、部分 bind 失敗等の観測点は UI-6 の確定と合わせて追加する。
 /// </para>
 /// <para>
-/// <b>「消化完了」による復帰（<see cref="YaguraHealthReason.SpoolEvacuationObserved"/>。Issue #132）</b>:
+/// <b>「消化完了」による復帰（<see cref="YaguraHealthReason.SpoolEvacuationObserved"/>）</b>:
 /// 一時保管（スプール）退避の警告は、他の判定理由と異なり <see cref="ObservationWindow"/>
 /// による時間経過ではなく、<b>スプールの現在ゲージ（<see cref="DiskSpool.CurrentUsageBytes"/>）が
 /// 0 かどうか</b>という、その瞬間の状態そのもので判定する。理由: <c>SpoolDrainCoordinator</c> は
@@ -42,8 +42,7 @@ namespace Yagura.Host.Observability;
 /// （at-least-once。§3.2.1・§3.2.4）ため、<c>CurrentUsageBytes == 0</c> は「退避したデータの
 /// DB 格納がすべて完了した（消化完了）」ことを表す直接的な正シグナルであり、追加の待ち時間
 /// （observation window）を挟む必要がない——退避 → 即 drain → 消化完了のケースでも、次回の
-/// 読み出しで直ちに警告が解除される（旧実装は退避カウンタの増分を観測窓で見ており、消化が
-/// 一瞬で終わっても最大 <see cref="ObservationWindow"/> の間は警告が残っていた）。
+/// 読み出しで直ちに警告が解除される。
 /// これは同時に「基準（baseline）が無い最初の読み出しでも判定できる」という副次的な改善も
 /// 兼ねる——起動直後に前回セッションの未消化セグメントが残っている場合（§1.2「前回退避分の
 /// 存在確認」）も、観測窓の基準を待たずに警告として現れる。
@@ -90,11 +89,11 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
     /// <param name="listeners">受信リスナの構成。</param>
     /// <param name="timeProvider">時刻源（テスト用の差し替え口。既定はシステム時刻）。</param>
     /// <param name="flowControlRejections">
-    /// 流量制御ゲートの送信元別拒否状況の読み取り口（Issue #288。ホストの合成ルートが
+    /// 流量制御ゲートの送信元別拒否状況の読み取り口（ホストの合成ルートが
     /// <c>SwappableIngressGate</c> を渡す。<c>null</c> は常に空を返す）。
     /// </param>
     /// <param name="sourceSilenceEntries">
-    /// 送信元の途絶検知のエントリ状態の読み取り口（ADR-0018 決定 4。Issue #351。合成ルートが
+    /// 送信元の途絶検知のエントリ状態の読み取り口（ADR-0018 決定 4。合成ルートが
     /// <c>SourceSilenceDetector.SnapshotEntryStatuses</c> を渡す。<c>null</c> は常に空を返す
     /// ——テスト等で途絶検知を結線しない構成向け）。
     /// </param>
@@ -211,11 +210,11 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
 
         if (baseline is not null)
         {
-            // SpoolCorruptTailDiscardedBytes（Issue #201）は他 5 種と単位が異なる（レコード数では
+            // SpoolCorruptTailDiscardedBytes は他 5 種と単位が異なる（レコード数では
             // なくバイト数——IngestionMetrics remarks 参照）が、ここでは「> 0 か」の判定にしか
             // 使わないため単位混在の影響を受けない——バイト単位の増分であっても取りこぼしが
             // 発生した事実に変わりはなく、異常判定（LossObserved）を発火させるべき対象である。
-            // PR #199 レビューで指摘された「一時保管ゲージが 0 に戻っても一部喪失があれば
+            // 「一時保管ゲージが 0 に戻っても一部喪失があれば
             // 正常表示に戻さない」という原則（クラス remarks 参照）を、末尾破損の喪失にも
             // 同様に適用する——末尾破損は一時保管ゲージでは表現されない喪失であるため、
             // 本カウンタの増分を見逃すとゲージ復帰と同時に異常表示が消えてしまう。
@@ -233,7 +232,7 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
             }
         }
 
-        // 「消化完了」による復帰（クラス remarks 参照。Issue #132）: 退避の警告は観測窓の増分では
+        // 「消化完了」による復帰（クラス remarks 参照）: 退避の警告は観測窓の増分では
         // なく、スプールの現在ゲージ（未消化データの有無）そのもので判定する——観測窓の基準
         // （baseline）が無い最初の読み出しでも判定できる（起動直後の前回退避分の持ち越しを見逃さない）。
         if (spoolReading is { CurrentUsageBytes: > 0 })
@@ -268,7 +267,7 @@ public sealed class SystemStatusReader : IYaguraSystemStatusReader
         // 1 対 1 対応させる。IsLoss の区分は同 §4.1 の表の「意味」列に従う（スプール退避・
         // TCP 接続拒否は損失ではない）。
         //
-        // 「スプール末尾破損破棄」（Issue #201）は本一覧の他 7 種と単位が異なる（レコード数ではなく
+        // 「スプール末尾破損破棄」は本一覧の他 7 種と単位が異なる（レコード数ではなく
         // バイト数——SpoolSegmentReader・IngestionMetrics remarks 参照）が、IsLoss: true とする
         // 判断はここでも他と揃える——「サーバに届いた後、回収不能な形で失われた」という性質は
         // 同質であり、単位差を理由にここで除外すると本来の目的（観測ギャップの解消。

@@ -4,7 +4,7 @@ namespace Yagura.Web.Diagnostics;
 
 /// <summary>
 /// Yagura.Web（閲覧・管理リスナ）の計測点（architecture.md §4.1 発生箇所別ドロップカウンタ・
-/// §4.1.1 計器の命名規則。M6-2。Issue #52）。
+/// §4.1.1 計器の命名規則。M6-2）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,7 +27,7 @@ namespace Yagura.Web.Diagnostics;
 /// イベントログの両方が失敗した場合。security.md §4.2 の多段の最終段——「それも失敗したら
 /// 黙って握りつぶさずカウンタで観測可能にする」）。</item>
 /// <item><c>yagura.web.audit.buffer_dropped</c>: 監査チャネル障害中のメモリ内保持が上限に達し、
-/// 縮退で破棄した事象の件数（SEC-10。security.md §4.2。Issue #269）。復旧サマリ（3013）が
+/// 縮退で破棄した事象の件数（SEC-10。security.md §4.2）。復旧サマリ（3013）が
 /// 書けないままプロセスが落ちても件数が観測に残るよう、ライブの計器としても計上する。</item>
 /// <item><c>yagura.web.circuit.origin_rejected</c>: 同一サイト以外からの circuit 確立試行の
 /// 拒否件数（origin 検証。security.md §2.1「拒否は計測する」。

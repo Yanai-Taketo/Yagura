@@ -1,8 +1,7 @@
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// 配置フォルダ内の Fluent Bit MSI 検出の契約（ADR-0008 設計条件 9・委任 #7・
-/// ADR-0009 決定7・委任 #4）。Web 層はデータルートの実パスを直接知らないため、
+/// 配置フォルダ内の Fluent Bit MSI 検出の契約（ADR-0008 設計条件 9）。Web 層はデータルートの実パスを直接知らないため、
 /// <see cref="INicCandidateSource"/> と同型の抽象を介して Host 側（データルートを知る側）から
 /// 実体を注入する。
 /// </summary>

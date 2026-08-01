@@ -6,7 +6,7 @@ namespace Yagura.Storage;
 /// <remarks>
 /// <para>
 /// M5 時点で database.md §1.2 の契約 6 項目（スキーマ管理・バッチ挿入・失敗の分類報告・
-/// 対話的検索・保持期間の削除・統計）を完全化した（M5-1。#45）。契約への操作追加は
+/// 対話的検索・保持期間の削除・統計）を完全化した（M5-1）。契約への操作追加は
 /// database.md §7 の「optional 操作（capability 検出）として MINOR で追加できる」互換規則に
 /// 従う——既存操作の意味論は変更しない。
 /// </para>
@@ -19,7 +19,7 @@ namespace Yagura.Storage;
 /// 据え置く。
 /// </para>
 /// <para>
-/// <b>実配線（Issue #151。M5-1 完了後に判明した契約と実配線の乖離への対応）</b>: 実際には
+/// <b>実配線（M5-1 完了後に判明した契約と実配線の乖離への対応）</b>: 実際には
 /// (a) 永続化段（ライブ書き込み）・(b) スプール drain・(c) 保持期間削除（+ 実行記録の
 /// システムイベント）の 3 経路が、独立したタスクから並行して本インターフェースの書き込み系
 /// メソッドを呼び出し得る。ホスト（<c>Yagura.Host.Program</c>）はこれを「呼び出し側の直列化」
@@ -37,7 +37,7 @@ namespace Yagura.Storage;
 /// 呼び出しはゲートを通らないが、消費ループ（永続化段・drain）と保持期間スケジューラの
 /// 開始より厳密に前——起動シーケンス上、他の書き込み経路がまだ 1 つも動いていない時点——で
 /// 実行されるため、非同時実行は起動順序により保証される（ゲートによる保証ではない。
-/// 起動順序をリファクタする場合はこの前提が崩れないか確認すること——PR #198 レビュー指摘）。
+/// 起動順序をリファクタする場合はこの前提が崩れないか確認すること）。
 /// </para>
 /// <para>
 /// <b>読み書き分離の性質の文書化義務</b>（database.md §1.2 契約表 末尾・§1.3）: 各 provider
@@ -86,7 +86,7 @@ public interface ILogStore
     /// 条件付きの対話的検索（database.md §1.2 契約 4）。条件（時間範囲・送信元・重大度の閾値・
     /// facility・解析状態・自由文）+ 射影（一覧用の軽量列。先頭 N 文字）+ 結果上限 + タイムアウトを
     /// <see cref="LogQuery"/> で必須引数化する。同一 <see cref="LogRecord.ReceivedAt"/> の行は
-    /// <see cref="LogRecord.Id"/> 降順でタイブレークする（Issue #144。結果順序の決定性）。
+    /// <see cref="LogRecord.Id"/> 降順でタイブレークする（結果順序の決定性）。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -94,7 +94,7 @@ public interface ILogStore
     /// database.md §1.2「契約拡張の予約」（一括読み出し・集計）の管理経路には適用しない。
     /// </para>
     /// <para>
-    /// <b>カーソル（キーセット）ページング</b>（database.md §1.2・DB-11。Issue #144）:
+    /// <b>カーソル（キーセット）ページング</b>（database.md §1.2・DB-11）:
     /// <see cref="LogQuery.Cursor"/> を指定すると、先頭ページと同じ条件のまま「続き」
     /// （カーソルより過去の行）だけを返す。実装は <c>ORDER BY ReceivedAt DESC, Id DESC</c> と
     /// 同じ複合キーに対するシーク（<c>WHERE (ReceivedAt, Id) &lt; (@cursorReceivedAt, @cursorId)</c>
@@ -147,7 +147,7 @@ public interface ILogStore
     Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default);
 
     // ------------------------------------------------------------------
-    // M8-3（Issue #70）で追加した読み取り専用 3 操作。
+    // M8-3 で追加した読み取り専用 3 操作。
     // database.md §1.2「契約拡張の予約」(a) 一括読み出し・(b) 集計のうち、閲覧 3 画面が
     // 必要とする最小の読み取り口を実体化した（詳細表示の個別取得・システムイベントの読み出し・
     // 送信元別集計）。v0.x のため直接メソッドとして追加する（v1.0 凍結時に optional 操作
@@ -185,12 +185,12 @@ public interface ILogStore
     /// <param name="timeout">クエリの実行時間上限。</param>
     /// <param name="kind">
     /// <see cref="SystemEvent.Kind"/> の完全一致フィルタ。<c>null</c> は全種別（従来互換）。
-    /// Issue #150（保持期間削除の起動時キャッチアップ）で追加した最小の契約拡張——キャッチアップ
+    /// 保持期間削除の起動時キャッチアップのために追加した最小の契約拡張——キャッチアップ
     /// 判定は直近の <c>retention.delete</c> イベントだけを必要とするが、種別を問わない直近 N 件の
     /// 走査では、<c>retention.delete</c> の <see cref="SystemEvent.StartAt"/> が意図的な過去日付
     /// （cutoff = 実行時刻 − 保持日数）である一方、受信断イベントの <see cref="SystemEvent.StartAt"/>
     /// は実時刻のため常に新しい側に並び、受信断が N 件を超えて蓄積すると削除記録がウィンドウから
-    /// 恒常的に押し出される（PR #198 レビュー指摘）。種別で先に絞ることでこの非対称を解消する。
+    /// 恒常的に押し出される。種別で先に絞ることでこの非対称を解消する。
     /// </param>
     /// <exception cref="TimeoutException">クエリが <paramref name="timeout"/> を超過した場合。</exception>
     Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
@@ -221,7 +221,7 @@ public interface ILogStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 送信元別の受信状況を<b>最終受信時刻の降順（新しい順）</b>で集計して返す（Issue #383）。
+    /// 送信元別の受信状況を<b>最終受信時刻の降順（新しい順）</b>で集計して返す。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -246,22 +246,22 @@ public interface ILogStore
         QuerySourceActivityAsync(limit, timeout, cancellationToken);
 
     // ------------------------------------------------------------------
-    // M8-5（Issue #159）で追加した読み取り専用 2 操作。database.md §1.2「契約拡張の予約」
+    // M8-5 で追加した読み取り専用 2 操作。database.md §1.2「契約拡張の予約」
     // (b) 集計の追加実体化——重大度分布（平常時からの逸脱検知）と受信量上位の送信元
     // （Top talkers。フラッディング検知）。ダッシュボードに従来欠けていた 2 視点を満たす。
     // いずれも書き込みを行わない。
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 観測窓内の重大度別件数を集計して返す（重大度分布。M8-5/Issue #159）。
+    /// 観測窓内の重大度別件数を集計して返す（重大度分布。M8-5）。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>窓の必須化と性能上の理由</b>: Severity 列には索引が無く（Issue #145 で追跡中の
+    /// <b>窓の必須化と性能上の理由</b>: Severity 列には索引が無く（追跡中の
     /// 既知の制約）、無条件の集計は大規模時にフルスキャンへ劣化し得る。本操作は
     /// <paramref name="from"/>・<paramref name="to"/> を必須引数とし、索引済みの
     /// <see cref="LogRecord.ReceivedAt"/> 範囲へ先に絞り込んでから集計することで、
-    /// スキャン対象行数を観測窓の幅に限定する——複合索引の追加そのものは Issue #145 の
+    /// スキャン対象行数を観測窓の幅に限定する——複合索引の追加そのものは別途の
     /// 範囲であり、本操作はそれとは独立に「窓の必須化」で大規模時の劣化を抑える設計とする。
     /// </para>
     /// <para>
@@ -281,7 +281,7 @@ public interface ILogStore
 
     /// <summary>
     /// 観測窓内の受信量上位の送信元（Top talkers）を集計して返す（フラッディング検知。
-    /// M8-5/Issue #159）。
+    /// M8-5）。
     /// </summary>
     /// <remarks>
     /// <para>
@@ -293,7 +293,7 @@ public interface ILogStore
     /// </para>
     /// <para>
     /// 窓の必須化の理由は <see cref="QuerySeverityDistributionAsync"/> と同じ
-    /// （Issue #145——SourceAddress 列にも索引が無く、無条件集計はフルスキャンへ劣化し得る）。
+    /// （SourceAddress 列にも索引が無く、無条件集計はフルスキャンへ劣化し得る）。
     /// </para>
     /// <para>
     /// 並び順は件数降順。同数の場合は <see cref="SourceActivity.SourceAddress"/> の

@@ -1,7 +1,7 @@
 namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
-/// 監査チャネル障害中の事象保持・書き戻し（SEC-10。security.md §4.2。Issue #269）の仮値。
+/// 監査チャネル障害中の事象保持・書き戻し（SEC-10。security.md §4.2）の仮値。
 /// </summary>
 /// <remarks>
 /// <b>保持上限・スキャン間隔は仮値である</b>（security.md §7 SEC-10）。確定は実装設計で行う

@@ -14,7 +14,7 @@
 @inject TimeProvider Time
 
 @*
-    管理画面共通のガードレイアウト（M8-4。Issue #71）。
+    管理画面共通のガードレイアウト（M8-4）。
 
     管理画面（Yagura.Web.Administration.Screens 配下の全ページ）は必ず本レイアウトを
     経由する（AdminScreenArchitectureTests が機械検証する）。役割はリスナ帰属の二層目の検査:
@@ -97,11 +97,11 @@
             return;
         }
 
-        // 認証の充足判定（ADR-0010 決定 1・2）: リスナ帰属とは独立の第二段判定。
+        // 認証の充足判定（ADR-0010 決定 1）: リスナ帰属とは独立の第二段判定。
         var isLoginRoute = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/') ==
             AdminAuthenticationExtensions.LoginPath.TrimEnd('/');
 
-        // 認証状態の取得元を _access（Decide）・isLoopbackListener と同じ根拠に揃える（issue #242 と同型）:
+        // 認証状態の取得元を _access（Decide）・isLoopbackListener と同じ根拠に揃える:
         // SSR/prerender（HttpContext あり）では HttpContext.User を正とする——circuit 未確立の段階では
         // YaguraCircuitAuthenticationStateProvider が匿名（初期値）を返すため、AuthenticationStateTask に
         // 頼ると RequireForLoopback=true 時に認証済みでも弾かれる。対話的描画（HttpContext == null）では
@@ -115,12 +115,12 @@
         // （ADR-0013 決定 5）。Windows 由来も circuit へは Cookie 経由で伝播し WindowsIdentity 型を持たない。
         var isAuthorizedUser = AdminAuthenticationExtensions.IsAdminSessionAuthenticated(user);
 
-        // loopback 帰属の判定は _access（Decide）と同じ根拠に揃える（issue #242 の回帰の修正）:
+        // loopback 帰属の判定は _access（Decide）と同じ根拠に揃える:
         // SSR/prerender（HttpContext あり）は circuit 未確立で CircuitContext.IsLoopbackListener が
         // null のため、接続の実ローカルポート（IsLoopbackAdminConnection——管理 loopback ポートか）で
         // 判定する。対話的描画（HttpContext == null）では circuit 確立時に束縛した帰属を使う。
         // リモート HTTPS ポート経由は IsLoopbackAdminConnection が false を返すため「リモートは常に
-        // 認証必須」（ADR-0010 Phase 2・決定 1）はそのまま保たれる。
+        // 認証必須」（ADR-0010 Phase 2）はそのまま保たれる。
         var isLoopbackListener = HttpContext is not null
             ? AdminAuthenticationExtensions.IsLoopbackAdminConnection(HttpContext)
             : CircuitContext.IsLoopbackListener;
@@ -131,8 +131,8 @@
         if (!_authenticationSatisfied)
         {
             // fail-closed: 未認証・未認可のまま画面本体（@Body）は描画しない。ログイン画面へ
-            // 誘導する。forceLoad: true でフルページロードにする（PR #217 レビュー指摘への
-            // 対応）——ログイン画面のアンチフォージェリトークンと Cookie の対は HTTP 要求
+            // 誘導する。forceLoad: true でフルページロードにする
+            // ——ログイン画面のアンチフォージェリトークンと Cookie の対は HTTP 要求
             // （prerender 段の HttpContext）でのみ発行できるため、circuit 内の対話的
             // ナビゲーションではなく新しい HTTP 要求として到達させ、常に有効なトークンで
             // フォームが描画されることを保証する（AdminLoginScreen の PersistentComponentState

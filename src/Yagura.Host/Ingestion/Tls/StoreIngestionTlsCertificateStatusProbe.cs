@@ -5,7 +5,7 @@ using Yagura.Host.Observability.ActiveNotification;
 namespace Yagura.Host.Ingestion.Tls;
 
 /// <summary>
-/// TLS 受信（RFC 5425。opt-in。security.md §6。Issue #137）の証明書の周期監視実装。
+/// TLS 受信（RFC 5425。opt-in。security.md §6）の証明書の周期監視実装。
 /// </summary>
 /// <remarks>
 /// <para>

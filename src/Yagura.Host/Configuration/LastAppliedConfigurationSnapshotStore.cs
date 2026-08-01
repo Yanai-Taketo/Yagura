@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 namespace Yagura.Host.Configuration;
 
 /// <summary>
-/// 「最後に適用した生 options」のスナップショット永続化（Issue #329）。起動時の設定差分照合
+/// 「最後に適用した生 options」のスナップショット永続化。起動時の設定差分照合
 /// （<see cref="StartupConfigurationInspector"/>）の比較基準となる専用ファイルを読み書きする。
 /// 保存契機は ①起動完了時（照合直後の基準取り直し）②ウィザード保存（監査 2001）
 /// ③再読み込み反映（監査 2016）の 3 点。

@@ -6,7 +6,7 @@ using Yagura.Web.Diagnostics;
 namespace Yagura.Web.ReverseDns;
 
 /// <summary>
-/// <see cref="IReverseDnsResolver"/> の実装（ADR-0007 決定 2・3・4・5）。
+/// <see cref="IReverseDnsResolver"/> の実装（ADR-0007 決定 2）。
 /// キャッシュ充填型——描画は解決を待たず、キャッシュ命中分のみ即時表示し、
 /// 未解決分は背景の解決完了後の束ね通知（<see cref="NamesUpdated"/>）で反映される。
 /// </summary>
@@ -59,7 +59,7 @@ public sealed class ReverseDnsResolver : IReverseDnsResolver, IDisposable
     public event Action? NamesUpdated;
 
     /// <summary>
-    /// 有効/無効を実行中に更新する（設定ライブ再読み込み。CF-4 層1。Issue #262）。
+    /// 有効/無効を実行中に更新する（設定ライブ再読み込み。CF-4 層1）。
     /// 判定は呼び出しごとに <c>_options.Enabled</c> を読むため、参照の交換だけで
     /// 次の表示・解決要求から反映される（無効化してもキャッシュは消さない——再有効化時に
     /// 即座に表示が戻る。オフの間は表示・解決とも行わないため「オフ = 逆引き名は出ない」

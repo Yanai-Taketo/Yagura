@@ -9,16 +9,16 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// <summary>
 /// architecture.md §4.6 の能動通知のうち、周期監視が必要な 4 トリガ（スプール使用率の
 /// 上限接近・到達 / スプール退避の継続 / 監視対象ボリューム（データルート・スプール置き場所）の
-/// 空き容量 / SQL Server Express の DB 容量接近）を評価する背景コンポーネント（Issue #149）。
+/// 空き容量 / SQL Server Express の DB 容量接近）を評価する背景コンポーネント。
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>スプール書込失敗は本クラスの対象外</b>: 発生箇所（<c>PersistenceWriter</c>）からの
-/// 即時通知（抑制窓付き）で配線する——本 Issue の依頼どおり、周期監視ではなく発生時点で
+/// 即時通知（抑制窓付き）で配線する——周期監視ではなく発生時点で
 /// 即座に警告する（発生から次の周期評価までの遅延を避ける）。
 /// </para>
 /// <para>
-/// <b>自己検証の投入・タイムアウト判定（architecture.md §3.2.5。Issue #152）</b>:
+/// <b>自己検証の投入・タイムアウト判定（architecture.md §3.2.5）</b>:
 /// 想定どおり <see cref="EvaluateOnceAsync"/> に評価メソッド（<c>EvaluateSpoolSelfTestAsync</c>）
 /// を 1 つ追加する形で実装した。本メソッドは 2 つの役割を持つ——①
 /// <see cref="ActiveNotificationConstants.SelfTestInterval"/>（仮値 1 日）ごとに合成レコード
@@ -27,12 +27,12 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// drain へ合流判定されたか（<see cref="Yagura.Storage.Spool.SpoolSelfTestTracker"/> 経由）を
 /// 判定する。合流判定の実体は drain 側（<c>Yagura.Ingestion.Persistence.SpoolDrainCoordinator</c>）
 /// が同一の <see cref="_selfTestTracker"/> インスタンスへ通知する（<c>Yagura.Host.Program</c> が
-/// 両者へ同一インスタンスを渡す構成）。<see cref="RunAsync"/> のループが包括的な例外保護を持つため
-/// （PR #188 レビュー指摘への対応）、本メソッドが自前の例外処理を怠っても監視ループ自体が
+/// 両者へ同一インスタンスを渡す構成）。<see cref="RunAsync"/> のループが包括的な例外保護を持つため、
+/// 本メソッドが自前の例外処理を怠っても監視ループ自体が
 /// 無警告で恒久停止することはない。**タイムアウト時、drain の進捗（消化済みセグメントの削除の
 /// 累積カウンタ <see cref="DiskSpool.DeletedSegmentsTotal"/> の増分）が直近に観測されているかで
-/// バックログ起因（EventId 1010。警告）と経路障害の疑い（EventId 1009。エラー）を判別する
-/// （Issue #202。PR #200 レビューのフォローアップ）**——詳細は
+/// バックログ起因（EventId 1010。警告）と経路障害の疑い（EventId 1009。エラー）を判別する**
+/// ——詳細は
 /// <c>EvaluateSpoolSelfTestAsync</c> の remarks 参照。
 /// </para>
 /// <para>
@@ -145,14 +145,14 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private DateTimeOffset? _storageDegradedSince;
 
     /// <summary>
-    /// フォワーダ MSI 配置フォルダのフルパス（1033 の本文に載せる撤去先。Issue #465）。
+    /// フォワーダ MSI 配置フォルダのフルパス（1033 の本文に載せる撤去先）。
     /// データルートは <c>YAGURA_DATAROOT</c> で既定以外にも置けるため、本文にパスが無いと
     /// 運用者が撤去先を特定できない。
     /// </summary>
     private readonly string? _forwarderMsiFolderPath;
 
     /// <summary>
-    /// フォワーダ MSI 配置フォルダの書き込み ACE 検出の問い合わせ口（ADR-0020 決定 2・委任 7）。
+    /// フォワーダ MSI 配置フォルダの書き込み ACE 検出の問い合わせ口（ADR-0020 決定 2）。
     /// 戻り値: <see langword="true"/> = 実効実行アカウントに書き込み ACE がある（開放中）/
     /// <see langword="false"/> = ない（既定の読み取り専用）/ <see langword="null"/> = 判定不能
     /// （非 Windows・ACL 読み取り失敗——安全側で何も通知しない）。実体は ACL の読み取りのみで
@@ -173,7 +173,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private DateTimeOffset? _forwarderMsiOpenSince;
 
     /// <summary>
-    /// 起動時 seed の照会口（ADR-0018 決定 3。Issue #381。<c>ILogStore.QuerySourceActivityAsync</c> を
+    /// 起動時 seed の照会口（ADR-0018 決定 3。<c>ILogStore.QuerySourceActivityAsync</c> を
     /// 結線する）。未注入（テスト等）や照会失敗時は seed を行わず、全エントリが起動時刻仮基準の
     /// まま動く——決定 3 の照会失敗時の規定どおり。
     /// </summary>
@@ -213,7 +213,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         _stoppingCts = new CancellationTokenSource();
 
-        // 起動時 seed（ADR-0018 決定 3。Issue #381）: 監視ループと並行に 1 回だけ DB を照会し、
+        // 起動時 seed（ADR-0018 決定 3）: 監視ループと並行に 1 回だけ DB を照会し、
         // ウォッチリスト該当エントリの基準を DB の最終受信時刻へ置き換える。ループ開始を
         // ブロックしない（seed 完了前の周期評価は起動時刻仮基準で判定される——閾値下限 10 分に
         // 対し seed は数秒で終わるため実害はない）。
@@ -253,8 +253,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// <summary>
     /// 周期監視ループを停止する。実行中の評価があればその終了（完了・キャンセル・例外の
     /// いずれか）を待ってから戻る——Express 容量チェックは <c>stoppingToken</c> を SqlClient まで
-    /// 伝播させているため、通常は速やかにキャンセルされる（PR #188 レビュー指摘によりコメントの
-    /// 精度を実装に合わせて修正した）。
+    /// 伝播させているため、通常は速やかにキャンセルされる。
     /// </summary>
     public async Task StopAsync()
     {
@@ -318,13 +317,13 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                 return;
             }
 
-            // 評価中の未捕捉例外でループを恒久停止させない（PR #188 レビュー指摘への対応）。
+            // 評価中の未捕捉例外でループを恒久停止させない。
             // 能動通知は「UI を見ていない夜間でも運用者が気づける」ことが存在意義（architecture.md
             // §4.6）であり、監視自身が無警告で沈黙・停止する経路を残さない——例外はエラーとして
             // ログ（EventLog プロバイダ到達）へ記録し、次周期で再試行する。連発は他トリガと同じ
             // 抑制窓で抑える（評価対象の状態が変わらない限り同じ例外が毎周期出続けるため）。
-            // この保護により、将来 EvaluateOnceAsync へ追加される評価メソッド（Issue #152 の
-            // 自己検証等）が自前の例外処理を怠っても、ループの生存自体は損なわれない。
+            // この保護により、将来 EvaluateOnceAsync へ追加される評価メソッド（自己検証等）が
+            // 自前の例外処理を怠っても、ループの生存自体は損なわれない。
             try
             {
                 await EvaluateOnceAsync(stoppingToken).ConfigureAwait(false);
@@ -371,15 +370,15 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     }
 
     /// <summary>
-    /// 保存先のスキーマ初期化の実行と、縮退・回復の通知（ADR-0023 決定 1。Issue #466）。
+    /// 保存先のスキーマ初期化の実行と、縮退・回復の通知（ADR-0023 決定 1）。
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>初期化をここで行う理由</b>: 起動シーケンスに置くと、保存先が到達不能なときに未処理例外で
-    /// プロセスが落ちるか、SCM の起動待ち（30 秒）を超えて 1920 → 1603 になる（Issue #466 の実測）。
+    /// プロセスが落ちるか、SCM の起動待ち（30 秒）を超えて 1920 → 1603 になる。
     /// 起動は初期化の完了を待たず、**回復契機は本メソッド（周期監視）のみ**とする——「利用時
     /// （ログイン要求）」を契機にすると、未認証の要求で任意に保存先への接続試行を誘発できてしまう
-    /// （ADR-0023 決定 1。田中・クリスの指摘）。
+    /// （ADR-0023 決定 1）。
     /// </para>
     /// <para>
     /// 単一実行・失敗の負のキャッシュは <see cref="StorageInitializationCoordinator"/> が担う。
@@ -452,24 +451,20 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     }
 
     /// <summary>
-    /// フォワーダ MSI 配置フォルダの書き込み ACE の稼働中検出（ADR-0020 決定 2・委任 7。
-    /// Issue #283）。本製品は再起動 = 受信断のため長期間再起動されず、起動時のみの検証では
+    /// フォワーダ MSI 配置フォルダの書き込み ACE の稼働中検出（ADR-0020 決定 2）。
+    /// 本製品は再起動 = 受信断のため長期間再起動されず、起動時のみの検証では
     /// 閉じ忘れが数ヶ月単位で沈黙する——周期監視で二系統を検出する:
-    /// ①<b>乖離警告（1033）</b>: opt-in 無効なのに書き込み ACE が残っている（閉じ忘れ。#171 の
-    /// 教訓——意図した ACL と実 ACL の乖離は検出されるまで気づかれない）。
+    /// ①<b>乖離警告（1033）</b>: opt-in 無効なのに書き込み ACE が残っている（閉じ忘れ——
+    /// 意図した ACL と実 ACL の乖離は検出されるまで気づかれない）。
     /// ②<b>開放継続の通知（1034）</b>: opt-in 有効で書き込み ACE の存在が継続している
     /// （推奨運用「使うときだけ開く」の閉じ忘れの主たる発生様式。継続判定
     /// <see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationThreshold"/>・
     /// 専用の抑制窓 <see cref="ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow"/>
-    /// ——常置運用を選んだ環境で騒音にならない釣り合い。いずれも仮値・確定は ADR-0020 委任 7）。
+    /// ——常置運用を選んだ環境で騒音にならない釣り合い。いずれも仮値）。
     /// </summary>
     /// <remarks>
-    /// <b>起動時の一回検査も本メソッドが担う</b>（<see cref="EvaluateForwarderMsiFolderAclAtStartup"/>。
-    /// Issue #465）: 以前は <c>Program.cs</c> が独自の <c>LogWarning</c> で 1033 を直接発火して
-    /// おり、抑制記録（<c>_lastNotifiedAt</c>）を更新しないため**再起動のたびに「起動直後 + その
-    /// 約 60 秒後」の 2 連発**が必ず起きていた（メール通知構成では 1 回の再起動で 2 通）。
+    /// <b>起動時の一回検査も本メソッドが担う</b>（<see cref="EvaluateForwarderMsiFolderAclAtStartup"/>）。
     /// 発火点を本メソッドへ一本化することで、抑制の記録点が単一になり二重化が構造的に消える。
-    /// 本文も 1 つに統一する（旧 2 経路は配置パスと危険性説明を非対称に持ち合っていた）。
     /// </remarks>
     /// <summary>
     /// 起動時の一回検査（ADR-0020 決定 2——周期監視〔最短でも 1 周期後〕に加えて起動直後にも
@@ -478,7 +473,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// 周期評価と<b>同じ発火経路</b>（<see cref="EvaluateForwarderMsiFolderAcl"/> →
-    /// <c>NotifyIfDue</c>）を通ることが要点（Issue #465）——抑制記録を共有するため、
+    /// <c>NotifyIfDue</c>）を通ることが要点——抑制記録を共有するため、
     /// 起動直後に発火した場合は続く周期評価が抑制窓で正しく沈黙する。開放継続の通知（1034）は
     /// 「継続」の観測を要するため起動時には成立しない（<c>_forwarderMsiOpenSince</c> の
     /// 起点が置かれるだけ）。
@@ -508,7 +503,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
             NotifyIfDue("forwarder-msi-acl-drift", () =>
                 _logger.LogWarning(
                     ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
-                    // 配置フォルダのパスを必ず含める（Issue #465）: データルートは
+                    // 配置フォルダのパスを必ず含める: データルートは
                     // YAGURA_DATAROOT で既定以外にも置けるため、撤去先を本文だけで特定できないと
                     // lab ③-1 の合否基準（本文にパスと撤去の誘導）を満たせない。
                     "[forwarder-msi-acl-drift] フォワーダ MSI 配置フォルダ {FolderPath} にサービス実行" +
@@ -551,7 +546,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// （<see cref="EvaluateMonitoredVolumesFreeSpace"/> と同じパターン）。
     /// </summary>
     /// <remarks>
-    /// <b>IP レート制限のアイドルエントリ掃引（Issue #233。PR #236 レビュー指摘で条件を修正）</b>:
+    /// <b>IP レート制限のアイドルエントリ掃引</b>:
     /// 評価の先頭で
     /// <see cref="Yagura.Host.Administration.AdminAuthentication.AdminAuthFailureDefense.SweepIdleIpRateLimitEntries"/>
     /// を毎周期（仮値 1 分）呼ぶ——送信元 IP をキーにした状態辞書は攻撃者が制御できる次元（IP
@@ -582,7 +577,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
             return;
         }
 
-        // サーバ都合の受信断との区別（決定 3。委任 6）: 構成済みの全リスナが受信不能な間は
+        // サーバ都合の受信断との区別（決定 3）: 構成済みの全リスナが受信不能な間は
         // 途絶判定を保留し、回復（true → false の遷移）で全エントリを回復時点で再アームする
         // （起動時の再アームと同一規則——固定グレース値を置かず、各エントリの再検知は当該
         // エントリの閾値で律速する）。部分受信断は保留しない——警告 Detail への経路状態の
@@ -612,7 +607,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         if (evaluation.IsBurst)
         {
-            // 「起動後の再アーム起点の一斉発火かの別」を Detail に含める（決定 3。Issue #382）——
+            // 「起動後の再アーム起点の一斉発火かの別」を Detail に含める（決定 3）——
             // 同一閾値で再アームされたエントリ群は起動・回復から閾値経過後に同時発火し得るため、
             // 独立障害の寄せ集めを「共通上流障害」と誤誘導しない。
             var rearmedCount = evaluation.Silences.Count(silence => silence.BaselineIsRearmed);
@@ -669,7 +664,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         entry.Label is null ? entry.Address.ToString() : $"{entry.Address}（{entry.Label}）";
 
     /// <summary>
-    /// 1027 の Detail が約束する「最終受信時刻（壁時計表示）」（決定 3。Issue #382）。
+    /// 1027 の Detail が約束する「最終受信時刻（壁時計表示）」（決定 3）。
     /// 基準が再アーム由来（登録・起動・受信断回復）の間は実受信の時刻ではないため、
     /// 誤読させない表現にする。
     /// </summary>
@@ -680,7 +675,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     /// <summary>
     /// 集約警告（1028）のエントリ列挙。Windows イベントログのメッセージ長上限（約 31KB）を
-    /// 考慮し、件数上限つきで列挙して残りは総数で表す（Issue #382）。
+    /// 考慮し、件数上限つきで列挙して残りは総数で表す。
     /// </summary>
     private static string FormatEntriesCapped(IReadOnlyList<SourceSilence.SourceSilenceEvent> silences)
     {
@@ -767,8 +762,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     /// <summary>
     /// 管理リスナのリモート HTTPS 証明書の期限接近・稼働中の使用不能を検知する
-    /// （ADR-0010 Phase 2 決定 4。PR #224 レビュー指摘 #2・#3 への対応。
-    /// <see cref="ICertificateStatusProbe"/> の remarks 参照）。
+    /// （ADR-0010 Phase 2 決定 4。<see cref="ICertificateStatusProbe"/> の remarks 参照）。
     /// リモートバインド opt-in が無効・起動時に証明書を解決できず縮小継続した構成
     /// （プローブ未注入 = <see langword="null"/>）では何もしない——後者は起動時警告
     /// （EventId 1013）が既に一度報告しており、再起動なしに bind が有効化されることもないため、
@@ -837,7 +831,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     }
 
     /// <summary>
-    /// TLS 受信（RFC 5425。opt-in。security.md §6。Issue #137）証明書の期限接近・稼働中の
+    /// TLS 受信（RFC 5425。opt-in。security.md §6）証明書の期限接近・稼働中の
     /// 使用不能を検知する。TLS 受信が無効・起動時に証明書を解決できず縮小継続した構成
     /// （プローブ未注入 = <see langword="null"/>）では何もしない
     /// （<see cref="EvaluateAdminHttpsCertificate"/> と同じ「重複警告の抑制」判断——後者は起動時
@@ -912,7 +906,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     /// <summary>
     /// 閲覧 UI HTTPS（ADR-0022。opt-in）証明書の期限接近（1036）・稼働中の使用不能（1037）を
-    /// 検知する（決定 2 可視化①・決定 7——期限接近通知の第 3 用途）。閲覧 HTTPS が無効・起動時に
+    /// 検知する（期限接近通知の第 3 用途）。閲覧 HTTPS が無効・起動時に
     /// 証明書を解決できず縮小継続した構成（プローブ未注入）では何もしない
     /// （<see cref="EvaluateAdminHttpsCertificate"/> と同じ「重複警告の抑制」判断——起動時警告
     /// 1035 が既に一度報告済みで、再起動なしに閲覧 HTTPS が有効化されることもない）。
@@ -921,7 +915,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 挙動は管理 UI HTTPS（<see cref="EvaluateAdminHttpsCertificate"/>）と同型——期限切れ中は
     /// <c>ServerCertificateSelector</c> が新規 TLS ハンドシェイクを拒否している（平文へは落ちない。
     /// 決定 2）。異なるのは影響面の説明（LAN からの閲覧が止まる・サーバ上の閲覧と復旧は管理画面
-    /// から可能）と、<b>更新手順への参照を文言に含める</b>こと（決定 7——長寿命自己署名の運用では
+    /// から可能）と、<b>更新手順への参照を文言に含める</b>こと（長寿命自己署名の運用では
     /// 次に触るのが数年後の「手順を忘れた自分」になるため）。
     /// </remarks>
     private void EvaluateViewerHttpsCertificate()
@@ -1066,7 +1060,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// <summary>
     /// 監視対象ボリューム（データルート・スプール置き場所。同一ボリュームなら読み取り側で
     /// 1 件に重複排除済み——<see cref="MonitoredVolumeInfo"/>）の空き容量（architecture.md §4.6。
-    /// database.md §3・§5.3。スプール置き場所のボリュームを含めるのは PR #188 レビュー指摘への対応）。
+    /// database.md §3・§5.3。スプール置き場所のボリュームを含める）。
     /// </summary>
     private void EvaluateMonitoredVolumesFreeSpace()
     {
@@ -1128,7 +1122,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     }
 
     /// <summary>
-    /// スプールの定期自己検証（architecture.md §3.2.5。Issue #152）。
+    /// スプールの定期自己検証（architecture.md §3.2.5）。
     /// <see cref="_spool"/> または <see cref="_selfTestTracker"/> が <c>null</c>（スプール
     /// opt-out・縮退運転）の間は投入・判定のいずれも行わない（クラス remarks 参照）。
     /// </summary>
@@ -1140,10 +1134,10 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 設計のため、判定の機会は投入直前の一度しかない）。
     /// </para>
     /// <para>
-    /// <b>バックログ起因の判別（Issue #202。PR #200 レビューのフォローアップ）</b>: drain は FIFO
+    /// <b>バックログ起因の判別</b>: drain は FIFO
     /// のため、投入時点で未消化バックログが深い（§3.2.2 が「隠れた欠陥ではない」と明記する持続的な
     /// 速度不足の正常状態）と、経路自体は健全でもマーカーが期待時間内に合流しないことがある。
-    /// 検討した 3 案（Issue #202）: ①投入時点のバックログ量を記録して判定に使う、②drain の進行
+    /// 検討した 3 案: ①投入時点のバックログ量を記録して判定に使う、②drain の進行
     /// （セグメント消化）を観測する、③タイムアウト値をバックログ量に比例させて再設計する。
     /// ①は「バックログが深い」ことと「経路が壊れている」ことを判別できない（両方とも投入時点の
     /// バックログは深いまま観測される）ため単独では使えない。③はバックログ量と所要時間の比例関係が
@@ -1153,7 +1147,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 周期ごとに観測し、前回周期から増えていれば drain の進捗の直接証拠として扱う
     /// （<see cref="EvaluateSpoolEvacuationContinuation"/> が <c>SpoolEvacuated</c> 累積カウンタで
     /// 行う継続判定と同じパターン）。<see cref="DiskSpool.CurrentUsageBytes"/> の周期サンプリング
-    /// 差分（純増減）を使わないのは PR #211 レビュー指摘への対応——持続的な速度不足（追記速度が
+    /// 差分（純増減）を使わないのは、持続的な速度不足（追記速度が
     /// 消化速度を恒常的に上回る状態）では、drain が実際にセグメントを消化していても任意の 1 分
     /// サンプルで純減少が一度も観測されず「進捗なし = 1009」に誤分類される。まさに本判別が対象と
     /// する高負荷滞留の場面で機能しないため、追記と混ざらない削除専用の累積カウンタへ分離した。
@@ -1168,7 +1162,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 1009 の発火を止めない——両者は独立したトリガキーで抑制窓を持つ）。
     /// </para>
     /// <para>
-    /// <b>1009 へのエスカレーションはマーカー単位でラッチする（PR #211 レビュー指摘への対応）</b>:
+    /// <b>1009 へのエスカレーションはマーカー単位でラッチする</b>:
     /// 未照合マーカーは次回投入（最大 1 日後）まで残り、タイムアウト判定は毎周期評価され続ける
     /// ため、ラッチが無いと「進捗途絶で 1009 → 単発の進捗で 1010 へ回帰 → 再途絶で 1009 → …」の
     /// 振動（flapping）が起こり得る。同一の根本原因に対して独立した抑制窓を持つ 2 つの ID が交互に
@@ -1192,7 +1186,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         // drain 進捗の観測（上記 remarks 参照）: drain がセグメントを消化・削除するたびに単調増加
         // する累積カウンタを前回周期と比較する。追記（実トラフィックの退避・本メソッド自身の投入）
         // はこのカウンタに影響しないため、追記と削除が同一周期内に混在していても取りこぼさない
-        // （PR #211 レビュー指摘への対応——使用量の純増減サンプリングは持続的な速度不足下で
+        // （使用量の純増減サンプリングは持続的な速度不足下で
         // 進捗を見落とす）。
         var deletedSegmentsTotal = _spool.DeletedSegmentsTotal;
         if (_lastSelfTestObservedDeletedSegments is { } lastDeletedSegments &&
@@ -1262,7 +1256,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         // ラッチはここで解除する（remarks 参照）。
         _selfTestFailureLatched = false;
 
-        // 登録 → 書込 → 失敗時は登録取消、の順序（PR #200 レビュー指摘への対応）。
+        // 登録 → 書込 → 失敗時は登録取消、の順序。
         // 書込に失敗したマーカーを未照合のまま残すと、drain に照合される見込みが無いまま
         // タイムアウト通知（別トリガキー）が次回投入（最大 1 日後）まで抑制窓ごとに反復発火する。
         // 登録自体は書込より先に行う——書込成功の確認より先に drain がレコードを読んで照合を

@@ -7,7 +7,7 @@ namespace Yagura.Web.Circuits;
 
 /// <summary>
 /// circuit のライフサイクルを台帳（<see cref="CircuitRegistry"/>）へ反映する
-/// <see cref="CircuitHandler"/>（M8-4。Issue #71。security.md §2.2 の基盤）。
+/// <see cref="CircuitHandler"/>（M8-4。security.md §2.2 の基盤）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,7 +16,7 @@ namespace Yagura.Web.Circuits;
 /// <see cref="YaguraCircuitContext"/> と自然に対応づく。
 /// </para>
 /// <para>
-/// <b>リスナ帰属の取得（レビュー注視点）</b>: circuit 確立時の接続（SignalR の WebSocket 要求）の
+/// <b>リスナ帰属の取得</b>: circuit 確立時の接続（SignalR の WebSocket 要求）の
 /// <c>HttpContext.Connection.LocalPort</c> を <see cref="IHttpContextAccessor"/> 経由で読む。
 /// <c>OnCircuitOpenedAsync</c> は接続確立処理の実行文脈で呼ばれるため <c>HttpContext</c> が
 /// 取得できる想定だが、Blazor の対話的描画の内側では <c>HttpContext</c> が無効になり得るという
@@ -97,9 +97,9 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     }
 
     /// <summary>
-    /// circuit の接続確立/再接続のたびに呼ばれる公式フック（ADR-0010 決定 2・委任事項 2。
-    /// 検証 3 が引用する Microsoft Learn の "Circuit handler to capture users for custom
-    /// services" パターン）。<see cref="OnCircuitOpenedAsync"/> は最初の接続確立時のみ呼ばれるが、
+    /// circuit の接続確立/再接続のたびに呼ばれる公式フック（ADR-0010 決定 2。Microsoft Learn の
+    /// "Circuit handler to capture users for custom services" パターンに基づく）。
+    /// <see cref="OnCircuitOpenedAsync"/> は最初の接続確立時のみ呼ばれるが、
     /// <see cref="OnConnectionUpAsync"/> は SignalR の再接続（circuit 喪失後の再接続を含む）の
     /// たびに呼ばれるため、<b>ここで現在の <c>HttpContext.User</c> を明示的に汲み直す</b>ことが
     /// 「接続確立時に固定されたスナップショットに頼らない」（security.md §2.3）実装の要である。
@@ -107,7 +107,7 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     /// <remarks>
     /// <b>認証状態と同じ理由で、リスナ帰属（<see cref="YaguraCircuitContext.IsAdminListener"/>/
     /// <see cref="YaguraCircuitContext.IsLoopbackListener"/>）もここで汲み直す</b>（ADR-0010
-    /// Phase 2。PR #224 レビュー指摘 #1 への対応）: circuit 確立時に固定した帰属のままだと、
+    /// Phase 2）: circuit 確立時に固定した帰属のままだと、
     /// loopback 束縛ポート経由で確立された circuit（既定構成では無認証許可）の再接続が別ポート
     /// （リモート HTTPS）の物理コネクションへ切り替わった場合に、`IsLoopbackListener = true` が
     /// 固定され続け「リモート経由の管理操作は常に認証必須」（ADR-0010 決定 1）の不変条件が
@@ -122,12 +122,12 @@ public sealed class YaguraCircuitHandler : CircuitHandler
 
         if (httpContext?.User is { } user)
         {
-            // SEC-6（security.md §2.3。Issue #267）: 閲覧リスナ帰属の circuit で「認証あり →
+            // SEC-6（security.md §2.3）: 閲覧リスナ帰属の circuit で「認証あり →
             // 認証なし」への遷移（= 失効の検知点）を捉えた場合、読み取り専用の掲示表示を失効の
             // 瞬間に切らず、猶予（CircuitGovernanceDefaults.RevocationGracePeriod = SEC-6 確定値
             // 15 分）の間だけ表示を維持する。
             //
-            // <b>権限昇格の防止（多層防御。オーナー指示 2026-07-17）</b>: 本猶予が管理権限の失効を
+            // <b>権限昇格の防止（多層防御）</b>: 本猶予が管理権限の失効を
             // 遅延させて「権限なく管理画面へ到達できる」穴にならないよう、次の三重で守る:
             //  ①管理セッション（AdminSessionClaimType を持つ principal）には猶予を与えず即時反映
             //    する——SEC-6 は掲示用途（閲覧専用）のための機構であり、管理者の失効は遅延させない
@@ -165,7 +165,7 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     }
 
     /// <summary>
-    /// 猶予中に維持する「無害化された」認証状態を作る（オーナー指示 2026-07-17。多層防御 ②）。
+    /// 猶予中に維持する「無害化された」認証状態を作る（多層防御 ②）。
     /// 認証済み（<c>IsAuthenticated = true</c>）は維持して閲覧の掲示表示を継続させるが、
     /// <b>管理権限に繋がるクレームをすべて除去する</b>: 管理セッション標識
     /// （<see cref="AdminAuthenticationExtensions.AdminSessionClaimType"/>）と全グループ SID
@@ -274,7 +274,8 @@ public sealed class YaguraCircuitHandler : CircuitHandler
     /// 確立時（<see cref="OnCircuitOpenedAsync"/>）は従来からこの挙動（クラスコメント参照）。
     /// 再接続時（<see cref="OnConnectionUpAsync"/>）も同じ扱いとし、**直前の帰属を持ち越さない**:
     /// 「前回は loopback だった」ことは「今回の接続も loopback である」ことを保証しない
-    /// （まさにそれが PR #224 レビュー指摘 #1 の攻撃経路）ため、判定できない再接続では帰属を
+    /// （持ち越した古い帰属を悪用されると、別ポートの物理コネクションへ切り替わった接続が
+    /// 誤って loopback 特権を保持し続ける攻撃経路になる）ため、判定できない再接続では帰属を
     /// 不明へ降格する。帰属不明の帰結は fail-closed 側に揃っている——管理画面は描画されず
     /// （<c>AdminScreenAccessPolicy.Decide</c> の Undetermined）、認証充足判定も認証必須側で扱う
     /// （<c>IsAuthenticationSatisfied</c> の <c>isLoopbackListener: null</c>）。復旧はページの

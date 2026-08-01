@@ -12,7 +12,7 @@
 @inject PersistentComponentState ApplicationState
 
 @*
-    管理 UI ログイン画面（ADR-0010 Phase 1・委任事項 9「選択式」）。
+    管理 UI ログイン画面（ADR-0010 Phase 1「選択式」）。
 
     未認証で到達できなければならない唯一の管理画面——AdminScreenLayout・
     YaguraAdminExtensions.AdminAuthExemptRouteTypeNames の両方で認可要求から除外されている
@@ -40,7 +40,7 @@
        実在/非実在に依存しないため列挙シグナルにならない）。 *@
     @* ADR-0023 決定 1: 保存先到達不能による一時的な利用不能だけは別文言にする——資格情報の
        誤りと同じ文言だと、利用者はパスワードを忘れたと思い込みリセットを試み、それも失敗して
-       余計に混乱する（ペルソナレビュー 佐藤の指摘）。アカウントの実在有無には依存しないため
+       余計に混乱する。アカウントの実在有無には依存しないため
        列挙耐性を損なわない。 *@
     <MudAlert Severity="@(_storeUnavailable ? Severity.Warning : Severity.Error)" Class="mt-4">
         @(_storeUnavailable ? UiText.AdminLoginStoreUnavailable : UiText.AdminLoginError)
@@ -99,7 +99,7 @@
         // （対話的描画では HttpContext が無効——AdminScreenLayout と同じ制約）。プレーンな
         // HTML フォームで POST するため、Blazor の EditForm 経由の暗黙トークン注入は使えない。
         //
-        // 対話的描画への持ち越し（PR #217 レビュー指摘への対応）: 本コンポーネントは prerender と
+        // 対話的描画への持ち越し: 本コンポーネントは prerender と
         // circuit 上の対話的描画の 2 回初期化される。対話的側では HttpContext が null のため
         // トークンを発行できず、prerender 済み HTML の hidden input も対話的描画による DOM
         // 置き換えで失われる——PersistentComponentState（prerender の状態を対話的コンポーネントへ

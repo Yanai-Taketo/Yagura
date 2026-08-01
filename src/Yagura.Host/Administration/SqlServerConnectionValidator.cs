@@ -3,7 +3,7 @@ using Microsoft.Data.SqlClient;
 namespace Yagura.Host.Administration;
 
 /// <summary>
-/// <see cref="ISqlServerConnectionValidator"/> の実体（M8-4。Issue #71）。
+/// <see cref="ISqlServerConnectionValidator"/> の実体（M8-4）。
 /// </summary>
 /// <remarks>
 /// 接続を開いて <c>SELECT 1</c> を実行する最小の検証。失敗は

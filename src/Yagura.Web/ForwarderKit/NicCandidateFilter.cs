@@ -4,7 +4,7 @@ using System.Net.NetworkInformation;
 namespace Yagura.Web.ForwarderKit;
 
 /// <summary>
-/// NIC 候補の除外判定（ADR-0008 設計条件 1・委任 #6）。列挙処理（<see cref="SystemNicCandidateSource"/>）
+/// NIC 候補の除外判定（ADR-0008 設計条件 1）。列挙処理（<see cref="SystemNicCandidateSource"/>）
 /// から分離した純粋関数として実装し、単体テストで境界（ループバック・APIPA・IPv6 リンクローカル・
 /// 停止 NIC・複数 NIC 混在）を固定できるようにする。
 /// </summary>

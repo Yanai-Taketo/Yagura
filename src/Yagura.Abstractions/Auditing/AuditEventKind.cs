@@ -4,19 +4,10 @@ namespace Yagura.Abstractions.Auditing;
 /// 監査記録の事象種別（security.md §4.1・§4.3）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// M6-2（Issue #52）で <see cref="ViewerListenerAdminRequestRejected"/> を、
-/// M8-4（Issue #71）で管理操作（2000 番台）と origin 拒否を追加した。
-/// 他の値（認証失敗・失効猶予の記録等）は該当機能の実装時に追加する
-/// （security.md §4.1 の対象一覧・§4.4「事象種別が変われば個別記録する」の前提となる区分）。
-/// </para>
-/// <para>
-/// <b>配置（M8-4 で <c>Yagura.Storage.Auditing</c> から移設）</b>: 監査記録はログ本体の
-/// 永続化（provider 抽象）とは独立した「ホスト管轄のローカルファイル + イベントログ併記」
-/// であり（security.md §4.2）、Storage の管轄物ではない。モジュール横断契約の最下層
-/// <c>Yagura.Abstractions</c>（architecture.md §1.1）へ移設した——M6-4 の申し送り
-/// 「<c>IAuditRecorder</c> 等、現在 <c>Yagura.Storage</c> にある横断契約の移設も M8 で判断する」の決着。
-/// </para>
+/// 監査記録はログ本体の永続化（provider 抽象）とは独立した「ホスト管轄のローカルファイル +
+/// イベントログ併記」であり（security.md §4.2）、モジュール横断契約の最下層
+/// <c>Yagura.Abstractions</c> に置く（architecture.md §1.1）。値は additive-only
+/// （既存値の意味・レベルは変更しない。security.md §4.3）。
 /// </remarks>
 public enum AuditEventKind
 {
@@ -27,32 +18,32 @@ public enum AuditEventKind
 
     /// <summary>
     /// 管理操作: 設定変更の適用（初期セットアップウィザードによる設定ファイル生成を含む。
-    /// security.md §4.1「設定変更」。イベント ID 2001。M8-4）。
+    /// security.md §4.1「設定変更」。イベント ID 2001）。
     /// </summary>
     ConfigurationSaved,
 
     /// <summary>
     /// 管理操作: 本番昇格の準備フェーズにおける SQL Server 接続検証の実施
-    /// （database.md §6.1 準備フェーズ。管理者資格情報の使用の事実のみを記録し、
-    /// 資格情報そのものは記録しない——configuration.md §5。イベント ID 2002。M8-4）。
+    /// （database.md §6.1 準備フェーズ。資格情報の使用の事実のみを記録し、
+    /// 資格情報そのものは記録しない——configuration.md §5。イベント ID 2002）。
     /// </summary>
     PromotionConnectionValidated,
 
     /// <summary>
     /// 管理操作: 本番昇格の切替実行（database.md §6.1。security.md §4.1「DB 切替・昇格」。
-    /// イベント ID 2003。M8-4）。
+    /// イベント ID 2003）。
     /// </summary>
     PromotionExecuted,
 
     /// <summary>
     /// 管理操作: circuit の個別切断（security.md §2.2「管理操作として監査対象」。
-    /// イベント ID 2004。M8-4）。
+    /// イベント ID 2004）。
     /// </summary>
     CircuitDisconnected,
 
     /// <summary>
     /// 同一サイト以外からの circuit 確立試行の拒否（origin 検証。security.md §2.1・§4.1
-    /// 「origin 検証拒否」。イベント ID 3002。M8-4）。
+    /// 「origin 検証拒否」。イベント ID 3002）。
     /// </summary>
     CircuitOriginRejected,
 
@@ -63,8 +54,8 @@ public enum AuditEventKind
     ForwarderKitGenerated,
 
     /// <summary>
-    /// 管理操作: 管理 UI 認証設定の変更（ADR-0010 決定 1・3。Windows 統合認証/アプリ独自認証の
-    /// 有効化・Kerberos-only・loopback 認証 opt-in の切替。イベント ID 2006）。
+    /// 管理操作: 管理 UI 認証設定の変更（Windows 統合認証/アプリ独自認証の有効化・Kerberos-only・
+    /// loopback 認証 opt-in の切替。ADR-0010 決定 3。イベント ID 2006）。
     /// </summary>
     AdminAuthenticationConfigured,
 
@@ -88,15 +79,9 @@ public enum AuditEventKind
 
     /// <summary>
     /// 拒否・セキュリティ事象: アプリ独自認証アカウントのロックアウト発生（ADR-0010 決定 6。
-    /// イベント ID 3005）。
+    /// イベント ID 3005）。凍結——ADR-0011 の三層防御採用後は発火しない。後継は
+    /// <see cref="AdminAuthBackoffCapReached"/>（3006）・<see cref="AdminAuthRateLimited"/>（3007）。
     /// </summary>
-    /// <remarks>
-    /// <b>凍結（ADR-0011 決定 9）</b>: 本 ID は ADR-0011 の三層防御（バックオフ + IP レート制限 +
-    /// グローバルトークンバケット）の採用以降、発火しなくなった——ハードロックアウト機構自体が
-    /// supersede されたため。意味・レベルは変更しない（additive-only 規約の「凍結」扱い。
-    /// security.md §4.3）。後継の事象は <see cref="AdminAuthBackoffCapReached"/>（3006）・
-    /// <see cref="AdminAuthRateLimited"/>（3007）。
-    /// </remarks>
     AdminAccountLockedOut,
 
     /// <summary>
@@ -108,15 +93,10 @@ public enum AuditEventKind
 
     /// <summary>
     /// 拒否・セキュリティ事象: 認証には成功したが管理者権限がないため管理 UI へのアクセスを拒否
-    /// （Windows 統合認証で認証は成立したが <c>BUILTIN\Administrators</c> に所属していない等。
-    /// イベント ID 3008。issue #237）。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
+    /// （<c>BUILTIN\Administrators</c> 非所属等。イベント ID 3008）。<see cref="WindowsAuthenticationHandshakeFailed"/>
+    /// （3003。プロトコルレベルの握手失敗）とは異なり、認証は成立したが認可で拒否された事象。
+    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を必ず伴う。
     /// </summary>
-    /// <remarks>
-    /// <b><see cref="WindowsAuthenticationHandshakeFailed"/>（3003）とは別事象</b>: 3003 は
-    /// プロトコルレベルの握手失敗（トークン不正・SPN 不一致等——認証が成立していない）を表す。
-    /// 本種別は「認証は成立したが認可で拒否された」を表し、名（握手失敗）と実（認証成功）の乖離を避け、
-    /// 運用者が Kind だけで両者を切り分けられるようにする（Detail 文字列一致に頼らせない。issue #237）。
-    /// </remarks>
     AdminAuthorizationDenied,
 
     /// <summary>
@@ -128,32 +108,29 @@ public enum AuditEventKind
     /// <summary>
     /// 管理操作: TLS 受信（RFC 5425。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ付与
     /// （security.md §6。<see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型の起動時
-    /// 自動操作。イベント ID 2010。Issue #137）。記録内容は証明書拇印・付与先アカウントのみ。
+    /// 自動操作。イベント ID 2010）。記録内容は証明書拇印・付与先アカウントのみ。
     /// </summary>
     IngestionTlsCertificatePrivateKeyAccessGranted,
 
     /// <summary>
-    /// 管理操作: 閲覧 UI HTTPS（ADR-0022。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ
-    /// 付与（configuration.md §6「付与は監査記録の対象とする」。
-    /// <see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型の起動時自動操作。
-    /// イベント ID 2028）。記録内容は証明書拇印・付与先アカウントのみ。
+    /// 管理操作: 閲覧 UI HTTPS（ADR-0022。opt-in）証明書の秘密鍵読み取り権限をサービスアカウントへ付与
+    /// （configuration.md §6。<see cref="AdminHttpsCertificatePrivateKeyAccessGranted"/> と同型の
+    /// 起動時自動操作。イベント ID 2028）。記録内容は証明書拇印・付与先アカウントのみ。
     /// </summary>
     ViewerHttpsCertificatePrivateKeyAccessGranted,
 
     /// <summary>
     /// 拒否・セキュリティ事象: アプリ独自認証のアカウント単位バックオフが cap（上限遅延）に到達
-    /// （ADR-0011 決定 3・9。イベント ID 3006）。<see cref="AppAuthenticationLoginFailed"/>（3004）は
-    /// 通常の失敗ログインとして引き続き記録し、本 ID は「バックオフが上限まで達した」ことを示す
-    /// 追加のセキュリティ事象として記録する。記録内容は送信元 IP・アカウントキー（アカウント正規化
-    /// ユーザー名 × loopback/remote の別）・現在の連続失敗回数 n・算出された待機時間。
+    /// （ADR-0011 決定 9。イベント ID 3006）。<see cref="AppAuthenticationLoginFailed"/>（3004。通常の
+    /// 失敗ログイン）とは別に、上限到達を示す追加のセキュリティ事象として記録する。記録内容は
+    /// 送信元 IP・アカウントキー・連続失敗回数・待機時間。
     /// </summary>
     AdminAuthBackoffCapReached,
 
     /// <summary>
     /// 拒否・セキュリティ事象: IP レート制限またはグローバルトークンバケットによる拒否
-    /// （ADR-0011 決定 2・4・5.1・9。イベント ID 3007）。<c>Detail</c> で拒否理由の別
-    /// （IP レート制限/グローバルトークンバケット涸渇のいずれか。後者はプロセス全体の事象である旨も
-    /// 含める）を区別する——利用者応答では区別しない（決定 3）。記録内容は送信元 IP・拒否理由の別。
+    /// （ADR-0011 決定 9。イベント ID 3007）。<c>Detail</c> で拒否理由の別を区別する
+    /// （利用者応答では区別しない）。記録内容は送信元 IP・拒否理由の別。
     /// </summary>
     AdminAuthRateLimited,
 
@@ -174,221 +151,161 @@ public enum AuditEventKind
     /// <summary>
     /// 管理操作: 認証セッションの緊急全失効（ADR-0013 決定 2。イベント ID 2013）。セッション世代番号を
     /// バンプして発行済みの全認証セッション Cookie を即時無効化する。記録内容は無効化後の世代番号
-    /// （＝無効化した母集団の識別）・実行者（<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c>）。
+    /// （＝無効化した母集団の識別）・実行者。
     /// </summary>
     AdminSessionsInvalidated,
 
     /// <summary>
-    /// 閲覧リスナ（8514）へのサインイン成功（ADR-0010 Phase 4 決定 7。イベント ID 2014）。閲覧認証
-    /// opt-in 有効時、Windows 統合認証（AD グループ → 閲覧/管理役割）またはアプリ独自認証（管理役割）で
-    /// 閲覧リスナ経由にセッションが確立したことを、管理リスナのサインイン成功（<see cref="AdminLoginSucceeded"/>
-    /// = 2008）と区別して記録する。<c>Detail</c> に役割（<c>role=viewer</c>/<c>role=admin</c>）と方式を残す。
-    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を必ず伴う。
+    /// 閲覧リスナ（8514）へのサインイン成功（ADR-0010 Phase 4 決定 7。イベント ID 2014）。
+    /// Windows 統合認証（AD グループ → 閲覧/管理役割）またはアプリ独自認証で確立したセッションを、
+    /// 管理リスナのサインイン成功（<see cref="AdminLoginSucceeded"/> = 2008）と区別して記録する。
+    /// <c>Detail</c> に役割と方式を残す。
     /// </summary>
     ViewerLoginSucceeded,
 
     /// <summary>
     /// 拒否・セキュリティ事象: 閲覧リスナで Windows 統合認証は成功したが、設定された閲覧/管理いずれの
     /// AD グループにも所属していないためアクセスを拒否（ADR-0010 Phase 4 決定 7・SEC-9。イベント ID 3009）。
-    /// 管理側の <see cref="AdminAuthorizationDenied"/>（3008。544/管理グループ非該当）と対をなす閲覧側事象。
-    /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> を伴う。
+    /// 管理側の <see cref="AdminAuthorizationDenied"/>（3008。管理グループ非該当）と対をなす閲覧側事象。
     /// </summary>
     ViewerAuthorizationDenied,
 
     /// <summary>
-    /// 監査記録の保持期間削除の実行（security.md §4.2 SEC-2。保持期間 365 日を超過した監査記録
-    /// ファイルの削除。イベント ID 2015。Issue #261）。<c>Detail</c> に削除ファイル数・保持日数・
-    /// cutoff（UTC）・削除したファイル名を記録する——**証跡の削除自体を証跡に残す**（イベントログ
-    /// 併記により、監査ファイル側の記録が消されてもイベントログに削除の事実が残る。ADR-0004
-    /// 決定 7「消去が痕跡を残す」と同じ向き）。システムが定時実行する自動操作のため
-    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// 監査記録の保持期間削除の実行（security.md §4.2 SEC-2。保持 365 日超過分の削除。
+    /// イベント ID 2015）。証跡の削除自体を証跡に残す（イベントログ併記）。システムの定時自動操作の
+    /// ため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     AuditRetentionApplied,
 
     /// <summary>
-    /// 管理操作: 設定ファイル（手編集）のライブ再読み込みの実行（configuration.md §3。CF-4 層1。
-    /// イベント ID 2016。Issue #262）。UI 経由・SCM カスタム制御コード経由（CF-5）の両方が
-    /// 本種別に合流する。<c>Detail</c> に変更キー・適用キー・再起動待ちキーの要約を記録する
-    /// （前後値は含めない——<see cref="ConfigurationSaved"/> と同じ「キー名 + 反映方式」の粒度。
-    /// 秘密情報キーの値の混入を構造的に避ける）。設定変更の保存（2001 = ウィザード経由の
-    /// ファイル書き込み）とは別事象——本種別は「実行中プロセスへの反映」を表す。
+    /// 管理操作: 設定ファイル（手編集）のライブ再読み込みの実行（configuration.md §3。イベント ID 2016）。
+    /// UI 経由・SCM カスタム制御コード経由の両方が本種別に合流する。
+    /// <see cref="ConfigurationSaved"/>（設定ファイル書き込み）とは別——実行中プロセスへの反映を表す。
     /// </summary>
     ConfigurationReloaded,
 
     /// <summary>
-    /// 管理操作: インストール記録（ファイアウォール規則一覧・オプトアウト選択——
-    /// <c>firewall-rules.ini</c>）の初回起動時のイベントログ転記（configuration.md §4.3・
-    /// security.md §4.1「インストーラ由来の記録の転記」。イベント ID 2017。Issue #265）。
-    /// 「なぜこのサーバには規則がないのか」に証跡で答える。インストーラの実行記録の転記のため
-    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// 管理操作: インストール記録（ファイアウォール規則一覧・オプトアウト選択）の初回起動時の
+    /// イベントログ転記（configuration.md §4.3。イベント ID 2017）。インストーラの実行記録の転記の
+    /// ため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     InstallationRecordTranscribed,
 
     /// <summary>
-    /// 管理操作: 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。DB-5。イベント ID 2018。
-    /// Issue #266）の実行。<c>Detail</c> に結果（検証の合否・移行元件数・累計移行件数・
-    /// 移行先範囲内件数）を記録する。
+    /// 管理操作: 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。イベント ID 2018）の実行。
+    /// <c>Detail</c> に検証の合否・移行件数を記録する。
     /// </summary>
     LogMigrationExecuted,
 
     /// <summary>
     /// セキュリティ事象: 認証失効後の閲覧 circuit の継続を猶予として許容した（SEC-6。
-    /// security.md §2.3。イベント ID 3010。Issue #267）。記録内容は継続を許容した circuit の
-    /// 利用者名・接続元・確立時刻・猶予満了予定——「失効から遮断までに誰が何を見得たか」に
-    /// 監査で答える起点。
+    /// security.md §2.3。イベント ID 3010）。「失効から遮断までに誰が何を見得たか」に監査で答える起点。
     /// </summary>
     CircuitRevocationGraceGranted,
 
     /// <summary>
-    /// セキュリティ事象: 猶予中だった circuit の終了（SEC-6。security.md §2.3。イベント ID 3011。
-    /// Issue #267）。<c>Detail</c> に終了の別（猶予満了 / 切断 / 全切断）を記録し、3010 と対で
-    /// 「見得た期間」を閉じる。
+    /// セキュリティ事象: 猶予中だった circuit の終了（SEC-6。security.md §2.3。イベント ID 3011）。
+    /// 3010 と対で「見得た期間」を閉じる。
     /// </summary>
     CircuitRevocationGraceEnded,
 
     /// <summary>
-    /// セキュリティ事象: 拒否試行の集約記録（SEC-4。security.md §4.4。イベント ID 3012。
-    /// Issue #268）。同一送信元・同一種別の拒否が短時間に反復した場合、個別記録から集約記録へ
-    /// 切り替えた結果のサマリ。<c>Detail</c> に集約対象の事象種別・期間・回数・試行された
-    /// 利用者名の集合（「どのアカウントが狙われたか」を件数に畳まない——§4.4）・最初と最後の
-    /// 試行のフル詳細を記録する。EventId 3010・3011 は Issue #267（circuit 失効猶予）が予約済みの
-    /// ため飛ばして 3012 を採る（additive-only。security.md §4.3。並行実装のためマージ順に
-    /// かかわらず番号は付け替えない）。
+    /// セキュリティ事象: 拒否試行の集約記録（SEC-4。security.md §4.4。イベント ID 3012）。
+    /// 同一送信元・同一種別の拒否が短時間に反復した場合、個別記録から集約記録へ切り替えた結果の
+    /// サマリ。試行された利用者名の集合は残す——件数に畳まない（§4.4）。
     /// </summary>
     RejectionAggregated,
 
     /// <summary>
     /// セキュリティ事象: 監査チャネルの復旧と、障害中に保持していた事象の書き戻し完了（SEC-10。
-    /// security.md §4.2。イベント ID 3013。Issue #269）。アプリ記録ファイルへの書き込みが失敗して
-    /// いた期間の事象をメモリ内に保持し、チャネル復旧後にファイルへ書き戻したうえで、本事象を 1 件
-    /// 記録する。<c>Detail</c> に「監査記録が欠落し得た期間（障害開始〜復旧の UTC 窓）」・書き戻し
-    /// 件数・保持上限超過で縮退破棄した件数を記録する——「証跡が欠けた可能性のある期間」自体を
-    /// 証跡に残す（§4.2）。レベルは警告（監査の欠落可能性を既定の監視で拾えるようにする）。
+    /// security.md §4.2。イベント ID 3013）。「証跡が欠けた可能性のある期間」自体を証跡に残す。
+    /// レベルは警告（欠落可能性を既定の監視で拾えるようにする）。
     /// </summary>
     AuditChannelRecovered,
 
     /// <summary>
     /// 管理操作: 前回稼働時から設定ファイルが変更された状態で起動した（起動時の設定差分照合。
-    /// security.md §4.1・configuration.md §3。イベント ID 2019。Issue #329）。手編集 + サービス
-    /// 再起動で反映された変更がどの監査証跡にも残らない特性（Issue #306）への軽量補完で、
-    /// 前回適用スナップショット（<c>last-applied-configuration.json</c>）と起動時点の設定ファイルの
-    /// 差分があるときに 1 件記録する。<c>Detail</c> は変更キー名のみ（<see cref="ConfigurationReloaded"/>
-    /// = 2016 と同粒度。前後値・秘密値は含めない）。「いつ・誰が」変更したかは特定できない——
-    /// 悪意への統制ではなく事故調査のための運用証跡（統制は OS の ACL・SACL に委ねる——
-    /// security.md §4.1）。起動時の自動照合のため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は
-    /// <see langword="null"/>。
+    /// security.md §4.1。イベント ID 2019）。前回適用スナップショットとの差分があるときに 1 件記録する。
+    /// 「いつ・誰が」変更したかは特定できない——統制は OS の ACL・SACL に委ねる。起動時の自動照合の
+    /// ため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     StartupConfigurationChangeDetected,
 
     /// <summary>
-    /// 管理操作: TLS 受信の証明書設定の変更（ADR-0019 決定 5。イベント ID 2020。Issue #349）。
-    /// <c>Ingestion:Tls:Enabled</c>・<c>Ingestion:Tls:Port</c>・
-    /// <c>Ingestion:Tls:CertificateThumbprint</c> の変更を記録する。
-    /// <see cref="AdminHttpsCertificateConfigured"/>（= 2012。管理リモート HTTPS 版）と対になる
-    /// TLS 受信版であり、記録内容も同型——変更キーと新値（拇印は証明書の公開識別子であり秘密では
-    /// ないため値を残す）+ 操作者。<c>Port</c> を対象に含めるのは<b>到達面の変更であり監査価値が
-    /// 高い</b>ため（2012 も 3 キーすべてを対象としている）。
+    /// 管理操作: TLS 受信の証明書設定の変更（ADR-0019 決定 5。イベント ID 2020）。
+    /// <see cref="AdminHttpsCertificateConfigured"/>（= 2012）と対になる TLS 受信版で、記録内容も同型
+    /// （拇印は公開識別子のため値を残す）。<c>Port</c> も対象——到達面の変更は監査価値が高いため。
     /// </summary>
     IngestionTlsCertificateConfigured,
 
     /// <summary>
-    /// 管理操作: 閲覧 UI の HTTPS 設定の変更（イベント ID 2029。ADR-0022 決定 10。Issue #455）。
-    /// 2012（管理リモート HTTPS）・2020（TLS 受信）の閲覧版であり、記録内容も同型——変更キー
-    /// （<c>Viewer:Https:Enabled</c>・<c>Viewer:Https:CertificateThumbprint</c>）と新値（拇印は
-    /// 証明書の公開識別子であり秘密ではないため値を残す）+ 操作者。
+    /// 管理操作: 閲覧 UI の HTTPS 設定の変更（イベント ID 2029。ADR-0022 決定 10）。
+    /// 2012（管理リモート HTTPS）・2020（TLS 受信）の閲覧版であり、記録内容も同型。
     /// </summary>
     ViewerHttpsConfigured,
 
     /// <summary>
-    /// メール通知設定の変更（イベント ID 2021。ADR-0017 決定 4。Issue #350）。
+    /// メール通知設定の変更（イベント ID 2021。ADR-0017 決定 4）。<c>Smtp:Password</c> は「変更した」
+    /// 事実のみで値は残さない。宛先・接続先の値は残す——「通知がどこへ向かうか」を事後に追えるため。
     /// </summary>
-    /// <remarks>
-    /// 記録内容は変更キーと新値 + 操作者。<b><c>Smtp:Password</c> は「変更した」事実のみ</b>で
-    /// 値は残さない。宛先（<c>To</c>）と接続先（<c>Smtp:Host</c> / <c>Port</c>）の値を残すのは、
-    /// これらが「通知がどこへ向かうか」= 流出経路そのものの定義であり、キー名粒度（2016）では
-    /// 事後に追えないため。
-    /// </remarks>
     EmailNotificationConfigured,
 
     /// <summary>
-    /// メール通知のテスト送信（イベント ID 2022。ADR-0017 決定 8。Issue #350）。
+    /// メール通知のテスト送信（イベント ID 2022。ADR-0017 決定 8）。状態を変えない操作だが監査対象
+    /// ——任意のホスト・ポートへの接続試行は内部ネットワークの到達性探査に転用し得るため。
+    /// 資格情報の値そのものは記録しない。
     /// </summary>
-    /// <remarks>
-    /// 状態を変えない操作だが監査対象とする——未保存の値で任意のホスト・ポートへ接続を試せる
-    /// 操作は<b>内部ネットワークの到達性探査に転用し得る</b>ため。接続先・宛先・成否・操作者と、
-    /// 「保存済み資格情報を使用したか」の別を記録し、資格情報の値そのものは記録しない。
-    /// </remarks>
     EmailNotificationTestSent,
 
     /// <summary>
-    /// 送信元の途絶検知のウォッチリスト変更（イベント ID 2023。ADR-0018 決定 5。Issue #351）。
+    /// 送信元の途絶検知のウォッチリスト変更（イベント ID 2023。ADR-0018 決定 5）。追加・削除・変更
+    /// されたエントリ（アドレスと表示名）を必ず記録する——ウォッチリストは検知範囲そのものの定義であり、
+    /// 事後にエントリ操作を再構成できる粒度が要る。
     /// </summary>
-    /// <remarks>
-    /// Detail には<b>追加・削除・変更されたエントリ（アドレスと表示名）を必ず含める</b>——
-    /// ウォッチリストは検知範囲そのものの定義であり、「管理権限を得た攻撃者が証跡遮断の前に
-    /// エントリを外す」を事後に再構成できる粒度が要る（キー名だけの既存粒度——2016——では
-    /// 答えられない。値は秘密情報ではない）。
-    /// </remarks>
     SourceSilenceWatchlistConfigured,
 
     /// <summary>
-    /// 管理操作: サービス実行アカウントの構成の初回起動時転記（ADR-0015 決定 8。イベント ID 2024。
-    /// Issue #263。security.md §4.1・§4.3、configuration.md §4.4）。インストーラが書く構成記録
-    /// （<c>service-account.ini</c>——MSI プロパティ <c>YAGURA_SERVICE_ACCOUNT</c> の値）を
-    /// 初回起動時に 1 回だけイベントログへ転記する（2017 のインストーラ由来転記レールと同型。
-    /// 一回性はマーカーファイルで判定）。記録内容は構成された実行アカウント名（既定の仮想
-    /// サービスアカウント <c>NT SERVICE\Yagura</c> / gMSA <c>DOMAIN\name$</c>。gMSA 名は識別子で
-    /// あり秘密ではない）。起動時の自動転記のため <c>RemoteAddress</c>/<c>AuthenticationScheme</c>
-    /// は <see langword="null"/>。
+    /// 管理操作: サービス実行アカウントの構成の初回起動時転記（ADR-0015 決定 8。イベント ID 2024）。
+    /// インストーラが書く構成記録（<c>service-account.ini</c>）を初回起動時に 1 回だけイベントログへ
+    /// 転記する（一回性はマーカーファイルで判定）。起動時の自動転記のため
+    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     ServiceAccountTranscribed,
 
     /// <summary>
     /// 管理操作: サービス実行アカウントが前回起動時から変化した状態で起動した（ADR-0015 決定 8。
-    /// イベント ID 2025。Issue #263。security.md §4.1）。起動時に実効実行アカウント（プロセスが
-    /// 実際に動いている識別）を前回起動時の記録（<c>last-service-account.json</c>）と照合し、
-    /// 変化があれば旧・新のアカウント名を 1 件記録する——再インストール/アップグレードでの指定
-    /// 変更のほか、<b>製品外の <c>sc config</c> による切替も次回起動で必ず証跡化される</b>
-    /// （「いつからこの識別で動いているか」に監査で答える）。初回起動・記録欠損時は発火しない
-    /// （転記 2024 のみ）。2019 と同じ「変化検出」レール。起動時の自動照合のため
-    /// <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// イベント ID 2025）。実効実行アカウントを前回記録と照合し、変化があれば旧・新のアカウント名を
+    /// 記録する——製品外の <c>sc config</c> による切替も次回起動で証跡化される。起動時の自動照合の
+    /// ため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
     /// </summary>
     ServiceAccountChangeDetected,
 
     /// <summary>
-    /// 管理操作: フォワーダ MSI を管理画面から配置（アップロード）した（ADR-0020 決定 3・4。
-    /// イベント ID 2026。Issue #283。配置経路 (b)）。ステージング → 検証 → 確認 → アトミック
-    /// リネームの全段を通過した確定時に 1 件記録する。記録内容（<c>Detail</c>）: アーキテクチャ・
-    /// 格納ファイル名・ProductVersion・SHA256・サイズ・officialHashMatch・
-    /// versionMismatchAcknowledged・置換時の旧 SHA256・loopback/リモートの別。
-    /// 本操作は認証必須構成でのみ実行可能なため（ADR-0020 決定 1 の fail-closed）、
+    /// 管理操作: フォワーダ MSI を管理画面から配置（アップロード）した（ADR-0020 決定 4。
+    /// イベント ID 2026）。ステージング → 検証 → 確認 → アトミックリネームの全段を通過した確定時に
+    /// 1 件記録する。認証必須構成でのみ実行可能なため
     /// <c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> には必ず値が入る。
     /// </summary>
     ForwarderMsiPlaced,
 
     /// <summary>
-    /// 管理操作: 配置済みのフォワーダ MSI を管理画面から削除した（ADR-0020 決定 3・4。
-    /// イベント ID 2027。Issue #283）。削除は配置と同じ重みの操作として扱い、削除前の SHA256 を
-    /// <c>Detail</c> に残す。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c> は
-    /// 2026 と同じく必ず値が入る。
+    /// 管理操作: 配置済みのフォワーダ MSI を管理画面から削除した（ADR-0020 決定 4。イベント ID 2027）。
+    /// 削除は配置と同じ重みの操作として扱う。<c>AuthenticationScheme</c>/<c>AuthenticatedPrincipal</c>
+    /// は 2026 と同じく必ず値が入る。
     /// </summary>
     ForwarderMsiDeleted,
 
     /// <summary>
     /// 拒否・セキュリティ事象: フォワーダ MSI のアップロード・削除の失敗/拒否
-    /// （ADR-0020 決定 4。イベント ID 3014。Issue #283。ADR-0004 決定 7「拒否された試行も
-    /// 監査対象」）。検証失敗（サイズ超過・ProductVersion 読み取り失敗・多重状態）・
-    /// 二段階確認の拒否（利用者の中止）・書き込み失敗・排他拒否・確認不整合（TOCTOU ガード）を
-    /// <c>Detail</c> の理由種別で区別して記録する。§4.4 の集約対象。
+    /// （ADR-0020 決定 4。イベント ID 3014。拒否された試行も監査対象）。検証失敗・二段階確認の拒否・
+    /// 書き込み失敗・排他拒否・確認不整合を <c>Detail</c> の理由種別で区別する。§4.4 の集約対象。
     /// </summary>
     ForwarderMsiUploadRejected,
 
     /// <summary>
     /// 保存先（アカウント台帳）が到達不能なため、アプリ独自認証のログイン要求を「一時的に
-    /// 利用できない」として拒否した（ADR-0023 決定 1。イベント ID 3015）。
-    /// **3004（ログイン失敗）へ相乗りさせない**——資格情報の検証に到達していない事象であり、
-    /// 混ぜると security.md §4.3 の意味凍結に反するため。縮退の開始・回復は運用状態として
-    /// 1000 番台（1039/1040）が担い、本 ID は個々の拒否試行を記録する。
+    /// 利用できない」として拒否した（ADR-0023 決定 1。イベント ID 3015）。3004（ログイン失敗）へは
+    /// 相乗りさせない——資格情報の検証に到達していない事象のため。
     /// </summary>
     AdminAccountStoreUnavailableRejected,
 }

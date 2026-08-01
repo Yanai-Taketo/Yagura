@@ -9,7 +9,7 @@ namespace Yagura.Host.Administration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// 分類の根拠（Microsoft Learn 公式ドキュメント確認 2026-07-07。conventions.md
+/// 分類の根拠（Microsoft Learn 公式ドキュメント確認。conventions.md
 /// 「技術的主張の検証」）:
 /// </para>
 /// <list type="bullet">

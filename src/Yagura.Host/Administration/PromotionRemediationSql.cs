@@ -13,7 +13,7 @@ namespace Yagura.Host.Administration;
 /// <item><b>秘密情報を含まない</b>: SQL 認証のパスワードは明示のプレースホルダとし、生成時点で
 /// 実値を埋めない（§5.2——依頼文がメール・チケットを経由して流通する前提）。</item>
 /// <item><b>db_owner は導入時権限</b>であることを SQL 内コメントで明記する（実行時最小権限への
-/// 分離——§5.2 の完全形——は後続 Issue。ペルソナレビュー PR #102 田中/クリスの指摘）。</item>
+/// 分離——§5.2 の完全形——は後続対応とする）。</item>
 /// </list>
 /// </remarks>
 internal static class PromotionRemediationSql

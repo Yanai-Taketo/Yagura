@@ -34,7 +34,7 @@ namespace Yagura.Ingestion.Persistence;
 /// 同じセグメントが再度 drain され重複が発生し得るが、これは仕様として許容する。
 /// </para>
 /// <para>
-/// <b>定期自己検証の照合（§3.2.5。Issue #152）</b>: <see cref="SpoolRecordKind.SelfTest"/> の
+/// <b>定期自己検証の照合（§3.2.5）</b>: <see cref="SpoolRecordKind.SelfTest"/> の
 /// 合成レコードを DB 書き込み直前で破棄するのは drain の常時動作だが、破棄する前に
 /// <see cref="Yagura.Storage.Spool.SpoolSelfTestTracker"/>（渡されていれば）へマーカーを通知する。
 /// 投入側（<c>Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor</c>）と
@@ -43,7 +43,7 @@ namespace Yagura.Ingestion.Persistence;
 /// （検証の有無は drain の正しさに影響しない）。
 /// </para>
 /// <para>
-/// <b>末尾破損分の計上（Issue #201）</b>: <see cref="DiskSpool.ReadSegmentRecords"/> が
+/// <b>末尾破損分の計上</b>: <see cref="DiskSpool.ReadSegmentRecords"/> が
 /// <c>corruptTailDetected</c> を返した場合、読み捨てた末尾のバイト数を
 /// <see cref="IngestionMetrics.RecordSpoolCorruptTailDiscarded"/> で計上する
 /// （architecture.md §3.1「カウンタに計上されない喪失は重大」）。計上は
@@ -52,7 +52,7 @@ namespace Yagura.Ingestion.Persistence;
 /// 同じ破損バイト数を毎回計上してしまう二重計上を避けるため。
 /// </para>
 /// <para>
-/// <b>再起動を跨ぐ理論上の二重計上（既知・許容。PR #213 レビュー指摘）</b>: 計上と
+/// <b>再起動を跨ぐ理論上の二重計上（既知・許容）</b>: 計上と
 /// <see cref="DiskSpool.DeleteSegment"/> の間には同期を取っていない微小な time window があり、
 /// この間にメタデータ領域の定期永続化（既定 10 秒間隔）が「計上済みだが未削除」の状態を
 /// 書き出した直後・削除完了前にプロセスが非グレースフルにクラッシュした場合、再起動後の
@@ -126,8 +126,8 @@ public sealed class SpoolDrainCoordinator
 
             // 封止 + 列挙は環境要因で例外を投げる（ディスク満杯時の Dispose 失敗・ディレクトリ列挙の
             // 失敗）。ここで捕捉しないと drain ループごと fault して恒久停止する——スプールが最も
-            // 必要とされている状況（ディスク満杯）で drain が止まるという最悪の組み合わせになる
-            // （Issue #360）。ReadSegmentRecords と同じ「この周期は見送って次の周期で再試行」に揃える。
+            // 必要とされている状況（ディスク満杯）で drain が止まるという最悪の組み合わせになる。
+            // ReadSegmentRecords と同じ「この周期は見送って次の周期で再試行」に揃える。
             IReadOnlyList<string> segments;
             try
             {
@@ -216,7 +216,7 @@ public sealed class SpoolDrainCoordinator
 
         // 自己検証用の合成レコード（§3.2.5）は DB 書き込みの直前で破棄する——
         // この識別・破棄は定期検証時だけでなく drain の常時動作である。破棄する前に、
-        // 定期自己検証（Issue #152）の照合対象としてトラッカーへ通知する——「drain の
+        // 定期自己検証の照合対象としてトラッカーへ通知する——「drain の
         // 実機構に読ませて照合する」ことの実体はこの通知である（トラッカーが無い、または
         // 投入していないマーカーであれば黙って無視される。§3.2.5）。
         foreach (var selfTestMarker in records
@@ -248,7 +248,7 @@ public sealed class SpoolDrainCoordinator
             // 通常ログが 0 件（自己検証レコードのみ、または空/全破損セグメント）でも
             // セグメント自体は消化済みとして削除してよい——再 drain しても得るものがない。
             //
-            // 末尾破損の計上（Issue #201）はここ・末尾の DeleteSegment 直前の 2 箇所でのみ行う
+            // 末尾破損の計上はここ・末尾の DeleteSegment 直前の 2 箇所でのみ行う
             // ——セグメント削除（= このセグメントの drain 完了）が確定するタイミングに限ることで、
             // 書き込み失敗による再試行のたびに同じ破損バイト数を重複計上することを避ける
             // （セグメントが未消化のまま残る限り、次周期の DrainSegmentAsync は同じ末尾破損を
@@ -274,7 +274,7 @@ public sealed class SpoolDrainCoordinator
 
             try
             {
-                // 書き込みゲート（Issue #151）: ライブ・保持期間削除と同じゲートを通す。
+                // 書き込みゲート: ライブ・保持期間削除と同じゲートを通す。
                 // ゲート待ちのタイムアウトは DB 操作のタイムアウトと独立させる
                 // （PersistenceWriter.WriteBatchWithTimeoutAsync のコメント・LogStoreWriteGate の
                 // doc コメント参照）。取得できなければこのセグメントは未消化のまま残し、
@@ -338,7 +338,7 @@ public sealed class SpoolDrainCoordinator
         }
 
         // 全バッチの書き込みが確定してから削除する（at-least-once。§3.2.1）。
-        // 末尾破損の計上（Issue #201）はセグメント削除の確定直前で行う（上の早期リターン経路と
+        // 末尾破損の計上はセグメント削除の確定直前で行う（上の早期リターン経路と
         // 同じ理由。クラス内コメント参照）。
         if (corruptTailDetected)
         {

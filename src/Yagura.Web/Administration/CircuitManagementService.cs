@@ -5,7 +5,7 @@ using Yagura.Web.Circuits;
 namespace Yagura.Web.Administration;
 
 /// <summary>
-/// circuit 管理（一覧・個別切断）の実装（security.md §2.2。M8-4。Issue #71）。
+/// circuit 管理（一覧・個別切断）の実装（security.md §2.2。M8-4）。
 /// </summary>
 /// <remarks>
 /// <para>

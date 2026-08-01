@@ -18,8 +18,8 @@
 /// <param name="TcpBindAddress">TCP 受信リスナの bind アドレス（検証・縮小適用済み。M4-1）。</param>
 /// <param name="TcpPort">TCP 受信リスナのポート（検証済み。M4-1）。</param>
 /// <param name="DefaultRfc3164TimeZone">
-/// RFC 3164 TIMESTAMP の既定タイムゾーン（検証済み。Issue #134）。未設定・不正値は
-/// <see cref="System.TimeZoneInfo.Utc"/>（現状互換）。送信元付記の TZ（Issue #135）が
+/// RFC 3164 TIMESTAMP の既定タイムゾーン（検証済み）。未設定・不正値は
+/// <see cref="System.TimeZoneInfo.Utc"/>（現状互換）。送信元付記の TZ が
 /// 取れる場合はそちらが優先され、本値は取れない場合のフォールバックとして使われる。
 /// </param>
 /// <param name="HttpPort">閲覧 HTTP リスナのポート（検証済み）。</param>
@@ -107,7 +107,7 @@
 /// <see cref="Configuration.StorageProvider.SqlServer"/> のときのみ非 null）。
 /// </param>
 /// <param name="IngestionTlsEnabled">
-/// TLS 受信の有効/無効（既定 <c>false</c>。opt-in。security.md §6。Issue #137）。
+/// TLS 受信の有効/無効（既定 <c>false</c>。opt-in。security.md §6）。
 /// </param>
 /// <param name="IngestionTlsBindAddress">TLS 受信リスナの bind アドレス（検証・縮小適用済み）。</param>
 /// <param name="IngestionTlsPort">TLS 受信リスナのポート（検証済み。既定 6514）。</param>
@@ -117,7 +117,7 @@
 /// bind エントリは開かずに縮小継続する（Program 側の判断。configuration.md §4.1 と同型）。
 /// </param>
 /// <param name="FlowControlEnabled">
-/// 送信元単位の流量制御の有効/無効（既定 <c>true</c>。opt-out。ADR-0002 決定 2。Issue #260）。
+/// 送信元単位の流量制御の有効/無効（既定 <c>true</c>。opt-out。ADR-0002 決定 2）。
 /// <c>false</c> のとき Program は <c>NoopIngressGate</c> を結線する。
 /// </param>
 /// <param name="FlowControlMessagesPerSecond">
@@ -129,7 +129,7 @@
 /// 確定待ちの仮値——<c>TokenBucketIngressGate.DefaultBurstSize</c>）。
 /// </param>
 /// <param name="AuditRetentionDays">
-/// 監査記録の保持期間（日数。SEC-2。security.md §4.2。Issue #261）。既定 365 日。
+/// 監査記録の保持期間（日数。SEC-2。security.md §4.2）。既定 365 日。
 /// <c>null</c> は「削除しない」（不正値時のフォールバック——<see cref="RetentionDays"/> と同じ
 /// 安全側）。
 /// </param>
@@ -176,8 +176,8 @@ public sealed record ResolvedYaguraConfiguration(
     int? AuditRetentionDays)
 {
     /// <summary>
-    /// <see cref="UdpBindAddress"/> が設定ファイルで明示指定された値か（<c>false</c> = 既定値。
-    /// PR #193 レビュー対応）。IPv6 スタックが無効な環境で、既定の <c>::</c> は IPv4 のみへ
+    /// <see cref="UdpBindAddress"/> が設定ファイルで明示指定された値か（<c>false</c> = 既定値）。
+    /// IPv6 スタックが無効な環境で、既定の <c>::</c> は IPv4 のみへ
     /// 自動縮小して起動を継続するが、明示指定の <c>::</c> は縮小せず起動失敗にする——
     /// この分岐の入力（<c>UdpSyslogListenerOptions.BindAddressIsExplicit</c> 参照）。
     /// </summary>
@@ -191,7 +191,7 @@ public sealed record ResolvedYaguraConfiguration(
 
     /// <summary>
     /// <see cref="IngestionTlsBindAddress"/> が設定ファイルで明示指定された値か（意味づけは
-    /// <see cref="UdpBindAddressIsExplicit"/> と同一。Issue #137）。
+    /// <see cref="UdpBindAddressIsExplicit"/> と同一）。
     /// </summary>
     public bool IngestionTlsBindAddressIsExplicit { get; init; }
 

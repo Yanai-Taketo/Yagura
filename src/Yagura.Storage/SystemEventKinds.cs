@@ -20,7 +20,7 @@ public static class SystemEventKinds
     public const string DowntimeCrashApproximate = "downtime.crash-approximate";
 
     /// <summary>
-    /// リスナ再構成（設定ライブ再読み込みによる bind の張り替え。CF-4 層2。Issue #262）に
+    /// リスナ再構成（設定ライブ再読み込みによる bind の張り替え。CF-4 層2）に
     /// 伴う受信断区間。プロセス跨ぎの 2 種と異なり稼働中に区間が確定するため、再構成の完了時に
     /// 直接書き込まれる（起動時の区間変換を経ない）。通常は 1 秒未満の瞬断。
     /// </summary>
@@ -28,8 +28,8 @@ public static class SystemEventKinds
 
     /// <summary>
     /// 起動時（または再構成失敗後）に bind できなかったリスナが、CF-6 の定期再試行で受信を
-    /// 再開するまでの受信断区間（Issue #291。#141 原子的起動の反転——2026-07-16 オーナー裁定。
-    /// 区間の開始 = bind を最初に試みて失敗した時刻、終了 = 再試行が成功して受信を再開した時刻）。
+    /// 再開するまでの受信断区間（区間の開始 = bind を最初に試みて失敗した時刻、
+    /// 終了 = 再試行が成功して受信を再開した時刻）。
     /// </summary>
     public const string DowntimeListenerBindRetry = "downtime.listener-bind-retry";
 
@@ -37,7 +37,7 @@ public static class SystemEventKinds
     public const string RetentionDelete = RetentionConstants.SystemEventKindRetentionDelete;
 
     /// <summary>
-    /// 蓄積ログ移行（SQLite → SQL Server。database.md §6.2。Issue #266）の完了記録。
+    /// 蓄積ログ移行（SQLite → SQL Server。database.md §6.2）の完了記録。
     /// StartAt〜EndAt = 移行されたレコードの ReceivedAt 範囲（移行由来の事後識別——§6.2 要件⑤。
     /// この範囲のレコードは移行で投入されたことを後から機械可読に辿れる）。Details に件数。
     /// </summary>

@@ -25,7 +25,7 @@ public sealed class YaguraConfigurationOptions
     /// <summary>§8「UI」区分（閲覧ポート・公開範囲。M6-1。HTTPS 証明書等は M6 以降で追加）。</summary>
     public ViewerOptions? Viewer { get; set; }
 
-    /// <summary>§8「UI」区分のうち管理リスナ（M6-1。Issue #51）。</summary>
+    /// <summary>§8「UI」区分のうち管理リスナ（M6-1）。</summary>
     public AdminOptions? Admin { get; set; }
 
     /// <summary>§8「永続化」区分のうち組み込み DB の置き場所。データルート自体は §2 参照。</summary>
@@ -37,7 +37,7 @@ public sealed class YaguraConfigurationOptions
     /// <summary>§8「保持期間」区分（M5-1。database.md §3）。</summary>
     public RetentionOptions? Retention { get; set; }
 
-    /// <summary>§8「監査」区分（SEC-2。security.md §4.2。Issue #261）。</summary>
+    /// <summary>§8「監査」区分（SEC-2。security.md §4.2）。</summary>
     public AuditOptions? Audit { get; set; }
 
     /// <summary>能動通知の書き出し先の追加（ADR-0017。opt-in・既定無効）。</summary>
@@ -51,13 +51,13 @@ public sealed class YaguraConfigurationOptions
         /// <summary>TCP 受信リスナの設定（M4-1）。</summary>
         public TcpOptions? Tcp { get; set; }
 
-        /// <summary>TLS 受信リスナの設定（syslog over TLS。RFC 5425。opt-in。Issue #137）。</summary>
+        /// <summary>TLS 受信リスナの設定（syslog over TLS。RFC 5425。opt-in）。</summary>
         public TlsOptions? Tls { get; set; }
 
-        /// <summary>RFC 3164 TIMESTAMP 解釈の設定（Issue #134・#135）。</summary>
+        /// <summary>RFC 3164 TIMESTAMP 解釈の設定。</summary>
         public Rfc3164Options? Rfc3164 { get; set; }
 
-        /// <summary>§8「流量制御」区分（ADR-0002 決定 2。Issue #260）。</summary>
+        /// <summary>§8「流量制御」区分（ADR-0002 決定 2）。</summary>
         public FlowControlOptions? FlowControl { get; set; }
 
         public sealed class UdpOptions
@@ -136,13 +136,13 @@ public sealed class YaguraConfigurationOptions
         public sealed class Rfc3164Options
         {
             /// <summary>
-            /// RFC 3164 TIMESTAMP（年・タイムゾーンを持たない）の解釈に使う既定タイムゾーン
-            /// （Issue #134）。値は Windows タイムゾーン ID（例: <c>Tokyo Standard Time</c>）または
+            /// RFC 3164 TIMESTAMP（年・タイムゾーンを持たない）の解釈に使う既定タイムゾーン。
+            /// 値は Windows タイムゾーン ID（例: <c>Tokyo Standard Time</c>）または
             /// IANA タイムゾーン ID（例: <c>Asia/Tokyo</c>）——.NET 6 以降は
             /// <see cref="System.TimeZoneInfo.FindSystemTimeZoneById(string)"/> が Windows 上でも
             /// 両方の ID 体系を受理する（<c>Yagura.Ingestion.Tests</c> の
             /// <c>SyslogParserRfc3164TimeZoneTests</c> で実機検証済み）。既定（未設定）は UTC
-            /// （現状互換）。TIMESTAMP に送信元付記の TZ（Issue #135）が取れた場合はそちらが優先され、
+            /// （現状互換）。TIMESTAMP に送信元付記の TZ が取れた場合はそちらが優先され、
             /// 本設定は取れない場合にのみ適用される。不正値は §1「既定値で継続」——UTC へ
             /// フォールバックし警告する（受信の成立に不可欠なキーではない）。
             /// </summary>
@@ -530,7 +530,7 @@ public sealed class YaguraConfigurationOptions
             /// </summary>
             /// <remarks>
             /// <b>配列キーを UI から保存する経路は ADR-0017 が初めて要求する</b>（既存の配列キーは
-            /// 手編集のみ）。保存経路の実装は ADR-0017 委任 9（ADR-0018 委任 3 と共通機構）。
+            /// 手編集のみ）。保存経路の実装は ADR-0017 委任 9 が定める。
             /// </remarks>
             public List<string>? To { get; set; }
 
@@ -577,7 +577,7 @@ public sealed class YaguraConfigurationOptions
     {
         /// <summary>
         /// 監査記録の保持期間（日数）。JSON キーは <c>Audit:RetentionDays</c>。未設定時の既定は
-        /// **365 日**（SEC-2 確定値。2026-07-05 オーナー決定——ログ本体の既定 30 日より長く、
+        /// **365 日**（SEC-2 確定値。ログ本体の既定 30 日より長く、
         /// 「証跡はログより長く問われる」を満たす）。**不正値のフォールバック先は「削除しない」**
         /// （既定 365 日へは自動フォールバックしない——<c>Retention:Days</c> と同じ「意図せぬ
         /// 自動削除で証跡を失う事故を避ける」安全側。configuration.md §8）。

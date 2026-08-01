@@ -3,7 +3,7 @@ using Yagura.Abstractions.Auditing;
 namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
-/// 拒否試行の集約記録（SEC-4。security.md §4.4。Issue #268）の仮値。
+/// 拒否試行の集約記録（SEC-4。security.md §4.4）の仮値。
 /// </summary>
 /// <remarks>
 /// <b>本クラスの閾値・窓・静穏はすべて仮値である</b>（security.md §7 SEC-4）。確定は実トラフィックで

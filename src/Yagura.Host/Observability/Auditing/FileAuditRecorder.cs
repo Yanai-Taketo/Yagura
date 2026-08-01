@@ -7,7 +7,7 @@ using Yagura.Web.Diagnostics;
 namespace Yagura.Host.Observability.Auditing;
 
 /// <summary>
-/// <see cref="IAuditRecorder"/> の実体（security.md §4.1・§4.2。M6-2。Issue #52）。
+/// <see cref="IAuditRecorder"/> の実体（security.md §4.1・§4.2）。
 /// アプリ記録の実体はホスト管轄の専用ローカルファイル（追記型 JSON Lines）とし、
 /// Windows イベントログへ併記する。
 /// </summary>
@@ -29,7 +29,7 @@ namespace Yagura.Host.Observability.Auditing;
 /// （書き込み頻度がスプールより遥かに低く、パース性能上の制約が緩い）。
 /// </para>
 /// <para>
-/// <b>日次ローテーション（SEC-2/SEC-3。Issue #261）</b>: 追記先は事象発生日（UTC）ごとの
+/// <b>日次ローテーション（SEC-2/SEC-3）</b>: 追記先は事象発生日（UTC）ごとの
 /// ファイル <c>audit-yyyyMMdd.jsonl</c>（<see cref="GetFileNameFor"/>）。単一ファイル
 /// （<see cref="LegacyFileName"/>）への無制限追記をやめ、日付でファイルを分割することで、
 /// ①保持期間超過分の削除が「期限切れファイルの削除」だけで済む（既存内容の書き換え・切り詰めが
@@ -51,7 +51,7 @@ namespace Yagura.Host.Observability.Auditing;
 /// 書き込み不能は要求処理を妨げない」）。
 /// </para>
 /// <para>
-/// <b>スコープの分界（Issue #52・#269）</b>: 記録失敗中の事象のメモリ内保持・チャネル復旧後の
+/// <b>スコープの分界</b>: 記録失敗中の事象のメモリ内保持・チャネル復旧後の
 /// 書き戻し（SEC-10）は本クラスの責務に含めない——本クラスは「1 事象を 2 チャネルへ 1 回書く」
 /// 単責務に留め、失敗中の保持・書き戻しは <see cref="ResilientAuditRecorder"/>（デコレータ）が
 /// 担う。そのために本クラスは書き込みの成否を <see cref="TryRecord"/> で呼び出し元へ返す
@@ -64,7 +64,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
     public const string DirectoryName = "audit";
 
     /// <summary>
-    /// 日次ローテーション導入（Issue #261）前の単一ファイル名。新規の追記先には使わない
+    /// 日次ローテーション導入前の単一ファイル名。新規の追記先には使わない
     /// （既存環境に残るファイルの識別・削除判定用に保持する。クラス remarks 参照）。
     /// </summary>
     public const string LegacyFileName = "audit.jsonl";
@@ -219,7 +219,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         {
             // イベントログ本文は日本語の説明（AuditEventDescriptions）を使う——{Kind} を
             // そのまま埋め込むと英語 enum 名（ViewerListenerAdminRequestRejected 等）が
-            // 運用者向けの文面に漏れるため（2026-07-06 イベントログ日本語化）。
+            // 運用者向けの文面に漏れるため（イベントログ日本語化）。
             // アプリ記録ファイル側（AuditFileLine.Kind）は機械可読性を優先し enum 名のまま
             // 維持するため、本メソッドの変更はイベントログ本文にのみ影響する。
             // 「誰が」欄（ADR-0010 決定 3・6）: 認証済みなら方式つき利用者名、未認証（または
@@ -272,8 +272,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.WindowsAuthenticationHandshakeFailed => AuditEventIds.WindowsAuthenticationHandshakeFailed,
         AuditEventKind.AppAuthenticationLoginFailed => AuditEventIds.AppAuthenticationLoginFailed,
         AuditEventKind.AdminAccountLockedOut => AuditEventIds.AdminAccountLockedOut,
-        // ADR-0011 三層防御の拒否事象（3005 ロックアウトの後継。#232 で enum・EventId・emit を
-        // 追加した際に本解決表への追加が漏れていた——認証拒否記録経路での throw を招く）。
+        // ADR-0011 三層防御の拒否事象（3005 ロックアウトの後継）。
         AuditEventKind.AdminAuthBackoffCapReached => AuditEventIds.AdminAuthBackoffCapReached,
         AuditEventKind.AdminAuthRateLimited => AuditEventIds.AdminAuthRateLimited,
         AuditEventKind.AdminLoginSucceeded => AuditEventIds.AdminLoginSucceeded,

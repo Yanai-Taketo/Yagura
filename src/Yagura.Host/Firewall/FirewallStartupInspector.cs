@@ -6,7 +6,7 @@ using Yagura.Host.Observability.Auditing;
 namespace Yagura.Host.Firewall;
 
 /// <summary>
-/// CF-2（configuration.md §4.3。Issue #265）の Host 側実装:
+/// CF-2（configuration.md §4.3）の Host 側実装:
 /// ①リスナの実ポートと Yagura 名前空間のファイアウォール規則の突合・警告（起動時 +
 /// リスナ再構成の適用時）②インストール記録（<c>firewall-rules.ini</c>）の初回起動時の
 /// イベントログ転記（監査 2017）。

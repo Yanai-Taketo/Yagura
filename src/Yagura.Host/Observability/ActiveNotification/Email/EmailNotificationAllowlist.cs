@@ -14,7 +14,7 @@ namespace Yagura.Host.Observability.ActiveNotification.Email;
 /// （更新義務によって判断を強制する——黙って増える経路を作らない）。
 /// </para>
 /// <para>
-/// <b>重大度を本表が持つ理由</b>（ADR-0017 改訂 1）: 流量上限の対象外か否かは
+/// <b>重大度を本表が持つ理由</b>: 流量上限の対象外か否かは
 /// <see cref="Severity"/> で決まる。これを「発火点で使われている <see cref="LogLevel"/>」という
 /// 別の場所の暗黙値から読み取る作りにすると、発火点のログレベルを何気なく変えた PR が
 /// 流量制御の挙動を黙って変えてしまう。**優先度の挙動は本表だけを読めば決まる**ようにする。
@@ -65,7 +65,7 @@ internal static class EmailNotificationAllowlist
             [ActiveNotificationEventIds.AdminHttpsCertificateUnavailableWhileRunning.Id] = Severity.Warning,  // 1015
             [ActiveNotificationEventIds.IngestionTlsCertificateExpiryApproaching.Id] = Severity.Warning,      // 1017
             [ActiveNotificationEventIds.IngestionTlsCertificateUnavailableWhileRunning.Id] = Severity.Warning, // 1018
-            // 閲覧 HTTPS（ADR-0022 決定 2 可視化②・決定 7——期限切れで停止する面のため事前警告が
+            // 閲覧 HTTPS（ADR-0022 決定 7——期限切れで停止する面のため事前警告が
             // 実質的な命綱。メール対象は起動時 1 回の 1035 ではなく、この周期監視 2 ID が担う）。
             [ActiveNotificationEventIds.ViewerHttpsCertificateExpiryApproaching.Id] = Severity.Warning,       // 1036
             [ActiveNotificationEventIds.ViewerHttpsCertificateUnavailableWhileRunning.Id] = Severity.Warning, // 1037
@@ -73,7 +73,7 @@ internal static class EmailNotificationAllowlist
             // --- 認証防御の昇格（ADR-0011。攻撃の予兆——希少で重要な初報の代表例） ---
             [ActiveNotificationEventIds.AdminAuthFailureDefenseEscalated.Id] = Severity.Warning, // 1019
 
-            // --- 受信リスナの縮小継続（Issue #291。「届かない」に直結する） ---
+            // --- 受信リスナの縮小継続（「届かない」に直結する） ---
             [ConfigurationEventIds.ListenerBindFailedDegradedStartup.Id] = Severity.Warning,     // 1022
 
             // --- 送信元の途絶検知（ADR-0018 決定 5——本 ADR が名指しで登録を要求する 2 件。
@@ -84,13 +84,13 @@ internal static class EmailNotificationAllowlist
             // --- 恒久障害による書き込み失敗の開始（ADR-0017 委任 10 の裁定。発火点は LogError） ---
             [PersistenceEventIds.PermanentWriteFailure.Id] = Severity.Error,                        // 1030
 
-            // --- 稼働中の Windows 統合認証での DB 接続失敗（ADR-0015 決定 5。Issue #418）。
+            // --- 稼働中の Windows 統合認証での DB 接続失敗（ADR-0015 決定 5）。
             //     統合認証起因の恒久障害では 1030 の代わりに発火するため、1030 と同じ重大度で
             //     登録しないと gMSA 構成の夜間 DC 断（「書き込みが止まる」導火線——
             //     database.md §6.1）がメールに乗らなくなる ---
             [PersistenceEventIds.IntegratedAuthConnectionFailed.Id] = Severity.Error,               // 1031
 
-            // --- 保存先のスキーマ初期化失敗による縮退（ADR-0023 決定 1。Issue #466）。
+            // --- 保存先のスキーマ初期化失敗による縮退（ADR-0023 決定 1）。
             //     起動を止めずに縮退させる決定の成立条件が「縮退が必ず見えること」であり、
             //     管理画面の常設バナーだけでは「管理画面を開くまで気づかない」——夜間に
             //     ログイン手段が失われたまま放置される経路をメールで塞ぐ。回復側（1040）は

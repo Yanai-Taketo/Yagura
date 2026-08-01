@@ -35,7 +35,7 @@ internal static class SpoolSegmentReader
     /// 破損した末尾として読み捨てたバイト数（<paramref name="corruptTailDetected"/> が
     /// <c>false</c> の場合は常に 0）。破損した末尾はフレーム境界が保証されないため
     /// レコード単位では数えられない（クラス remarks 参照）——バイト数を計上の単位とする
-    /// （Issue #201: architecture.md §3.1「カウンタに計上されない喪失は重大」への対応）。
+    /// （architecture.md §3.1「カウンタに計上されない喪失は重大」への対応）。
     /// </param>
     public static List<SpoolRecord> ReadValidRecords(string filePath, out bool corruptTailDetected, out long corruptTailBytes)
     {
