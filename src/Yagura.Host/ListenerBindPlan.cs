@@ -7,7 +7,7 @@ namespace Yagura.Host;
 
 /// <summary>
 /// 閲覧・管理の両リスナの bind 先一式を、実際の Kestrel 構成（<c>ConfigureKestrel</c>）から
-/// 切り離して計算する（M6-1。Issue #51）。
+/// 切り離して計算する（M6-1）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,7 +24,7 @@ namespace Yagura.Host;
 /// を使うこと（<c>Listen(IPAddress.Any, port)</c> と <c>Listen(IPAddress.IPv6Any, port)</c> を
 /// 両方呼ぶと、Kestrel のソケットトランスポート層が <c>IPv6Any</c> bind に <c>DualMode = true</c>
 /// を設定するため <c>AddressInUseException</c> になる——dotnet/aspnetcore の
-/// <c>SocketTransportOptions.CreateDefaultBoundListenSocket</c> 実装より。確認日 2026-07-05）。
+/// <c>SocketTransportOptions.CreateDefaultBoundListenSocket</c> 実装より）。
 /// <see cref="ListenerBindEntry.Address"/> はこの場合 <see langword="null"/> になる。
 /// </para>
 /// </remarks>
@@ -79,7 +79,7 @@ public static class ListenerBindPlan
         // 理由: (1) OS の bind 制約——同一ポートでワイルドカード(AnyIP) bind と特定アドレス
         // （loopback）bind は共存できない（Windows は先に bind した側がポート全体を排他的に
         // 占有する）ため、loopback を残したまま「別ポート」で remote を提供する以外に両立の
-        // 手段がない。(2) ADR-0010 Phase 2 決定 4「loopback 経由の管理リスナは HTTPS の対象外の
+        // 手段がない。(2)「loopback 経由の管理リスナは HTTPS の対象外の
         // まま残る」——証明書の期限切れ・失効時に管理リスナ全体が道連れにならず、RDP + loopback
         // からの復旧が常に残ることを bind 構成そのもので保証する。
         // 到達可否は YaguraConfigurationLoader.Load の fail-closed 検証（認証・HTTPS が両方
@@ -94,7 +94,7 @@ public static class ListenerBindPlan
             // Program 側が UseYaguraListenerPortGuard/YaguraAdminListenerPort へ渡す「管理ポート
             // 一式」は本メソッドが返す ListenerBindEntry.Port を読むだけの設計（effectiveAdminPort
             // と同じパターン）であるため、0 のまま返すと「実際に bind されるポート」と「ポート
-            // ガードが認識するポート」が食い違う（実際に踏んだ実装バグ——PR レビューで発見）。
+            // ガードが認識するポート」が食い違う（実装時に踏んだ実バグ）。
             // loopback dual-stack と同じ「予約してから離す」手法をここでも適用し、常に具体値を返す。
             var remoteHttpsPort = ResolvePortForAnyIP(configuration.AdminHttpsPort);
             entries.Add(ListenerBindEntry.AnyIP(ListenerKind.Admin, remoteHttpsPort, requiresHttps: true));
@@ -186,7 +186,7 @@ public sealed record ListenerBindEntry
     /// <c>UseHttps</c> 付きで bind し、解決できなければこのエントリを縮小継続としてスキップする
     /// （管理面 = <see cref="ConfigurationEventIds.AdminHttpsCertificateUnavailableAtStartup"/>、
     /// 閲覧面 = <see cref="ConfigurationEventIds.ViewerHttpsCertificateUnavailableAtStartup"/>。
-    /// 閲覧面は平文 HTTP へ落とさない——ADR-0022 決定 2）。
+    /// 閲覧面は平文 HTTP へ落とさない）。
     /// </summary>
     public bool RequiresHttps { get; }
 

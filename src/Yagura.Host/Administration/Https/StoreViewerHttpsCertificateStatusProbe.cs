@@ -5,7 +5,7 @@ namespace Yagura.Host.Administration.Https;
 
 /// <summary>
 /// 閲覧 UI HTTPS 証明書用の <see cref="ICertificateStatusProbe"/> の Windows 証明書ストア実装
-/// （ADR-0022 決定 2 可視化①・決定 7。Issue #455 段階 ③。
+/// （ADR-0022 決定 2 可視化①。
 /// <see cref="StoreAdminHttpsCertificateStatusProbe"/> の閲覧版——3 例目）。
 /// </summary>
 /// <remarks>

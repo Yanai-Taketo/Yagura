@@ -10,7 +10,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Ingestion.Tls;
 
 /// <summary>
-/// <see cref="IIngestionTlsAdminService"/> の実体（ADR-0019 決定 1・2・5。Issue #349）。
+/// <see cref="IIngestionTlsAdminService"/> の実体（ADR-0019 決定 2）。
 /// TLS 受信の既存 3 キーを、保存前 fail-closed 検証つきで <c>yagura.json</c> へ保存し、
 /// 監査記録（イベント ID 2020）する。
 /// </summary>

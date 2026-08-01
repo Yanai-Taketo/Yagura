@@ -5,7 +5,7 @@ namespace Yagura.Host.Administration.Https;
 
 /// <summary>
 /// 管理リスナのリモート HTTPS 証明書用の <see cref="ICertificateStatusProbe"/> の Windows
-/// 証明書ストア実装（ADR-0010 Phase 2 決定 4。PR #224 レビュー指摘 #2・#3 への対応）。
+/// 証明書ストア実装（ADR-0010 Phase 2 決定 4）。
 /// </summary>
 /// <remarks>
 /// 周期（1 分。<see cref="ActiveNotificationConstants.PollInterval"/>）ごとに

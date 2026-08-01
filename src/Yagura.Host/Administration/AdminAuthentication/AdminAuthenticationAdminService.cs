@@ -6,7 +6,7 @@ using Yagura.Storage.Administration;
 namespace Yagura.Host.Administration.AdminAuthentication;
 
 /// <summary>
-/// <see cref="IAdminAuthenticationAdminService"/> の実体（ADR-0010 決定 1・3。Phase 1）。
+/// <see cref="IAdminAuthenticationAdminService"/> の実体（ADR-0010 決定 1。Phase 1）。
 /// </summary>
 /// <remarks>
 /// 設定ファイルの読み書きは <see cref="YaguraConfigurationWriter"/> に、パスワードのハッシュ化は
@@ -87,9 +87,8 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         }
 
         // fail-closed 不変条件（ADR-0010 決定 1）: 起動時検証（YaguraConfigurationLoader）と
-        // 同じ判定を、ウィザード画面上でも先に拒否する——「有効化を受け付けない」というオーナー
-        // 決定の実装は、まず UI 層で親切に拒否し、手編集で作られた場合の最終防衛線を起動時
-        // 検証が担う二段構え。
+        // 同じ判定を、ウィザード画面上でも先に拒否する——まず UI 層で親切に拒否し、手編集で
+        // 作られた場合の最終防衛線を起動時検証が担う二段構え。
         if (requireForLoopback && !windowsAuthEnabled && !appAuthEnabled)
         {
             throw new WizardValidationException(
@@ -115,7 +114,7 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
                 "有効に保つか、先に Admin:RemoteBinding:Enabled を false に戻してください。");
         }
 
-        // fail-closed（UI）の対称防御（ADR-0021 決定 2——ADR-0020 決定 1 の (i)(iii) 側の判定）:
+        // fail-closed（UI）の対称防御（ADR-0021 決定 2）:
         // アップロード機能が設定ファイル上有効なまま認証方式を両方無効にすると、次回起動時に
         // 1032 が起動を拒否し syslog 受信ごと停止する。その状態に陥る設定変更を UI 層で先に拒否する
         // （1011/1012 型の判定と同じ二段構え。現在値は設定ファイルから読む——本画面は

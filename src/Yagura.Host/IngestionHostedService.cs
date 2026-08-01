@@ -32,9 +32,6 @@ namespace Yagura.Host;
 /// drain（手順 2）→ 最終値を書き正常停止イベントを記録する（手順 3）</item>
 /// </list>
 /// </para>
-/// <para>
-/// Windows サービス統合（<c>UseWindowsService()</c> 等）は M3 で行った。
-/// </para>
 /// </remarks>
 public sealed class IngestionHostedService : IHostedService
 {
@@ -85,7 +82,7 @@ public sealed class IngestionHostedService : IHostedService
         var receiveStartedAt = DateTimeOffset.UtcNow;
         var startupResult = await _pipeline.StartListenerAsync(cancellationToken).ConfigureAwait(false);
 
-        // 環境要因の bind 失敗は縮小継続 + CF-6 再試行（Issue #291。#141 の原子的起動は
+        // 環境要因の bind 失敗は縮小継続 + CF-6 再試行（原子的起動は
         // 環境要因以外に限定して維持——IngestionPipeline.StartListenerAsync の remarks 参照）。
         // 縮小継続は警告（1022）で可視化する。受信再開は ListenerBindRecovered（Program 側で
         // 購読）が受信断区間として記録する。
@@ -110,7 +107,7 @@ public sealed class IngestionHostedService : IHostedService
             _logger.LogWarning(
                 Yagura.Host.Configuration.ConfigurationEventIds.ListenerBindFailedDegradedStartup,
                 "[listener-bind-degraded] 受信リスナの一部が bind できず、開けたリスナのみで縮小継続しています: {Degraded}。" +
-                "開けなかったリスナは定期再試行（CF-6）が受信再開を試み続けます（configuration.md §4.1。Issue #291）。",
+                "開けなかったリスナは定期再試行（CF-6）が受信再開を試み続けます（configuration.md §4.1）。",
                 string.Join(", ", degraded));
         }
 
@@ -119,13 +116,13 @@ public sealed class IngestionHostedService : IHostedService
         // ListenerSeparationE2ETests・SpoolDegradedStartupE2ETests・LoopbackBindingRegressionTests・
         // ListenerGuardAuditE2ETests）が、子プロセスの標準出力からこの英語文面
         // （"UDP/TCP syslog listener started on port"）を正規表現・文字列一致で読み取り、
-        // 実バインドポートを取得する起動待ちマーカーとして使っている（grep で実体確認済み。
-        // 2026-07-06）。Console と Windows イベントログは同じ ILogger 呼び出しを共有する配線
-        // （Program.cs のコメント参照）のため、ここだけ文面を分離することはコンソール出力側の
-        // 契約を保ったまま行えない。将来分離したい場合は Console 向け・イベントログ向けを
-        // 別々の Log 呼び出しにする設計変更が必要（本 PR のスコープ外）。
+        // 実バインドポートを取得する起動待ちマーカーとして使っている。Console と Windows
+        // イベントログは同じ ILogger 呼び出しを共有する配線（Program.cs のコメント参照）のため、
+        // ここだけ文面を分離することはコンソール出力側の契約を保ったまま行えない。将来分離したい
+        // 場合は Console 向け・イベントログ向けを別々の Log 呼び出しにする設計変更が必要
+        // （現状のスコープ外）。
         // 起動マーカーは実際に開いたリスナのみ出力する（縮小継続中のリスナの「port 0」出力で
-        // E2E テスト・実機確認の起動待ちマーカーを偽装しない。Issue #291）。
+        // E2E テスト・実機確認の起動待ちマーカーを偽装しない）。
         if (startupResult.Udp.Status == ListenerStartupStatus.Started)
         {
             _logger.LogInformation("UDP syslog listener started on port {Port}.", _pipeline.BoundPort);
@@ -136,7 +133,7 @@ public sealed class IngestionHostedService : IHostedService
             _logger.LogInformation("TCP syslog listener started on port {Port}.", _pipeline.TcpBoundPort);
         }
 
-        // TLS 受信（RFC 5425。opt-in。Issue #137）: 構成されている場合のみ出力する
+        // TLS 受信（RFC 5425。opt-in）: 構成されている場合のみ出力する
         // （TlsBoundPort は TLS 受信が未構成——証明書未解決を含む——の間は null。
         // UDP/TCP と同じ文面規約に揃え、E2E テスト・実機確認での起動待ちマーカーとして使える
         // ようにする——本行が出ない場合は「TLS 受信は構成されていない/縮小継続した」ことを
@@ -150,10 +147,9 @@ public sealed class IngestionHostedService : IHostedService
         // 判定する（区間の確定は起動時に行う。§4.4「区間の確定は起動時に行い、保存は通常の
         // パイプラインを通す」）。DB 初期化前でも呼び出せるよう、書き込み自体は
         // ILogStore.WriteSystemEventAsync に委ねる（DB 障害時の扱いは M5 の契約完全化まで
-        // ベストエフォート——本 Issue の依頼コメント「M5 の契約完全化で正式化される前提でよい」
-        // に対応する）。
+        // ベストエフォート。M5 の契約完全化で正式化される前提）。
         //
-        // 書き込みゲート（Issue #151。LogStoreWriteGate）を意図的に通さない: この呼び出しは
+        // 書き込みゲート（LogStoreWriteGate）を意図的に通さない: この呼び出しは
         // 消費ループ（永続化段・drain。StartConsumers）と保持期間スケジューラ
         // （_retentionScheduler.Start()）の開始より厳密に前——他の書き込み経路がまだ 1 つも
         // 動いていない時点——で実行されるため、非同時実行は起動順序により保証される
@@ -187,10 +183,10 @@ public sealed class IngestionHostedService : IHostedService
         }
 
         // 手順 3（§1.2）: DB provider の初期化は **StorageInitializationCoordinator へ委ねる**
-        // （ADR-0023 決定 1。Issue #466）。従来はここで try/catch なしに待っており、保存先が
-        // 到達不能だと SqlException が StartAsync を貫いて Generic Host が起動を中止していた——
+        // （ADR-0023 決定 1）。ここで try/catch なしに待つと、保存先が
+        // 到達不能な場合 SqlException が StartAsync を貫いて Generic Host が起動を中止する——
         // リスナは既に開いているのに消費ループ以降が一切始まらないため実質全滅であり、さらに
-        // 回復契機である周期監視（下の _activeNotificationMonitor.Start()）にも到達しなかった。
+        // 回復契機である周期監視（下の _activeNotificationMonitor.Start()）にも到達しない。
         // 初期化は監視ループの初回評価で行い、失敗しても受信は継続する（書き込みはスプールへ
         // 退避される——§1.2 の縮退運転）。
 
@@ -207,7 +203,7 @@ public sealed class IngestionHostedService : IHostedService
         _retentionScheduler.Start();
         _logger.LogInformation("保持期間削除の定期実行を開始しました。");
 
-        // 能動通知の周期監視（architecture.md §4.6。M4-6。Issue #149）もコンシューマ開始後に
+        // 能動通知の周期監視（architecture.md §4.6。M4-6）もコンシューマ開始後に
         // 始める。スプール使用率・退避継続・データルートの空き容量・Express 上限接近を
         // 定期評価し、閾値超過をイベントログへ警告として書き出す（トリガごとの抑制窓あり）。
         _activeNotificationMonitor.Start();

@@ -10,7 +10,7 @@ namespace Yagura.Host.Administration.Https;
 /// サーバ証明書の秘密鍵読み取り権限をサービスアカウントへ付与する。configuration.md §6 が
 /// 確定済みの方式（証明書の選択時に、サービスアカウントへ当該証明書の秘密鍵の読み取り権限
 /// <b>のみ</b>を付与する——広い権限へ逃げない）を適用する。<b>用途は 1 つではない</b>
-/// （#359 で命名を中立化した）——<b>管理リスナのリモート HTTPS</b>（ADR-0010 Phase 2 決定 4）と
+/// ——<b>管理リスナのリモート HTTPS</b>（ADR-0010 Phase 2 決定 4）と
 /// <b>TLS 受信</b>（RFC 5425。security.md §6）の両証明書に対して、合成ルート（<c>Program</c>）が
 /// 同一の付与処理を呼ぶ。
 /// </summary>
@@ -31,7 +31,7 @@ namespace Yagura.Host.Administration.Https;
 /// Windows 管理者）にとって現実的な範囲である。
 /// </para>
 /// <para>
-/// <b>環境要因の失敗で例外を投げない</b>（<c>Try</c> 接頭辞のとおりの契約。Issue #345）:
+/// <b>環境要因の失敗で例外を投げない</b>（<c>Try</c> 接頭辞のとおりの契約）:
 /// 呼び出し元（<c>Program</c>）は付与をベストエフォートとして扱い、失敗しても起動を妨げず
 /// 警告のみ残す設計である（security.md §2.5）。この設計が成立するには、本メソッドが
 /// 鍵へのアクセス不能・ACL 書き換え不可・鍵ファイル不在といった環境要因を
@@ -61,7 +61,7 @@ public static class CertificatePrivateKeyAccessGranter
         }
 
         // 鍵ファイルパスの解決は秘密鍵を開くため、「これから付与しようとしている権限」を要求する
-        // （鶏と卵。Issue #345）。既定の鍵 ACL は CREATOR OWNER / SYSTEM / Administrators のみで
+        // （鶏と卵）。既定の鍵 ACL は CREATOR OWNER / SYSTEM / Administrators のみで
         // サービスアカウントの ACE を持たないため、**本機構が想定する典型状況そのもの**で
         // CryptographicException（キー セットがありません）が飛ぶ。ここで捕捉しないと呼び出し元
         // （Program）まで抜けてサービスが起動できない——「付与に失敗しても起動は妨げない

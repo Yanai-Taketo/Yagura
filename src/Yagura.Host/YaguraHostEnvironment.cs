@@ -1,10 +1,9 @@
 ﻿namespace Yagura.Host;
 
 /// <summary>
-/// ホスト全体で使う環境変数名・既定値の定数集約。M2 時点は <c>Program.cs</c> に直書きして
-/// いたが、M3-1 で設定基盤（<see cref="Yagura.Host.Configuration.YaguraConfigurationLoader"/>）
-/// を導入するにあたり、環境変数は「設定ファイル・既定値より優先される上書き手段」として
-/// 引き続き維持する（configuration.md §2 の優先順位: 環境変数 &gt; 設定ファイル &gt; 既定値）。
+/// ホスト全体で使う環境変数名・既定値の定数集約。環境変数は
+/// 「設定ファイル・既定値より優先される上書き手段」として維持する
+/// （configuration.md §2 の優先順位: 環境変数 &gt; 設定ファイル &gt; 既定値）。
 /// </summary>
 public static class YaguraHostEnvironment
 {
@@ -32,7 +31,7 @@ public static class YaguraHostEnvironment
     public const string HttpPortEnvironmentVariable = "YAGURA_HTTP_PORT";
 
     /// <summary>
-    /// 管理 HTTP リスナのポートを上書きする環境変数名（M6-1。Issue #51）。<c>0</c> を指定すると
+    /// 管理 HTTP リスナのポートを上書きする環境変数名（M6-1）。<c>0</c> を指定すると
     /// OS がポートを採番する（テスト用。E2E テストは <c>YAGURA_UDP_PORT</c> 等と同じ流儀で
     /// 衝突なくポートを取得する）。
     /// </summary>
@@ -45,7 +44,7 @@ public static class YaguraHostEnvironment
     public const string AdminHttpsPortEnvironmentVariable = "YAGURA_ADMIN_HTTPS_PORT";
 
     /// <summary>
-    /// TLS 受信ポート（RFC 5425。opt-in。Issue #137）を上書きする環境変数名。<c>0</c> を指定すると
+    /// TLS 受信ポート（RFC 5425。opt-in）を上書きする環境変数名。<c>0</c> を指定すると
     /// OS がポートを採番する（テスト用。他の *_PORT 環境変数と同じ流儀）。
     /// </summary>
     public const string IngestionTlsPortEnvironmentVariable = "YAGURA_INGESTION_TLS_PORT";
@@ -54,8 +53,8 @@ public static class YaguraHostEnvironment
     /// 閲覧 HTTP リスナの既定ポート。
     /// </summary>
     /// <remarks>
-    /// <b>CF-1 確定値（Issue #51。2026-07-05 オーナー決定）</b>: 閲覧 8514 / 管理 8515。
-    /// 選定理由・IANA 衝突調査は configuration.md §4.2 と Issue #51 の決定記録を参照。
+    /// <b>CF-1 確定値</b>: 閲覧 8514 / 管理 8515。
+    /// 選定理由・IANA 衝突調査は configuration.md §4.2 を参照。
     /// 既定の bind 先は LAN 公開（configuration.md §4.2「閲覧リスナは既定で LAN に公開する」）
     /// ——bind アドレス自体は <see cref="Yagura.Host.Configuration.YaguraConfigurationLoader"/>
     /// が <c>Viewer:PublicAccess</c> の解決結果から決める。

@@ -1,7 +1,7 @@
 namespace Yagura.Host.Firewall;
 
 /// <summary>
-/// Windows ファイアウォールの受信規則 1 件分の、突合に必要な属性（CF-2。Issue #265）。
+/// Windows ファイアウォールの受信規則 1 件分の、突合に必要な属性（CF-2）。
 /// </summary>
 /// <param name="Name">規則名（Yagura 名前空間 = 「Yagura」始まり）。</param>
 /// <param name="Protocol">IP プロトコル番号（6 = TCP / 17 = UDP。それ以外は突合対象外）。</param>

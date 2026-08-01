@@ -1,7 +1,7 @@
 namespace Yagura.Host.Administration;
 
 /// <summary>
-/// ウィザードセッション統治の既定値（configuration.md §5・§7。M8-4。Issue #71）。
+/// ウィザードセッション統治の既定値（configuration.md §5・§7。M8-4）。
 /// </summary>
 public static class WizardSessionDefaults
 {

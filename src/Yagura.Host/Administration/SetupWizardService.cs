@@ -8,7 +8,7 @@ using Yagura.Host.Configuration;
 namespace Yagura.Host.Administration;
 
 /// <summary>
-/// 初期セットアップウィザードの実体（<see cref="ISetupWizardService"/>。M8-4。Issue #71）。
+/// 初期セットアップウィザードの実体（<see cref="ISetupWizardService"/>。M8-4）。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -136,7 +136,7 @@ public sealed class SetupWizardService : ISetupWizardService
 
             // 入力ステップ（Reception/ViewerAccess/Retention）の再確定で値が変わり得るため、
             // 確認ステップが確定済みならその確定と発行済みトークン・読み込み済みスナップショットを
-            // 破棄する（Issue #248）。古い確認内容・トークンのまま適用される事故を防ぐ——
+            // 破棄する。古い確認内容・トークンのまま適用される事故を防ぐ——
             // GoBackAsync の Review 破棄と同じ意味論（configuration.md §7 の一回性: トークンは
             // 「確認した内容」と 1 対 1 に対応し、内容が変わったら確認をやり直す）。
             if (step != SetupWizardStep.Review && _confirmedSteps.Contains(SetupWizardStep.Review))
@@ -281,7 +281,7 @@ public sealed class SetupWizardService : ISetupWizardService
                 return new SetupWizardApplyResult(WizardApplyOutcome.Conflict, [], ConfigurationApplyEffect.Immediate);
             }
 
-            // 前回適用スナップショットの永続化（Issue #329——保存契機②「ウィザード保存」。
+            // 前回適用スナップショットの永続化（保存契機②「ウィザード保存」。
             // 起動時の設定差分照合の基準を更新する）。失敗は適用自体を妨げない（Try 系）。
             LastAppliedConfigurationSnapshotStore.TrySave(_dataRoot, after, _logger);
 

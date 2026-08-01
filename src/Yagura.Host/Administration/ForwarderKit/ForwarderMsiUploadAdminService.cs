@@ -91,7 +91,7 @@ public sealed class ForwarderMsiUploadAdminService : IForwarderMsiUploadAdminSer
                     "fail-closed 検証〔イベント 1032〕でサービスが起動できません）。");
             }
 
-            // 切替時点検（ADR-0021 決定 1 の事前仕込み対処。round 2 田中・クリス指摘）:
+            // 切替時点検（ADR-0021 決定 1 の事前仕込み対処）:
             // opt-in が無効な間は無認証 loopback からアプリアカウントを作成できるため、
             // 有効化の時点で既存アカウントが「自分の管理下にあるか」を確認させる。
             if (currentStatus.HasAppAccount && !accountInventoryAcknowledged)
@@ -120,7 +120,7 @@ public sealed class ForwarderMsiUploadAdminService : IForwarderMsiUploadAdminSer
             $" existingAppAccount={(currentStatus.HasAppAccount ? currentStatus.AppAccountUsername : "(none)")}" +
             $" existingAppAccountUpdatedAt={FormatTimestamp(currentStatus.AppAccountUpdatedAtUtc)}" +
             // 最終ログインはアップグレード環境（作成・変更時刻が unknown）でも値が入るため、
-            // 監査側にも残す——「何を見て有効化したか」の再現に必要（Issue #458）。
+            // 監査側にも残す——「何を見て有効化したか」の再現に必要。
             $" existingAppAccountLastLoginAt={FormatTimestamp(currentStatus.AppAccountLastLoginAtUtc)}" +
             $" inventoryAcknowledged={accountInventoryAcknowledged}";
 
@@ -152,7 +152,7 @@ public sealed class ForwarderMsiUploadAdminService : IForwarderMsiUploadAdminSer
             AppAccountCreatedAtUtc: account?.CreatedAtUtc,
             AppAccountUpdatedAtUtc: account?.UpdatedAtUtc,
             // アップグレード環境では作成・変更時刻が NULL（v3 で追加した列のため）。最終ログインは
-            // 旧版から記録されているため、点検の手がかりとして併記する（Issue #458）。
+            // 旧版から記録されているため、点検の手がかりとして併記する。
             AppAccountLastLoginAtUtc: account?.LastLoginAtUtc);
 
     private static string FormatTimestamp(DateTimeOffset? value) =>

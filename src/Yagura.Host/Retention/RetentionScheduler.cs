@@ -6,8 +6,7 @@ namespace Yagura.Host.Retention;
 
 /// <summary>
 /// 保持期間削除の定期実行スケジューラ（database.md §3）+ 容量枯渇契機の前倒し実行
-/// （<see cref="ICapacityExhaustionHandler"/>。§1.2 契約 3・§4・§5.3）+ 起動時キャッチアップ
-/// （Issue #150）。
+/// （<see cref="ICapacityExhaustionHandler"/>。§1.2 契約 3・§4・§5.3）+ 起動時キャッチアップ。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,24 +19,24 @@ namespace Yagura.Host.Retention;
 /// 場合、定期実行は何もしない（削除を試みない）。
 /// </para>
 /// <para>
-/// <b>起動時キャッチアップ（Issue #150）</b>: <see cref="RunAsync"/> は定期実行ループへ入る前に
+/// <b>起動時キャッチアップ</b>: <see cref="RunAsync"/> は定期実行ループへ入る前に
 /// 一度だけ <see cref="TryCatchUpAsync"/> を実行する。日中のみ稼働する設置や、再起動が
 /// 実行時刻（既定 03:00）付近に偏る環境では、定期実行が実行時刻に稼働していないホストで
-/// 恒常的にスキップされ得る（「保持期間を設定した＝消える」という前提が静かに崩れる。
-/// syslog 実務者ペルソナの深掘りレビュー指摘）。<see cref="TryCatchUpAsync"/> は
+/// 恒常的にスキップされ得る（「保持期間を設定した＝消える」という前提が静かに崩れる）。
+/// <see cref="TryCatchUpAsync"/> は
 /// <see cref="ILogStore.QuerySystemEventsAsync"/> で直近の削除実行記録
 /// （<c>Kind = RetentionConstants.SystemEventKindRetentionDelete</c>）を検索し、
 /// 前回実行（またはその記録の不在）から <see cref="CatchUpThreshold"/> 以上経過していれば
 /// 即座に削除を実行する。<b>新規のメタデータ領域は設けない</b>——削除実行の事実は
 /// 既に <see cref="ILogStore.WriteSystemEventAsync"/> でシステムイベントとして記録済み
 /// （下記「削除実行の記録」）であり、これを読み出すだけでキャッチアップ判定ができるため
-/// （Issue 本文の提案「メタデータ領域に最終削除実行時刻を持たせる」との比較: 新規の永続化領域
+/// （代替案「メタデータ領域に最終削除実行時刻を持たせる」との比較: 新規の永続化領域
 /// ・書き込み経路を増やさずに済み、既存の記録と情報源が一本化される点を優先した。トレードオフは
 /// システムイベントの検索コスト——<c>Kind = retention.delete</c> でサーバ側フィルタした直近
 /// <see cref="CatchUpEventQueryLimit"/> 件の読み出し——を起動時に 1 回払う点。種別フィルタは
 /// 必須である——種別を問わない直近 N 件の走査だと、削除記録の StartAt が意図的な過去日付
 /// = cutoff である一方で受信断イベントの StartAt は実時刻という非対称により、受信断の蓄積が
-/// 削除記録をウィンドウから恒常的に押し出す。PR #198 レビュー指摘・
+/// 削除記録をウィンドウから恒常的に押し出す。
 /// <see cref="ILogStore.QuerySystemEventsAsync"/> の <c>kind</c> 引数の doc コメント参照）。
 /// </para>
 /// <para>
@@ -55,8 +54,7 @@ namespace Yagura.Host.Retention;
 /// <see cref="ICapacityExhaustionHandler.OnCapacityExhausted"/> の呼び出しは、定期実行の
 /// 時間帯を待たず即座に削除を試みる。<b>保持期間が未設定の場合は前倒し実行もできない</b>
 /// ——削除の基準となる cutoff（日数）自体が存在しないため、この場合は削除を試みず
-/// 警告を出すに留める（容量枯渇の自走復旧は「保持期間が設定されている」ことが前提になる。
-/// 本 Issue の設計判断）。
+/// 警告を出すに留める（容量枯渇の自走復旧は「保持期間が設定されている」ことが前提になる）。
 /// </para>
 /// <para>
 /// <b>削除実行の記録</b>: 削除を実行した（0 件であっても実行した事実そのもの）場合、
@@ -65,7 +63,7 @@ namespace Yagura.Host.Retention;
 /// 書き込む。<see cref="SystemEvent.Details"/> に削除件数を格納する（database.md §2.3）。
 /// </para>
 /// <para>
-/// <b>書き込みゲート（Issue #151）</b>: <see cref="ILogStore.DeleteOlderThanAsync"/> と
+/// <b>書き込みゲート</b>: <see cref="ILogStore.DeleteOlderThanAsync"/> と
 /// <see cref="ILogStore.WriteSystemEventAsync"/> の呼び出しは、コンストラクタで渡された
 /// <see cref="LogStoreWriteGate"/>（非 <c>null</c> の場合）で、永続化段（ライブ書き込み）・
 /// drain と直列化する——<see cref="ILogStore"/> の「書き込みは単一 writer が呼び出す」契約を
@@ -75,13 +73,13 @@ namespace Yagura.Host.Retention;
 /// <see cref="LogStoreWriteGate.AcquireAsync(CancellationToken)"/>）で待つ。
 /// </para>
 /// <para>
-/// <b>スコープの明示（本 Issue の独自判断）</b>: database.md §3 は定期実行の実行判断側にも
+/// <b>スコープの明示</b>: database.md §3 は定期実行の実行判断側にも
 /// 「スプール退避が進行中・Q2 が高水位・drain が進行中の間は削除を開始しない」譲歩条件を
 /// 課している。この譲歩条件は <see cref="IngestionPipeline"/> の内部状態（Q2 使用率・
 /// drain 進行状況）への新規の公開 API を要し、M5-1（ILogStore の契約完全化）のスコープを
 /// 超えるため、本実装では譲歩条件を適用しない（常に実行する）——分割実行
-/// （<see cref="ILogStore.DeleteOlderThanAsync"/> 自体の性質）と書き込みゲート（Issue #151）に
-/// より書き込みへの影響は抑えられているが、譲歩条件そのものの実装は後続 Issue（M5 の
+/// （<see cref="ILogStore.DeleteOlderThanAsync"/> 自体の性質）と書き込みゲートに
+/// より書き込みへの影響は抑えられているが、譲歩条件そのものの実装は後続（M5 の
 /// 別チケットまたは M6）でパイプライン側の観測 API を追加してから行う。この限定は
 /// 最終報告で明示する。
 /// </para>
@@ -89,9 +87,9 @@ namespace Yagura.Host.Retention;
 public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDisposable
 {
     /// <summary>
-    /// 起動時キャッチアップ（Issue #150）の閾値。前回の削除実行からこの時間以上経過していれば
+    /// 起動時キャッチアップの閾値。前回の削除実行からこの時間以上経過していれば
     /// 即座に実行する。定期実行が「1 日 1 回」の運用である前提（既定 <see cref="RetentionSchedulerOptions.ExecutionTimeOfDay"/>
-    /// は日付ではなく時刻のみを持つ）に合わせ、Issue 本文の提案どおり 1 日とする。
+    /// は日付ではなく時刻のみを持つ）に合わせ、1 日とする。
     /// </summary>
     internal static readonly TimeSpan CatchUpThreshold = TimeSpan.FromDays(1);
 
@@ -105,8 +103,8 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
 
     /// <summary>
     /// 起動時キャッチアップの判定で読み出すシステムイベントの件数上限。検索は
-    /// <c>Kind = retention.delete</c> でサーバ側フィルタ済み（PR #198 レビュー指摘への対応——
-    /// 種別を問わない直近 N 件の走査だと、<c>retention.delete</c> の StartAt が意図的な過去日付
+    /// <c>Kind = retention.delete</c> でサーバ側フィルタ済み（種別を問わない直近 N 件の走査だと、
+    /// <c>retention.delete</c> の StartAt が意図的な過去日付
     /// = cutoff である一方、受信断イベントの StartAt は実時刻のため常に新しい側へ並び、受信断の
     /// 蓄積だけで削除記録がウィンドウから恒常的に押し出される非対称があった。<see cref="ILogStore.QuerySystemEventsAsync"/>
     /// の <c>kind</c> フィルタ参照）のため、この上限は「削除実行記録そのものが N 件を超えて並ぶ」
@@ -147,7 +145,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
     }
 
     /// <summary>
-    /// 保持期間・実行時刻を実行中に更新する（設定ライブ再読み込み。CF-4 層1。Issue #262）。
+    /// 保持期間・実行時刻を実行中に更新する（設定ライブ再読み込み。CF-4 層1）。
     /// 実行ループ・削除試行は毎回 <c>_options</c> を参照するため、参照の原子的交換だけで
     /// 次回の判定から新値が使われる。<b>実行時刻（ExecutionTimeOfDay）の変更は、進行中の
     /// 待機（前回計算した遅延）には割り込まない</b>——次の実行機会の計算から反映される
@@ -176,7 +174,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
     /// <summary>
     /// 定期実行ループを停止する。実行中の削除処理の完了は待たない
     /// （<see cref="ILogStore.DeleteOlderThanAsync"/> 自体の分割実行が長時間化を防ぐ設計のため、
-    /// 停止処理側で明示的な打ち切りは行わない——本 Issue の設計判断）。
+    /// 停止処理側で明示的な打ち切りは行わない）。
     /// </summary>
     public async Task StopAsync()
     {
@@ -216,7 +214,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
 
     private async Task RunAsync(CancellationToken stoppingToken)
     {
-        // 起動時キャッチアップ（Issue #150）: 定期実行ループへ入る前に一度だけ判定する。
+        // 起動時キャッチアップ: 定期実行ループへ入る前に一度だけ判定する。
         // RetentionDays 未設定（削除しない既定）ならキャッチアップも対象がないため試みない
         // （TryExecuteRetentionDeleteAsync 自体も同じ条件で何もしないが、判定用の
         // QuerySystemEventsAsync 呼び出し自体を避けるため、ここで先に弾く）。
@@ -244,7 +242,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
     }
 
     /// <summary>
-    /// 起動時キャッチアップ（Issue #150）。前回の削除実行記録（システムイベント）を検索し、
+    /// 起動時キャッチアップ。前回の削除実行記録（システムイベント）を検索し、
     /// <see cref="CatchUpThreshold"/> 以上経過している（または記録が見つからない）場合は
     /// 即座に削除を試みる。判定用のシステムイベント検索自体が失敗した場合は、キャッチアップを
     /// 諦め通常の定期実行の待機に委ねる（DB 未初期化・障害中でも起動そのものは止めない、という
@@ -258,7 +256,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
             using var timeoutCts = new CancellationTokenSource(CatchUpQueryTimeout);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
 
-            // Kind でサーバ側フィルタする（PR #198 レビュー指摘への対応。CatchUpEventQueryLimit の
+            // Kind でサーバ側フィルタする（CatchUpEventQueryLimit の
             // doc コメント参照——種別を問わない走査では受信断イベントの蓄積が削除記録を
             // ウィンドウから押し出す非対称があった）。
             var recentDeleteEvents = await _logStore.QuerySystemEventsAsync(
@@ -350,7 +348,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
             return;
         }
 
-        // 二重実行の回避（Issue #150）: 容量枯渇契機は常に即時実行を優先するため対象外とする。
+        // 二重実行の回避: 容量枯渇契機は常に即時実行を優先するため対象外とする。
         // 定期実行・キャッチアップは、直前の実行から間もない場合はスキップする
         // （キャッチアップ直後に当日の定刻がわずかな遅延で到来するケースが主眼。本クラスの
         // remarks「二重実行の回避」参照）。
@@ -380,11 +378,11 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
             DeleteOlderThanResult result;
             try
             {
-                // 書き込みゲート（Issue #151）: ライブ・drain と直列化する。緊急性より完遂を
+                // 書き込みゲート: ライブ・drain と直列化する。緊急性より完遂を
                 // 優先するため、固定タイムアウトなし（cancellationToken のみで打ち切る）で待つ
                 // （LogStoreWriteGate の doc コメント参照）。
                 //
-                // 影響範囲の認識（PR #198 レビュー指摘）: 容量枯渇契機（OnCapacityExhausted）は
+                // 影響範囲の認識: 容量枯渇契機（OnCapacityExhausted）は
                 // CancellationToken.None の fire-and-forget であるため、この待ちはその経路では
                 // 実質無期限であり StopAsync でも中断できない。ゲートは正しく実装されていれば
                 // 必ず解放されるため通常は問題にならないが、万一ゲート解放のリークバグが将来
@@ -471,8 +469,8 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
 }
 
 /// <summary>
-/// 保持期間削除の実行契機（Issue #150 でキャッチアップを追加し、ログ・二重実行防止の分岐が
-/// 3 値になったため、従来の <c>bool capacityExhaustionTriggered</c> から列挙型へ整理した）。
+/// 保持期間削除の実行契機（定期実行・容量枯渇契機の前倒し実行・起動時キャッチアップの 3 種を
+/// 区別する）。
 /// </summary>
 internal enum RetentionExecutionTrigger
 {
@@ -482,6 +480,6 @@ internal enum RetentionExecutionTrigger
     /// <summary>容量枯渇契機の前倒し実行（<see cref="ICapacityExhaustionHandler"/>）。</summary>
     CapacityExhaustion,
 
-    /// <summary>起動時キャッチアップ（Issue #150）。</summary>
+    /// <summary>起動時キャッチアップ。</summary>
     CatchUp,
 }

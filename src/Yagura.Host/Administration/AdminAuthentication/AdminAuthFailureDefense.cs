@@ -26,7 +26,7 @@ namespace Yagura.Host.Administration.AdminAuthentication;
 /// <para>
 /// <b>原子性（委任事項 1）</b>: 送信元 IP レート制限・アカウント単位バックオフはいずれも CAS
 /// ループ（<see cref="ConcurrentDictionary{TKey,TValue}.TryUpdate"/> による楽観的並行制御）で
-/// 状態を更新し、分散送信元からの同時失敗による lost update を防ぐ（PR #217 の DB 側原子的 UPDATE
+/// 状態を更新し、分散送信元からの同時失敗による lost update を防ぐ（DB 側の原子的 UPDATE
 /// と同じ設計意図をインメモリで再現）。グローバルトークンバケットはプロセス全体で単一の状態を
 /// 持つため、単純な <see langword="lock"/> で十分（競合区間はトークンの増減のみで短い）。
 /// </para>
@@ -65,11 +65,11 @@ public sealed class AdminAuthFailureDefense
         _bucketLastRefillAtUtc = _timeProvider.GetUtcNow();
     }
 
-    // ==== ①IP レート制限（決定 2・4・5・5.1） ====
+    // ==== ①IP レート制限（決定 2） ====
 
     /// <summary>
-    /// 送信元 IP 単位のレート制限を判定する（決定 2 評価順序 ①）。loopback は対象外（決定 4）。
-    /// 待たせず即座に許可/拒否を返す（決定 5.1）。
+    /// 送信元 IP 単位のレート制限を判定する（決定 2 評価順序 ①）。loopback は対象外。
+    /// 待たせず即座に許可/拒否を返す。
     /// </summary>
     public AdminAuthGateDecision CheckIpRateLimit(IPAddress? remoteAddress, bool isLoopback)
     {
@@ -149,39 +149,38 @@ public sealed class AdminAuthFailureDefense
     }
 
     /// <summary>
-    /// 現在追跡中の IP レート制限エントリ数（診断・テスト用。Issue #233）。<see cref="_ipWindows"/>
+    /// 現在追跡中の IP レート制限エントリ数（診断・テスト用）。<see cref="_ipWindows"/>
     /// は非 loopback の送信元 IP のみをキーにする（loopback は <see cref="CheckIpRateLimit"/> が
     /// 早期リターンし、本辞書に一切触れない）。
     /// </summary>
     public int IpRateLimitTrackedAddressCount => _ipWindows.Count;
 
     /// <summary>
-    /// アイドル化した IP レート制限エントリ（Issue #233）を辞書から掃き出す。除去条件は「現在の窓が
+    /// アイドル化した IP レート制限エントリを辞書から掃き出す。除去条件は「現在の窓が
     /// 既に失効している（直近 <see cref="AdminAuthenticationDefaults.IpRateLimitWindow"/> の間、当該
     /// 送信元 IP からの試行が一件もない）」<b>かつ</b>「能動的な拒否ストリーク
     /// （<see cref="IpWindowState.DenyStreakStartAtUtc"/>。決定 6 の <see cref="GetIpRateLimitEscalations"/>
     /// エスカレーション判定の起点）を持たない、または staleness-cap（<see cref="AdminAuthenticationDefaults.EscalationThreshold"/>
-    /// の 2 倍）を超えて窓が凍結している」——ストリーク保護と staleness-cap の 2 条件は PR #236
-    /// レビュー指摘への 2 段階の対応（下記 remarks 参照）。
+    /// の 2 倍）を超えて窓が凍結している」（下記 remarks 参照）。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>ストリーク保護（PR #236 レビュー指摘 その 1）</b>: 窓の失効のみを条件にしていた当初実装は、
+    /// <b>ストリーク保護</b>: 窓の失効のみを除去条件にすると、
     /// 毎窓の先頭で上限超のバーストを打ち残りをアイドルにする「ペース調整型」の持続的攻撃に対し、
     /// 毎周期のスイープが窓失効直後（= 攻撃者が次のバーストを打つ前のアイドル区間）にストリークごと
-    /// エントリを消してしまい、エスカレーション（能動通知）が永久に成立しなくなる副作用を持っていた
+    /// エントリを消してしまい、エスカレーション（能動通知）が永久に成立しなくなる
     /// ——<see cref="CheckIpRateLimit"/> 自身が窓境界でストリークを引き継ぐロールオーバー処理（同
     /// メソッドのコメント参照）を持つのはまさにこの種の攻撃を検知し続けるためであり、スイープが
     /// その前提（エントリが窓境界をまたいで生存し続けること）を壊してはならない。
     /// </para>
     /// <para>
-    /// <b>staleness-cap（PR #236 レビュー指摘 その 2）</b>: ストリーク保護だけでは別の穴が開く——
+    /// <b>staleness-cap</b>: ストリーク保護だけでは別の穴が開く——
     /// <see cref="IpWindowState.DenyStreakStartAtUtc"/> が <c>null</c> へ戻るのは <see cref="CheckIpRateLimit"/>
     /// の窓ロールオーバーが「直前の窓を上限未満」と観測したときだけであり、ストリークを立てた後
     /// アクセスが二度と来なければストリークは永久に非 <c>null</c> のまま。攻撃者が spoof した各 IPv6 から
     /// 1 窓内に上限超の試行を打ってストリークを立て、そのまま放置すると、窓失効後もストリーク保護で
     /// 除去されずロールオーバーも起きず、エントリが恒久ピン留めされる——IPv6 の無制限アドレス空間で
-    /// ピン留め数が攻撃者制御で無限に増え、Issue #233 が塞ぐべきメモリ無制限増加が別経路で復活する。
+    /// ピン留め数が攻撃者制御で無限に増え、塞ぐべきメモリ無制限増加が別経路で復活する。
     /// これを塞ぐため、ストリークを持つエントリでも <c>now - WindowStartAtUtc</c> が staleness-cap
     /// （<see cref="AdminAuthenticationDefaults.EscalationThreshold"/> の 2 倍。≒ 30 分）を超えたら
     /// 除去可能にする。撃ち逃げ放置ピンは <c>WindowStartAtUtc</c> が凍結するため約 2×閾値 で除去され、
@@ -202,7 +201,7 @@ public sealed class AdminAuthFailureDefense
     /// <para>
     /// <b>呼び出し元</b>: <see cref="Yagura.Host.Observability.ActiveNotification.ActiveNotificationMonitor"/>
     /// の周期評価（仮値 1 分ごと）が毎周期呼ぶ——IP レート制限の窓（仮値 60 秒）と同オーダーの
-    /// 頻度で、送信元が攻撃者制御であるがゆえに無制限に増加し得る辞書（Issue #233 の問題提起）を
+    /// 頻度で、送信元が攻撃者制御であるがゆえに無制限に増加し得る辞書を
     /// 定期的に縮退させる。辞書サイズの上限機構（LRU 等）は採用しない——アクティブな送信元を
     /// 上限超過で強制退避すると、退避された攻撃者がレート制限を回避できてしまい「エビクションが
     /// アクティブな攻撃者の状態を消して制限を回避させない」という要件に反するため、除去対象は
@@ -214,7 +213,7 @@ public sealed class AdminAuthFailureDefense
     /// （ストリークあり + 毎窓アクセス）のみ保持される——最後のケースは進行中の実攻撃であり、
     /// エスカレーション（1019）で通知したうえで保持するのが正しい挙動。よって辞書サイズは
     /// 「現に進行中で通知対象の攻撃者数」で有界であり、攻撃者が任意に膨らませられる恒久ピン留めは
-    /// 残らない（Issue #233 の要件を staleness-cap で回復）。
+    /// 残らない（staleness-cap で回復する）。
     /// </para>
     /// </remarks>
     /// <returns>実際に除去したエントリ数。</returns>
@@ -248,7 +247,7 @@ public sealed class AdminAuthFailureDefense
                 // 撃ち逃げ放置ピン（ストリークを立てた後アクセスが二度と来ず WindowStartAtUtc が
                 // 凍結したエントリ）は now - WindowStartAtUtc が単調増加して streakStaleAfter を
                 // 超えるため、~2×閾値 経過後にこの保護から外れて除去可能になる（IPv6 アドレス空間
-                // での恒久ピン留めによるメモリ無制限増加の再発を防ぐ。Issue #233）。一方、能動
+                // での恒久ピン留めによるメモリ無制限増加の再発を防ぐ）。一方、能動
                 // ペース攻撃は毎窓アクセスで WindowStartAtUtc が更新されるため now - WindowStartAtUtc
                 // は常に 1 窓未満に留まり、staleness に到達せず保持され続ける（進行中の実攻撃であり
                 // エスカレーション対象）。
@@ -264,11 +263,11 @@ public sealed class AdminAuthFailureDefense
         return removed;
     }
 
-    // ==== ②グローバルトークンバケット（決定 2・4・5.1） ====
+    // ==== ②グローバルトークンバケット（決定 2） ====
 
     /// <summary>
     /// プロセス全体のグローバルトークンバケットを判定する（決定 2 評価順序 ②）。loopback は
-    /// 対象外（決定 4）。待たせず即座に許可/拒否を返す（決定 5.1）。
+    /// 対象外。待たせず即座に許可/拒否を返す。
     /// </summary>
     public AdminAuthGateDecision CheckGlobalBucket(bool isLoopback, IPAddress? remoteAddress)
     {
@@ -337,7 +336,7 @@ public sealed class AdminAuthFailureDefense
         }
     }
 
-    // ==== ③アカウント単位バックオフ（決定 2・3・4） ====
+    // ==== ③アカウント単位バックオフ（決定 3） ====
 
     /// <summary>
     /// 現在の状態に基づき、これから行う試行に適用すべき遅延を返す（決定 3。パスワード検証の
@@ -367,8 +366,7 @@ public sealed class AdminAuthFailureDefense
 
     /// <summary>
     /// ログイン失敗を記録し、連続失敗回数 n を原子的に増分する（委任事項 1）。戻り値は次回試行に
-    /// 適用される遅延と、今回の試行が cap（上限遅延）下で行われたか（監査 ID 3006 の発火判定に使う。
-    /// 決定 9）。
+    /// 適用される遅延と、今回の試行が cap（上限遅延）下で行われたか（監査 ID 3006 の発火判定に使う）。
     /// </summary>
     public BackoffFailureOutcome RecordFailure(string username, bool isLoopback, IPAddress? remoteAddress)
     {

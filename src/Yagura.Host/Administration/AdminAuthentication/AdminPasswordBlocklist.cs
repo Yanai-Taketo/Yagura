@@ -4,7 +4,7 @@ using System.Reflection;
 namespace Yagura.Host.Administration.AdminAuthentication;
 
 /// <summary>
-/// 既知漏洩パスワード・頻出パターンのブロックリスト突合（ADR-0011 決定 7・委任事項 5）。
+/// 既知漏洩パスワード・頻出パターンのブロックリスト突合（ADR-0011 決定 7）。
 /// </summary>
 /// <remarks>
 /// <para>
