@@ -1541,8 +1541,8 @@ public static class YaguraConfigurationLoader
             return (StorageProvider.Sqlite, null);
         }
 
-        // --- 平文の接続文字列（手編集経路）は従来どおり受理する（オーナー決定: ---
-        // --- 自動書き換えはしない）。資格情報入りの平文のみ警告する（configuration.md §2） ---
+        // --- 平文の接続文字列（手編集経路）は受理し、自動書き換えはしない。 ---
+        // --- 資格情報入りの平文のみ警告する（configuration.md §2） ---
         if (SqlServerConnectionStringCredentialGuard.ContainsPlaintextCredential(connectionString))
         {
             warnings.Add(new ConfigurationWarning(
