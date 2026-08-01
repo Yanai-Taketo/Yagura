@@ -425,4 +425,78 @@ public sealed class TlsSyslogListenerTests
             await listener.StopAsync();
         }
     }
+
+    // ------------------------------------------------------------------
+    // 想定外の例外による接続異常終了（分類漏れの失敗経路を無言にしない）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 接続ハンドラが想定していない型の例外で終了した場合に、接続異常終了カウンタへ計上されること。
+    /// </summary>
+    /// <remarks>
+    /// 修正前は、ハンドシェイク周りの catch フィルタ（<c>AuthenticationException</c> /
+    /// <c>IOException</c> / <c>OperationCanceledException</c>）に一致しない型の例外が接続タスク内に
+    /// 閉じ込められ、カウンタにもログにも残らないまま接続だけが落ちていた。プロセスは生存し
+    /// TCP accept も継続するため外形監視からも見えず、送信元が無言で全滅し得る
+    /// （「失った場合に必ず観測できる」の違反）。ここでは証明書セレクタから
+    /// <see cref="InvalidOperationException"/> を送出して、その経路を再現する——証明書ストア参照は
+    /// 実行時に例外を投げ得る現実の経路であり、作為的な注入ではない。
+    /// </remarks>
+    [Fact]
+    public async Task CertificateSelectorThrowsUnexpected_RecordsConnectionFaultedCounter()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var meterCollector = new MetricCollector<long>(metrics.TcpConnectionFaultedCounter, timeProvider: null);
+
+        var listener = new TlsSyslogListener(
+            new TlsSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics,
+            () => throw new InvalidOperationException("証明書ストアの参照に失敗しました（テスト）。"));
+
+        await listener.StartAsync();
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, listener.BoundPort);
+
+            await meterCollector.WaitForMeasurementsAsync(minCount: 1, timeout: TimeSpan.FromSeconds(10));
+            Assert.Equal(1, meterCollector.GetMeasurementSnapshot().Sum(m => m.Value));
+        }
+        finally
+        {
+            await listener.StopAsync();
+        }
+    }
+
+    /// <summary>
+    /// 正常停止に伴うキャンセルは異常ではないため、接続異常終了カウンタへ計上しないこと
+    /// （平常時ゼロであることに意味があるカウンタを、停止のたびに汚さない）。
+    /// </summary>
+    [Fact]
+    public async Task StopWhileConnectionOpen_DoesNotRecordConnectionFaultedCounter()
+    {
+        var q1 = CreateQ1();
+        using var metrics = new IngestionMetrics();
+        using var meterCollector = new MetricCollector<long>(metrics.TcpConnectionFaultedCounter, timeProvider: null);
+        using var testCertificate = IssueTestCertificate();
+
+        var listener = new TlsSyslogListener(
+            new TlsSyslogListenerOptions { BindAddress = "127.0.0.1", Port = 0 },
+            q1.Writer,
+            new NoopIngressGate(),
+            metrics,
+            () => testCertificate.Certificate);
+
+        await listener.StartAsync();
+
+        using var client = new TcpClient();
+        await using var sslStream = await ConnectAndAuthenticateClientAsync(client, listener.BoundPort);
+
+        await listener.StopAsync();
+
+        Assert.Empty(meterCollector.GetMeasurementSnapshot());
+    }
 }

@@ -237,6 +237,24 @@ public sealed class TlsSyslogListener : IAsyncDisposable
                 }
             }
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 正常停止に伴うキャンセル。異常ではないため計上しない。
+        }
+        catch (Exception ex)
+        {
+            // 想定内の失敗経路（証明書なし・ハンドシェイク失敗/タイムアウト・アイドル/フレーミング
+            // タイムアウト・再同期上限）はいずれも上位でそれぞれのカウンタへ計上済みのため、ここへ
+            // 到達するのは分類できていない失敗である。捕捉しないと例外はタスク内に閉じ込められ、
+            // カウンタにもログにも残らないまま接続だけが落ちる（プロセスは生存し TCP accept も
+            // 継続するため外形監視からも見えない）。接続を諦めるのは同じでも、必ず観測可能にする。
+            _metrics.RecordTcpConnectionFaulted();
+            _logger?.LogError(
+                ex,
+                "TLS 接続 {SourceAddress}:{SourcePort} の処理が想定外の例外で終了しました。",
+                sourceAddress,
+                sourcePort);
+        }
         finally
         {
             _acceptLoop.ReleaseConnectionSlot();

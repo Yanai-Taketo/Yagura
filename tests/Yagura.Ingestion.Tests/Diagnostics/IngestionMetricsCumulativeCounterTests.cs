@@ -99,6 +99,7 @@ public sealed class IngestionMetricsCumulativeCounterTests
         metrics.RecordTcpConnectionResyncLimitExceeded();
         metrics.RecordTcpConnectionFramingTimeout();
         metrics.RecordTcpConnectionFramingTimeout();
+        metrics.RecordTcpConnectionFaulted();
 
         var snapshot = metrics.SnapshotCumulativeCounters();
 
@@ -107,6 +108,24 @@ public sealed class IngestionMetricsCumulativeCounterTests
         Assert.Equal(1, snapshot.TcpMessageOversizedDiscarded);
         Assert.Equal(1, snapshot.TcpConnectionResyncLimitExceeded);
         Assert.Equal(2, snapshot.TcpConnectionFramingTimeout);
+        Assert.Equal(1, snapshot.TcpConnectionFaulted);
+    }
+
+    /// <summary>
+    /// 接続異常終了カウンタは平常時ゼロであることに意味があるため、再起動をまたいで累積が
+    /// 引き継がれること（前回稼働中の分類漏れの発生事実が消えないこと）を確認する。
+    /// </summary>
+    [Fact]
+    public void SeedCumulativeCounters_ThenRecord_ComposesTcpConnectionFaulted()
+    {
+        var previous = IngestionCounterSnapshot.Zero with { TcpConnectionFaulted = 7 };
+
+        using var metrics = new IngestionMetrics();
+        metrics.SeedCumulativeCounters(previous);
+
+        metrics.RecordTcpConnectionFaulted();
+
+        Assert.Equal(8, metrics.SnapshotCumulativeCounters().TcpConnectionFaulted);
     }
 
     [Fact]

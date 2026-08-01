@@ -57,6 +57,10 @@ internal sealed class MetadataStoreFileFormat
         // null を 0 として扱う）。単位は他フィールドと異なりバイト（IngestionCounterSnapshot.
         // SpoolCorruptTailDiscardedBytes・IngestionMetrics remarks 参照）。
         public long? SpoolCorruptTailDiscardedBytes { get; set; }
+
+        // 上と同じく additive-only。平常時ゼロであることに意味があるカウンタのため、再起動をまたいで
+        // 引き継がないと「前回稼働中に分類漏れの失敗経路を通った」という事実が消える。
+        public long? TcpConnectionFaulted { get; set; }
     }
 
     internal sealed class StopEventFileFormat

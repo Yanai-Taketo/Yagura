@@ -192,10 +192,33 @@ internal sealed class TcpConnectionAcceptLoop
             // 接続終了時に一覧から取り除く（無限に積み上がらないようにする）。継続はバックグラウンドで行い、
             // Accept ループ自体はブロックしない。
             _ = connectionTask.ContinueWith(
-                t => _connectionTasks.TryRemove(t, out _),
+                CompleteConnection,
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>
+    /// 接続タスクの完了処理。一覧から取り除き、<b>タスクの例外を必ず観測する</b>。
+    /// </summary>
+    /// <remarks>
+    /// 各リスナの接続処理は自身で全例外を捕捉するため通常ここに例外は現れないが、その捕捉の外側
+    /// （<c>finally</c> の <c>Dispose</c> 等）で送出された場合の最後の受け皿として観測する。
+    /// 観測しないまま放置すると例外は <c>UnobservedTaskException</c> として黙って消え、接続が
+    /// どのカウンタにも計上されないまま失われる（architecture.md §4.5「分類漏れの受け皿」）。
+    /// </remarks>
+    private void CompleteConnection(Task completed)
+    {
+        _connectionTasks.TryRemove(completed, out _);
+
+        if (completed.Exception is { } exception)
+        {
+            _metrics.RecordTcpConnectionFaulted();
+            _logger?.LogError(
+                exception,
+                "{ListenerName}: 接続の処理が想定外の例外で終了しました（接続処理の捕捉外）。",
+                _listenerName);
         }
     }
 }
