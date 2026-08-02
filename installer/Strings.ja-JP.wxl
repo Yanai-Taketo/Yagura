@@ -49,8 +49,11 @@
 
   <!-- 対応 OS 下限の LaunchCondition(ADR-0024 決定 6。Issue #496)。
        「なぜ入れられないか」+「どうすればよいか」+「対応外 OS で取れる選択肢」を含める。
+       **255 文字以内に収めること**: LaunchCondition テーブルの Description 列の上限で、
+       超えると ICE03(String overflow)でビルドが落ちる(実ビルドで検出。当初案は 258 文字だった)。
+       移行相談の導線(Discussions)は字数の都合で README 側へ委ねる。
        MSI のコードページは 932 のため em ダッシュ等は使えない(Package.wxs 冒頭の注意参照)。 -->
-  <String Id="UnsupportedOsError" Value="この OS には Yagura をインストールできません(検出した OS ビルド: [YAGURA_OS_BUILD])。Yagura が対応するのは OS ビルド 17763 以上、具体的には Windows Server 2019 以降、または Windows 11 / Windows 10 の LTSC・Enterprise です。推奨は Windows Server 2022 以降です。対応環境の一覧は README の「システム要件」を参照してください。現在の環境で使い続けたい場合は、対応 OS への移行をご検討ください。移行が難しい事情がある場合は GitHub の Discussions でご相談ください。" />
+  <String Id="UnsupportedOsError" Value="この OS には Yagura をインストールできません(OS ビルド [YAGURA_OS_BUILD])。対応は OS ビルド 17763 以上(Windows Server 2019 以降 / Windows 11 / Windows 10 LTSC・Enterprise)、推奨は Windows Server 2022 以降です。詳細と移行の相談先は README の「システム要件」を参照してください。" />
 
   <!-- ファイアウォール規則の説明(Windows ファイアウォール管理画面に表示される)。 -->
   <String Id="FwDescriptionUdp514" Value="Yagura syslog 受信 (UDP 514)" />
