@@ -80,70 +80,81 @@ jobs:
       # 件数ガードは残す。ただし閾値は 5 に置く——実測値（2022 / 2025 とも 10 種）と
       # 同じ値にすると、将来スイートがさらに削られたときに正常な採取を失敗と誤判定するため。
       # 狙いは「潰れた採取（0〜1 件）を沈黙させない」ことであり、上限側の検査ではない。
-      # ■ 採取値が「OS の既定」なのか「その機の構成」なのかを必ず併記する
+      # ■ 主測定は「Local キー」である。`Get-TlsCipherSuite` は OS 既定を返さない
       #
-      # スイート順序はグループポリシー／ローカルポリシーで上書きでき、上書きされていると
-      # `Get-TlsCipherSuite` は**そのポリシーの内容**を返す。この区別を書かずに数値だけ記録すると、
-      # 「推奨環境の OS 既定はこうだ」という**成り立たない主張**になる。
-      # 実際に本 workflow の初回計測（10 種）は Microsoft が Server 2022 の既定として公表している
-      # 一覧（23H2 以降で 3 種を除いた 22 種前後）と一致しておらず、ランナー image 側の構成を
-      # 疑う必要があった。
-      #   - Functions（GPO 由来）: HKLM\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002
-      #   - Functions（ローカル）: HKLM\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002
-      - name: Record cipher suite policy (is this the OS default or a configured order?)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-
-          $gpo   = 'HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002'
-          $local = 'HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002'
-
-          foreach ($path in @($gpo, $local)) {
-            Write-Host "== $path"
-            if (Test-Path $path) {
-              $v = (Get-ItemProperty -Path $path -ErrorAction SilentlyContinue).Functions
-              if ($null -ne $v) {
-                $list = @($v) -join ','
-                Write-Host "  CONFIGURED (Functions present)"
-                Write-Host "  $list"
-              } else {
-                Write-Host "  key exists but Functions is absent"
-              }
-            } else {
-              Write-Host "  not configured"
-            }
-          }
-
-      - name: Collect enabled TLS cipher suites
+      # 実測（2026-08-02）: **GitHub ホストランナーは両バージョンとも GPO でスイート順序を
+      # 上書きしている**（強い 10 種のみに絞る image 側のハードニング）。この状態で
+      # `Get-TlsCipherSuite` を呼ぶと**そのポリシーの内容**が返り、OS 既定は得られない。
+      # 初回計測の「10 種・弱スイート 0」はこれであって、Microsoft が公表している
+      # Server 2022 の既定（31 種）と食い違ったのはそのためだった。
+      #
+      # OS 既定は次のローカル構成キーが持つ。実測値は Microsoft の公表内容と一致した
+      # （2022 = 31 種で 3DES・DHE を含む / 2025 = 28 種で「23H2 以降で外す」とされた 3 種が抜ける）。
+      #   HKLM\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002
+      # GPO キー（上書き側）も併せて出す——**どちらを見ているかを取り違えないため**。
+      #   HKLM\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002
+      #
+      # 弱スイートの判定は**両方に対して**行う。Yagura が問うているのは「導入先の OS 既定に
+      # 弱いスイートが残るか」であり、答えるのは Local 側である。
+      - name: Survey cipher suites (OS default vs configured policy)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Flatten to a plain list of names (works whether the cmdlet unrolls or collapses).
-          $names = @(Get-TlsCipherSuite | ForEach-Object { $_.Name } | Where-Object { $_ })
-
-          Write-Host "Enabled cipher suites: $($names.Count)"
-
-          if ($names.Count -lt 5) {
-            throw "Cipher suite collection failed ($($names.Count) found). See the YAML comment above this step."
+          function Get-SuiteList([string]$path) {
+            if (-not (Test-Path $path)) { return $null }
+            $v = (Get-ItemProperty -Path $path -ErrorAction SilentlyContinue).Functions
+            if ($null -eq $v) { return $null }
+            # REG_SZ (comma separated) or REG_MULTI_SZ.
+            return @(@($v) | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
           }
 
-          $names | ForEach-Object { Write-Host "  $_" }
+          function Show-Weak([string]$label, $names) {
+            $weak = @($names | Where-Object {
+              $_ -match '3DES' -or $_ -match 'RC4' -or $_ -match 'NULL' -or $_ -match 'CBC_SHA$'
+            })
+            Write-Host "$label weak suites (3DES / RC4 / NULL / SHA-1 CBC): $($weak.Count)"
+            $weak | ForEach-Object { Write-Host "    WEAK: $_" }
+            return $weak
+          }
 
-          # Weak suites: 3DES / NULL / RC4 / SHA-1 CBC (name ends with _CBC_SHA).
-          $weak = @($names | Where-Object {
-            $_ -match '3DES' -or $_ -match 'NULL' -or $_ -match 'RC4' -or $_ -match 'CBC_SHA$'
-          })
-          Write-Host "----"
-          Write-Host "Weak suites (3DES / NULL / RC4 / SHA-1 CBC): $($weak.Count)"
-          $weak | ForEach-Object { Write-Host "  WEAK: $_" }
+          $localPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002'
+          $gpoPath   = 'HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002'
+
+          $osDefault = Get-SuiteList $localPath
+          $gpo       = Get-SuiteList $gpoPath
+          $effective = @(Get-TlsCipherSuite | ForEach-Object { $_.Name } | Where-Object { $_ })
+
+          if ($null -eq $osDefault -or $osDefault.Count -lt 5) {
+            throw "OS default cipher suite list not found at $localPath. This is the primary measurement; see the YAML comment above this step."
+          }
+
+          Write-Host "=== OS default (Local\SSL\00010002): $($osDefault.Count) suites"
+          $osDefault | ForEach-Object { Write-Host "    $_" }
+          $osWeak = Show-Weak 'OS default' $osDefault
+
+          Write-Host ""
+          if ($null -eq $gpo) {
+            Write-Host "=== Group policy override: not configured"
+          } else {
+            Write-Host "=== Group policy override: CONFIGURED, $($gpo.Count) suites"
+            $gpo | ForEach-Object { Write-Host "    $_" }
+            Write-Host "    NOTE: Get-TlsCipherSuite reflects this policy, not the OS default."
+          }
+
+          Write-Host ""
+          Write-Host "=== Get-TlsCipherSuite (effective on this machine): $($effective.Count) suites"
 
           New-Item -ItemType Directory -Path survey-results -Force | Out-Null
           [pscustomobject]@{
-            Runner    = '${{ matrix.os }}'
-            Count     = $names.Count
-            Names     = $names
-            WeakNames = $weak
+            Runner            = '${{ matrix.os }}'
+            OsDefaultCount    = $osDefault.Count
+            OsDefault         = $osDefault
+            OsDefaultWeak     = $osWeak
+            GroupPolicyCount  = if ($null -eq $gpo) { 0 } else { $gpo.Count }
+            GroupPolicy       = $gpo
+            EffectiveCount    = $effective.Count
+            Effective         = $effective
           } | ConvertTo-Json -Depth 4 |
             Set-Content -Path "survey-results/cipher-suites-${{ matrix.os }}.json" -Encoding utf8
 
