@@ -22,6 +22,9 @@ public static partial class UiText
     /// <summary>カウンタ平易語: TCP 接続拒否。</summary>
     public const string CounterTcpConnectionRejected = "同時接続の上限で受け付けなかった接続";
 
+    /// <summary>カウンタ平易語: TCP / TLS 接続の異常終了（Issue #482）。</summary>
+    public const string CounterTcpConnectionFaulted = "取りこぼしの疑い（接続が想定外の理由で終了）";
+
     /// <summary>カウンタ平易語: スプール退避。</summary>
     public const string CounterSpoolEvacuated = "一時保管への退避（取りこぼしではありません）";
 

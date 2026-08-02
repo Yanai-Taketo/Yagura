@@ -304,3 +304,49 @@ v1.0 系列は同梱する .NET 10（LTS）のサポート終了日を上限と�
 SECURITY.md のとおり修正は最新リリースにのみ提供され、過去の版へのバックポートは行わない。したがって**対応外 OS に留まることは、脆弱性修正を受け取る経路が無くなることを意味する**。
 
 対応 OS への移行が難しい事情がある場合は、[Discussions](https://github.com/Yanai-Taketo/Yagura/discussions) で相談してほしい。
+
+### 12.5 TLS 受信（6514）を有効化したら、ファイアウォール規則を自分で足す
+
+MSI が作成する受信許可規則は **UDP 514 / TCP 514 / TCP 8514 の 3 本だけ**である。TLS 受信は opt-in で導入後に有効化するため、**MSI は 6514 の規則を作れない**。
+
+規則が無いまま TLS 受信を有効化すると、起動時とその後の周期監視で次の警告が出る（loopback からの検証は通るため、**リモートの送信元だけが届かない**という気づきにくい状態になる）。
+
+```
+[firewall-rule-mismatch] リスナの実ポートと Yagura 名前空間のファイアウォール規則に不一致があります:
+  syslog TLS 受信（TCP 6514）に対応する有効な受信許可規則がありません
+```
+
+管理者権限の PowerShell で、MSI が作る規則と同じ条件（Domain + Private・受信許可・実行ファイル限定）を満たす規則を追加する。
+
+```powershell
+New-NetFirewallRule -DisplayName 'Yagura Syslog (TLS 6514)' `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6514 `
+  -Profile Domain,Private `
+  -Program 'C:\Program Files\Yagura\Yagura.Host.exe'
+```
+
+インストール先を既定から変えた場合は `-Program` のパスを合わせる。規則を追加すると次回の突合で警告は消える。**ポート番号を `Ingestion:Tls:Port` で変更した場合も同じ警告が出る**（古いポートの規則が「どのリスナにも対応していない」として併せて列挙される）。
+
+### 12.6 Windows Server 2019 の送信元から TLS 受信へ送るとき
+
+Yagura の TLS 受信は **TLS 1.2 を下限**とする（1.0 / 1.1 は受け付けない）。一方 **Windows Server 2019 の既定のクライアント設定は、.NET Framework 系のツールで TLS 1.0 までしか提示しない**ことがある。
+
+実機で確認した例（2026-08-02。Server 2019 10.0.17763.3650、`SchUseStrongCrypto` / `SystemDefaultTlsVersions` とも未設定）: PowerShell 5.1 の `SslStream` で既定のまま接続すると、共通アルゴリズムが無く必ず失敗する。
+
+```
+A call to SSPI failed, see inner exception.
+---> The function requested is not supported   (SEC_E_UNSUPPORTED_FUNCTION 0x80090302)
+```
+
+サーバ側のイベントログには次が記録される（**失敗は必ず観測できる**——ログが出ないまま接続が消えることはない）。
+
+```
+TLS 接続 <送信元>:<ポート> のハンドシェイクに失敗しました。
+---> クライアントとサーバーは共通のアルゴリズムを処理していないので、通信できません。
+```
+
+対処は送信側の設定である。
+
+- **送信側が .NET Framework 系のツール**（PowerShell 5.1・自作スクリプト等）: レジストリの `SchUseStrongCrypto` / `SystemDefaultTlsVersions` を有効にするか、コード側で `[System.Security.Authentication.SslProtocols]::Tls12` を明示する
+- **送信側が syslog 転送エージェント**: そのエージェントの TLS バージョン設定を 1.2 以上にする
+- **サーバ側を 1.0 まで下げることはしない**。Yagura は導入先の OS バージョンが混在しても TLS 1.0 / 1.1 が意図せず露出しないよう、プロトコルの下限を明示固定している（[ADR-0010](adr/0010-admin-ui-authentication.md) Phase 2 決定 4）
