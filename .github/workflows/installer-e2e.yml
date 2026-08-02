@@ -144,6 +144,36 @@ jobs:
             -UpgradeFromMsiPath $prev.FullName `
             -OutputDir 'e2e-results'
 
+      # 対応 OS 下限の LaunchCondition(ADR-0024 決定 6。Issue #496)が**何を根拠に判定したか**を
+      # 実ビルドの msiexec ログから採取する。
+      #
+      # ここが要る理由: 条件式が誤ると**全対応環境でインストールとアップグレードが拒否される**。
+      # 上のステップが成功していること自体が「推奨区分は通る」証拠だが、それは
+      # 「条件が正しい」からなのか「プロパティが読めず fail-open で通った」からなのかを
+      # 区別しない。**実際に読めた値**を記録して初めて、判定が効いていることを言える。
+      # 併せて VersionNT / WindowsBuild も出す——これらを使わなかった判断
+      # （Package.wxs のコメント参照）が実測で裏付けられるかを残すため。
+      - name: Record OS gate properties from the MSI log
+        if: always()
+        shell: pwsh
+        run: |
+          $log = 'e2e-results/msiexec-install.log'
+          if (-not (Test-Path $log)) {
+            Write-Host "::warning::$log not found; skipping OS gate property report"
+            exit 0
+          }
+          # msiexec の詳細ログは UTF-16LE。Select-String の既定では読めない。
+          $lines = Get-Content $log -Encoding Unicode
+          foreach ($name in 'YAGURA_OS_BUILD', 'VersionNT', 'VersionNT64', 'WindowsBuild') {
+            $hit = $lines | Select-String -SimpleMatch "Property(S): $name = " | Select-Object -First 1
+            if ($null -eq $hit) { $hit = $lines | Select-String -SimpleMatch "Property(C): $name = " | Select-Object -First 1 }
+            if ($null -eq $hit) {
+              Write-Host "  $name = (not present in log)"
+            } else {
+              Write-Host ("  " + $hit.Line.Trim())
+            }
+          }
+
       # 証拠 artifact(ADR-0006 基準 1): 人間可読ログ(*.log.txt)+ 機械可読サマリ
       # (*.summary.json)+ msiexec 詳細ログ。失敗時も必ず残す(失敗の記録も証拠)。
       - name: Upload E2E evidence
