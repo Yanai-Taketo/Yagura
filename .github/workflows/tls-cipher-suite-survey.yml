@@ -62,8 +62,16 @@ jobs:
       # `Protocols` は UInt32 の配列で返る（0x0303 = TLS 1.2 / 0x0304 = TLS 1.3）。
       # 既定の Format-Table では配列が省略表示になり比較に使えないため、16 進へ展開する。
       # DTLS（0xFEFF / 0xFEFD）は本件の対象外だが、除外して集合を歪めないようそのまま出す。
+      # **Windows PowerShell 5.1 で実行する（pwsh 7 では使えない）。**
+      # `Get-TlsCipherSuite` は Windows 同梱の TLS モジュール（CDXML）で、pwsh 7 からは
+      # Windows PowerShell 互換層を経由する。その際に**全スイートが 1 オブジェクトへ潰れ、
+      # 各プロパティが配列になる**（実測: `$suites.Count` が 1 になり、Name が
+      # `{TLS_AES_256_GCM_SHA384, TLS_AES_128_GCM_SHA256, ...}` として返る）。
+      # この状態でも例外は出ず、後段の絞り込みが黙って 0 件を返す——**「弱いスイートは無い」
+      # という誤った結論が緑のまま記録される**ため、下のガードで件数を検査する。
+      # 5.1 を使うことで、lab（Server 2019）の採取方法とも揃う。
       - name: Collect enabled TLS cipher suites
-        shell: pwsh
+        shell: powershell
         run: |
           $suites = Get-TlsCipherSuite | ForEach-Object {
             [pscustomobject]@{
@@ -77,6 +85,17 @@ jobs:
           }
 
           Write-Host "有効な暗号スイート数: $($suites.Count)"
+
+          # 採取が潰れていないことを確かめてから先へ進む。Windows の既定有効スイートは
+          # どのバージョンでも数十件あり、数件しか取れていないのは**採取の失敗**である。
+          # ここで落とさないと、後段の絞り込みが 0 件を返して「弱いスイートは残っていない」
+          # という誤った結論が緑のまま記録される。
+          if ($suites.Count -lt 10) {
+            throw "暗号スイートの採取に失敗しました（$($suites.Count) 件）。" +
+                  "Get-TlsCipherSuite の戻り値が 1 オブジェクトへ潰れている可能性があります" +
+                  "（pwsh 7 経由で起きる。本ステップは Windows PowerShell 5.1 で実行すること）。"
+          }
+
           $suites | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 
           # 弱いスイートの残存（ADR-0024 決定 1 の「強度は OS 側の設定に依存する」の裏付け）。
