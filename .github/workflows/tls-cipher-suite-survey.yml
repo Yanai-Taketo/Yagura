@@ -77,8 +77,43 @@ jobs:
       # プロトコル版の対応づけは（潰れる実行系では復元できないため）取得しない
       # ——2019 側の版対応は lab の 5.1 実測が手順書に記録済みで、そちらが正である。
       #
-      # 件数ガードは残す。Windows の既定有効スイートはどのバージョンでも数十件あり、
-      # 10 件未満は採取の失敗である。**沈黙して 0 件を返させない。**
+      # 件数ガードは残す。ただし閾値は 5 に置く——実測値（2022 / 2025 とも 10 種）と
+      # 同じ値にすると、将来スイートがさらに削られたときに正常な採取を失敗と誤判定するため。
+      # 狙いは「潰れた採取（0〜1 件）を沈黙させない」ことであり、上限側の検査ではない。
+      # ■ 採取値が「OS の既定」なのか「その機の構成」なのかを必ず併記する
+      #
+      # スイート順序はグループポリシー／ローカルポリシーで上書きでき、上書きされていると
+      # `Get-TlsCipherSuite` は**そのポリシーの内容**を返す。この区別を書かずに数値だけ記録すると、
+      # 「推奨環境の OS 既定はこうだ」という**成り立たない主張**になる。
+      # 実際に本 workflow の初回計測（10 種）は Microsoft が Server 2022 の既定として公表している
+      # 一覧（23H2 以降で 3 種を除いた 22 種前後）と一致しておらず、ランナー image 側の構成を
+      # 疑う必要があった。
+      #   - Functions（GPO 由来）: HKLM\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002
+      #   - Functions（ローカル）: HKLM\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002
+      - name: Record cipher suite policy (is this the OS default or a configured order?)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          $gpo   = 'HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002'
+          $local = 'HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002'
+
+          foreach ($path in @($gpo, $local)) {
+            Write-Host "== $path"
+            if (Test-Path $path) {
+              $v = (Get-ItemProperty -Path $path -ErrorAction SilentlyContinue).Functions
+              if ($null -ne $v) {
+                $list = @($v) -join ','
+                Write-Host "  CONFIGURED (Functions present)"
+                Write-Host "  $list"
+              } else {
+                Write-Host "  key exists but Functions is absent"
+              }
+            } else {
+              Write-Host "  not configured"
+            }
+          }
+
       - name: Collect enabled TLS cipher suites
         shell: pwsh
         run: |
@@ -89,7 +124,7 @@ jobs:
 
           Write-Host "Enabled cipher suites: $($names.Count)"
 
-          if ($names.Count -lt 10) {
+          if ($names.Count -lt 5) {
             throw "Cipher suite collection failed ($($names.Count) found). See the YAML comment above this step."
           }
 
