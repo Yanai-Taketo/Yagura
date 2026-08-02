@@ -21,7 +21,7 @@
       最新安定版を確認（プレリリースは除外）。nuspec の依存グループで net10.0 対応を確認済み。
       ライセンス MIT（採用日 2026-07-09）。
     -->
-    <PackageVersion Include="bunit" Version="2.7.2" />
+    <PackageVersion Include="bunit" Version="2.8.6" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <!--
       SQL Server provider（M5-3。Issue #47）。採用時のライブ検証: nuget.org の flat container index
@@ -111,7 +111,7 @@
       明示 pin する。**下限の制約**: 2.1.11 系は影響を受けるため、この 2 点を 2.x 系へ
       下げてはならない（採用日 2026-07-05）。
     -->
-    <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.4" />
+    <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.5" />
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
 
     <!--
@@ -123,7 +123,7 @@
       初回修正 1.5.0」としているため、1.5.0 未満へ下げてはならない。実 pin は
       tests/Yagura.Web.Tests の直接参照で効かせる（bunit の唯一の利用箇所。採用日 2026-07-18）。
     -->
-    <PackageVersion Include="AngleSharp" Version="1.5.2" />
+    <PackageVersion Include="AngleSharp" Version="1.7.0" />
   </ItemGroup>
 
 </Project>
