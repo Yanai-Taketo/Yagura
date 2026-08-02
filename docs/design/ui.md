@@ -272,6 +272,7 @@ architecture.md §4.2 の M8 必須要求（「UI に表示する際は…常時
 | 解析済み（ParseStatus.Parsed） | 解析済み（検索条件の解析状態欄。Issue #148） |
 | 内部バッファ破棄（`yagura.ingestion.internal_buffer.dropped`） | 取りこぼし（サーバ内の処理待ちが満杯） |
 | TCP 接続拒否（`yagura.ingestion.tcp_connection.rejected`） | 同時接続の上限で受け付けなかった接続 |
+| TCP / TLS 接続の異常終了（`yagura.ingestion.tcp_connection.faulted`。Issue #482） | 取りこぼしの疑い（接続が想定外の理由で終了） |
 | スプール退避（`yagura.ingestion.spool.evacuated`） | 一時保管への退避（取りこぼしではありません） |
 | スプール書込失敗（`yagura.ingestion.spool.write_failed`） | 取りこぼし（一時保管への保存失敗） |
 | スプール破棄（`yagura.ingestion.spool.discarded`） | 取りこぼし（一時保管が満杯） |

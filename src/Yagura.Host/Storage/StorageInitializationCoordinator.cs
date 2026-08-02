@@ -60,6 +60,7 @@ public sealed class StorageInitializationCoordinator
     private readonly ILogStore _logStore;
     private readonly IAdminAccountStore _accountStore;
     private readonly StorageAvailabilityState _state;
+    private readonly DeferredSystemEventQueue? _deferredSystemEvents;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger _logger;
 
@@ -76,7 +77,8 @@ public sealed class StorageInitializationCoordinator
         IAdminAccountStore accountStore,
         StorageAvailabilityState state,
         TimeProvider? timeProvider = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        DeferredSystemEventQueue? deferredSystemEvents = null)
     {
         ArgumentNullException.ThrowIfNull(logStore);
         ArgumentNullException.ThrowIfNull(accountStore);
@@ -85,6 +87,7 @@ public sealed class StorageInitializationCoordinator
         _logStore = logStore;
         _accountStore = accountStore;
         _state = state;
+        _deferredSystemEvents = deferredSystemEvents;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
@@ -145,6 +148,16 @@ public sealed class StorageInitializationCoordinator
             {
                 _logStoreInitialized = await TryInitializeOneAsync(
                     "ログストア", ct => _logStore.InitializeAsync(ct), onFailure: null, cancellationToken).ConfigureAwait(false);
+
+                // スキーマが揃った直後に、初期化前で書けなかったシステムイベントを書き込む
+                // （Issue #501）。ここに置くのは、**スキーマ未作成が理由で落ちた書き込みを
+                // 拾える唯一の地点**が「初期化が成功した瞬間」だからである。
+                // 本ブロックは単一実行ゲート（不変条件①）の内側にあり、多重フラッシュは起きない。
+                if (_logStoreInitialized && _deferredSystemEvents is { PendingCount: > 0 })
+                {
+                    // フラッシュの失敗は初期化の成否を変えない（預かったまま次の契機で再試行する）。
+                    await _deferredSystemEvents.FlushAsync(_logStore, _logger, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             // 管理者アカウントストア: 失敗するとアプリ独自認証が使えない（縮退。ADR-0023 決定 1）。

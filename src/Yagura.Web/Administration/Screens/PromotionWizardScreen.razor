@@ -150,6 +150,13 @@ else
         <MudText Typo="Typo.h6">これまでに保存したログの扱い</MudText>
         <MudText Class="mt-2">@UiText.PromotionSwitchWarning</MudText>
 
+        @* 処分が未実装であることを**選択の前**に出す（Issue #502）。 *@
+        <div class="mt-3">
+            <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
+                                Message="@UiText.PromotionDisposalManualNotice"
+                                Supplement="@UiText.PromotionDisposalManualSupplement" />
+        </div>
+
         <div class="mt-4">
             <YaguraButton OnClick="ShowEvacuationInput"
                           Disabled="@_showEvacuationInput">

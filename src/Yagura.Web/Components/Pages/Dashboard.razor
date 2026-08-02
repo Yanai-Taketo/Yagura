@@ -335,7 +335,21 @@
         // 初期表示（prerender を含む）で全セクションを一度組み立てる。
         var now = DateTimeOffset.UtcNow;
         RefreshLightSections(now);
-        await RefreshHeavySectionsAsync(now);
+
+        // 保存先由来のセクションは初期表示でも失敗しうる（保存先の停止・到達不能）。
+        // ここで例外を通すと**画面そのものが開けなくなる**（Issue #500）——定期更新側は
+        // 既に同じ失敗を捕捉して警告表示 + 次周期での再試行に落としており、初期表示だけが
+        // その扱いから漏れていた。同じ扱いに揃える。
+        // 軽いセクション（RefreshLightSections。カウンタ・スプール等の観測値）は保存先に
+        // 依存しないため、この分岐でも表示できる。
+        try
+        {
+            await RefreshHeavySectionsAsync(now);
+        }
+        catch (Exception)
+        {
+            _updateStalled = true;
+        }
     }
 
     protected override void OnAfterRender(bool firstRender)

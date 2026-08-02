@@ -188,9 +188,12 @@ New-SelfSignedCertificate -DnsName "yagura01.example.local", "yagura01" `
 | | 状態 |
 |---|---|
 | syslog の受信 | **継続**。DB へ書けない分はディスクのスプールへ退避される |
-| 閲覧 | 見えるのは**障害が起きる前に DB へ書けた分まで**。障害中に受信した分はスプールにあり、閲覧には現れない |
+| 閲覧 | 見えるのは**障害が起きる前に DB へ書けた分まで**。障害中に受信した分はスプールにあり、閲覧には現れない。検索を実行すると「保存先に接続できていない」旨の警告が出る（**「該当なし」とは区別される**） |
+| 状態画面（`/status`） | **開ける。** カウンタと一時保管（スプール）の状態は保存先に依存しないため表示される。蓄積件数・保存先の使用量・履歴だけが「取得できません」になる |
 | ID/パスワードでのサインイン | **一時的に不可**（管理者アカウントの台帳が読めないため） |
 | Windows 統合認証でのサインイン | 影響なし |
+
+**障害中に最初に見る場所は状態画面である**——退避が起きているか（`yagura.ingestion.spool.evacuated`）、損失系カウンタが動いていないか（`spool.discarded` / `persistence.failed` 等）をここで確認する。
 
 **復旧に操作は要らない。** DB が復旧すると自動的に元へ戻り、スプールの内容も順次 DB へ流し込まれる（イベントログに 1040 が記録される）。
 
@@ -304,3 +307,96 @@ v1.0 系列は同梱する .NET 10（LTS）のサポート終了日を上限と�
 SECURITY.md のとおり修正は最新リリースにのみ提供され、過去の版へのバックポートは行わない。したがって**対応外 OS に留まることは、脆弱性修正を受け取る経路が無くなることを意味する**。
 
 対応 OS への移行が難しい事情がある場合は、[Discussions](https://github.com/Yanai-Taketo/Yagura/discussions) で相談してほしい。
+
+### 12.5 TLS 受信（6514）を有効化したら、ファイアウォール規則を自分で足す
+
+MSI が作成する受信許可規則は **UDP 514 / TCP 514 / TCP 8514 の 3 本だけ**である。TLS 受信は opt-in で導入後に有効化するため、**MSI は 6514 の規則を作れない**。
+
+規則が無いまま TLS 受信を有効化すると、起動時とその後の周期監視で次の警告が出る（loopback からの検証は通るため、**リモートの送信元だけが届かない**という気づきにくい状態になる）。
+
+```
+[firewall-rule-mismatch] リスナの実ポートと Yagura 名前空間のファイアウォール規則に不一致があります:
+  syslog TLS 受信（TCP 6514）に対応する有効な受信許可規則がありません
+```
+
+管理者権限の PowerShell で、MSI が作る規則と同じ条件（Domain + Private・受信許可・実行ファイル限定）を満たす規則を追加する。
+
+```powershell
+New-NetFirewallRule -DisplayName 'Yagura Syslog (TLS 6514)' `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6514 `
+  -Profile Domain,Private `
+  -Program 'C:\Program Files\Yagura\Yagura.Host.exe'
+```
+
+インストール先を既定から変えた場合は `-Program` のパスを合わせる。規則を追加すると次回の突合で警告は消える。**ポート番号を `Ingestion:Tls:Port` で変更した場合も同じ警告が出る**（古いポートの規則が「どのリスナにも対応していない」として併せて列挙される）。
+
+### 12.6 Windows Server 2019 の送信元から TLS 受信へ送るとき
+
+Yagura の TLS 受信は **TLS 1.2 を下限**とする（1.0 / 1.1 は受け付けない）。一方 **Windows Server 2019 の既定のクライアント設定は、.NET Framework 系のツールで TLS 1.0 までしか提示しない**ことがある。
+
+実機で確認した例（2026-08-02。Server 2019 10.0.17763.3650、`SchUseStrongCrypto` / `SystemDefaultTlsVersions` とも未設定）: PowerShell 5.1 の `SslStream` で既定のまま接続すると、共通アルゴリズムが無く必ず失敗する。
+
+```
+A call to SSPI failed, see inner exception.
+---> The function requested is not supported   (SEC_E_UNSUPPORTED_FUNCTION 0x80090302)
+```
+
+サーバ側のイベントログには次が記録される（**失敗は必ず観測できる**——ログが出ないまま接続が消えることはない）。
+
+```
+TLS 接続 <送信元>:<ポート> のハンドシェイクに失敗しました。
+---> クライアントとサーバーは共通のアルゴリズムを処理していないので、通信できません。
+```
+
+対処は送信側の設定である。
+
+- **送信側が .NET Framework 系のツール**（PowerShell 5.1・自作スクリプト等）: レジストリの `SchUseStrongCrypto` / `SystemDefaultTlsVersions` を有効にするか、コード側で `[System.Security.Authentication.SslProtocols]::Tls12` を明示する
+- **送信側が syslog 転送エージェント**: そのエージェントの TLS バージョン設定を 1.2 以上にする
+- **サーバ側を 1.0 まで下げることはしない**。Yagura は導入先の OS バージョンが混在しても TLS 1.0 / 1.1 が意図せず露出しないよう、プロトコルの下限を明示固定している（[ADR-0010](adr/0010-admin-ui-authentication.md) Phase 2 決定 4）
+
+## 13. 昇格後に旧データベースファイルを処分する
+
+SQLite から SQL Server へ「本番昇格」すると、管理画面のウィザードで**旧・組み込みデータベースの処分（退避 / 削除）を選ぶ**。ただし**現在の版では、この選択は記録されるだけで、ファイルの移動・削除は自動では行われない**。切り替え後も旧ファイルは元の場所に残る。
+
+処分は切り替えの完了後に手動で行う。
+
+### 13.1 なぜ手動なのか
+
+旧ファイルは**サービスが停止するまで開かれたまま**であり、切り替えの反映自体がサービス再起動を伴う。したがって処分は「再起動をまたいだ後始末」になる。この後始末を自動化する仕組みは、無瞬断での切替手順とあわせて設計する項目として残っている（[#502](https://github.com/Yanai-Taketo/Yagura/issues/502)）。
+
+**放置しても受信・閲覧に影響はない**が、次の 2 点のため、方針を決めて処分することを勧める。
+
+- 旧ファイルには**切り替え前のログがそのまま入っている**。保持期間の自動削除は新しい保存先にしか効かないため、**旧ファイルの中身は消えない**
+- ディスク容量を占め続ける
+
+### 13.2 手順
+
+切り替えが完了し、新しい保存先へログが保存されていることを確認してから行う。
+
+```powershell
+# 1. サービスを停止する（ファイルの掴みを解放するため）
+Stop-Service Yagura
+
+# 2. 旧ファイルを確認する（既定のデータルート配下。ファイル名の既定は yagura.db）
+$Root = "$env:ProgramData\Yagura"
+Get-ChildItem $Root -Filter 'yagura.db*'   # -wal / -shm が併存する場合がある
+
+# 3a. 退避する場合（-wal / -shm も一緒に移す）
+$Dest = 'D:\Backup\Yagura'
+New-Item -ItemType Directory -Path $Dest -Force | Out-Null
+Move-Item "$Root\yagura.db*" $Dest
+
+# 3b. 削除する場合
+Remove-Item "$Root\yagura.db*"
+
+# 4. サービスを起動する
+Start-Service Yagura
+```
+
+**`-wal` / `-shm` を置き去りにしないこと。** SQLite は本体ファイルの脇に書き込みログ（`yagura.db-wal`）と共有メモリ索引（`yagura.db-shm`）を作る場合があり、**本体だけを移すと退避先のファイルから最新の書き込みを読めなくなることがある**。`yagura.db*` のようにまとめて扱う。
+
+データルートを既定から変えている場合、または SQLite のファイル名を変えている場合は、`yagura.json` の該当設定を確認してパスを読み替える。
+
+### 13.3 退避したファイルを後で読みたい場合
+
+退避先の `yagura.db` は**そのままの SQLite ファイル**である。Yagura に読み込ませる機能は現時点では無いため、SQLite の閲覧ツール（`sqlite3` コマンド等）で直接開く。

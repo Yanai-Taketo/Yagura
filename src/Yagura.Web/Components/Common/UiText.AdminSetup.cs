@@ -925,11 +925,29 @@ public static partial class UiText
         "切り替えると、これまでに保存したログは移行機能の提供まで画面から参照できなくなります。" +
         "あとで参照する可能性がある場合は「退避」を選んでください。";
 
-    /// <summary>旧・組み込み DB ファイルの処分: 退避。</summary>
-    public const string PromotionDisposalEvacuate = "退避（指定した場所へ移動して保管する）";
+    /// <summary>
+    /// 旧・組み込み DB ファイルの処分: 退避。
+    /// **「移動して保管する」とは書かない**（Issue #502）——現行の版では実ファイルの移動は
+    /// 行われないため、動作を約束する文言にすると利用者は「退避された」と誤解する。
+    /// </summary>
+    public const string PromotionDisposalEvacuate = "退避（あとで参照できるよう保管する）";
 
     /// <summary>旧・組み込み DB ファイルの処分: 削除。</summary>
-    public const string PromotionDisposalDelete = "削除";
+    public const string PromotionDisposalDelete = "削除（あとで参照しない）";
+
+    /// <summary>
+    /// 処分が未実装であることの明示（Issue #502）。**選択する前**に出す——
+    /// 切替完了後にだけ伝えると、退避先を入力した利用者は「退避済み」と思い込んだまま
+    /// 旧ファイルを放置する（または元の場所を探さない）ことになる。
+    /// </summary>
+    public const string PromotionDisposalManualNotice =
+        "現在の版では、ここでの選択は記録されるだけで、旧データベースファイルの移動・削除は" +
+        "自動では行われません。切り替え後も、旧ファイルは元の場所に残ります。";
+
+    /// <summary>処分が未実装であることの補足（次に取る手順）。</summary>
+    public const string PromotionDisposalManualSupplement =
+        "選択した内容は監査記録に残ります。実際の移動・削除は、切り替えの完了後に手動で行ってください" +
+        "（手順は運用ガイドの「昇格後に旧データベースファイルを処分する」を参照）。";
 
     /// <summary>切替実行ボタン（破壊的操作。確認ダイアログ必須——ui.md §3.1）。</summary>
     public const string PromotionExecute = "切り替えを実行する";
