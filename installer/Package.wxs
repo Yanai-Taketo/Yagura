@@ -43,13 +43,23 @@
       Windows Server 2019 と Windows 10 1809 は**いずれもビルド 17763** であり、
       サーバ・クライアント双方の対応下限を単一の条件式で表現できる(ADR-0024 決定 1)。
 
-      【VersionNT / WindowsBuild を使わない理由】
-      Windows Installer は Windows 10 以降の互換性マニフェストを持たないため、
-      これらのプロパティは実ビルド番号ではなく 6.3 / 9600 に張り付きうる。該当すると
-      条件式は**全対応環境で false** になり、LaunchCondition はアップグレードでも
-      評価されるため、**既存の全インストール環境が更新不能**になる——脆弱性修正の
-      配布経路が断たれる(ADR-0023 が 1 本の ADR を費やした「アップグレードで製品が
-      消えない」と同じ経路のリスク)。したがって**レジストリの実値を直接読む**。
+      【VersionNT / WindowsBuild を使わない理由——机上の懸念ではなく実測である】
+      Windows Installer は Windows 10 以降の互換性マニフェストを持たないため、これらの
+      プロパティは実ビルド番号を返さない。**installer-e2e の実ビルドで実測した値**
+      (2026-08-02、GitHub ホストランナー。msiexec 詳細ログの Property(S) より):
+
+        | プロパティ            | windows-2022 | windows-2025 |
+        |-----------------------|--------------|--------------|
+        | VersionNT / VersionNT64 |        603 |          603 |
+        | WindowsBuild            |       9600 |         9600 |
+        | YAGURA_OS_BUILD(本実装) |      20348 |        26100 |
+
+      **`WindowsBuild >= 17763` と書いていれば、両方とも 9600 で false になり、
+      対応環境を含む全環境で新規インストールとアップグレードが拒否されていた。**
+      LaunchCondition はアップグレードでも評価されるため、これを含むリリースを 1 本
+      出した時点で**既存の全インストール環境が更新不能**になり、脆弱性修正の配布経路が
+      断たれる(ADR-0023 が 1 本の ADR を費やした「アップグレードで製品が消えない」と
+      同じ経路のリスク)。したがって**レジストリの実値を直接読む**。
       CurrentBuildNumber は REG_SZ の数字列で、MSI は整数へ変換可能な文字列プロパティを
       整数と数値比較する(learn.microsoft.com/windows/win32/msi/conditional-statement-syntax
       「Comparison of an integer with a string or property value that cannot be converted

@@ -460,3 +460,51 @@ Microsoft の公表内容とも整合する——[TLS Cipher Suites in Windows S
 #### 委任事項 1 の残条件
 
 **残条件 B は本改訂で消えた。**残るのは A（閲覧 HTTPS と `tcp_connection.faulted` を含む main ビルドでの §A-1・§A-3 の再測）のみで、[#494](https://github.com/Yanai-Taketo/Yagura/issues/494) に残す。
+
+### 改訂 9（2026-08-02）: 委任事項 6（MSI の起動条件）を実装。決定 6 は不変
+
+決定 6（対応下限を MSI の起動条件で機械的に強制する）を `installer/Package.wxs` へ実装した（[#496](https://github.com/Yanai-Taketo/Yagura/issues/496)）。**決定そのものは変えていない**——実装方式と、実装時に確定させると委任していた 4 点の答えを記録する。
+
+#### ① 使用するプロパティと比較方法（実ビルドでの確証）
+
+委任事項 6 は「`VersionNT` / `WindowsBuild` が実ビルド番号を返さない可能性」を最大の risk として挙げ、**机上調査に留めないこと**を条件にしていた。installer-e2e の実ビルドで実測した結果は次のとおりで、**懸念は現実だった**。
+
+| プロパティ | windows-2022 | windows-2025 |
+|---|---|---|
+| `VersionNT` / `VersionNT64` | 603 | 603 |
+| `WindowsBuild` | **9600** | **9600** |
+| `YAGURA_OS_BUILD`（本実装のレジストリ読み） | **20348** | **26100** |
+
+**`WindowsBuild >= 17763` と書いていれば両方とも false になり、対応環境を含む全環境で新規インストールとアップグレードが拒否されていた。** 委任事項 6 が想定した最悪の失敗様式そのものである。
+
+採った方式は `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\CurrentBuildNumber`（REG_SZ）の `RegistrySearch`。MSI は整数へ変換可能な文字列プロパティを整数と数値比較する（[Conditional Statement Syntax](https://learn.microsoft.com/en-us/windows/win32/msi/conditional-statement-syntax)「Comparison of an integer with a string or property value that cannot be converted to an integer is always false」。確認日 2026-08-02）。
+
+#### ② 条件式（3 項。どれを落としても事故になる）
+
+```
+NOT YAGURA_OS_BUILD OR YAGURA_OS_BUILD >= 17763 OR REMOVE~="ALL"
+```
+
+- **`NOT YAGURA_OS_BUILD`（読めなければ通す = fail-open）**: 判定材料を得られないことと「対応外 OS である」ことは別である。ここを fail-closed にすると**測定の失敗がそのまま全環境ブロックに化ける**。本条件はセキュリティ境界ではなくサポート表明のゲートであり、被害の非対称性（全環境の更新停止 ≫ 対応外 OS への誤インストール）から fail-open を採る
+- **`REMOVE~="ALL"`（アンインストールは常に許す）**: `LaunchCondition` は削除シーケンスでも評価される。これが無いと**対応外 OS の利用者は製品を消すこともできなくなる**。委任事項 6 の必須項目には挙がっていなかったが、同じ「全環境ブロック」系の事故である
+
+#### ③ 拒否メッセージ
+
+「なぜ入れられないか（検出したビルド番号を含む）」「対応下限と推奨」「詳細と移行相談の導線」を含める。**`LaunchCondition` の Description 列は 255 文字が上限**で、超えると ICE03 でビルドが落ちる（当初案 258 文字が実ビルドで落ちた）。移行相談の導線は字数の都合で README 側へ委ねた。
+
+#### ④ Server Core — 判別できるが拒否しない
+
+`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\InstallationType`（`Server Core` / `Server` / `Client`）で判別できる。**判別できても拒否しない**方針とする——決定 1 が Server Core を対応外に置いた理由は「未検証だから」であって動作しないからではなく、ADR-0004 決定 2 は設定ファイル手編集による管理経路を明示的に設計している。ここで拒否すると**その経路を試すこと自体を封じ、既存利用者の更新も止める**。
+
+#### 検証の現況
+
+委任事項 6 は「4 区分 × 2 経路」を求め、**推奨・対応区分で正常に通ることを、対応外での拒否確認と同格の必須項目**としていた。
+
+| 経路 | 状況 |
+|---|---|
+| 推奨区分（2022 / 2025）× 新規インストール | ✅ installer-e2e で成功（両ランナー） |
+| 推奨区分（2022 / 2025）× メジャーアップグレード | ✅ installer-e2e のアップグレード検証で成功（両ランナー） |
+| 対応区分（Server 2019）× 両経路 | ⬜ lab 未実施（#496 に残す） |
+| 対応外区分 × 両経路 | ⬜ lab 未実施。**拒否が出ることの確認**（#496 に残す） |
+
+**通過側は CI で常時検証される**（installer-e2e は `installer/**` の変更で走る）。したがって「条件式の誤りで全環境が更新不能になる」という最悪ケースは、リリース前に機械的に検出される。残るのは拒否側の実地確認である。
