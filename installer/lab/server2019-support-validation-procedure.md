@@ -149,7 +149,51 @@ Get-TlsCipherSuite | Select-Object Name, Protocols, Cipher, CipherLength, Hash, 
 | 2019 と推奨環境でスイート集合が同等 | 弱いスイートの残存は**全区分共通の性質**である。「対応環境固有の差」としては書かず、全区分に掛かる注意として記す |
 | 2019 側にだけ弱いスイート（3DES・SHA-1 系 CBC・NULL）が残る | **区分間の差として記す**。要件表に「対応環境では暗号強度が OS 側のハードニングにより依存度が高い」旨を追記する |
 
-**2026-08-02 実施時点の 2019 側の観測（既定有効 31 スイート。抜粋）**: TLS 1.3 スイート 2 種が列挙される一方、TLS 1.2 用として **`TLS_RSA_WITH_3DES_EDE_CBC_SHA`・`TLS_RSA_WITH_NULL_SHA256`・`TLS_RSA_WITH_NULL_SHA`・SHA-1 系 CBC 各種**が既定で有効だった。この観測を受けて **ADR-0024 決定 1 の「差は TLS 1.3 の 1 点」は既に撤回済み**（改訂 7）。残るのは「2019 固有か全区分共通か」の切り分けのみ。
+この観測を受けて **ADR-0024 決定 1 の「差は TLS 1.3 の 1 点」は既に撤回済み**（改訂 7）。残るのは「2019 固有か全区分共通か」の切り分けのみ。
+
+#### 2019 側の実測値（比較の基準。2026-08-02）
+
+Windows Server 2019 Standard Evaluation **10.0.17763.3650**（Windows Update 2022-11 適用水準）の `Get-TlsCipherSuite` 出力。既定有効は **31 スイート**（DTLS 専用の `0xFEFF` / `0xFEFD` 表記は省略）。
+
+```
+TLS_AES_256_GCM_SHA384                    0x0304
+TLS_AES_128_GCM_SHA256                    0x0304
+TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384   (protocols 表示なし)
+TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256   0x0303
+TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384     0x0303
+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256     0x0303
+TLS_DHE_RSA_WITH_AES_256_GCM_SHA384       0x0303
+TLS_DHE_RSA_WITH_AES_128_GCM_SHA256       0x0303
+TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384   (protocols 表示なし)
+TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256   0x0303
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384     0x0303
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256     0x0303
+TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA      0x0301,0x0302,0x0303
+TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA      0x0301,0x0302,0x0303
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA        0x0301,0x0302,0x0303
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA        0x0301,0x0302,0x0303
+TLS_RSA_WITH_AES_256_GCM_SHA384           0x0303
+TLS_RSA_WITH_AES_128_GCM_SHA256           0x0303
+TLS_RSA_WITH_AES_256_CBC_SHA256           0x0303
+TLS_RSA_WITH_AES_128_CBC_SHA256           0x0303
+TLS_RSA_WITH_AES_256_CBC_SHA              0x0301,0x0302,0x0303
+TLS_RSA_WITH_AES_128_CBC_SHA              0x0301,0x0302,0x0303
+TLS_RSA_WITH_3DES_EDE_CBC_SHA             0x0300,0x0301,0x0302,0x0303
+TLS_RSA_WITH_NULL_SHA256                  0x0303
+TLS_RSA_WITH_NULL_SHA                     0x0300,0x0301,0x0302,0x0303
+TLS_PSK_WITH_AES_256_GCM_SHA384           (protocols 表示なし)
+TLS_PSK_WITH_AES_128_GCM_SHA256           0x0303
+TLS_PSK_WITH_AES_256_CBC_SHA384           0x0303
+TLS_PSK_WITH_AES_128_CBC_SHA256           0x0303
+TLS_PSK_WITH_NULL_SHA384                  0x0303
+TLS_PSK_WITH_NULL_SHA256                  0x0303
+```
+
+**注意**: TLS 1.3 のスイート（`0x0304`）が列挙されるが、**Schannel の 17763 では TLS 1.3 は利用できない**。§A-1 の実測（`SslProtocol = Tls12`）が正であり、この列挙を根拠に「TLS 1.3 が使える」と読まないこと。
+
+#### 推奨環境側の採取（CI）
+
+`.github/workflows/tls-cipher-suite-survey.yml` が `windows-2025` / `windows-2022` で同じ `Get-TlsCipherSuite` を採る。**lab は不要**——測っているのは Yagura の挙動ではなく OS の既定だからである。再測は `workflow_dispatch` で行う。
 
 ---
 

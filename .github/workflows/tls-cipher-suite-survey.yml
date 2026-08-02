@@ -1,0 +1,105 @@
+# TLS 暗号スイートの実測（ADR-0024 委任事項 1 の残条件 B。Issue #494）
+#
+# ■ 何を測るか
+# **OS（Schannel）が既定で有効にしている TLS 暗号スイートの集合**を、推奨環境の各
+# バージョンで採取する。Yagura が固定しているのは**プロトコル版の下限（TLS 1.2）だけ**で、
+# ハンドシェイクで実際に選ばれるスイートは OS のポリシーに委ねられている——したがって
+# 「対応環境と推奨環境で通信強度に差があるか」は、Yagura を動かして 1 回ハンドシェイクを
+# 見ても分からない。**OS の既定集合そのものを並べる**しかない。
+#
+# ■ なぜ CI で測るのか（lab ではなく）
+# 測定対象は Yagura の挙動ではなく **OS の設定**である。GitHub ホストランナーの Windows
+# image はその OS の既定を持っているため、推奨環境 2 バージョンの採取はここで足りる。
+# 対応下限の Server 2019 は `windows-2019` ランナーが退役済みで CI では踏めないため、
+# lab の実測値を installer/lab/server2019-support-validation-procedure.md §A-4 に記録して
+# あり、本 workflow の出力とそれを突き合わせる。
+#
+# ■ トリガ設計（常設にしない）
+# 毎 PR で回す価値はない——Yagura のコード変更で結果が変わることはないため。
+#   - workflow_dispatch: 再測したくなったとき（ランナー image の更新後・監査対応等）
+#   - push（本ファイル自身の変更時のみ）: 採取内容を変えたら測り直す、が自然に成立する
+# ランナー image の更新で結果は変わりうるが、**変わっても Yagura 側の記述は変わらない**
+# （「強度は OS 側の設定に依存する」という命題は集合の中身に依らない）。したがって
+# 追随を自動化する必要はなく、必要になった時点で dispatch すればよい。
+name: TLS Cipher Suite Survey
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tls-cipher-suite-survey.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    strategy:
+      # 片方が落ちてももう片方の採取は続ける（比較が目的のため両方欲しいが、
+      # 片方だけでも 2019 との突合はできる）。
+      fail-fast: false
+      matrix:
+        # 推奨環境（ADR-0024 決定 1）。ci.yml の matrix と同じ明示ピンにする。
+        os: [windows-2025, windows-2022]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 採取値は「どの OS ビルドの既定か」とセットでなければ記録として意味を持たない
+      # （ランナー image は随時更新されるため）。
+      - name: Record OS identity
+        shell: pwsh
+        run: |
+          $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          [pscustomobject]@{
+            RunnerLabel  = '${{ matrix.os }}'
+            ProductName  = $cv.ProductName
+            DisplayVersion = $cv.DisplayVersion
+            BuildNumber  = "$($cv.CurrentMajorVersionNumber).$($cv.CurrentMinorVersionNumber).$($cv.CurrentBuildNumber).$($cv.UBR)"
+            OSVersion    = [System.Environment]::OSVersion.VersionString
+          } | Format-List
+
+      # `Protocols` は UInt32 の配列で返る（0x0303 = TLS 1.2 / 0x0304 = TLS 1.3）。
+      # 既定の Format-Table では配列が省略表示になり比較に使えないため、16 進へ展開する。
+      # DTLS（0xFEFF / 0xFEFD）は本件の対象外だが、除外して集合を歪めないようそのまま出す。
+      - name: Collect enabled TLS cipher suites
+        shell: pwsh
+        run: |
+          $suites = Get-TlsCipherSuite | ForEach-Object {
+            [pscustomobject]@{
+              Name         = $_.Name
+              Protocols    = ($_.Protocols | ForEach-Object { '0x{0:X4}' -f $_ }) -join ','
+              Cipher       = $_.Cipher
+              CipherLength = $_.CipherLength
+              Hash         = $_.Hash
+              Exchange     = $_.Exchange
+            }
+          }
+
+          Write-Host "有効な暗号スイート数: $($suites.Count)"
+          $suites | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+
+          # 弱いスイートの残存（ADR-0024 決定 1 の「強度は OS 側の設定に依存する」の裏付け）。
+          # 名前で判定する——CipherLength だけでは 3DES（168）と AES(128/256) の別が読みにくく、
+          # NULL（暗号化なし）は長さ 0 で他と紛れるため。
+          $weak = $suites | Where-Object {
+            $_.Name -match '3DES' -or $_.Name -match 'NULL' -or $_.Name -match 'RC4' -or
+            ($_.Name -match 'CBC_SHA$')   # SHA-1 の CBC（末尾が _SHA のもの）
+          }
+          Write-Host "----"
+          Write-Host "弱いスイート（3DES / NULL / RC4 / SHA-1 CBC）の残存数: $($weak.Count)"
+          if ($weak.Count -gt 0) {
+            $weak | Select-Object Name, Protocols | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          }
+
+          New-Item -ItemType Directory -Path survey-results -Force | Out-Null
+          $suites | ConvertTo-Json -Depth 3 |
+            Set-Content -Path "survey-results/cipher-suites-${{ matrix.os }}.json" -Encoding utf8
+
+      - name: Upload survey results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tls-cipher-suite-survey-${{ matrix.os }}
+          path: survey-results/
+          if-no-files-found: warn
