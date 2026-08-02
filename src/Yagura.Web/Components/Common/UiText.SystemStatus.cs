@@ -69,6 +69,26 @@ public static partial class UiText
     /// <summary>未知の計器名のフォールバック表示（新カウンタ追加時の平易語未登録を隠さない）。</summary>
     public const string CounterUnknown = "（対応表未登録の項目）";
 
+    // ---- 保存先到達不能時の縮退表示（Issue #500） ----
+
+    /// <summary>
+    /// 保存先の読み出しに失敗したときの縮退バナー（Issue #500）。
+    /// **何が見えないかと、何は見えるかを同時に言う**——この画面は保存先障害中こそ見たい
+    /// カウンタ・スプールを持っており、「全部だめ」と読ませない。
+    /// </summary>
+    public const string StatusStorageUnavailableNotice =
+        "保存先（データベース）に接続できていないため、蓄積件数・保存先の使用量・履歴は表示できません。";
+
+    /// <summary>保存先到達不能時の補足（この画面で何が確認できるか）。</summary>
+    public const string StatusStorageUnavailableSupplement =
+        "下のカウンタと一時保管（スプール）の状態は保存先に依存しないため、この画面で確認できます" +
+        "——受信は継続しており、保存できなかった分は一時保管へ退避されます。" +
+        "保存先が復旧すると自動的に元の表示に戻ります。";
+
+    /// <summary>履歴が取得できなかったときの表示（0 件と区別する。Issue #500）。</summary>
+    public const string HistoryStorageUnavailable =
+        "保存先に接続できていないため取得できませんでした（履歴が無いという意味ではありません）。";
+
     /// <summary>ゲージ一覧カードの見出し。</summary>
     public const string GaugesTitle = "現在の状態";
 

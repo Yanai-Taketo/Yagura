@@ -17,6 +17,18 @@
 
 <MudText Typo="Typo.h5" Class="mb-4">@UiText.NavStatus</MudText>
 
+@* 保存先到達不能時の縮退バナー（Issue #500）。この画面は保存先が落ちていても開ける——
+   むしろ落ちている最中にこそ、退避が起きているか・損失系カウンタが動いていないかを
+   ここで確認する。何が見えていて何が見えていないかを先に明示する。 *@
+@if (_storageUnavailable)
+{
+    <div class="mb-4">
+        <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
+                            Message="@UiText.StatusStorageUnavailableNotice"
+                            Supplement="@UiText.StatusStorageUnavailableSupplement" />
+    </div>
+}
+
 <div class="mb-4">
     <YaguraCard Title="@UiText.GaugesTitle">
         <MudGrid Spacing="3">
@@ -65,7 +77,12 @@
 
 <div class="mb-4">
     <YaguraCard Title="@UiText.OutageHistoryTitle">
-        @if (_outageEvents is null)
+        @if (_storageUnavailable)
+        {
+            @* 「履歴はありません」と出さない——0 件と取得できないことは別の意味である（Issue #500）。 *@
+            <MudText Typo="Typo.body2">@UiText.HistoryStorageUnavailable</MudText>
+        }
+        else if (_outageEvents is null)
         {
             <MudText Typo="Typo.body2">読み込み中です。</MudText>
         }
@@ -94,7 +111,11 @@
 <div class="mb-4">
     <YaguraCard Title="@UiText.EventHistoryTitle">
         <MudText Typo="Typo.caption" Class="mb-2" role="note">@UiText.EventLogNote</MudText>
-        @if (_otherEvents is null)
+        @if (_storageUnavailable)
+        {
+            <MudText Typo="Typo.body2">@UiText.HistoryStorageUnavailable</MudText>
+        }
+        else if (_otherEvents is null)
         {
             <MudText Typo="Typo.body2">読み込み中です。</MudText>
         }
@@ -133,6 +154,12 @@
     private IReadOnlyList<SystemEvent>? _outageEvents;
     private IReadOnlyList<SystemEvent>? _otherEvents;
 
+    /// <summary>
+    /// 保存先の読み出しに失敗したか（Issue #500）。true でも本画面は開ける——
+    /// カウンタ・スプール・ゲージは保存先に依存しないため。
+    /// </summary>
+    private bool _storageUnavailable;
+
     protected override async Task OnInitializedAsync()
     {
         var status = StatusReader.ReadCurrent();
@@ -151,18 +178,43 @@
         _spool = status.Spool;
         _spoolDegraded = status.SpoolDegraded;
 
-        var statistics = await LogStore.GetStatisticsAsync();
-        _storedRecords = statistics.RecordCount;
-        _databaseSizeBytes = statistics.DatabaseSizeBytes;
-        _databaseSizeUnavailableReason = statistics.DatabaseSizeUnavailableReason;
+        // 保存先由来の情報（蓄積件数・DB サイズ・履歴）は**個別に**縮退させる（Issue #500）。
+        // ここで例外を通すと画面全体が落ちるが、上で読み終えたカウンタ・スプール・ゲージは
+        // **保存先に依存しない**観測値であり、保存先障害中こそ見たい情報である
+        // （退避が起きているか・損失系カウンタが動いていないか）。architecture.md §1.2 の
+        // 「DB や UI の初期化失敗が受信を止めない」と同じ原則を観測面にも適用する。
+        try
+        {
+            var statistics = await LogStore.GetStatisticsAsync();
+            _storedRecords = statistics.RecordCount;
+            _databaseSizeBytes = statistics.DatabaseSizeBytes;
+            _databaseSizeUnavailableReason = statistics.DatabaseSizeUnavailableReason;
+        }
+        catch (Exception)
+        {
+            // 値は未取得のまま（"—" 表示）にし、理由は画面上部の縮退バナーで 1 回だけ伝える。
+            // 例外の詳細はイベントログ側の責務——画面へ内部エラーを出さない（ui.md §5.2）。
+            _storageUnavailable = true;
+        }
 
-        var events = await LogStore.QuerySystemEventsAsync(
-            from: null,
-            to: null,
-            limit: HistoryLimit,
-            timeout: InternalQueryTimeout);
-        _outageEvents = events.Where(e => SystemEventKinds.IsDowntime(e.Kind)).ToList();
-        _otherEvents = events.Where(e => !SystemEventKinds.IsDowntime(e.Kind)).ToList();
+        try
+        {
+            var events = await LogStore.QuerySystemEventsAsync(
+                from: null,
+                to: null,
+                limit: HistoryLimit,
+                timeout: InternalQueryTimeout);
+            _outageEvents = events.Where(e => SystemEventKinds.IsDowntime(e.Kind)).ToList();
+            _otherEvents = events.Where(e => !SystemEventKinds.IsDowntime(e.Kind)).ToList();
+        }
+        catch (Exception)
+        {
+            _storageUnavailable = true;
+            // 空リストを入れる（null のままだと「読み込み中です。」が出続け、取得できなかった
+            // ことと読み込み中が区別できない）。表示の出し分けは _storageUnavailable が持つ。
+            _outageEvents = [];
+            _otherEvents = [];
+        }
     }
 
     /// <summary>計器名 → 平易語（ui.md §7.2 用語対応表と 1 対 1。未登録は隠さず明示する）。</summary>

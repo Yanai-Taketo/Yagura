@@ -112,10 +112,30 @@ public static class CertificatePrivateKeyAccessGranter
                 AccessControlType.Allow));
             fileInfo.SetAccessControl(accessControl);
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IdentityNotMappedException or IOException)
+        catch (IdentityNotMappedException ex)
         {
+            // アカウント名そのものが解決できない（存在しない gMSA・打ち間違い・ドメイン到達不能）。
+            // certlm.msc を案内しても同じ名前で失敗するため、**この分岐だけは別の案内にする**。
             return CertificatePrivateKeyGrantResult.Failure(
-                $"秘密鍵ファイル {keyFilePath} への ACL 付与に失敗しました: {ex.Message}");
+                $"アカウント「{accountName}」を解決できなかったため、秘密鍵ファイル {keyFilePath} へ" +
+                $"権限を付与できませんでした: {ex.Message} " +
+                "サービスの実行アカウント名（gMSA を使う場合はドメインからの解決可否を含む）を確認してください。");
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            // 付与先の鍵ファイルは判明している（他の 2 分岐と違い、対象パスを示せる）。
+            // **是正手順を必ず添える**（Issue #503）——ここだけ案内が無いと、利用者は
+            // 例外メッセージ（"Attempted to perform an unauthorized operation." 等）だけを
+            // 受け取ることになり、次に何をすればよいか分からない。
+            // security.md §2.5 の「付与に失敗しても起動は妨げない（警告のみ）」は維持したまま、
+            // 警告の実用性だけを上げる。
+            return CertificatePrivateKeyGrantResult.Failure(
+                $"秘密鍵ファイル {keyFilePath} への ACL 付与に失敗しました: {ex.Message} " +
+                "現在の実行アカウントに、この鍵ファイルの ACL を変更する権限がない場合に起きます。" +
+                "管理者権限で次のいずれかを行ってください（configuration.md §6 CF-D2）: " +
+                $"①コマンドで付与する — icacls \"{keyFilePath}\" /grant \"{accountName}\":R  " +
+                "②証明書スナップイン（certlm.msc）で対象の証明書を右クリックし、" +
+                $"［すべてのタスク］→［秘密キーの管理］から「{accountName}」に読み取り権限を与える。");
         }
 
         return CertificatePrivateKeyGrantResult.Success(keyFilePath);

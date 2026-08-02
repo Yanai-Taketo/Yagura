@@ -1068,12 +1068,16 @@ public static class Program
         // ADR-0023 決定 1: 保存先の初期化を起動経路の外で行い、失敗しても起動を止めない。
         // 縮退状態（アプリ独自認証の利用可否）は StorageAvailabilityState で認証・画面・通知が共有する。
         builder.Services.AddSingleton<Yagura.Web.Administration.StorageAvailabilityState>();
+        // 初期化前に書けなかったシステムイベントの預かり先（Issue #501）。IngestionHostedService が
+        // 預け、StorageInitializationCoordinator がスキーマ初期化の直後に書き込む。
+        builder.Services.AddSingleton<Yagura.Host.Storage.DeferredSystemEventQueue>();
         builder.Services.AddSingleton(sp => new Yagura.Host.Storage.StorageInitializationCoordinator(
             sp.GetRequiredService<ILogStore>(),
             sp.GetRequiredService<Yagura.Storage.Administration.IAdminAccountStore>(),
             sp.GetRequiredService<Yagura.Web.Administration.StorageAvailabilityState>(),
             timeProvider: null,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Storage.Initialization")));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger("Yagura.Host.Storage.Initialization"),
+            sp.GetRequiredService<Yagura.Host.Storage.DeferredSystemEventQueue>()));
 
         builder.Services.AddSingleton<Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService>(sp =>
             new Yagura.Host.Administration.ForwarderKit.ForwarderMsiUploadAdminService(

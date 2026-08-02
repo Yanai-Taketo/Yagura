@@ -489,6 +489,72 @@ public sealed class ViewerPageRenderTests
         Assert.DoesNotContain("yagura.os.udp", html, StringComparison.Ordinal);
     }
 
+    // ---- 保存先到達不能時の縮退（Issue #500） ----
+    //
+    // 保存先が落ちている間、閲覧 3 画面はいずれも例外で開けなくなっていた。
+    // 計器（カウンタ・スプール）を最も見たいのがまさにその局面であるため、
+    // 「画面が開くこと」と「見えない情報を 0 件と誤読させないこと」を固定する。
+
+    [Fact]
+    public async Task SystemStatus_StorageUnavailable_StillShowsCountersAndSpool()
+    {
+        var store = new FakeLogStore { ReadsFail = true };
+        var reader = new FakeStatusReader
+        {
+            Spool = new YaguraSpoolReading(CurrentUsageBytes: 512 * 1024, QuotaBytes: 1024 * 1024),
+            Counters =
+            [
+                new YaguraCounterReading("yagura.ingestion.spool.evacuated", 1234, IsLoss: false),
+                new YaguraCounterReading("yagura.ingestion.persistence.failed", 0, IsLoss: true),
+            ],
+        };
+
+        var html = await RenderPageAsync<SystemStatus>(store, reader);
+
+        // ①画面が開く（描画が例外で落ちない）。
+        Assert.Contains(UiText.NavStatus, html, StringComparison.Ordinal);
+
+        // ②保存先に依存しない観測値は**必ず出る**——障害中に見たいのはここ。
+        Assert.Contains(UiText.CounterSpoolEvacuated, html, StringComparison.Ordinal);
+        Assert.Contains("1,234", html, StringComparison.Ordinal);
+        Assert.Contains(UiText.StatSpoolUsage, html, StringComparison.Ordinal);
+
+        // ③何が見えていないかを明示する。
+        Assert.Contains(UiText.StatusStorageUnavailableNotice, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.StatusStorageUnavailableSupplement, html, StringComparison.Ordinal);
+
+        // ④履歴は「0 件」ではなく「取得できなかった」と伝える（意味が違う）。
+        Assert.Contains(UiText.HistoryStorageUnavailable, html, StringComparison.Ordinal);
+        Assert.DoesNotContain(UiText.HistoryEmpty, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Dashboard_StorageUnavailable_StillRendersWithStaleNotice()
+    {
+        var store = new FakeLogStore { ReadsFail = true };
+        var reader = new FakeStatusReader { RetentionDays = 30 };
+
+        var html = await RenderPageAsync<Dashboard>(store, reader);
+
+        // 初期表示でも落ちない（定期更新側と同じ扱いに揃えた）。
+        Assert.Contains(UiText.StaleWhileConnectedNotice, html, StringComparison.Ordinal);
+        // 保存先に依存しないカード群は出る。
+        Assert.Contains(UiText.StatSpoolUsage, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LogSearch_StorageUnavailable_ShowsDistinctNoticeNotEmptyResult()
+    {
+        var store = new FakeLogStore { ReadsFail = true };
+        var reader = new FakeStatusReader { RetentionDays = 30 };
+
+        var html = await RenderPageAsync<LogSearch>(store, reader);
+
+        // 「該当なし」と読ませない——0 件の空状態と同じ見え方にしない。
+        Assert.Contains(UiText.SearchStorageUnavailableNotice, html, StringComparison.Ordinal);
+        Assert.Contains(UiText.SearchStorageUnavailableSupplement, html, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task SystemStatus_ShowsOutageAndEventHistories()
     {
@@ -663,14 +729,23 @@ public sealed class ViewerPageRenderTests
         public LogRecord? Record { get; init; }
         public LogStoreStatistics Statistics { get; init; } = new(RecordCount: 0, DatabaseSizeBytes: 0);
 
+        /// <summary>
+        /// 読み出しをすべて失敗させる（保存先の停止・到達不能の再現。Issue #500）。
+        /// SQL Server が落ちている状況で <c>SqlException</c> が飛ぶ経路の代役。
+        /// </summary>
+        public bool ReadsFail { get; init; }
+
+        private static InvalidOperationException StoreDown() =>
+            new("保存先に到達できません（テスト用の擬似障害）。");
+
         public override Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public override Task<IReadOnlyList<LogRecordSummary>> QueryLatestAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            Task.FromResult((IReadOnlyList<LogRecordSummary>)Summaries
+            ReadsFail ? throw StoreDown() : Task.FromResult((IReadOnlyList<LogRecordSummary>)Summaries
                 .OrderByDescending(s => s.ReceivedAt).Take(limit).ToList());
 
         public override Task<IReadOnlyList<LogRecordSummary>> QueryAsync(LogQuery query, CancellationToken cancellationToken = default) =>
-            Task.FromResult((IReadOnlyList<LogRecordSummary>)Summaries
+            ReadsFail ? throw StoreDown() : Task.FromResult((IReadOnlyList<LogRecordSummary>)Summaries
                 .Where(s => query.ReceivedAtFrom is not { } from || s.ReceivedAt >= from)
                 .Where(s => query.ReceivedAtTo is not { } to || s.ReceivedAt <= to)
                 .OrderByDescending(s => s.ReceivedAt)
@@ -678,13 +753,13 @@ public sealed class ViewerPageRenderTests
                 .ToList());
 
         public override Task<LogStoreStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Statistics);
+            ReadsFail ? throw StoreDown() : Task.FromResult(Statistics);
 
         public override Task<LogRecord?> FindByIdAsync(long id, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult(Record);
 
         public override Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult((IReadOnlyList<SystemEvent>)Events
+            ReadsFail ? throw StoreDown() : Task.FromResult((IReadOnlyList<SystemEvent>)Events
                 .Where(e => from is not { } f || e.EndAt >= f)
                 .Where(e => to is not { } t || e.StartAt <= t)
                 .OrderByDescending(e => e.StartAt)
@@ -692,16 +767,16 @@ public sealed class ViewerPageRenderTests
                 .ToList());
 
         public override Task<IReadOnlyList<SourceActivity>> QuerySourceActivityAsync(int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            Task.FromResult((IReadOnlyList<SourceActivity>)Sources
+            ReadsFail ? throw StoreDown() : Task.FromResult((IReadOnlyList<SourceActivity>)Sources
                 .OrderBy(s => s.LastReceivedAt).Take(limit).ToList());
 
         public List<SeverityCount> SeverityDistribution { get; init; } = [];
         public List<SourceActivity> TopTalkers { get; init; } = [];
 
         public override Task<IReadOnlyList<SeverityCount>> QuerySeverityDistributionAsync(DateTimeOffset from, DateTimeOffset to, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            Task.FromResult((IReadOnlyList<SeverityCount>)SeverityDistribution);
+            ReadsFail ? throw StoreDown() : Task.FromResult((IReadOnlyList<SeverityCount>)SeverityDistribution);
 
         public override Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
-            Task.FromResult((IReadOnlyList<SourceActivity>)TopTalkers.OrderByDescending(t => t.RecordCount).Take(limit).ToList());
+            ReadsFail ? throw StoreDown() : Task.FromResult((IReadOnlyList<SourceActivity>)TopTalkers.OrderByDescending(t => t.RecordCount).Take(limit).ToList());
     }
 }

@@ -74,6 +74,17 @@
     </YaguraCard>
 </div>
 
+@* 保存先到達不能時の縮退（Issue #500）。検索そのものが行えないことと「該当なし」を
+   区別して伝える——0 件と読ませると「そのログは無かった」という誤った結論になる。 *@
+@if (_storageUnavailable)
+{
+    <div class="mt-4 mb-4">
+        <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
+                            Message="@UiText.SearchStorageUnavailableNotice"
+                            Supplement="@UiText.SearchStorageUnavailableSupplement" />
+    </div>
+}
+
 @if (_retentionHorizon is { } horizon && SearchReachesBeyondHorizon(horizon))
 {
     @* 保持地平の明示（database.md §2.3・ui.md §5.3）: 検索範囲が保持期間より古い場合。 *@
@@ -321,6 +332,9 @@
     private string? _searchText;
     private bool _searching;
 
+    /// <summary>保存先の読み出しに失敗したか（Issue #500。「該当なし」と区別して表示する）。</summary>
+    private bool _storageUnavailable;
+
     // カーソル（キーセット）ページングの「さらに読み込む」状態（database.md DB-11）。
     // _hasMore は直近の取得バッチがちょうど SearchLimit 件だったか（=まだ続きが
     // あり得るか）を表す——_results.Count 自体で判定すると、追記型で件数が増え続けるうちに
@@ -526,6 +540,7 @@
         _searching = true;
         _detailVisible = false;
         _detail = null;
+        _storageUnavailable = false;
 
         try
         {
@@ -534,6 +549,14 @@
             _hasMore = results.Count == SearchLimit;
 
             await LoadOutagesAndChartAsync(results);
+        }
+        catch (Exception)
+        {
+            // 保存先が到達不能な間は画面ごと落とさない（Issue #500）。**結果を空にしない**
+            // ——空の結果表は「該当なし」に読め、「そのログは無かった」という誤った結論を
+            // 招く。結果は前回のまま据え置き、取得できなかったことを縮退バナーで伝える。
+            _storageUnavailable = true;
+            _hasMore = false;
         }
         finally
         {
@@ -571,6 +594,13 @@
             // 拡張後の全件（_results）を基準に再計算する（LoadOutagesAndChartAsync は
             // FromUtc 指定時はその下限を優先するため、期間指定検索では範囲は広がらない）。
             await LoadOutagesAndChartAsync(combined);
+            _storageUnavailable = false;
+        }
+        catch (Exception)
+        {
+            // 追記の失敗も画面ごと落とさない（Issue #500）。表示済みの結果は保持する。
+            _storageUnavailable = true;
+            _hasMore = false;
         }
         finally
         {

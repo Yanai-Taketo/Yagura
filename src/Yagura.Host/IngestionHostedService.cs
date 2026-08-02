@@ -42,6 +42,7 @@ public sealed class IngestionHostedService : IHostedService
     private readonly ActiveNotificationMonitor _activeNotificationMonitor;
     private readonly EmailNotificationDispatcher _emailNotificationDispatcher;
     private readonly ILogger<IngestionHostedService> _logger;
+    private readonly Yagura.Host.Storage.DeferredSystemEventQueue? _deferredSystemEvents;
 
     public IngestionHostedService(
         IngestionPipeline pipeline,
@@ -50,7 +51,8 @@ public sealed class IngestionHostedService : IHostedService
         RetentionScheduler retentionScheduler,
         ActiveNotificationMonitor activeNotificationMonitor,
         EmailNotificationDispatcher emailNotificationDispatcher,
-        ILogger<IngestionHostedService> logger)
+        ILogger<IngestionHostedService> logger,
+        Yagura.Host.Storage.DeferredSystemEventQueue? deferredSystemEvents = null)
     {
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(logStore);
@@ -67,6 +69,7 @@ public sealed class IngestionHostedService : IHostedService
         _activeNotificationMonitor = activeNotificationMonitor;
         _emailNotificationDispatcher = emailNotificationDispatcher;
         _logger = logger;
+        _deferredSystemEvents = deferredSystemEvents;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -173,12 +176,22 @@ public sealed class IngestionHostedService : IHostedService
                 // DB 未初期化・障害中でも起動そのものは止めない（§1.2「DB や UI の初期化失敗・
                 // 遅延が受信開始を遅らせない」と同じ原則）。M5 の契約完全化で耐障害経路
                 // （スプール等）を通す前提のため、現時点では記録できなかったことを警告に留める。
+                //
+                // ただし**スキーマ未作成が理由の失敗は放置しない**（Issue #501）: 保存先を
+                // 切り替えた直後の初回起動では、この呼び出しは初期化（DDL）より前にあるため
+                // 確定的に失敗する。しかもその 1 回は「昇格に伴う受信断」——運用者が最も記録を
+                // 期待する受信断である。初期化の完了後に書き直せるよう預ける。
+                var deferred = _deferredSystemEvents?.TryDefer(downtimeEvent) ?? false;
+
                 _logger.LogWarning(
                     ex,
-                    "[downtime-record-failed] 受信断区間の記録に失敗しました: {Kind} {StartAt:o} 〜 {EndAt:o}",
+                    "[downtime-record-failed] 受信断区間の記録に失敗しました: {Kind} {StartAt:o} 〜 {EndAt:o}（{Disposition}）",
                     downtimeEvent.Kind,
                     downtimeEvent.StartAt,
-                    downtimeEvent.EndAt);
+                    downtimeEvent.EndAt,
+                    deferred
+                        ? "保存先の初期化後に再試行します"
+                        : "再試行は行いません");
             }
         }
 
