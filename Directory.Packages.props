@@ -21,7 +21,7 @@
       最新安定版を確認（プレリリースは除外）。nuspec の依存グループで net10.0 対応を確認済み。
       ライセンス MIT（採用日 2026-07-09）。
     -->
-    <PackageVersion Include="bunit" Version="2.8.6" />
+    <PackageVersion Include="bunit" Version="2.9.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <!--
       SQL Server provider（M5-3。Issue #47）。採用時のライブ検証: nuget.org の flat container index
