@@ -48,11 +48,10 @@
       プロパティは実ビルド番号を返さない。**installer-e2e の実ビルドで実測した値**
       (2026-08-02、GitHub ホストランナー。msiexec 詳細ログの Property(S) より):
 
-        | プロパティ            | windows-2022 | windows-2025 |
-        |-----------------------|--------------|--------------|
-        | VersionNT / VersionNT64 |        603 |          603 |
-        | WindowsBuild            |       9600 |         9600 |
-        | YAGURA_OS_BUILD(本実装) |      20348 |        26100 |
+        (XML コメント内では罫線に使う連続ハイフンを書けない。表組みは使わず列挙にする)
+          VersionNT / VersionNT64 : windows-2022 = 603   / windows-2025 = 603
+          WindowsBuild            : windows-2022 = 9600  / windows-2025 = 9600
+          YAGURA_OS_BUILD(本実装) : windows-2022 = 20348 / windows-2025 = 26100
 
       **`WindowsBuild >= 17763` と書いていれば、両方とも 9600 で false になり、
       対応環境を含む全環境で新規インストールとアップグレードが拒否されていた。**
