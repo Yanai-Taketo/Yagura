@@ -131,6 +131,59 @@ public sealed class DeferredSystemEventQueueTests
         Assert.Empty(logStore.Written);
     }
 
+    // ---- 初期化完了の待ち合わせ（Issue #510） ----
+
+    [Fact]
+    public async Task WaitForLogStoreInitialization_ReturnsFalse_WhenInitializationDoesNotSucceed()
+    {
+        // 保存先が落ちている間は初期化が成立しない。**無期限に待たない**ことを固定する
+        // ——待ち続けると「復旧するまで保持期間削除が一切走らない」状態を作るため。
+        var time = new FakeTimeProvider(Baseline);
+        var coordinator = new StorageInitializationCoordinator(
+            new RecordingLogStore { InitializeFails = true }, new AlwaysOkAccountStore(),
+            new StorageAvailabilityState(), time);
+
+        await coordinator.TryInitializeAsync(force: true);
+
+        var waiting = coordinator.WaitForLogStoreInitializationAsync(TimeSpan.FromMinutes(2));
+        time.Advance(TimeSpan.FromMinutes(2));
+
+        Assert.False(await waiting);
+    }
+
+    [Fact]
+    public async Task WaitForLogStoreInitialization_CompletesWhenSchemaBecomesReady()
+    {
+        // 昇格直後の初回起動の再現: 1 回目は失敗して待ち手はブロックされ、
+        // 2 回目の成功で解ける（= 起動時キャッチアップがスキーマ作成後に走る）。
+        var time = new FakeTimeProvider(Baseline);
+        var logStore = new RecordingLogStore { InitializeFails = true };
+        var coordinator = new StorageInitializationCoordinator(
+            logStore, new AlwaysOkAccountStore(), new StorageAvailabilityState(), time);
+
+        await coordinator.TryInitializeAsync(force: true);
+        var waiting = coordinator.WaitForLogStoreInitializationAsync(TimeSpan.FromMinutes(2));
+        Assert.False(waiting.IsCompleted);
+
+        logStore.InitializeFails = false;
+        await coordinator.TryInitializeAsync(force: true);
+
+        Assert.True(await waiting);
+    }
+
+    [Fact]
+    public async Task WaitForLogStoreInitialization_ReturnsImmediately_WhenAlreadyInitialized()
+    {
+        var time = new FakeTimeProvider(Baseline);
+        var coordinator = new StorageInitializationCoordinator(
+            new RecordingLogStore(), new AlwaysOkAccountStore(), new StorageAvailabilityState(), time);
+
+        Assert.True(await coordinator.TryInitializeAsync(force: true));
+
+        // 時間を進めずに完了する（Task.Delay の待ちに入っていない）。
+        Assert.True(await coordinator.WaitForLogStoreInitializationAsync(TimeSpan.FromMinutes(2)));
+    }
+
     private sealed class RecordingLogStore : LogStoreTestDouble
     {
         public List<SystemEvent> Written { get; } = [];
