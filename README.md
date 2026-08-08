@@ -146,7 +146,8 @@ MSI には Authenticode コード署名（タイムスタンプ付き）を付�
 | 区分 | 対象 |
 |---|---|
 | **推奨** | SQL Server 2022（Express / Standard / Enterprise） |
-| **検証中** | SQL Server 2019・2025（実機検証の完了までは対応と表明しません。[ADR-0024](docs/adr/0024-supported-environments.md) 委任事項 2） |
+| **対応** | SQL Server 2019（Express / Standard / Enterprise）。実機検証済み（2026-08-08。Express 15.0.2000.5 で確認） |
+| **検証中** | SQL Server 2025（実機検証の完了までは対応と表明しません。[ADR-0024](docs/adr/0024-supported-environments.md) 委任事項 2） |
 | **対応外** | SQL Server 2017 以前（2016 は 2026-07-14 に延長サポート終了済み）、LocalDB |
 
 **Express を使う場合の上限にご注意ください**——データベース最大 10 GB・メモリ 1,410 MB・4 コアの制限があります。既定の設定（保持 30 日）で毎秒 10 件を受け続けると **約 7.8 GB** に達し、容量の警告が出る水準（8 GB）に近づきます。保持期間を短くするか、上位エディションをご検討ください。

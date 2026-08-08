@@ -569,7 +569,7 @@ public static partial class UiText
     /// （<c>yagura.ingestion.tcp.tls_handshake_failure</c>）は状態画面の表示一覧に
     /// 含まれておらず、リンク先に出ない。TLS が繋がらない調査中に「計器に出るはず」と
     /// 案内して出ないのは、最も助けが要る場面での誤誘導になる（2026-08-08 lab で発覚）。
-    /// 表示一覧への追加は Issue #513 で判断する。
+    /// 表示一覧への追加は Issue #509 で判断する。
     /// </summary>
     public const string IngestionTlsObservabilityMetricsLinkText = "計器一覧";
 
