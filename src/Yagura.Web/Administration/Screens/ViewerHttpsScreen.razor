@@ -76,7 +76,7 @@ else
     <YaguraCertificateSelectionPanel Title="@UiText.ViewerHttpsCertificatesTitle"
                                       RefreshButtonText="@UiText.ViewerHttpsRefreshButton"
                                       OnRefresh="RefreshCertificates"
-                                      CertificateListError="_certificateListError"
+                                      CertificateListError="@_certificateListError"
                                       EnumerationFailedFormat="@UiText.ViewerHttpsEnumerationFailedFormat"
                                       Candidates="_candidates"
                                       EmptyTitle="@UiText.ViewerHttpsEmptyTitle"

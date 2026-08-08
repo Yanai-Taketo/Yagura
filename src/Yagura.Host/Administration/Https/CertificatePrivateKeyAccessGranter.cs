@@ -133,7 +133,11 @@ public static class CertificatePrivateKeyAccessGranter
                 $"秘密鍵ファイル {keyFilePath} への ACL 付与に失敗しました: {ex.Message} " +
                 "現在の実行アカウントに、この鍵ファイルの ACL を変更する権限がない場合に起きます。" +
                 "管理者権限で次のいずれかを行ってください（configuration.md §6 CF-D2）: " +
-                $"①コマンドで付与する — icacls \"{keyFilePath}\" /grant \"{accountName}\":R  " +
+                // 引用符の位置に注意: /grant "アカウント:R" と**丸ごと囲む**。
+                // /grant "アカウント":R の形は cmd.exe では通るが、**PowerShell では
+                // Invalid parameter（exit 87）で失敗する**（Server 2019 実機で両シェル検証済み。
+                // 2026-08-08 lab）。Server 2019 の管理者は PowerShell 利用が多い。
+                $"①コマンドで付与する — icacls \"{keyFilePath}\" /grant \"{accountName}:R\"  " +
                 "②証明書スナップイン（certlm.msc）で対象の証明書を右クリックし、" +
                 $"［すべてのタスク］→［秘密キーの管理］から「{accountName}」に読み取り権限を与える。");
         }
