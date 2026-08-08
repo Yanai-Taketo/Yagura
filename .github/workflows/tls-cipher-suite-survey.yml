@@ -1,0 +1,167 @@
+# TLS 暗号スイートの実測（ADR-0024 委任事項 1 の残条件 B。Issue #494）
+#
+# ■ 何を測るか
+# **OS（Schannel）が既定で有効にしている TLS 暗号スイートの集合**を、推奨環境の各
+# バージョンで採取する。Yagura が固定しているのは**プロトコル版の下限（TLS 1.2）だけ**で、
+# ハンドシェイクで実際に選ばれるスイートは OS のポリシーに委ねられている——したがって
+# 「対応環境と推奨環境で通信強度に差があるか」は、Yagura を動かして 1 回ハンドシェイクを
+# 見ても分からない。**OS の既定集合そのものを並べる**しかない。
+#
+# ■ なぜ CI で測るのか（lab ではなく）
+# 測定対象は Yagura の挙動ではなく **OS の設定**である。GitHub ホストランナーの Windows
+# image はその OS の既定を持っているため、推奨環境 2 バージョンの採取はここで足りる。
+# 対応下限の Server 2019 は `windows-2019` ランナーが退役済みで CI では踏めないため、
+# lab の実測値を installer/lab/server2019-support-validation-procedure.md §A-4 に記録して
+# あり、本 workflow の出力とそれを突き合わせる。
+#
+# ■ トリガ設計（常設にしない）
+# 毎 PR で回す価値はない——Yagura のコード変更で結果が変わることはないため。
+#   - workflow_dispatch: 再測したくなったとき（ランナー image の更新後・監査対応等）
+#   - push（本ファイル自身の変更時のみ）: 採取内容を変えたら測り直す、が自然に成立する
+# ランナー image の更新で結果は変わりうるが、**変わっても Yagura 側の記述は変わらない**
+# （「強度は OS 側の設定に依存する」という命題は集合の中身に依らない）。したがって
+# 追随を自動化する必要はなく、必要になった時点で dispatch すればよい。
+name: TLS Cipher Suite Survey
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tls-cipher-suite-survey.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    strategy:
+      # 片方が落ちてももう片方の採取は続ける（比較が目的のため両方欲しいが、
+      # 片方だけでも 2019 との突合はできる）。
+      fail-fast: false
+      matrix:
+        # 推奨環境（ADR-0024 決定 1）。ci.yml の matrix と同じ明示ピンにする。
+        os: [windows-2025, windows-2022]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 採取値は「どの OS ビルドの既定か」とセットでなければ記録として意味を持たない
+      # （ランナー image は随時更新されるため）。
+      - name: Record OS identity
+        shell: pwsh
+        run: |
+          $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          [pscustomobject]@{
+            RunnerLabel  = '${{ matrix.os }}'
+            ProductName  = $cv.ProductName
+            DisplayVersion = $cv.DisplayVersion
+            BuildNumber  = "$($cv.CurrentMajorVersionNumber).$($cv.CurrentMinorVersionNumber).$($cv.CurrentBuildNumber).$($cv.UBR)"
+            OSVersion    = [System.Environment]::OSVersion.VersionString
+          } | Format-List
+
+      # ■ 採取は「名前の平坦なリスト」を正とする
+      #
+      # `Get-TlsCipherSuite`（Windows 同梱 TLS モジュール = CDXML）の返り方が実行系で割れる。
+      # 実測（2026-08-02、windows-2022 / windows-2025 の両ランナー）:
+      #   - pwsh 7 経由: **全スイートが 1 オブジェクトへ潰れ、各プロパティが配列になる**
+      #     （`$suites.Count` = 1、Name が `{TLS_AES_256_GCM_SHA384, ...}`）。しかも
+      #     Protocols は全スイート分が 1 本に連結され、**どの版がどのスイートに対応するかが失われる**
+      #   - Windows PowerShell 5.1 経由: **何も返さない**（`$suites` が null になる）
+      # どちらも例外を出さないため、素直に書くと「弱いスイートは 0 件」という**誤った結論が
+      # 緑のまま残る**。実際に初回実行でそれが起きた。
+      #
+      # 本 workflow が答えるべき問いは「3DES / NULL / RC4 / SHA-1 CBC が推奨環境にも既定で
+      # 有効か」であり、**スイート名の集合だけで足りる**。`ForEach-Object { $_.Name }` は
+      # スクリプトブロックが配列を返すと各要素を個別にパイプへ流すため、**潰れた形でも
+      # 正しく展開された形でも同じ平坦なリストになる**。したがってこれを正とし、
+      # プロトコル版の対応づけは（潰れる実行系では復元できないため）取得しない
+      # ——2019 側の版対応は lab の 5.1 実測が手順書に記録済みで、そちらが正である。
+      #
+      # 件数ガードは残す。ただし閾値は 5 に置く——実測値（2022 / 2025 とも 10 種）と
+      # 同じ値にすると、将来スイートがさらに削られたときに正常な採取を失敗と誤判定するため。
+      # 狙いは「潰れた採取（0〜1 件）を沈黙させない」ことであり、上限側の検査ではない。
+      # ■ 主測定は「Local キー」である。`Get-TlsCipherSuite` は OS 既定を返さない
+      #
+      # 実測（2026-08-02）: **GitHub ホストランナーは両バージョンとも GPO でスイート順序を
+      # 上書きしている**（強い 10 種のみに絞る image 側のハードニング）。この状態で
+      # `Get-TlsCipherSuite` を呼ぶと**そのポリシーの内容**が返り、OS 既定は得られない。
+      # 初回計測の「10 種・弱スイート 0」はこれであって、Microsoft が公表している
+      # Server 2022 の既定（31 種）と食い違ったのはそのためだった。
+      #
+      # OS 既定は次のローカル構成キーが持つ。実測値は Microsoft の公表内容と一致した
+      # （2022 = 31 種で 3DES・DHE を含む / 2025 = 28 種で「23H2 以降で外す」とされた 3 種が抜ける）。
+      #   HKLM\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002
+      # GPO キー（上書き側）も併せて出す——**どちらを見ているかを取り違えないため**。
+      #   HKLM\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002
+      #
+      # 弱スイートの判定は**両方に対して**行う。Yagura が問うているのは「導入先の OS 既定に
+      # 弱いスイートが残るか」であり、答えるのは Local 側である。
+      - name: Survey cipher suites (OS default vs configured policy)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Get-SuiteList([string]$path) {
+            if (-not (Test-Path $path)) { return $null }
+            $v = (Get-ItemProperty -Path $path -ErrorAction SilentlyContinue).Functions
+            if ($null -eq $v) { return $null }
+            # REG_SZ (comma separated) or REG_MULTI_SZ.
+            return @(@($v) | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          }
+
+          function Show-Weak([string]$label, $names) {
+            $weak = @($names | Where-Object {
+              $_ -match '3DES' -or $_ -match 'RC4' -or $_ -match 'NULL' -or $_ -match 'CBC_SHA$'
+            })
+            Write-Host "$label weak suites (3DES / RC4 / NULL / SHA-1 CBC): $($weak.Count)"
+            $weak | ForEach-Object { Write-Host "    WEAK: $_" }
+            return $weak
+          }
+
+          $localPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002'
+          $gpoPath   = 'HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002'
+
+          $osDefault = Get-SuiteList $localPath
+          $gpo       = Get-SuiteList $gpoPath
+          $effective = @(Get-TlsCipherSuite | ForEach-Object { $_.Name } | Where-Object { $_ })
+
+          if ($null -eq $osDefault -or $osDefault.Count -lt 5) {
+            throw "OS default cipher suite list not found at $localPath. This is the primary measurement; see the YAML comment above this step."
+          }
+
+          Write-Host "=== OS default (Local\SSL\00010002): $($osDefault.Count) suites"
+          $osDefault | ForEach-Object { Write-Host "    $_" }
+          $osWeak = Show-Weak 'OS default' $osDefault
+
+          Write-Host ""
+          if ($null -eq $gpo) {
+            Write-Host "=== Group policy override: not configured"
+          } else {
+            Write-Host "=== Group policy override: CONFIGURED, $($gpo.Count) suites"
+            $gpo | ForEach-Object { Write-Host "    $_" }
+            Write-Host "    NOTE: Get-TlsCipherSuite reflects this policy, not the OS default."
+          }
+
+          Write-Host ""
+          Write-Host "=== Get-TlsCipherSuite (effective on this machine): $($effective.Count) suites"
+
+          New-Item -ItemType Directory -Path survey-results -Force | Out-Null
+          [pscustomobject]@{
+            Runner            = '${{ matrix.os }}'
+            OsDefaultCount    = $osDefault.Count
+            OsDefault         = $osDefault
+            OsDefaultWeak     = $osWeak
+            GroupPolicyCount  = if ($null -eq $gpo) { 0 } else { $gpo.Count }
+            GroupPolicy       = $gpo
+            EffectiveCount    = $effective.Count
+            Effective         = $effective
+          } | ConvertTo-Json -Depth 4 |
+            Set-Content -Path "survey-results/cipher-suites-${{ matrix.os }}.json" -Encoding utf8
+
+      - name: Upload survey results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tls-cipher-suite-survey-${{ matrix.os }}
+          path: survey-results/
+          if-no-files-found: warn

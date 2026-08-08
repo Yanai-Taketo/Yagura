@@ -83,7 +83,7 @@ else
     <YaguraCertificateSelectionPanel Title="@UiText.IngestionTlsCertificatesTitle"
                                       RefreshButtonText="@UiText.IngestionTlsRefreshButton"
                                       OnRefresh="RefreshCertificates"
-                                      CertificateListError="_certificateListError"
+                                      CertificateListError="@_certificateListError"
                                       EnumerationFailedFormat="@UiText.IngestionTlsEnumerationFailedFormat"
                                       Candidates="_candidates"
                                       EmptyTitle="@UiText.IngestionTlsEmptyTitle"

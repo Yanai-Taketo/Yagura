@@ -91,7 +91,7 @@ else
     <YaguraCertificateSelectionPanel Title="@UiText.AdminRemoteAccessCertificatesTitle"
                                       RefreshButtonText="@UiText.AdminRemoteAccessRefreshButton"
                                       OnRefresh="RefreshCertificates"
-                                      CertificateListError="_certificateListError"
+                                      CertificateListError="@_certificateListError"
                                       EnumerationFailedFormat="@UiText.AdminRemoteAccessEnumerationFailedFormat"
                                       Candidates="_candidates"
                                       EmptyTitle="@UiText.AdminRemoteAccessEmptyTitle"

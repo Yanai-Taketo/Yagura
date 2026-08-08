@@ -37,6 +37,69 @@
     <SummaryInformation Description="Yagura : Windows ネイティブ syslog 集約サーバ" />
 
     <!--
+      対応 OS 下限の機械的な強制(ADR-0024 決定 6 / 委任事項 6。Issue #496)。
+
+      【下限をビルド 17763 に置ける理由】
+      Windows Server 2019 と Windows 10 1809 は**いずれもビルド 17763** であり、
+      サーバ・クライアント双方の対応下限を単一の条件式で表現できる(ADR-0024 決定 1)。
+
+      【VersionNT / WindowsBuild を使わない理由——机上の懸念ではなく実測である】
+      Windows Installer は Windows 10 以降の互換性マニフェストを持たないため、これらの
+      プロパティは実ビルド番号を返さない。**installer-e2e の実ビルドで実測した値**
+      (2026-08-02、GitHub ホストランナー。msiexec 詳細ログの Property(S) より):
+
+        (XML コメント内では罫線に使う連続ハイフンを書けない。表組みは使わず列挙にする)
+          VersionNT / VersionNT64 : windows-2022 = 603   / windows-2025 = 603
+          WindowsBuild            : windows-2022 = 9600  / windows-2025 = 9600
+          YAGURA_OS_BUILD(本実装) : windows-2022 = 20348 / windows-2025 = 26100
+
+      **`WindowsBuild >= 17763` と書いていれば、両方とも 9600 で false になり、
+      対応環境を含む全環境で新規インストールとアップグレードが拒否されていた。**
+      LaunchCondition はアップグレードでも評価されるため、これを含むリリースを 1 本
+      出した時点で**既存の全インストール環境が更新不能**になり、脆弱性修正の配布経路が
+      断たれる(ADR-0023 が 1 本の ADR を費やした「アップグレードで製品が消えない」と
+      同じ経路のリスク)。したがって**レジストリの実値を直接読む**。
+      CurrentBuildNumber は REG_SZ の数字列で、MSI は整数へ変換可能な文字列プロパティを
+      整数と数値比較する(learn.microsoft.com/windows/win32/msi/conditional-statement-syntax
+      「Comparison of an integer with a string or property value that cannot be converted
+      to an integer is always false」。確認日 2026-08-02)。
+
+      【条件式が 3 項ある理由——どれを落としても事故になる】
+      (1) NOT YAGURA_OS_BUILD: **読めなかったときは通す(fail-open)**。判定材料を得られない
+          ことと「対応外 OS である」ことは別であり、ここを fail-closed にすると測定の失敗が
+          そのまま全環境ブロックに化ける。本条件はセキュリティ境界ではなくサポート表明の
+          ゲートであり、被害の非対称性(全環境の更新停止 > 対応外 OS への誤インストール)から
+          fail-open を採る。
+      (2) YAGURA_OS_BUILD >= 17763: 本来の判定。
+      (3) REMOVE~="ALL": **アンインストールは常に許す**。LaunchCondition は削除シーケンスでも
+          評価されるため、これが無いと対応外 OS の利用者は**製品を消すこともできなくなる**。
+
+      【なぜ LaunchCondition か(既存の判断との衝突を避けるための明記)】
+      本ファイル下部の ValidateYaguraServiceAccount は「LaunchCondition は UI シーケンスの
+      先頭(利用者入力の前)にも評価されるため入力値の検証には使えない」として type 19 CA を
+      採っている。OS のバージョンは**利用者入力に依存しない**ため本件はその制約に当たらず、
+      むしろ「UI が出る前に止まる」ことが望ましい(インストール画面を進ませてから拒否しない)。
+
+      【Server Core は本条件の射程外】
+      ビルド番号では Desktop Experience と区別できない。判別自体は
+      HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\InstallationType("Server Core" /
+      "Server" / "Client")で可能だが、**判別できても拒否しない**——ADR-0024 が Server Core を
+      対応外に置いた理由は「未検証だから」であって動作しないからではなく、ADR-0004 決定 2 は
+      設定ファイル手編集による管理経路を明示的に設計している。ここで拒否すると、その経路を
+      試すこと自体を封じ、既存利用者の更新も止める。
+    -->
+    <Property Id="YAGURA_OS_BUILD" Secure="yes">
+      <RegistrySearch Id="YaguraOsBuildSearch"
+                      Root="HKLM"
+                      Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber"
+                      Type="raw" />
+    </Property>
+
+    <Launch Condition="NOT YAGURA_OS_BUILD OR YAGURA_OS_BUILD &gt;= 17763 OR REMOVE~=&quot;ALL&quot;"
+            Message="!(loc.UnsupportedOsError)" />
+
+    <!--
       MajorUpgrade: アップグレードの基本定義。
 
       【Schedule="afterInstallExecute" を採る理由(ADR-0023 決定 2。Issue #467 現象 A)】

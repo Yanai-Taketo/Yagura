@@ -47,6 +47,14 @@
   <!-- fail-closed 検証のエラー(Package.wxs の ValidateYaguraServiceAccount。type 19 CA)。 -->
   <String Id="ServiceAccountInvalidError" Value="サービス実行アカウントの指定が不正です: [YAGURA_SERVICE_ACCOUNT]。指定できるのは既定の仮想サービスアカウント(NT SERVICE\Yagura)または gMSA(DOMAIN\name$ 形式)のみです。LocalSystem などの well-known アカウントや通常のユーザーアカウントは指定できません。詳細はドキュメント(docs/guides/gmsa-service-account.md)を参照してください。" />
 
+  <!-- 対応 OS 下限の LaunchCondition(ADR-0024 決定 6。Issue #496)。
+       「なぜ入れられないか」+「どうすればよいか」+「対応外 OS で取れる選択肢」を含める。
+       **255 文字以内に収めること**: LaunchCondition テーブルの Description 列の上限で、
+       超えると ICE03(String overflow)でビルドが落ちる(実ビルドで検出。当初案は 258 文字だった)。
+       移行相談の導線(Discussions)は字数の都合で README 側へ委ねる。
+       MSI のコードページは 932 のため em ダッシュ等は使えない(Package.wxs 冒頭の注意参照)。 -->
+  <String Id="UnsupportedOsError" Value="この OS には Yagura をインストールできません(OS ビルド [YAGURA_OS_BUILD])。対応は OS ビルド 17763 以上(Windows Server 2019 以降 / Windows 11 / Windows 10 LTSC・Enterprise)、推奨は Windows Server 2022 以降です。詳細と移行の相談先は README の「システム要件」を参照してください。" />
+
   <!-- ファイアウォール規則の説明(Windows ファイアウォール管理画面に表示される)。 -->
   <String Id="FwDescriptionUdp514" Value="Yagura syslog 受信 (UDP 514)" />
   <String Id="FwDescriptionTcp514" Value="Yagura syslog 受信 (TCP 514)" />

@@ -557,13 +557,21 @@ public static partial class UiText
     /// <summary>同上の説明文。</summary>
     public const string IngestionTlsObservabilityNote =
         "証明書を差し替えて再起動したあとは、送信元の機器がすべて再接続できたかを確認してください。" +
-        "TLS のハンドシェイク失敗は計器に、送信元ごとの最終受信時刻はダッシュボードに出ます。";
+        "TLS のハンドシェイク失敗はイベントログ（ソース Yagura の警告）に、"
+        + "送信元ごとの最終受信時刻はダッシュボードに出ます。";
 
     /// <summary>観測性リンク: 送信元別の受信状況。</summary>
     public const string IngestionTlsObservabilitySourcesLinkText = "送信元別の受信状況";
 
-    /// <summary>観測性リンク: 計器（ハンドシェイク失敗を含む）。</summary>
-    public const string IngestionTlsObservabilityMetricsLinkText = "計器（ハンドシェイク失敗を含む）";
+    /// <summary>
+    /// 観測性リンク: 計器一覧。
+    /// **「ハンドシェイク失敗を含む」とは書かない**——ハンドシェイク失敗の計器
+    /// （<c>yagura.ingestion.tcp.tls_handshake_failure</c>）は状態画面の表示一覧に
+    /// 含まれておらず、リンク先に出ない。TLS が繋がらない調査中に「計器に出るはず」と
+    /// 案内して出ないのは、最も助けが要る場面での誤誘導になる（2026-08-08 lab で発覚）。
+    /// 表示一覧への追加は Issue #509 で判断する。
+    /// </summary>
+    public const string IngestionTlsObservabilityMetricsLinkText = "計器一覧";
 
     // ---- 閲覧 UI の HTTPS 設定（ADR-0022） ----
 

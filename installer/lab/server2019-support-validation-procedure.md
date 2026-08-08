@@ -2,7 +2,7 @@
 
 > **条件付き実施済み**（2026-08-02。Windows Server 2019 Standard Evaluation 10.0.17763.3650 / Desktop Experience / Proxmox）。
 > 結果は [ADR-0024 改訂 7](../../docs/adr/0024-supported-environments.md) に記録済みで、**Server 2019 の「対応」区分は確定**し README のシステム要件表へ転記した。
-> **残条件 2 件**（§A-3 と `faulted` カウンタの再測 / §A-4 の推奨環境比較）は下記「残条件」に記す。v1.0 リリース前に消す。
+> **残条件はすべて解消した**（2026-08-08 の第 2 回検証で A を完了。§A-4 の推奨環境比較は 2026-08-02 に CI で完了）。ADR-0024 改訂 8・10 を参照。
 
 [Issue #494](https://github.com/Yanai-Taketo/Yagura/issues/494) の lab 検証手順。
 
@@ -10,8 +10,8 @@
 
 | # | 項目 | 理由 | 実施方法 |
 |---|---|---|---|
-| **A** | **§A-1 の観測性判定と §A-3** | 2026-08-02 の実施は**公開リリース v0.5.0（`7f638da`、2026-07-24）**を対象にした。閲覧 HTTPS（2026-07-26）と `yagura.ingestion.tcp_connection.faulted`（2026-08-01）はいずれもそれより後に main へ入っており、当時のビルドに存在しなかった | **main からビルドした MSI** で §A-1 と §A-3 のみ再実施する（§B・§D〜§G の再実施は不要——OS 側の性質を見る項目であり版に依存しない） |
-| **B** | **§A-4 の推奨環境との比較** | lab から Server 2022 / 2025 へ到達できなかった。2019 側の既定スイート一覧は採取済み | **lab は不要**。CI（`windows-2022` / `windows-2025`）で `Get-TlsCipherSuite` を採取し、下記 §A-4 の記録と比較する |
+| ~~**A**~~ | ~~**§A-1 の観測性判定と §A-3**~~ **完了（2026-08-08）**。main ビルド（`41be3fd`）で再実施し合格 | 2026-08-02 の実施は**公開リリース v0.5.0（`7f638da`、2026-07-24）**を対象にした。閲覧 HTTPS（2026-07-26）と `yagura.ingestion.tcp_connection.faulted`（2026-08-01）はいずれもそれより後に main へ入っており、当時のビルドに存在しなかった | **main からビルドした MSI** で §A-1 と §A-3 のみ再実施する（§B・§D〜§G の再実施は不要——OS 側の性質を見る項目であり版に依存しない） |
+| ~~**B**~~ | ~~**§A-4 の推奨環境との比較**~~ | **完了（2026-08-02）**。CI で採取し、2019 と 2022 の既定が完全に同一であることを確認した（§A-4 参照） | — |
 
 **残条件 A は本手順書の指定漏れが原因である**（「検証対象のバージョンの MSI」としか書かず、main ビルドを要求しなかった）。§「事前準備」で是正済み。
 
@@ -94,6 +94,8 @@ try {
 } finally { $ssl.Dispose(); $client.Dispose() }
 ```
 
+> **スクリプトは BOM 付き UTF-8 で保存すること。** BOM 無し UTF-8 だと Windows PowerShell 5.1 が日本語コメントを誤読してスクリプトが壊れる（2026-08-08 の実施で実際に踏んだ）。`Set-Content -Encoding UTF8`（5.1 既定で BOM 付き）か、エディタで「BOM 付き UTF-8」を選ぶ。
+
 **厳密な暗号スイート名（`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384` 等）が要る場合は PowerShell 7 で実行する。** `SslStream.NegotiatedCipherSuite` は .NET Core 3.0 以降のプロパティで、**Windows PowerShell 5.1（.NET Framework）には存在しない**。5.1 で取れるのは上記の `CipherAlgorithm` / `HashAlgorithm` / `KeyExchangeAlgorithm` の分解値までで、そこから**候補を絞り込むことはできてもスイート名の断定はできない**。5.1 のまま進める場合は、分解値を記録したうえで「厳密名は未取得」と明記すること（推測でスイート名を書かない）。
 
 ### A-1. syslog TLS 受信（6514）
@@ -149,7 +151,66 @@ Get-TlsCipherSuite | Select-Object Name, Protocols, Cipher, CipherLength, Hash, 
 | 2019 と推奨環境でスイート集合が同等 | 弱いスイートの残存は**全区分共通の性質**である。「対応環境固有の差」としては書かず、全区分に掛かる注意として記す |
 | 2019 側にだけ弱いスイート（3DES・SHA-1 系 CBC・NULL）が残る | **区分間の差として記す**。要件表に「対応環境では暗号強度が OS 側のハードニングにより依存度が高い」旨を追記する |
 
-**2026-08-02 実施時点の 2019 側の観測（既定有効 31 スイート。抜粋）**: TLS 1.3 スイート 2 種が列挙される一方、TLS 1.2 用として **`TLS_RSA_WITH_3DES_EDE_CBC_SHA`・`TLS_RSA_WITH_NULL_SHA256`・`TLS_RSA_WITH_NULL_SHA`・SHA-1 系 CBC 各種**が既定で有効だった。この観測を受けて **ADR-0024 決定 1 の「差は TLS 1.3 の 1 点」は既に撤回済み**（改訂 7）。残るのは「2019 固有か全区分共通か」の切り分けのみ。
+この観測を受けて **ADR-0024 決定 1 の「差は TLS 1.3 の 1 点」は既に撤回済み**（改訂 7）。残るのは「2019 固有か全区分共通か」の切り分けのみ。
+
+#### 2019 側の実測値（比較の基準。2026-08-02）
+
+Windows Server 2019 Standard Evaluation **10.0.17763.3650**（Windows Update 2022-11 適用水準）の `Get-TlsCipherSuite` 出力。既定有効は **31 スイート**（DTLS 専用の `0xFEFF` / `0xFEFD` 表記は省略）。
+
+```
+TLS_AES_256_GCM_SHA384                    0x0304
+TLS_AES_128_GCM_SHA256                    0x0304
+TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384   (protocols 表示なし)
+TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256   0x0303
+TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384     0x0303
+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256     0x0303
+TLS_DHE_RSA_WITH_AES_256_GCM_SHA384       0x0303
+TLS_DHE_RSA_WITH_AES_128_GCM_SHA256       0x0303
+TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384   (protocols 表示なし)
+TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256   0x0303
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384     0x0303
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256     0x0303
+TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA      0x0301,0x0302,0x0303
+TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA      0x0301,0x0302,0x0303
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA        0x0301,0x0302,0x0303
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA        0x0301,0x0302,0x0303
+TLS_RSA_WITH_AES_256_GCM_SHA384           0x0303
+TLS_RSA_WITH_AES_128_GCM_SHA256           0x0303
+TLS_RSA_WITH_AES_256_CBC_SHA256           0x0303
+TLS_RSA_WITH_AES_128_CBC_SHA256           0x0303
+TLS_RSA_WITH_AES_256_CBC_SHA              0x0301,0x0302,0x0303
+TLS_RSA_WITH_AES_128_CBC_SHA              0x0301,0x0302,0x0303
+TLS_RSA_WITH_3DES_EDE_CBC_SHA             0x0300,0x0301,0x0302,0x0303
+TLS_RSA_WITH_NULL_SHA256                  0x0303
+TLS_RSA_WITH_NULL_SHA                     0x0300,0x0301,0x0302,0x0303
+TLS_PSK_WITH_AES_256_GCM_SHA384           (protocols 表示なし)
+TLS_PSK_WITH_AES_128_GCM_SHA256           0x0303
+TLS_PSK_WITH_AES_256_CBC_SHA384           0x0303
+TLS_PSK_WITH_AES_128_CBC_SHA256           0x0303
+TLS_PSK_WITH_NULL_SHA384                  0x0303
+TLS_PSK_WITH_NULL_SHA256                  0x0303
+```
+
+**注意**: TLS 1.3 のスイート（`0x0304`）が列挙されるが、**Schannel の 17763 では TLS 1.3 は利用できない**。§A-1 の実測（`SslProtocol = Tls12`）が正であり、この列挙を根拠に「TLS 1.3 が使える」と読まないこと。
+
+#### 推奨環境側の採取（CI）— **実施済み（2026-08-02）**
+
+`.github/workflows/tls-cipher-suite-survey.yml` が `windows-2025` / `windows-2022` で採取する。**lab は不要**——測っているのは Yagura の挙動ではなく OS の既定だからである。再測は `workflow_dispatch` で行う。
+
+> **`Get-TlsCipherSuite` の出力を「OS 既定」と読まないこと。** スイート順序はグループポリシーで上書きでき、上書きされていれば同コマンドは**そのポリシーの内容**を返す。GitHub ホストランナーは実際に上書きしており（強い 10 種のみ）、初回計測は「弱いスイート 0」という**誤った結論**を返した。OS 既定は `HKLM\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002` が持つ。**lab 機で再測する場合も、まずこのキーとポリシーキーの有無を確認すること。**
+
+#### 比較結果（§A-4 の答え）
+
+| | Server 2019（本手順） | Server 2022（CI） | Server 2025（CI） |
+|---|---|---|---|
+| 既定有効スイート数 | **31** | **31** | **28** |
+| 弱いスイート数（3DES / RC4 / NULL / SHA-1 CBC） | **11** | **11** | **10** |
+| 3DES | あり | あり | **なし** |
+| DHE-RSA GCM（2 種） | あり | あり | **なし** |
+| SHA-1 CBC（6 種） | あり | あり | あり |
+| NULL 系（4 種） | あり | あり | あり |
+
+**判定表の 1 行目に該当した**——2019 と推奨環境（2022）の集合は**完全に同一**で、弱いスイートの残存は**全区分共通の性質**である。ADR-0024 改訂 8 に記録済みで、**本項の残条件は消えた**。
 
 ---
 
@@ -224,7 +285,12 @@ Get-TlsCipherSuite | Select-Object Name, Protocols, Cipher, CipherLength, Hash, 
 
 > **「切替中の受信継続」は確認項目にしない。** 昇格は**サービス再起動を伴う方式**であり、製品自身が「反映にはサービスの再起動が必要です（再起動中は受信できません）」と表示する。無瞬断切替は database.md §6.1 の後続実装であって現行の設計ではない。**受信断そのものは仕様どおりであり、不合格の根拠にならない**（改訂前の本節は存在しない挙動を確認項目にしていた。2026-08-02 の実施で判明）。
 >
-> 参考として**受信断の長さ**（製品自身の計測値。2026-08-02 の実測では約 1.7 秒）は記録しておくとよい。
+> **切替を実行してもサービスは自動再起動されない。手動で再起動すること。** これを忘れると、
+> 切替直後に送ったログは**まだ SQLite 側に入る**ため「SQL Server に保存されていない」と
+> 誤認する（2026-08-08 の実施で誤認しかけた）。再起動してから件数突合を行う。
+>
+> 参考として**受信断の長さ**（製品自身の計測値。2026-08-02 は約 1.7 秒、2026-08-08 は 31.3 秒
+> ——うちサービス停止に 30.3 秒。環境差が大きいので値そのものは判定に使わない）は記録しておくとよい。
 
 **判定**: 上記 2 点の突合が成立すること。**「退避 / 削除」の処分は現行では実行されない**（[#502](https://github.com/Yanai-Taketo/Yagura/issues/502)）ため、旧 DB ファイルが残置されていても本項の不合格にはしない。
 
