@@ -122,7 +122,36 @@ public sealed class PromotionWizardScreenRenderTests
                 services.AddSingleton<IPromotionWizardService>(new FakePromotionWizardService(snapshot));
                 services.AddSingleton<ILogMigrationService>(new FakeLogMigrationService());
                 services.AddSingleton(new YaguraCircuitContext());
+                // 切替の保存後に再読み込みを呼ぶ（Issue #512）ため、本画面は
+                // IConfigurationReloadService を要求する。
+                services.AddSingleton<IConfigurationReloadService>(new CountingReloadService());
             });
+
+    /// <summary>再読み込みの呼び出し回数を数えるフェイク（Issue #512）。</summary>
+    internal sealed class CountingReloadService : IConfigurationReloadService
+    {
+        internal int ReloadCount { get; private set; }
+
+        public IReadOnlyList<PendingRestartKey> GetPendingRestartKeys() => [];
+
+        public Task<ConfigurationReloadResult> ReloadAsync(
+            string? operatorAddress,
+            string? authenticationScheme,
+            string? authenticatedPrincipal,
+            CancellationToken cancellationToken = default)
+        {
+            ReloadCount++;
+            return Task.FromResult(new ConfigurationReloadResult(
+                Rejected: false,
+                RejectionReason: null,
+                ChangedKeys: ["Storage:Provider"],
+                AppliedKeys: [],
+                PendingRestartKeys: ["Storage:Provider"],
+                WarningMessages: [],
+                UnknownKeys: [],
+                TypeCoercionNotes: []));
+        }
+    }
 
     /// <summary>移行セクション（Issue #266）の初期描画（GetStatusAsync のみ）に応答するフェイク。</summary>
     private sealed class FakeLogMigrationService : ILogMigrationService

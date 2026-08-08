@@ -75,6 +75,59 @@ jobs:
       - name: Build MSI
         run: dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=x64
 
+      # 「版だけ新しく中身が旧版」の MSI を落とす（Issue #514）。
+      #
+      # wixproj は publish を別プロセスで起動するため、-p:YaguraVersion の上書きが
+      # publish 側へ届かない時期があった。その MSI でアップグレードすると、MSI の
+      # ファイル版数規則で上書きが起きず、**新しいコードを 1 バイトも載せないまま
+      # インストールが成功する**（"Existing file is of an equal version"）。
+      # 成功して見えるのが厄介で、lab の手動検証を長く無効化していた。
+      #
+      # MSI の ProductVersion と収録アセンブリの FileVersion が一致することを検査する。
+      # -p:YaguraVersion を明示して両者がともに追随することを確かめるため、**既定値とは
+      # 違う版**でビルドし直して比べる（既定値のままだと、渡らなくても一致してしまい
+      # 検査が空振りする）。
+      - name: Verify the MSI version reaches the published assemblies
+        shell: pwsh
+        run: |
+          $probeVersion = '9.9.9'
+          dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=x64 `
+            -p:YaguraVersion=$probeVersion `
+            -p:BaseOutputPath=bin/versionprobe/ -p:BaseIntermediateOutputPath=obj/versionprobe/
+          if ($LASTEXITCODE -ne 0) { throw "version probe build failed" }
+
+          $msi = Get-ChildItem -Path installer/bin/versionprobe -Recurse -Filter Yagura-*.msi | Select-Object -First 1
+          if ($null -eq $msi) { throw 'version probe MSI not found' }
+
+          # MSI の ProductVersion を読む（WindowsInstaller COM）。
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msi.FullName, 0))
+          $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db,
+            @("SELECT Value FROM Property WHERE Property='ProductVersion'"))
+          $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+          $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+          $productVersion = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1)
+
+          # 収録アセンブリ（publish 出力）の FileVersion を読む。
+          $hostExe = Get-ChildItem -Path installer/bin/versionprobe -Recurse -Filter Yagura.Host.exe |
+            Select-Object -First 1
+          if ($null -eq $hostExe) {
+            $hostExe = Get-ChildItem -Path installer -Recurse -Filter Yagura.Host.exe | Select-Object -First 1
+          }
+          if ($null -eq $hostExe) { throw 'Yagura.Host.exe not found for version comparison' }
+          $fileVersion = (Get-Item $hostExe.FullName).VersionInfo.FileVersion
+
+          Write-Host "MSI ProductVersion : $productVersion"
+          Write-Host "Assembly FileVersion: $fileVersion"
+
+          if (-not $productVersion.StartsWith($probeVersion)) {
+            throw "MSI ProductVersion ($productVersion) does not reflect -p:YaguraVersion ($probeVersion)."
+          }
+          if (-not $fileVersion.StartsWith($probeVersion)) {
+            throw "Assembly FileVersion ($fileVersion) does not reflect -p:YaguraVersion ($probeVersion). " +
+                  "The MSI would ship old binaries under a new version (Issue #514)."
+          }
+
       # アップグレード元 MSI(ADR-0023 決定 2 の採否条件②。Issue #467):
       # Schedule="afterInstallExecute" では**新サービスを起動した後に旧製品のアンインストールが
       # 走る**ため、コンポーネント参照カウントが崩れていれば起動したばかりの新サービスが

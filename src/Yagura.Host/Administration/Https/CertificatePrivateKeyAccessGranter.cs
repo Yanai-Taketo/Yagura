@@ -104,6 +104,24 @@ public static class CertificatePrivateKeyAccessGranter
             var account = new NTAccount(accountName);
             var fileInfo = new FileInfo(keyFilePath);
             var accessControl = fileInfo.GetAccessControl();
+
+            // 既に読み取れるなら**何もしない**（Issue #511）。
+            //
+            // ACL の変更に失敗しても、権限が既にあれば TLS は正常に動作する。それでも警告を出すと
+            // 「TLS が使えない」と読める警告が**正常な構成で毎回出る**ことになり、利用者は
+            // この警告を無視するようになる——次に本物（本当に権限が無く TLS が成立しない）が
+            // 出ても見過ごす。#503 で警告へ是正手順（icacls）を添えたため、**不要な ACL 変更を
+            // 促してしまう**問題も重なる。
+            //
+            // 判定は「対象アカウントに読み取りを許可する明示 ACE があるか」で行う。グループ経由の
+            // 実効権限までは見ないため**取りこぼし側に倒れる**（既に読めるのに付与を試みる）が、
+            // その場合は従来どおりの経路に合流するだけで害はない。逆側（読めないのにスキップ）に
+            // 倒すと TLS が黙って成立しなくなるため、この非対称は意図的である。
+            if (HasReadAccessRule(accessControl, account))
+            {
+                return CertificatePrivateKeyGrantResult.AlreadyGranted(keyFilePath);
+            }
+
             accessControl.AddAccessRule(new FileSystemAccessRule(
                 account,
                 FileSystemRights.Read,
@@ -143,6 +161,35 @@ public static class CertificatePrivateKeyAccessGranter
         }
 
         return CertificatePrivateKeyGrantResult.Success(keyFilePath);
+    }
+
+    /// <summary>
+    /// 対象アカウントに読み取りを許可する明示 ACE が既にあるか（Issue #511）。
+    /// </summary>
+    /// <remarks>
+    /// グループ経由の実効権限までは見ない——**取りこぼし側（既に読めるのに付与を試みる）に
+    /// 倒す**。逆側に倒すと、読めないのに付与をスキップして TLS が黙って成立しなくなる。
+    /// </remarks>
+    private static bool HasReadAccessRule(FileSecurity accessControl, NTAccount account)
+    {
+        var sid = (SecurityIdentifier)account.Translate(typeof(SecurityIdentifier));
+
+        foreach (FileSystemAccessRule rule in accessControl.GetAccessRules(
+            includeExplicit: true, includeInherited: true, targetType: typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow ||
+                !rule.IdentityReference.Value.Equals(sid.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if ((rule.FileSystemRights & FileSystemRights.Read) == FileSystemRights.Read)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -186,11 +233,13 @@ public static class CertificatePrivateKeyAccessGranter
 /// <summary><see cref="CertificatePrivateKeyAccessGranter.TryGrantReadAccess"/> の結果。</summary>
 public sealed class CertificatePrivateKeyGrantResult
 {
-    private CertificatePrivateKeyGrantResult(bool succeeded, string? keyFilePath, string? failureReason)
+    private CertificatePrivateKeyGrantResult(
+        bool succeeded, string? keyFilePath, string? failureReason, bool wasAlreadyGranted = false)
     {
         Succeeded = succeeded;
         KeyFilePath = keyFilePath;
         FailureReason = failureReason;
+        WasAlreadyGranted = wasAlreadyGranted;
     }
 
     public bool Succeeded { get; }
@@ -199,7 +248,21 @@ public sealed class CertificatePrivateKeyGrantResult
 
     public string? FailureReason { get; }
 
+    /// <summary>
+    /// 権限が**既にあったため何もしなかった**か（Issue #511）。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Succeeded"/> は true だが、**ACL は変更していない**。監査記録は状態の変化を
+    /// 残すものであり、変えていないものを「付与した」と記録すると監査証跡が事実と食い違う。
+    /// 呼び出し側はこのフラグで記録の要否を分ける。
+    /// </remarks>
+    public bool WasAlreadyGranted { get; }
+
     public static CertificatePrivateKeyGrantResult Success(string keyFilePath) => new(true, keyFilePath, null);
+
+    /// <summary>既に読み取り権限があり、付与を行わなかった（Issue #511）。</summary>
+    public static CertificatePrivateKeyGrantResult AlreadyGranted(string keyFilePath) =>
+        new(true, keyFilePath, null, wasAlreadyGranted: true);
 
     public static CertificatePrivateKeyGrantResult Failure(string reason) => new(false, null, reason);
 }

@@ -8,6 +8,7 @@
 @inject ILogMigrationService LogMigration
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+@inject IConfigurationReloadService ReloadService
 
 @*
     本番昇格（SQLite → SQL Server）ウィザード（database.md §6.1）。
@@ -437,6 +438,24 @@ else
         {
             _snapshot = await PromotionWizard.GetSnapshotAsync();
             _applyResult = null;
+            return;
+        }
+
+        // 保存が成立したら設定の再読み込みを走らせる（Issue #512）。
+        //
+        // 再起動待ちカード（#286）のデータ源は ConfigurationReloadService 内部の累積辞書で、
+        // **再読み込みの実行時にしか更新されない**。呼ばないと、保存先の切替という
+        // 未反映変更があるのにカードへ載らず、利用者は「保存したのに効かない」理由に
+        // 気づけない——実際 lab では、切替後の再起動を忘れて「SQL Server に保存されていない」と
+        // 誤認しかけた。証明書 3 画面は CertificateAdminScreenSupport 経由で同じことを
+        // 既に行っており、本画面がその扱いから漏れていた。
+        //
+        // 保存先キーはすべて再起動が要るため、再読み込みで即時適用されるものは無い
+        // （効果は再起動待ちカードへの計上のみ）。拒否された場合も切替の保存自体は
+        // 成立しているため、ここでは画面の結果表示を上書きしない。
+        if (_applyResult.Outcome is WizardApplyOutcome.Applied)
+        {
+            await ReloadService.ReloadAsync(CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
         }
     }
 

@@ -562,7 +562,9 @@ public static class Program
                 resolvedConfiguration.RetentionExecutionTimeOfDay),
             timeProvider: null,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Retention.RetentionScheduler>(),
-            sp.GetRequiredService<LogStoreWriteGate>()));
+            sp.GetRequiredService<LogStoreWriteGate>(),
+            // 起動時キャッチアップをスキーマ初期化の後に回すための待ち合わせ点（Issue #510）。
+            sp.GetRequiredService<Yagura.Host.Storage.StorageInitializationCoordinator>()));
 
         // 流量制御（architecture.md §3.3。ADR-0002 決定 2「送信元単位の流量制御（既定有効）」）:
         // 既定は TokenBucketIngressGate、opt-out（Ingestion:FlowControl:Enabled =
@@ -1403,7 +1405,10 @@ public static class Program
                 adminHttpsCertificate, effectiveServiceAccountName);
 
             var auditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
-            if (grantResult.Succeeded)
+            // 既に権限があった場合は ACL を変えていないため監査記録を残さない（Issue #511）
+            // ——監査は状態の変化を残すもので、変えていないものを「付与した」と書くと
+            // 証跡が事実と食い違う。
+            if (grantResult.Succeeded && !grantResult.WasAlreadyGranted)
             {
                 await auditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: TimeProvider.System.GetUtcNow(),
@@ -1454,7 +1459,10 @@ public static class Program
                 ingestionTlsCertificate, effectiveServiceAccountName);
 
             var ingestionTlsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
-            if (ingestionTlsGrantResult.Succeeded)
+            // 既に権限があった場合は ACL を変えていないため監査記録を残さない（Issue #511）
+            // ——監査は状態の変化を残すもので、変えていないものを「付与した」と書くと
+            // 証跡が事実と食い違う。
+            if (ingestionTlsGrantResult.Succeeded && !ingestionTlsGrantResult.WasAlreadyGranted)
             {
                 await ingestionTlsAuditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: TimeProvider.System.GetUtcNow(),
@@ -1506,7 +1514,10 @@ public static class Program
                 viewerHttpsCertificate, effectiveServiceAccountName);
 
             var viewerHttpsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
-            if (viewerHttpsGrantResult.Succeeded)
+            // 既に権限があった場合は ACL を変えていないため監査記録を残さない（Issue #511）
+            // ——監査は状態の変化を残すもので、変えていないものを「付与した」と書くと
+            // 証跡が事実と食い違う。
+            if (viewerHttpsGrantResult.Succeeded && !viewerHttpsGrantResult.WasAlreadyGranted)
             {
                 await viewerHttpsAuditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: TimeProvider.System.GetUtcNow(),

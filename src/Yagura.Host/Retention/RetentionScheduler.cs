@@ -116,11 +116,23 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
 
     private static readonly TimeSpan CatchUpQueryTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// 起動時キャッチアップの前に、保存先のスキーマ初期化を待つ上限（Issue #510）。
+    /// </summary>
+    /// <remarks>
+    /// 初期化は周期監視の初回評価で行われ、健全な環境では起動直後に完了する。ここで長く取るのは
+    /// **保存先が一時的に遅い場合に取りこぼさないため**であり、落ちている場合に待ち続けるためでは
+    /// ない——上限に達したら諦めて従来どおり試みる（失敗すれば警告に留まる）。
+    /// 保持期間削除は日次であり、数分の遅れは運用上の意味を持たない。
+    /// </remarks>
+    internal static readonly TimeSpan CatchUpInitializationWait = TimeSpan.FromMinutes(2);
+
     private readonly ILogStore _logStore;
     private RetentionSchedulerOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<RetentionScheduler> _logger;
     private readonly LogStoreWriteGate? _writeGate;
+    private readonly Yagura.Host.Storage.StorageInitializationCoordinator? _storageInitialization;
     private readonly SemaphoreSlim _executionGate = new(1, 1);
 
     private CancellationTokenSource? _stoppingCts;
@@ -132,7 +144,8 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
         RetentionSchedulerOptions options,
         TimeProvider? timeProvider = null,
         ILogger<RetentionScheduler>? logger = null,
-        LogStoreWriteGate? writeGate = null)
+        LogStoreWriteGate? writeGate = null,
+        Yagura.Host.Storage.StorageInitializationCoordinator? storageInitialization = null)
     {
         ArgumentNullException.ThrowIfNull(logStore);
         ArgumentNullException.ThrowIfNull(options);
@@ -142,6 +155,7 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<RetentionScheduler>.Instance;
         _writeGate = writeGate;
+        _storageInitialization = storageInitialization;
     }
 
     /// <summary>
@@ -220,6 +234,31 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
         // QuerySystemEventsAsync 呼び出し自体を避けるため、ここで先に弾く）。
         if (_options.RetentionDays is not null)
         {
+            // スキーマの初期化を待ってから判定する（Issue #510）。保存先の初期化は
+            // StorageInitializationCoordinator が**起動経路の外**で行うため（ADR-0023 決定 1）、
+            // ここで素直に照会すると**新しい保存先へ切り替えた直後の初回起動では必ず失敗する**
+            // （SQL エラー 208「オブジェクト名 'dbo.SystemEvents' が無効です」）。
+            // データ損失はないが、SQL Server へ昇格した全利用者が初回起動で必ず通る経路であり、
+            // その 1 回はキャッチアップが行われない。
+            //
+            // 待ちきれなくても止めない——保存先が長時間落ちている場合は初期化が復旧まで
+            // 成立せず、無期限に待つと「復旧するまで保持期間削除が一切走らない」状態を作る。
+            // 上限で諦め、従来どおり試みて失敗すれば警告に留める既存の縮退経路へ合流する。
+            if (_storageInitialization is { } initialization)
+            {
+                var ready = await initialization
+                    .WaitForLogStoreInitializationAsync(CatchUpInitializationWait, stoppingToken)
+                    .ConfigureAwait(false);
+
+                if (!ready)
+                {
+                    _logger.LogInformation(
+                        "保存先の初期化が {Timeout} 以内に完了しなかったため、起動時キャッチアップの判定を" +
+                        "初期化の完了を待たずに試みます。",
+                        CatchUpInitializationWait);
+                }
+            }
+
             await TryCatchUpAsync(stoppingToken).ConfigureAwait(false);
         }
 

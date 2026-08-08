@@ -67,6 +67,19 @@ public sealed class StorageInitializationCoordinator
     /// <summary>単一実行のゲート（不変条件①）。</summary>
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// ログストアのスキーマ初期化が**初めて成功した**ときに完了する（Issue #510）。
+    /// </summary>
+    /// <remarks>
+    /// 起動時に保存先を照会する処理（保持期間の起動時キャッチアップ等）は、初期化が
+    /// 起動経路の外にあるため**素直に書くとスキーマ作成前に走る**。新しい保存先へ切り替えた
+    /// 直後の初回起動では確定的に失敗するため、待ち合わせ点を 1 つ用意する。
+    /// <see cref="TaskCreationOptions.RunContinuationsAsynchronously"/> を付けるのは、
+    /// 完了時に待ち手の継続が**初期化ゲートの内側で同期実行されない**ようにするため。
+    /// </remarks>
+    private readonly TaskCompletionSource _logStoreInitializedSignal =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private DateTimeOffset? _lastAttemptAt;
     private bool _logStoreInitialized;
     private bool _accountStoreInitialized;
@@ -105,6 +118,32 @@ public sealed class StorageInitializationCoordinator
 
     /// <summary>管理者アカウントストアのスキーマ初期化が完了しているか（= アプリ独自認証の可用性）。</summary>
     public bool IsAdminAccountStoreInitialized => _accountStoreInitialized;
+
+    /// <summary>
+    /// ログストアのスキーマ初期化が完了するまで待つ（Issue #510）。**待ちきれなくても呼び出し元を
+    /// 止めない**設計とし、上限時間を呼び出し側が渡す。
+    /// </summary>
+    /// <param name="timeout">待つ上限。超えたら <see langword="false"/> を返す。</param>
+    /// <returns>初期化が完了していれば <see langword="true"/>、上限に達したら <see langword="false"/>。</returns>
+    /// <remarks>
+    /// 保存先が長時間落ちている場合、初期化は復旧まで成立しない。ここで無期限に待つと
+    /// 「保存先が復旧するまで保持期間削除が一切走らない」状態を作るため、**上限で諦めて
+    /// 従来どおり試みる**（諦めた側は失敗を警告に留める既存の縮退経路へ合流する）。
+    /// </remarks>
+    public async Task<bool> WaitForLogStoreInitializationAsync(
+        TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        if (_logStoreInitialized)
+        {
+            return true;
+        }
+
+        var completed = await Task.WhenAny(
+            _logStoreInitializedSignal.Task,
+            Task.Delay(timeout, _timeProvider, cancellationToken)).ConfigureAwait(false);
+
+        return completed == _logStoreInitializedSignal.Task;
+    }
 
     /// <summary>
     /// 未完了の初期化を試みる。**失敗しても例外を投げない**——戻り値と
@@ -157,6 +196,14 @@ public sealed class StorageInitializationCoordinator
                 {
                     // フラッシュの失敗は初期化の成否を変えない（預かったまま次の契機で再試行する）。
                     await _deferredSystemEvents.FlushAsync(_logStore, _logger, cancellationToken).ConfigureAwait(false);
+                }
+
+                // スキーマが揃ったことを待ち手へ知らせる（Issue #510）。TrySetResult を使うのは
+                // 初期化が複数回成功しうる（既に初期化済みでも再入する経路がある）ため——
+                // 2 回目以降は no-op になる。
+                if (_logStoreInitialized)
+                {
+                    _logStoreInitializedSignal.TrySetResult();
                 }
             }
 

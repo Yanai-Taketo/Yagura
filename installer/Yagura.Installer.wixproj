@@ -112,7 +112,20 @@
       <_YaguraDotnetExe Condition="'$(DOTNET_HOST_PATH)' != ''">$(DOTNET_HOST_PATH)</_YaguraDotnetExe>
       <_YaguraDotnetExe Condition="'$(_YaguraDotnetExe)' == ''">dotnet</_YaguraDotnetExe>
     </PropertyGroup>
-    <Exec Command="&quot;$(_YaguraDotnetExe)&quot; publish &quot;$(MSBuildProjectDirectory)\..\src\Yagura.Host\Yagura.Host.csproj&quot; -c Release -r $(YaguraPublishRid) --self-contained true -o &quot;$(YaguraPublishDir)&quot;" />
+    <!--
+      **-p:YaguraVersion を必ず渡す（Issue #514）。**
+      publish は別プロセスの dotnet CLI で起動するため、wixproj 側のグローバルプロパティ
+      （-p:YaguraVersion=... の上書き）は**継承されない**。渡さないと MSI の ProductVersion
+      だけが上がり、収録アセンブリは Directory.Build.props の既定値のままになる——
+      「版だけ新しく中身が旧版」の MSI ができる。
+      その MSI でアップグレードすると、MSI のファイル版数規則で上書きが起きず
+      （"Existing file is of an equal version"）、**新しいコードを 1 バイトも載せないまま
+      インストールが成功する**。lab の手動アップグレード検証がこの経路を常用しており、
+      過去の検証の一部を無効化していた（2026-08-08 の第 3 回 lab 検証で検出）。
+      実リリースは Directory.Build.props を更新する運用のため影響を受けない見込みだが、
+      -p: 上書きが効かないこと自体が罠であるため塞ぐ。
+    -->
+    <Exec Command="&quot;$(_YaguraDotnetExe)&quot; publish &quot;$(MSBuildProjectDirectory)\..\src\Yagura.Host\Yagura.Host.csproj&quot; -c Release -r $(YaguraPublishRid) --self-contained true -p:YaguraVersion=$(YaguraVersion) -o &quot;$(YaguraPublishDir)&quot;" />
   </Target>
 
   <Target Name="EnsurePublishOutput" BeforeTargets="CoreCompile" AfterTargets="PublishYaguraHost">

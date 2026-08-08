@@ -71,8 +71,7 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
         // --- 区間 1: ベースライン（UDP 送信のみ） ---
         var baselineBefore = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
         var baselineResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
-        await Task.Delay(TimeSpan.FromSeconds(2)); // 永続化の反映猶予（既存 Bench シナリオと同様）
-        var baselineAfter = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
+        var baselineAfter = await WaitForPersistedAsync(databasePath, baselineBefore, baselineResult.SentCount);
         var baselineSaved = baselineAfter - baselineBefore;
 
         // --- 区間 2: UDP 送信 + 管理リスナへの継続的なログイン試行を同時実行 ---
@@ -91,8 +90,7 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
 
         var concurrentBefore = baselineAfter;
         var concurrentResult = await SendUdpBurstAsync(host.UdpPort, count: 500);
-        await Task.Delay(TimeSpan.FromSeconds(2));
-        var concurrentAfter = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
+        var concurrentAfter = await WaitForPersistedAsync(databasePath, concurrentBefore, concurrentResult.SentCount);
         var concurrentSaved = concurrentAfter - concurrentBefore;
 
         authLoadCts.Cancel();
@@ -106,6 +104,49 @@ public sealed class AdminAuthLoadIsolationTests : IAsyncLifetime
 
         // --- 参考情報として記録するのみ（閾値判定はしない。クラスの remarks 参照） ---
         Assert.True(loginAttempts > 0, "管理リスナへのログイン試行が 1 件も実行されなかった（負荷生成器が機能していない）。");
+    }
+
+    /// <summary>
+    /// 送信分が保存されるまで待って、保存後の総件数を返す（固定スリープを使わない）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>主張は変えていない</b>——期待件数に達したら抜け、達しなければ上限まで待ってから
+    /// そのときの件数を返す。呼び出し側の <c>Assert.Equal(送信数, 保存数)</c> はそのままで、
+    /// **本当に取りこぼしていれば従来どおり失敗する**。緩めたのは待ち方だけである。
+    /// </para>
+    /// <para>
+    /// <b>なぜ必要か</b>: 従来は固定 2 秒の猶予だった。500 件の SQLite 永続化に要する時間は
+    /// ランナーのディスク性能に依存し、混雑した個体では 2 秒に収まらない——実際に
+    /// windows-2025 で「500 送信・401 保存」で落ちた（同じ run の windows-2022 は成功、
+    /// 同一コミットの main も成功）。**取りこぼしではなく待ち不足**を「受信ロス」として
+    /// 報告する構造になっていた。architecture.md §5.2 が記録している「CI ランナーの個体差が
+    /// 支配的」という実測と同じ性質の問題である。
+    /// </para>
+    /// </remarks>
+    private static async Task<long> WaitForPersistedAsync(string databasePath, long before, long expectedSent)
+    {
+        // 上限は「遅い個体でも収まる」側に取る。ここに達したら件数をそのまま返し、
+        // 呼び出し側の等値検査で失敗させる（黙って成功にしない）。
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+
+        long after;
+        do
+        {
+            after = await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
+            if (after - before >= expectedSent)
+            {
+                break;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250));
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        // 到達後にもう一度読む——**超過（重複保存）も検出したい**ため、
+        // 期待値に達した瞬間で打ち切らず、落ち着くまでの短い猶予を置く。
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        return await LogStoreProbe.GetSqliteRecordCountAsync(databasePath);
     }
 
     private static async Task<LoadGeneratorResult> SendUdpBurstAsync(int udpPort, int count)
