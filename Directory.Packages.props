@@ -21,7 +21,7 @@
       最新安定版を確認（プレリリースは除外）。nuspec の依存グループで net10.0 対応を確認済み。
       ライセンス MIT（採用日 2026-07-09）。
     -->
-    <PackageVersion Include="bunit" Version="2.8.6" />
+    <PackageVersion Include="bunit" Version="2.11.3" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <!--
       SQL Server provider（M5-3。Issue #47）。採用時のライブ検証: nuget.org の flat container index
@@ -35,13 +35,13 @@
       最新安定版を確認（プレリリースは除外。他の Microsoft.* と同一系列に揃える方針。
       採用日 2026-07-10）。
     -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
     <!--
       能動通知の背景監視コンポーネント（Issue #149。architecture.md §4.6）のテストで
       周期・抑制窓を FakeTimeProvider により決定的に検証するために追加。採用時のライブ検証:
@@ -50,7 +50,7 @@
       最新安定版を確認（Microsoft.Extensions.Diagnostics.Testing と同一系列に揃える方針。
       採用日 2026-07-09）。
     -->
-    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
     <!--
       メール通知の SMTP 送信（ADR-0017 決定 2・委任 1。Issue #350）。.NET 標準の
       System.Net.Mail.SmtpClient は公式に非推奨（docs 上で MailKit が名指しの代替）であり、
@@ -64,9 +64,9 @@
       ライセンス MIT（NOTICE 記載は本 PR で実施。採用日 2026-07-19）。
       **下限の制約**: CVE-2026-41319 の影響を受けるため 4.16.0 未満へ下げてはならない。
     -->
-    <PackageVersion Include="MailKit" Version="4.17.0" />
-    <PackageVersion Include="MimeKit" Version="4.17.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="MailKit" Version="4.18.1" />
+    <PackageVersion Include="MimeKit" Version="4.18.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <!--
       UI コンポーネントライブラリ（M8-1。Issue #68。採用判断は ADR-0003 決定 3）。
       採用時のライブ検証: nuget.org の flat container index
@@ -74,7 +74,7 @@
       (azuresearch-usnc.nuget.org/query?q=packageid:MudBlazor&prerelease=false) の両方で
       最新安定版を確認。ライセンス MIT（NOTICE 記載は導入 PR で実施。採用日 2026-07-06）。
     -->
-    <PackageVersion Include="MudBlazor" Version="9.7.0" />
+    <PackageVersion Include="MudBlazor" Version="9.11.0" />
     <!--
       SQL Server 接続文字列の DPAPI 暗号化（ADR-0004 決定 5「v0.1: DPAPI 完動」。
       configuration.md §2）。採用時のライブ検証: nuget.org の flat container index
@@ -82,7 +82,7 @@
       最新安定版を確認（プレリリースは除外。他の Microsoft.* と同一系列に揃える方針。
       採用日 2026-07-06）。
     -->
-    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <!--
@@ -93,7 +93,7 @@
       （コンストラクタ・InitializeAsync・テスト本体を包含）を SkippableTestMessageBus でラップして
       Skipped へ変換することを確認済み（採用日 2026-07-05）。
     -->
-    <PackageVersion Include="Xunit.SkippableFact" Version="1.5.61" />
+    <PackageVersion Include="Xunit.SkippableFact" Version="1.5.85" />
 
     <!--
       WiX 拡張(M9-1。Issue #74。installer/Yagura.Installer.wixproj のみが参照)。
@@ -123,7 +123,7 @@
       初回修正 1.5.0」としているため、1.5.0 未満へ下げてはならない。実 pin は
       tests/Yagura.Web.Tests の直接参照で効かせる（bunit の唯一の利用箇所。採用日 2026-07-18）。
     -->
-    <PackageVersion Include="AngleSharp" Version="1.7.0" />
+    <PackageVersion Include="AngleSharp" Version="1.8.3" />
   </ItemGroup>
 
 </Project>
