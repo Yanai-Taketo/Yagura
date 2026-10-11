@@ -84,7 +84,7 @@
     -->
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
     <PackageVersion Include="xunit" Version="2.9.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <!--
       SQL Server 適合テストの動的スキップ（M5-3。Issue #47）。採用時のライブ検証:
       nuget.org registration (api.nuget.org/v3/registration5-semver1/xunit.skippablefact/) で
