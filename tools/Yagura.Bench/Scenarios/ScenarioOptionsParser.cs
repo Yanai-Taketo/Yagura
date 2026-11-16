@@ -1,4 +1,6 @@
+using System.Globalization;
 using Yagura.Bench.LoadGeneration;
+using Yagura.Ingestion.FlowControl;
 using Yagura.Storage.Spool;
 
 namespace Yagura.Bench.Scenarios;
@@ -35,6 +37,10 @@ public static class ScenarioOptionsParser
         string? compareBaselinePath = null;
         int? udpReceiveBufferBytes = null;
         IReadOnlyList<long>? rowCounts = null;
+        bool? flowControlEnabled = null;
+        int? flowControlMessagesPerSecond = null;
+        int? flowControlBurstSize = null;
+        var drainTimeoutSeconds = ScenarioOptions.DefaultDrainTimeoutSeconds;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -85,9 +91,41 @@ public static class ScenarioOptionsParser
                         .Select(long.Parse)
                         .ToArray();
                     break;
+                case "--flow-control":
+                    flowControlEnabled = ParseOnOff(RequireValue(args, ref i, "--flow-control"), "--flow-control");
+                    break;
+                case "--flow-control-rate":
+                    flowControlMessagesPerSecond = ParseIntInRange(
+                        RequireValue(args, ref i, "--flow-control-rate"),
+                        "--flow-control-rate",
+                        TokenBucketIngressGate.MinMessagesPerSecond,
+                        TokenBucketIngressGate.MaxMessagesPerSecond);
+                    break;
+                case "--flow-control-burst":
+                    flowControlBurstSize = ParseIntInRange(
+                        RequireValue(args, ref i, "--flow-control-burst"),
+                        "--flow-control-burst",
+                        TokenBucketIngressGate.MinBurstSize,
+                        TokenBucketIngressGate.MaxBurstSize);
+                    break;
+                case "--drain-timeout":
+                    drainTimeoutSeconds = ParseIntInRange(
+                        RequireValue(args, ref i, "--drain-timeout"),
+                        "--drain-timeout",
+                        1,
+                        86_400); // 上限は打ち間違いの安全弁（1 日待っても drain しない段は測定として成立しない）。
+                    break;
                 default:
                     throw new BenchUsageException($"未知のオプション '{args[i]}'。\n\n{BuildUsageText()}");
             }
+        }
+
+        // 無効にした流量制御へ閾値を渡しても何も効かない。指定が黙って捨てられると、測る側は
+        // 閾値を変えた条件で測れたと誤認するため、組み合わせ自体を拒否する。
+        if (flowControlEnabled == false && (flowControlMessagesPerSecond is not null || flowControlBurstSize is not null))
+        {
+            throw new BenchUsageException(
+                "--flow-control off と --flow-control-rate / --flow-control-burst は同時に指定できない（無効にした流量制御に閾値は効かない）。");
         }
 
         return new ScenarioOptions(
@@ -105,7 +143,28 @@ public static class ScenarioOptionsParser
             keepDataRoot,
             compareBaselinePath,
             udpReceiveBufferBytes,
-            rowCounts);
+            rowCounts,
+            flowControlEnabled,
+            flowControlMessagesPerSecond,
+            flowControlBurstSize,
+            drainTimeoutSeconds);
+    }
+
+    private static bool ParseOnOff(string value, string optionName) => value.ToLowerInvariant() switch
+    {
+        "on" => true,
+        "off" => false,
+        _ => throw new BenchUsageException($"{optionName} は on または off のみ指定可能（指定値: '{value}'）。"),
+    };
+
+    private static int ParseIntInRange(string value, string optionName, int min, int max)
+    {
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < min || parsed > max)
+        {
+            throw new BenchUsageException($"{optionName} には {min}〜{max} の整数を指定する（指定値: '{value}'）。");
+        }
+
+        return parsed;
     }
 
     private static LoadTransport ParseTransport(string value) => value.ToLowerInvariant() switch
@@ -158,6 +217,11 @@ public static class ScenarioOptionsParser
                                       Issue #62 / architecture.md §5.2。絶対値の合否は行わない）
           --udp-receive-buffer-bytes <N>  UDP 受信バッファサイズ（SO_RCVBUF。バイト。M-2。
                                            既定: 未指定 = 製品既定のまま上書きしない）
+          --flow-control <on|off>     送信元単位の流量制御の有効/無効（既定: 未指定 = 製品既定〔有効〕のまま。
+                                      送信元は 127.0.0.1 の 1 つなので、受信能力を測るときは off にする）
+          --flow-control-rate <N>     流量制御の持続速度（件/秒。既定: 製品既定。off とは併用不可）
+          --flow-control-burst <N>    流量制御のバーストサイズ（件。既定: 製品既定。off とは併用不可）
+          --drain-timeout <秒>         送出後にスプールの drain 完了を待つ上限（既定 120）
           --rows <N1,N2,...>          QueryLatency/SchemaMigrationDdl の対象行数規模（カンマ区切り。
                                       既定: QueryLatency = 100000,1000000 / SchemaMigrationDdl = 100000,1000000）
 
@@ -168,6 +232,8 @@ public static class ScenarioOptionsParser
           Yagura.Bench ProviderWriteCeiling --sqlserver "Server=.;Database=YaguraBench;Integrated Security=true;"
           Yagura.Bench SustainedZeroDrop --rate 5000 --duration 10 --compare-baseline tools\Yagura.Bench\baselines\ci-baseline.json
           Yagura.Bench SustainedZeroDrop --rate 30000 --duration 10 --udp-receive-buffer-bytes 4194304
+          Yagura.Bench SustainedZeroDrop --transport udp --rate 12000 --duration 60 --padding-bytes 100 --flow-control off
+          Yagura.Bench ProviderWriteCeiling --transport tcp --rate 15000 --duration 60 --flow-control off --drain-timeout 900
           Yagura.Bench QueryLatency --rows 100000,1000000,10000000
           Yagura.Bench SchemaMigrationDdl --rows 100000,1000000
           Yagura.Bench SchemaMigrationDdl --rows 100000,1000000 --sqlserver "Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true;"

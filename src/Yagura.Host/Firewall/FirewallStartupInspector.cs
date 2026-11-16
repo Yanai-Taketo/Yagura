@@ -15,10 +15,12 @@ namespace Yagura.Host.Firewall;
 /// <para>
 /// <b>突合の設計</b>: 期待集合 = 実際に外部公開される listen（UDP 受信・TCP 受信・
 /// 閲覧 HTTP〔`Viewer:PublicAccess = Lan` のときのみ——LocalhostOnly は規則不要〕・
-/// TLS 受信〔有効時〕）。管理リスナは loopback 束縛のため対象外（規則を作らない設計——
-/// configuration.md §4.3）。各期待 listen をカバーする**有効な受信許可規則**が Yagura
-/// 名前空間に存在しなければ警告（イベント ID 1023）。逆に、どの listen にも対応しない
-/// Yagura 規則（ポート変更後の取り残し）も同じ警告にまとめて列挙する。
+/// TLS 受信〔有効時〕・管理リスナのリモート HTTPS〔`Admin:RemoteBinding:Enabled` 時〕）。
+/// loopback 束縛の管理リスナ本体は対象外（規則を作らない設計——configuration.md §4.3）。
+/// リモート HTTPS を期待集合に含めないと、運用者が案内どおり Yagura 名前空間で作った
+/// 規則が「どのリスナにも対応しない取り残し」と誤って列挙される。各期待 listen をカバーする
+/// **有効な受信許可規則**が Yagura 名前空間に存在しなければ警告（イベント ID 1023）。逆に、
+/// どの listen にも対応しない Yagura 規則（ポート変更後の取り残し）も同じ警告にまとめて列挙する。
 /// </para>
 /// <para>
 /// <b>オプトアウトへの配慮</b>: インストール記録が「規則作成をオプトアウトした」ことを示し、
@@ -171,7 +173,7 @@ public sealed class FirewallStartupInspector
                 ConfigurationEventIds.FirewallRuleMismatch,
                 "[firewall-rule-mismatch] リスナの実ポートと Yagura 名前空間のファイアウォール規則に不一致があります: {Findings}。" +
                 "この状態では該当ポートへの受信がファイアウォールで破棄され、Yagura のカウンタにも現れません" +
-                "（configuration.md §4.3。規則の作成・修正手順は利用者ガイド参照）。",
+                "（規則の作成・修正手順は運用ガイド docs/operations.md §14「ファイアウォール規則を自分で足す」を参照）。",
                 string.Join(" / ", findings));
         }
     }
@@ -196,6 +198,13 @@ public sealed class FirewallStartupInspector
         if (configuration.IngestionTlsEnabled && configuration.IngestionTlsCertificateThumbprint is not null)
         {
             expected.Add((FirewallRuleInfo.TcpProtocol, configuration.IngestionTlsPort, "syslog TLS 受信"));
+        }
+
+        // 有効時は認証・HTTPS の構成済みが起動時の fail-closed 検証で保証されている
+        // （configuration.md §4.2）ため、フラグだけで「外部公開される」と判定できる。
+        if (configuration.AdminRemoteBindingEnabled)
+        {
+            expected.Add((FirewallRuleInfo.TcpProtocol, configuration.AdminHttpsPort, "管理画面のリモート HTTPS"));
         }
 
         return expected;

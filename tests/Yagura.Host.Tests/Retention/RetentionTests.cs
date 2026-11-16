@@ -1,9 +1,12 @@
 using Microsoft.Extensions.Logging.Testing;
 using Yagura.Host.Configuration;
 using Yagura.Host.Retention;
+using Yagura.Host.Storage;
 using Yagura.Host.Tests.Configuration;
 using Yagura.Storage;
+using Yagura.Storage.Administration;
 using Yagura.TestSupport;
+using Yagura.Web.Administration;
 
 namespace Yagura.Host.Tests.Retention;
 
@@ -441,6 +444,124 @@ public sealed class RetentionTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // スケジューラ: 起動時キャッチアップと保存先のスキーマ初期化の待ち合わせ
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Start_BeforeSchemaInitialized_WaitsThenCatchesUpOnceInitialized()
+    {
+        // 新しい保存先へ切り替えた直後の初回起動の再現: スキーマの初期化は起動経路の外で
+        // 周期監視が行うため、スケジューラの起動時点ではまだスキーマが無い。ここで照会すると
+        // 確定的に失敗し、その起動ではキャッチアップが行われない。
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var time = new TimerTrackingTimeProvider(baseline);
+        var store = new RecordingLogStore { SchemaMissingUntilInitialized = true };
+        var coordinator = CreateStorageInitialization(store, time);
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            OptionsWithDistantExecutionTime(baseline),
+            time,
+            new FakeLogger<RetentionScheduler>(collector),
+            storageInitialization: coordinator);
+
+        scheduler.Start();
+        await WaitUntilAsync(() => time.CreatedTimerCount >= 1);
+
+        // 初期化前には照会しない。待機の上限の直前まで時間を進めても諦めない。
+        Assert.Equal(0, store.QuerySystemEventsCallCount);
+        Assert.Equal(1, time.CountLiveTimers(RetentionScheduler.CatchUpInitializationWait));
+        time.Advance(RetentionScheduler.CatchUpInitializationWait - TimeSpan.FromSeconds(1));
+        Assert.Equal(0, store.QuerySystemEventsCallCount);
+
+        // 周期監視の初回評価に相当する初期化が成功すると、待機が解けて照会とキャッチアップが走る。
+        Assert.True(await coordinator.TryInitializeAsync(force: true));
+        await WaitUntilAsync(() => store.DeleteCallCount >= 1);
+
+        Assert.Equal(1, store.QuerySystemEventsCallCount);
+        Assert.Equal(1, store.DeleteCallCount);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Message.Contains("[retention-catchup-query-failed]"));
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Message.Contains(InitializationWaitTimedOutText));
+
+        // 待ち合わせが決着したら、上限側のタイマーを上限まで残さない（破棄は待ち手の継続の
+        // 直後に行われるため、完了を待って確かめる。時間は進めない）。
+        await WaitUntilAsync(() => time.CountLiveTimers(RetentionScheduler.CatchUpInitializationWait) == 0);
+    }
+
+    [Fact]
+    public async Task Start_SchemaNeverInitialized_GivesUpAtWaitLimitAndTriesAnyway()
+    {
+        // 保存先が長時間落ちている間は初期化が成立しない。無期限に待つと復旧まで保持期間削除が
+        // 一切走らないため、上限で諦めて試みる（失敗は警告に留まり、定期実行の待機へ委ねる）。
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var time = new TimerTrackingTimeProvider(baseline);
+        var store = new RecordingLogStore { SchemaMissingUntilInitialized = true, InitializeFails = true };
+        var coordinator = CreateStorageInitialization(store, time);
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            OptionsWithDistantExecutionTime(baseline),
+            time,
+            new FakeLogger<RetentionScheduler>(collector),
+            storageInitialization: coordinator);
+
+        Assert.False(await coordinator.TryInitializeAsync(force: true));
+        scheduler.Start();
+        await WaitUntilAsync(() => time.CountLiveTimers(RetentionScheduler.CatchUpInitializationWait) == 1);
+
+        time.Advance(RetentionScheduler.CatchUpInitializationWait - TimeSpan.FromSeconds(1));
+        Assert.Equal(0, store.QuerySystemEventsCallCount);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        await WaitUntilAsync(() => collector.GetSnapshot().Any(r => r.Message.Contains("[retention-catchup-query-failed]")));
+
+        Assert.Equal(1, store.QuerySystemEventsCallCount);
+        Assert.Contains(collector.GetSnapshot(), r => r.Message.Contains(InitializationWaitTimedOutText));
+        Assert.Equal(0, store.DeleteCallCount);
+    }
+
+    [Fact]
+    public async Task Stop_WhileWaitingForSchemaInitialization_EndsWithoutQuerying()
+    {
+        // 停止要求による打ち切りは時間切れとして扱わない。時間切れの経路へ進むと、停止中に
+        // 保存先へ照会し、「上限内に完了しなかった」という事実と異なるログを残す。
+        var baseline = new DateTimeOffset(2026, 7, 9, 12, 0, 0, TimeSpan.Zero);
+        var time = new TimerTrackingTimeProvider(baseline);
+        var store = new RecordingLogStore { SchemaMissingUntilInitialized = true };
+        var collector = new FakeLogCollector();
+        await using var scheduler = new RetentionScheduler(
+            store,
+            OptionsWithDistantExecutionTime(baseline),
+            time,
+            new FakeLogger<RetentionScheduler>(collector),
+            storageInitialization: CreateStorageInitialization(store, time));
+
+        scheduler.Start();
+        await WaitUntilAsync(() => time.CountLiveTimers(RetentionScheduler.CatchUpInitializationWait) == 1);
+
+        await scheduler.StopAsync();
+
+        Assert.Equal(0, store.QuerySystemEventsCallCount);
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Message.Contains(InitializationWaitTimedOutText));
+    }
+
+    /// <summary>初期化の待機が上限に達したときの情報ログに含まれる文言。</summary>
+    private const string InitializationWaitTimedOutText = "以内に完了しなかった";
+
+    private static StorageInitializationCoordinator CreateStorageInitialization(ILogStore store, TimeProvider time) =>
+        new(store, new AlwaysAvailableAccountStore(), new StorageAvailabilityState(), time);
+
+    /// <summary>
+    /// 定刻を基準時刻から 6 時間後に置く——テスト中に進める時間（数分）で定期実行の契機が
+    /// 混ざらず、定期実行の待機タイマーの期限が初期化の待機の上限と一致することもない。
+    /// </summary>
+    private static RetentionSchedulerOptions OptionsWithDistantExecutionTime(DateTimeOffset baseline)
+    {
+        var local = baseline.ToLocalTime();
+        return new RetentionSchedulerOptions(RetentionDays: 7, new TimeOnly(local.Hour, local.Minute).AddHours(6));
+    }
+
+    // ------------------------------------------------------------------
     // スケジューラ: 書き込みゲートとの直列化(Issue #151)
     // ------------------------------------------------------------------
 
@@ -485,6 +606,8 @@ public sealed class RetentionTests : IDisposable
     private sealed class RecordingLogStore : ILogStore
     {
         private int _deleteCallCount;
+        private int _querySystemEventsCallCount;
+        private volatile bool _schemaCreated;
 
         public int DeleteCallCount => Volatile.Read(ref _deleteCallCount);
         public DateTimeOffset? LastCutoff { get; private set; }
@@ -495,10 +618,31 @@ public sealed class RetentionTests : IDisposable
         /// <summary>QuerySystemEventsAsync を失敗させる（キャッチアップ判定の失敗経路の検証用）。</summary>
         public bool ThrowOnQuerySystemEvents { get; set; }
 
+        /// <summary>
+        /// InitializeAsync が成功するまで QuerySystemEventsAsync を失敗させる（スキーマ未作成の
+        /// 保存先の模擬）。
+        /// </summary>
+        public bool SchemaMissingUntilInitialized { get; init; }
+
+        /// <summary>InitializeAsync を失敗させる（保存先に到達できない間の模擬）。</summary>
+        public bool InitializeFails { get; set; }
+
+        /// <summary>QuerySystemEventsAsync が呼ばれた回数（失敗した呼び出しを含む）。</summary>
+        public int QuerySystemEventsCallCount => Volatile.Read(ref _querySystemEventsCallCount);
+
         /// <summary>WriteSystemEventAsync で書き込まれたイベントの記録。</summary>
         public List<SystemEvent> WrittenSystemEvents { get; } = [];
 
-        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            if (InitializeFails)
+            {
+                return Task.FromException(new InvalidOperationException("テスト用の初期化失敗。"));
+            }
+
+            _schemaCreated = true;
+            return Task.CompletedTask;
+        }
 
         public Task WriteBatchAsync(IReadOnlyList<LogRecord> records, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
@@ -537,9 +681,16 @@ public sealed class RetentionTests : IDisposable
 
         public Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(DateTimeOffset? from, DateTimeOffset? to, int limit, TimeSpan timeout, string? kind = null, CancellationToken cancellationToken = default)
         {
+            Interlocked.Increment(ref _querySystemEventsCallCount);
+
             if (ThrowOnQuerySystemEvents)
             {
                 throw new InvalidOperationException("テスト用の読み取り失敗。");
+            }
+
+            if (SchemaMissingUntilInitialized && !_schemaCreated)
+            {
+                throw new InvalidOperationException("テスト用の読み取り失敗（スキーマ未作成）。");
             }
 
             // 実 provider と同じ意味論で kind フィルタを適用する（Issue #150 の
@@ -561,6 +712,32 @@ public sealed class RetentionTests : IDisposable
 
         public Task<IReadOnlyList<SourceActivity>> QueryTopTalkersAsync(DateTimeOffset from, DateTimeOffset to, int limit, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("このテストダブルは閲覧用の読み取り操作を対象としない。");
+    }
+
+    /// <summary>
+    /// 初期化が常に成功する管理者アカウントストア（待ち合わせの対象はログストアだけのため、
+    /// 初期化以外は使わない）。
+    /// </summary>
+    private sealed class AlwaysAvailableAccountStore : IAdminAccountStore
+    {
+        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<bool> HasAnyAccountAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<AdminAccountRecord?> GetSoleAccountAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<AdminAccountRecord?> FindByUsernameAsync(string username, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task UpsertAsync(
+            string username, string passwordHash, DateTimeOffset atUtc, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RecordSuccessfulLoginAsync(
+            string username, DateTimeOffset atUtc, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     /// <summary>

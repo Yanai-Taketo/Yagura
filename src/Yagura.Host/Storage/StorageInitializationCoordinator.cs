@@ -120,11 +120,16 @@ public sealed class StorageInitializationCoordinator
     public bool IsAdminAccountStoreInitialized => _accountStoreInitialized;
 
     /// <summary>
-    /// ログストアのスキーマ初期化が完了するまで待つ（Issue #510）。**待ちきれなくても呼び出し元を
+    /// ログストアのスキーマ初期化が完了するまで待つ。**待ちきれなくても呼び出し元を
     /// 止めない**設計とし、上限時間を呼び出し側が渡す。
     /// </summary>
     /// <param name="timeout">待つ上限。超えたら <see langword="false"/> を返す。</param>
+    /// <param name="cancellationToken">停止要求。</param>
     /// <returns>初期化が完了していれば <see langword="true"/>、上限に達したら <see langword="false"/>。</returns>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> で打ち切られた。時間切れ（<see langword="false"/>）と区別するのは、
+    /// 停止要求で抜けた呼び出し元が「時間切れなので初期化を待たずに試みる」経路へ進まないようにするため。
+    /// </exception>
     /// <remarks>
     /// 保存先が長時間落ちている場合、初期化は復旧まで成立しない。ここで無期限に待つと
     /// 「保存先が復旧するまで保持期間削除が一切走らない」状態を作るため、**上限で諦めて
@@ -138,11 +143,19 @@ public sealed class StorageInitializationCoordinator
             return true;
         }
 
-        var completed = await Task.WhenAny(
-            _logStoreInitializedSignal.Task,
-            Task.Delay(timeout, _timeProvider, cancellationToken)).ConfigureAwait(false);
-
-        return completed == _logStoreInitializedSignal.Task;
+        try
+        {
+            // Task.WhenAny と Task.Delay の組み合わせにしないのは、初期化が先に完了したときに
+            // 上限側のタイマーが上限まで残り続けるため。WaitAsync は完了時にタイマーを破棄する。
+            await _logStoreInitializedSignal.Task
+                .WaitAsync(timeout, _timeProvider, cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

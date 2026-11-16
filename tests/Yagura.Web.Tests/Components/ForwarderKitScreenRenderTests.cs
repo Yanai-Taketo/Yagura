@@ -161,6 +161,9 @@ public sealed class ForwarderKitScreenRenderTests
                 // ADR-0021 委任 2: opt-in トグルの状態表示（機能が無効な構成でも読む）。
                 services.AddSingleton<Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService>(
                     new FakeForwarderMsiUploadAdminService(uploadSettingStatus));
+                // opt-in トグルの保存後に再読み込みを呼ぶため、画面が注入する（初期描画では呼ばれない）。
+                services.AddSingleton<Yagura.Abstractions.Administration.IConfigurationReloadService>(
+                    new RecordingConfigurationReloadService());
                 services.AddSingleton(new Yagura.Web.Circuits.YaguraCircuitContext());
             });
 

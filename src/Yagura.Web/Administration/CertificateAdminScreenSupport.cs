@@ -77,11 +77,8 @@ public static class CertificateAdminScreenSupport
         notifier.NotifyOk(summary);
         onSaved?.Invoke();
 
-        var reload = await reloadService.ReloadAsync(operatorAddress, operatorScheme, operatorPrincipal);
-        if (reload.Rejected)
-        {
-            notifier.NotifyWarning(string.Format(reloadRejectedFormat, reload.RejectionReason));
-        }
+        await ConfigurationSaveReload.ReloadAfterSaveAsync(
+            reloadService, notifier, changedKeys, operatorAddress, operatorScheme, operatorPrincipal, reloadRejectedFormat);
 
         return summary;
     }

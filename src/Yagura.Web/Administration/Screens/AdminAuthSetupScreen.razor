@@ -8,6 +8,7 @@
 @using Yagura.Web.Administration
 @using Yagura.Web.Circuits
 @inject IAdminAuthenticationAdminService AuthAdminService
+@inject IConfigurationReloadService ReloadService
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
@@ -162,7 +163,7 @@ else
             var user = (await AuthStateProvider.GetAuthenticationStateAsync()).User;
             var (operatorScheme, operatorPrincipal) = AuditActorResolver.Resolve(user);
 
-            _status = await AuthAdminService.ConfigureAsync(
+            var result = await AuthAdminService.ConfigureAsync(
                 _windowsEnabled,
                 _kerberosOnly,
                 _appEnabled,
@@ -176,9 +177,21 @@ else
                 // 変更にも実認証を要求する。判定は HTTP 側ポリシーと同じ単一実装。
                 AdminAuthenticationExtensions.IsForwarderMsiUploadOperationAllowed(user));
 
+            _status = result.Status;
             _newPassword = string.Empty;
             ApplyStatusToFields(_status);
-            Notifier.NotifyOk("管理 UI 認証設定を保存しました。反映にはサービス再起動が必要です。");
+
+            if (result.ChangedKeys.Count == 0)
+            {
+                Notifier.NotifyOk(UiText.AdminAuthSetupSavedNoRestart);
+                return;
+            }
+
+            Notifier.NotifyOk(UiText.AdminAuthSetupSaved);
+
+            // 認証設定の変更は再起動まで効かない。再読み込みで再起動待ちカードへ計上する。
+            await ConfigurationSaveReload.ReloadAfterSaveAsync(
+                ReloadService, Notifier, result.ChangedKeys, CircuitContext.RemoteAddress, operatorScheme, operatorPrincipal);
         }
         catch (WizardValidationException ex)
         {
