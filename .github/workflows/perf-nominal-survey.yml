@@ -31,6 +31,8 @@
 name: Perf Nominal Survey
 
 on:
+  push:
+    branches: ['claude/loving-bell-0ta4a7-m6-survey']
   workflow_dispatch:
     inputs:
       phase:
@@ -121,17 +123,17 @@ jobs:
         id: plan
         shell: bash
         env:
-          IN_PHASE: ${{ inputs.phase }}
-          IN_OS: ${{ inputs.os }}
-          IN_SAMPLES: ${{ inputs.samples }}
-          IN_UDP_RATES: ${{ inputs.udp_rates }}
-          IN_TCP_RATES: ${{ inputs.tcp_rates }}
-          IN_SQLITE_RATES: ${{ inputs.sqlite_rates }}
-          IN_BURST_COUNTS: ${{ inputs.burst_counts }}
-          IN_DURATION: ${{ inputs.duration }}
-          IN_PADDING_BYTES: ${{ inputs.padding_bytes }}
-          IN_RCVBUF: ${{ inputs.rcvbuf }}
-          IN_MAX_PARALLEL: ${{ inputs.max_parallel }}
+          IN_PHASE: ${{ github.event_name == 'push' && 'explore' || inputs.phase }}
+          IN_OS: ${{ github.event_name == 'push' && 'both' || inputs.os }}
+          IN_SAMPLES: ${{ github.event_name == 'push' && '' || inputs.samples }}
+          IN_UDP_RATES: ${{ github.event_name == 'push' && '1000,2000,3000,4000,5000,6000,8000,10000,12000' || inputs.udp_rates }}
+          IN_TCP_RATES: ${{ github.event_name == 'push' && '2000,4000,6000,8000,10000,15000,20000' || inputs.tcp_rates }}
+          IN_SQLITE_RATES: ${{ github.event_name == 'push' && '1000,2000,3000,4000,6000,8000,10000,15000' || inputs.sqlite_rates }}
+          IN_BURST_COUNTS: ${{ github.event_name == 'push' && '500,1000,2000,5000,10000,20000' || inputs.burst_counts }}
+          IN_DURATION: ${{ github.event_name == 'push' && '' || inputs.duration }}
+          IN_PADDING_BYTES: ${{ github.event_name == 'push' && '100' || inputs.padding_bytes }}
+          IN_RCVBUF: ${{ github.event_name == 'push' && '' || inputs.rcvbuf }}
+          IN_MAX_PARALLEL: ${{ github.event_name == 'push' && '20' || inputs.max_parallel }}
         run: |
           python3 - <<'PY'
           import json, math, os, sys
