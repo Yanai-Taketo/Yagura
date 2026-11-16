@@ -16,7 +16,8 @@ namespace Yagura.Host.Administration.OldDatabaseDisposal;
 /// <b>保存期間を過ぎた時間帯は照合しない</b>: 移行先では保存期間による削除が進むため、移行済みでも保存期間を
 /// 過ぎた時間帯は移行先の件数が旧ファイルを下回る。それらは製品の約束の上では既に消えているはずのログであり、
 /// 「まだ移行していない」と呼んで明示確認を求めると、移行を済ませた利用者に誤った警告を出し続けることになる。
-/// 正時の時間帯の終わりが保存期間の境界以前のものだけを除く。
+/// 境界を跨ぐ時間帯も除く——移行先の削除は前回の実行の境界（今回の境界より手前）まで進んでおり、その時間帯の
+/// 件数は削除の進み具合で変わるため照合に使えない。
 /// </para>
 /// <para>
 /// 切替の境界の記録が無い・読めない場合は、照合できない区間を全区間とみなす（安全側——明示確認に回す）。
@@ -30,7 +31,7 @@ public static class MigrationCompletionJudge
     /// <param name="checkpoint">移行チェックポイントの状態（無ければ <see langword="null"/>）。</param>
     /// <param name="boundary">切替の境界の記録（無い・読めなければ <see langword="null"/>）。</param>
     /// <param name="target">移行先（現行 provider）。</param>
-    /// <param name="retentionCutoff">保存期間の境界（これ以前に終わる時間帯は照合しない。無期限なら <see langword="null"/>）。</param>
+    /// <param name="retentionCutoff">保存期間の境界（これより前に始まる時間帯は照合しない。無期限なら <see langword="null"/>）。</param>
     /// <param name="cancellationToken">取り消し。</param>
     public static async Task<OldDatabaseMigrationJudgment> JudgeAsync(
         string oldPath,
@@ -95,7 +96,7 @@ public static class MigrationCompletionJudge
                     var oldHours = await OldSqliteDatabase.CountByHourAsync(oldPath, toExclusive, cancellationToken)
                         .ConfigureAwait(false);
                     var comparable = oldHours
-                        .Where(hour => retentionCutoff is not { } cutoff || hour.HourStartUtc.AddHours(1) > cutoff)
+                        .Where(hour => retentionCutoff is not { } cutoff || hour.HourStartUtc >= cutoff)
                         .ToList();
                     if (comparable.Count > 0)
                     {

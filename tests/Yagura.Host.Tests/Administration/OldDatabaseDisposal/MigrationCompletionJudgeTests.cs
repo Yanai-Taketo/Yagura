@@ -195,6 +195,23 @@ public sealed class MigrationCompletionJudgeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HourStraddlingTheRetentionCutoff_IsNotReconciled()
+    {
+        // 保存期間による削除は境界の途中まで進んでいることがある（前回の実行の境界が今回の境界より手前）。
+        // 境界を跨ぐ時間帯は件数で照合できないため照合しない。
+        var records = await DisposalFixtures.SeedOldAsync(_oldPath, 180);
+        var cutoff = DisposalFixtures.BaseTime.AddHours(2).AddMinutes(30);
+        await DisposalFixtures.WriteAsync(_target, records.Where(r => r.ReceivedAt >= DisposalFixtures.BaseTime.AddHours(2).AddMinutes(10)));
+
+        var judgment = await JudgeAsync(
+            await CompletedCheckpointAsync(180),
+            BoundaryAt(DisposalFixtures.BaseTime.AddDays(1)),
+            retentionCutoff: cutoff);
+
+        Assert.True(judgment.Migrated, string.Join(",", judgment.Gaps));
+    }
+
+    [Fact]
     public async Task TargetWithoutHourlyCounts_CannotReconcile()
     {
         var records = await DisposalFixtures.SeedOldAsync(_oldPath, 10);
