@@ -15,6 +15,7 @@
 | [対応環境を維持する](operations/supported-environments.md) | 閉域環境でのブラウザ更新、対応下限の環境の扱い、サポート期限、対応外の OS、Windows Server 2019 の送信元から TLS 受信へ送るとき |
 | [昇格後に旧データベースファイルを処分する](operations/promotion-old-db.md) | SQLite から SQL Server へ本番昇格した後の、旧ファイルの退避・削除 |
 | [ファイアウォール規則を自分で足す](operations/firewall.md) | TLS 受信・管理画面のリモートアクセスの受信許可規則の追加・削除と、起動時の規則の突合の警告（イベント ID 1023） |
+| [バックアップ・復旧・サーバの移設と交換](operations/backup-and-migration.md) | バックアップの対象と置き場所・アクセス権、サービス停止の要否、暗号化された設定値（DPAPI）がサーバに束縛されることと入れ直し、同じサーバへの復旧、別のサーバへの移設、SQL Server の交換 |
 
 ## 節番号での参照の読み替え
 
