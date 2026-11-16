@@ -4,7 +4,7 @@
 ![Release](https://img.shields.io/github/v/release/Yanai-Taketo/Yagura)
 ![License](https://img.shields.io/github/license/Yanai-Taketo/Yagura)
 
-> **English**: Yagura is a Windows-native open-source syslog server. Install the MSI, point your network devices at UDP/TCP 514, and open the built-in web viewer — no configuration files, no extra database setup, no Linux VM, no license fees. It runs as a Windows service with an embedded SQLite store out of the box and can later be promoted to SQL Server through a built-in wizard. Windows Event Log forwarding is covered by a bundled Fluent Bit kit, and the admin UI can generate a pre-configured kit (ZIP) pointing at your server. v0.5 is released for evaluation on trusted networks; it is not yet recommended for production (the v1.0 criteria are defined in [ADR-0006](docs/adr/0006-v1-release-criteria.md), in Japanese). Documentation is Japanese-first. License: Apache-2.0.
+> **English**: Yagura is a Windows-native open-source syslog server. Install the MSI, point your network devices at UDP/TCP 514, and open the built-in web viewer — no configuration files, no extra database setup, no Linux VM, no license fees. It runs as a Windows service with an embedded SQLite store out of the box and can later be promoted to SQL Server through a built-in wizard. Windows Event Log forwarding is covered by a bundled Fluent Bit kit, and the admin UI can generate a pre-configured kit (ZIP) pointing at your server. v0.5 is released for evaluation on trusted networks; it is not yet recommended for production (the v1.0 criteria are defined in [ADR-0025](docs/adr/0025-v1-release-criteria-revision.md), in Japanese; on 2026-11-16 the criteria were revised before being met, replacing independent field operation and third-party document review with the author's lab records and AI-based document review — what this gives up will be disclosed with v1.0.0). Documentation is Japanese-first. License: Apache-2.0.
 
 **Windows ネイティブな OSS syslog 集約サーバ——インストール直後、設定なしで受信・閲覧が始まります。**
 
@@ -25,11 +25,13 @@ Windows 環境での syslog 集約には空白地帯があります。商用製�
 
 **v0.5 は評価・試用向けのリリースです。本番利用はまだ推奨していません。**
 
-v1.0（本番利用を推奨できる版）は、[ADR-0006](docs/adr/0006-v1-release-criteria.md) が定める公開基準——独立した 2 環境以上での連続 30 日以上の実運用実績、opt-in セキュリティ強化（TLS 受信・HTTPS・AD 認証）の提供完了など——をすべて満たしてから公開します。基準は先に固定してあり、達成しやすい形に動かしません。
+v1.0（本番利用を推奨できる版）は、[ADR-0025](docs/adr/0025-v1-release-criteria-revision.md) が定める公開基準をすべて満たしてから公開します。
 
-### 試用にご協力いただける方を募集しています
+当初の公開基準（[ADR-0006](docs/adr/0006-v1-release-criteria.md)）は「独立した 2 環境以上での連続 30 日以上の実運用実績」と「利害関係のない第三者による文書の実地確認」を求め、ここに「基準は先に固定してあり、達成しやすい形に動かしません」と書いていました。**2026-11-16、この 2 つの基準を満たす前に改定し、作者の検証環境での記録と、AI による文書の通読で代替することにしました**（ADR-0025）。協力者が現れず、期限を持てなかったためです。この改定で失うもの（独立した環境での運用実績や、第三者による文書の確認が無いことなど）は、v1.0.0 の公開時にこの節とリリースノートで開示します。
 
-v1.0 公開基準のひとつ「独立 2 環境 × 連続 30 日の実運用」に向けて、試用協力者を歓迎します。
+### 実運用の報告を歓迎します
+
+実際の環境で動かした報告を歓迎します。v1.0 の公開判定は独立した環境での運用実績を得ないまま行うため、いただいた報告は、v1.0 の後も不具合の発見と開示の更新に使います（ADR-0025 決定 5）。
 
 - **既存のログ基盤との並行受信（ミラー）で構いません**。本番の可用性を Yagura に預ける必要はありません
 - 実機器由来のトラフィックを複数送信元から継続的に受信できる環境が対象です。SQL Server 構成の環境は特に歓迎します
@@ -219,11 +221,11 @@ Yagura は syslog の**受信・保存・閲覧・通知に特化**します。�
 
 ## v1.0 に向けたロードマップ
 
-Yagura は「本番利用を推奨できる」状態を、期日ではなく **第三者が検証できる基準** で定義しています。次の 5 基準をすべて満たしたときに v1.0 を公開します（判定方法・証拠形式の詳細は [ADR-0006](docs/adr/0006-v1-release-criteria.md)）。
+Yagura は「本番利用を推奨できる」状態を、期日ではなく、**充足を公開の記録で示す基準** で定義しています。次の 5 基準をすべて満たしたときに v1.0 を公開します（判定方法・証拠形式の詳細は [ADR-0025](docs/adr/0025-v1-release-criteria-revision.md)。基準 2・3 は 2026-11-16 に改定しました）。
 
 1. **機能**: ゼロ設定ファーストラン等の導入体験・品質原則が動作し、TLS 受信・Web UI の HTTPS・AD 連携認証の opt-in 強化がすべて提供済みであること
-2. **実運用実績**: 独立した 2 環境以上で連続 30 日以上の実運用実績（[試用にご協力いただける方を募集しています](#試用にご協力いただける方を募集しています)）
-3. **利用者向け文書の完備**: 文書だけを頼りに導入から運用まで到達できることを、利害関係のない第三者が実地確認済みであること
+2. **作者の検証記録**: 作者の検証環境での検証記録を台帳にまとめ、未解決の重大不具合が無いことを判定記録に残すこと（当初の「独立した 2 環境以上で連続 30 日以上の実運用実績」の代替。[実運用の報告を歓迎します](#実運用の報告を歓迎します)）
+3. **利用者向け文書の完備**: 必要な文書がそろい、AI による通読と、作者の検証記録のうち手順に沿って実施した回で確かめていること（当初の「利害関係のない第三者による実地確認」の代替）
 4. **後方互換性の凍結**: 設定・DB スキーマ・保存データ形式の互換性凍結の準備が整っていること
 5. **リリースの完全性**: インストーラへの Authenticode コード署名・checksum 添付・SECURITY.md のサポート対象明記
 
