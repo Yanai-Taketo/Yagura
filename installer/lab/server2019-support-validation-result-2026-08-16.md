@@ -292,12 +292,12 @@ else
   （QEMU ゲスト・メモリ 8GB・空き 45GB、Hyper-V 未導入、ISO/VHD なし、
    VBoxManage / vmrun / docker / wsl いずれも不在）ため、当初は「準備できず」の見込みだった
 - 検証中に 10.0.0.142（Server 2016）を提供いただいた
-- 当初共有された資格情報（`Yagura@2016`）では WinRM 認証が通らず、
+- 当初共有された資格情報では WinRM 認証が通らず、
   `WSManFault Code 5 / 0x80070005 Access is denied` が返り続けた。
   `Administrator` / `10.0.0.142\Administrator` / `.\Administrator` の 3 形、
   `Test-WSMan -Credential`・`winrm identify` のいずれでも同一だったため、
   PowerShell エンドポイントの ACL ではなく **WSMan 層の認証失敗**と切り分けた。
-  正しいパスワード（`Yagura@2026`）の提供を受けて解決
+  正しい資格情報の提供を受けて解決
 - **GUI インストールは目視では未確認**。WinRM 経由には対話デスクトップが無いため、
   代わりに `/qb`（基本 UI。**UI シーケンスの LaunchConditions も評価される**）で拒否を確認し、
   ダイアログに出るのと同一の文面をログから全文取得した。
