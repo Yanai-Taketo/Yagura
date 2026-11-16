@@ -38,6 +38,8 @@ Kerberos のみを許可し NTLM を拒否したい場合は `Viewer:Authenticat
 
 ## 管理 UI 認証と AD グループ（SEC-9）
 
+管理 UI 認証そのものの有効化（管理画面「管理 UI の認証」での操作・最初の管理者アカウント・loopback にも認証を課す設定）は [opt-in 機能を有効化する](opt-in-features.md#管理-ui-の認証) を参照。
+
 管理 UI 認証（[ADR-0010](../adr/0010-admin-ui-authentication.md) Phase 1）の「管理者」は既定で `BUILTIN\Administrators`（ローカル Administrators）のみ。**AD グループを管理者にマップしたい場合**は、既定判定に**加えて** `Admin:Authentication:Windows:AdminGroups` を指定する（ローカル Administrators 判定は残る）。
 
 ```json
