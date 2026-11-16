@@ -1,6 +1,8 @@
 # コード署名セットアップ手順（Sectigo + Google Cloud KMS）
 
-[ADR-0014](../adr/0014-code-signing.md) の実装に向けた運用手順。**証明書の発注・本人確認・アカウント作成・支払いはオーナー本人が行う**（AI エージェントは代行しない）。この文書は「オーナーがやること」と「実装で自動化すること」を分け、発注前に片づける確認事項（ADR-0014 委任 A/B/C）を実行可能な形にまとめる。
+[ADR-0014](../adr/0014-code-signing.md) の署名基盤の構築記録と運用手順。**証明書の発注・本人確認・アカウント作成・支払いはオーナー本人が行う**（AI エージェントは代行しない）。この文書は「オーナーがやること」と「実装で自動化すること」を分け、発注前に片づける確認事項（ADR-0014 委任 A/B/C）を実行可能な形にまとめる。
+
+> **現在の状態**: 構築はフェーズ 3 まで完了し、v0.5.0（2026-07-23）から署名付きで公開している。委任事項ごとの消化状況（済／未実施／記録上未確認）とオーナー確認事項は [ADR-0014](../adr/0014-code-signing.md) の改訂履歴 2 を正とする。
 
 方式の確定事項（ADR-0014 決定 1、オーナー裁定 2026-07-15）:
 
@@ -15,6 +17,8 @@
 ---
 
 ## フェーズ 0: 発注前の確認・準備（オーナー作業。委任 A/B/C）
+
+> **結果**: 委任 A は個人名義・GCP KMS 鍵での証明書発行（2026-07-23 に氏名を訂正して再発行）で可否が確定し、委任 C は Open DUMP Viewer 側の署名導入で済んだ。委任 B（MFA の有効化）と委任 A の費用総額は、確認の記録が残っていない（ADR-0014 改訂履歴 2）。
 
 ### 委任 A — Sectigo リセラーへの事前確認（発注前・最重要）
 
@@ -73,6 +77,7 @@ CSR は Cloud Shell で `libengine-pkcs11-openssl` + Google の `libkmsp11`（PK
 > - プロバイダの `attributeCondition` = `(assertion.repository=='Yanai-Taketo/Yagura' || assertion.repository=='Open-DUMP-Viewer/Open-DUMP-Viewer') && assertion.environment=='release-signing'`
 > - `attributeMapping` に `attribute.environment: assertion.environment` を含む
 > - 鍵 `codesign-rsa4096` の IAM は両 SA に `roles/cloudkms.signerVerifier` **のみ**
+>   - 2026-07-23 追記: jsign での実署名には `roles/cloudkms.viewer` も要ることが署名の通し検証で判明し、追加で付与した（WIF 疎通確認では検出できない）。下の 2-3 の手順はこの付与を含まない
 > - `yagura-signer` は Yagura リポジトリ、`odv-signer` は ODV リポジトリからのみ借用可
 >
 > **未了: 監査ログの有効化（委任 4。下記）。** これが済むまで「事後の検知・帰属」は成立しない。
@@ -124,6 +129,10 @@ for SA in yagura-signer odv-signer; do
     --member="serviceAccount:${SA}@code-signing-502513.iam.gserviceaccount.com" \
     --role="roles/cloudkms.signerVerifier"
 done
+# 注意(2026-07-23 判明): jsign での実署名には roles/cloudkms.viewer も要る(WIF 疎通確認では検出できない)。
+# 付与した範囲(鍵単位かプロジェクト単位か)と付与先(yagura-signer だけか odv-signer もか)は記録がなく、
+# 範囲が未確定のため本手順には付与のコマンドを入れていない。この手順だけを流し直すと jsign の実署名が
+# 権限不足で失敗する。範囲が確定したらここに足す(ADR-0014 改訂履歴 2 のオーナー確認事項)。
 
 # 2-4) WIF から各 SA を借用できる紐付け(リポジトリ単位に限定)。
 #      Yagura の CI は yagura-signer しか、ODV の CI は odv-signer しか借用できない。
@@ -156,9 +165,9 @@ GCP コンソール → **IAM と管理 → 監査ログ** → 一覧から **�
 - WIF プロバイダ: `projects/275116585205/locations/global/workloadIdentityPools/github-pool/providers/github-provider`
 - サービスアカウント（Yagura）: `yagura-signer@code-signing-502513.iam.gserviceaccount.com`
 
-## フェーズ 3: リリースワークフローへの署名工程の組み込み（証明書発行後に実装・検証）
+## フェーズ 3: リリースワークフローへの署名工程の組み込み ✅ 完了（2026-07-23）
 
-ADR-0014 決定 3 の構造を `release.yml` に実装する。**署名ステップは実際の証明書が無いと通し検証できない**ため、実装 PR は証明書受領後にマージする（現行の未署名リリース経路を壊さないよう、証明書が揃うまで main の署名は有効化しない）。以下は確定済みの設計。
+ADR-0014 決定 3 の構造を `release.yml` に実装した。**署名ステップは実際の証明書が無いと通し検証できない**ため、実装は証明書の受領前に入れ、リポジトリ変数 `YAGURA_SIGNING` を `enabled` にするまで署名を無効にしておいた（未署名リリースの経路を壊さないため）。訂正版証明書の受領後、`YAGURA_SIGNING` を `enabled` にし、公開しない通し検証（`publish_release=false` の dispatch。run 30017908696）を経て、v0.5.0（2026-07-23）から署名付きで公開している。以下は実装した設計。
 
 ### ジョブ構造（決定 3）
 
@@ -169,10 +178,11 @@ build (x64 / arm64)  … 未署名 MSI を artifact 化
        · google-github-actions/auth で WIF から yagura-signer の短命トークンを取得
        · Yagura.Host.exe と Yagura.*.dll を deep signing → 署名済み publish 出力から MSI を再ビルド → MSI を署名
        · タイムスタンプは主+副 TSA でフォールバック（決定 9）
-  → 署名済み MSI に対して Full E2E を再実行 + 署名/Subject/タイムスタンプ検証
-  → 署名済み MSI の SHA256 を算出（未署名の値は使わない）
-  → create-release（署名済み MSI + .sha256 のみ公開。全アーキ揃わなければ非公開）
-  → 公開後検証（公開資産を取り直して署名・Subject・.sha256 を突合、証跡記録）
+       · 署名の直後に署名/Subject/タイムスタンプを検証（Invoke-YaguraSign.ps1）
+       · 署名済み MSI の SHA256 を算出（未署名の値は使わない）
+  → 署名済み MSI に対して Full E2E を再実行（smoke-signed-x64 / smoke-signed-arm64。E2E のみ）
+  → create-release（公開直前に全アーキ揃いと署名/Subject/タイムスタンプを検証〔fail-closed〕→ 署名済み MSI + .sha256 のみ公開）
+  → 公開後検証（create-release 内。公開資産を取り直して署名・Subject・.sha256 を突合し、thumbprint をジョブログに出力。恒久保存は未決〔ADR-0014 改訂履歴 2〕）
 ```
 
 ### 実装の要点
@@ -180,11 +190,11 @@ build (x64 / arm64)  … 未署名 MSI を artifact 化
 - **署名ツールは jsign**（決定 9 の TSA フォールバック要件に素直に合う。`--tsaurl <主> <副>` で複数指定できる）。`--storetype GOOGLECLOUD`、`--keystore <鍵リングパス>`、`--alias codesign-rsa4096`、`--storepass <WIF アクセストークン>`、`--certfile <Sectigo 発行の証明書チェーン>`。SignTool + Cloud KMS CNG は代替（Windows ランナー・単一 TSA）
 - **認証**: `google-github-actions/auth`（**SHA ピン留め**: `@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093` = v3.0.0）で `token_format: access_token` を取り、jsign の `--storepass` に渡す。長期鍵 JSON は置かない
 - **deep signing（委任 2）**: MSI 内部の自前バイナリ（`Yagura.Host.exe`・`Yagura.*.dll`）を署名してから WiX で再パッケージし、最後に MSI を署名する。上流バイナリ（.NET ランタイム・MudBlazor）は署名しない。sign ジョブは署名済み publish 出力から `-p:SkipYaguraHostPublish=true -p:YaguraPublishDir=<署名済み出力>` で MSI を焼く
-- **承認ゲート**: GitHub Environment `release-signing`（required reviewers = オーナー）で人間の承認を挟む（決定 3。(A) SignPath の手動承認に相当する統制を (C2) で再現）。WIF の紐付けを将来この Environment に絞ると更に堅い（委任 3 の hardening）
+- **承認ゲート**: GitHub Environment `release-signing`（required reviewers = オーナー）で人間の承認を挟む（決定 3。(A) SignPath の手動承認に相当する統制を (C2) で再現）。sign ジョブはこの Environment を指定しており、WIF の信頼条件もこの Environment 名を要求している（フェーズ 2。委任 3）。承認の実績・管理者バイパスの設定・ブランチ／タグ制限の状況と、同じ Environment を使う `signing-wif-check.yml` の扱いは ADR-0014 改訂履歴 2 を参照
 - **skip 条件**: WIF 設定が使えない実行（`pull_request`・fork）では sign ジョブを skip し、未署名ビルド + E2E の確認までで止める（Release は作らない）。決定 3
-- **証明書チェーン**: Sectigo 発行の証明書（+中間証明書）をどこから供給するか（リポジトリ同梱の公開証明書 or Secrets）は実装 PR で確定。公開証明書自体は秘密ではない
-- **全アクションを SHA ピン留め**（決定 3。`cla.yml` に前例）
-- **退避弁・復旧手順・公開後検証・全アーキ all-or-nothing** は決定 3・8・9・委任 11 のとおり実装する
+- **証明書チェーン**: Sectigo 発行の証明書と中間 CA を `installer/sign/codesign-chain.pem` としてリポジトリに同梱した（公開情報であり秘密ではない）
+- **署名を担う外部アクション・ツールのピン留め**（決定 3。`cla.yml` に前例）: `google-github-actions/auth` はコミット SHA、jsign は版固定 + jar の SHA256 照合。checkout・setup-dotnet などの汎用アクションはタグ参照のまま。sign ジョブは `id-token: write` を持ったままこれらを実行しており、構築時の計画（全アクションの SHA ピン留め）より範囲が狭い。扱いは ADR-0014 改訂履歴 2 のオーナー確認事項
+- **公開後検証と全アーキ all-or-nothing** は `create-release` ジョブに実装した（決定 3）。**決定 8 の退避弁（未署名の緊急リリース）と委任 11 の中断時の復旧手順**は、実装・文書化した記録がない。`YAGURA_SIGNING` を無効にすれば未署名で公開できるが、決定 8 が求めるリリースノート・Advisory での明示は自動では入らない（ADR-0014 改訂履歴 2）
 
 ---
 

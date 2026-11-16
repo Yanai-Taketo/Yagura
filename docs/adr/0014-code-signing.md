@@ -1,6 +1,6 @@
 # ADR-0014: リリース成果物のコード署名 — Sectigo + Google Cloud KMS による Authenticode 署名（Yagura・Open DUMP Viewer 共用）
 
-- 状態: proposed（決定 1 はオーナー裁定済み 2026-07-15 = (C2)。書き直した本文の承認待ち）
+- 状態: accepted（PR #278 のマージ〔2026-07-15〕で受理。状態行の記帳漏れを 2026-11-16 のオーナー確認で是正。決定 1 の裁定は 2026-07-15 = (C2)。v0.5.0〔2026-07-23〕から署名付きで公開。委任事項の消化状況とオーナー確認事項は改訂履歴 2）
 - 日付: 2026-07-14（決定 1 の裁定: 2026-07-15）
 - 決定者: YANAI Taketo
 - 関連: [Issue #264](https://github.com/Yanai-Taketo/Yagura/issues/264)（本 ADR がこの Issue の「証明書の調達方針を決める」「ADR を起案するか判断する」に応える）、[ADR-0006](0006-v1-release-criteria.md)（基準 5「リリースの完全性」の実現手段を確定する）、[ADR-0009](0009-architecture-support.md)（委任事項 8「コード署名方針」を閉じる）、[ADR-0005](0005-oss-packaging.md)（入口文書の体裁）、[ADR-0004](0004-security-model.md)（セキュリティモデル）、[SECURITY.md](../../SECURITY.md)、[conventions.md](../development/conventions.md)（リリース）
@@ -476,3 +476,67 @@ required_approving_review_count: 1
 **オーナー裁定（2026-07-24）: (i) 現状受容で確定**。理由: 本証明書は**マイナンバーカードによる本人確認（IV）で取得しており、検証名がカード記載の漢字氏名になる。マイナンバーカードにローマ字表記が無いため、ローマ字 subject の証明書は本人確認経路の制約上そもそも発行できない**（(ii) は選択肢として成立しない——将来「ローマ字にすればよい」の蒸し返しを防ぐため理由を明記する）。したがって v0.5.0 以降も漢字 subject のまま進める。**緩和と正しい発行者名の確認手段**: ①SmartScreen の「認識されないアプリ」警告自体は評判蓄積で解消していく（決定 1・本 amendment 上表の想定どおり——警告ダイアログが出なくなれば化けた発行元行も表に出なくなる）。②署名の真正性と正しい発行者名（`柳井建人`）は `Get-AuthenticodeSignature` およびファイルのプロパティ→デジタル署名の詳細で正しく確認できる（SmartScreen とは別の Unicode 対応経路。本 lab で `Get-AuthenticodeSignature` = `CN=柳井建人`・`Status=Valid` を実測）。README／SECURITY.md には「SmartScreen ダイアログ上の発行者名が一部の日本語 Windows で文字化けし得るが、署名は有効であり正しい発行者はファイルのデジタル署名詳細で確認できる」旨を注記するのが望ましい（利用者の不信を招かないため。**文言化済み**: PR #412〈マージ済み〉が README の SmartScreen 節と docs/code-signing-policy.md「既知の表示問題」節に同旨の注記を追加している）。
 
 **バージョン注記**: run 30017908696 の署名済み MSI は **ProductVersion 0.4.0**（0.5.0 ではない——版数 bump 前の run）。SmartScreen の発行元表示は版数に依存しないため本検証には支障ないが、v0.5.0 の署名付きリリース物として記録する場合は 0.5.0 を焼いた署名 run の指定が要る（オーナー確認事項）。
+
+### 2. 2026-11-16（状態の記帳の是正）: 状態行を accepted に直し、v0.5.0 の署名付き公開と委任事項の消化状況を記録する
+
+**分類**: 状態行の記帳漏れの是正と、実施状況の記録。決定 1〜9 の本文と委任事項の表は書き換えない（判断は何も反転していない）。ヘッダーの日付は起案日（2026-07-14）のまま据える。
+
+**契機**: 本 ADR は PR #278 でマージされた（2026-07-15、オーナー）。[persona-review.md](../development/persona-review.md) は「merge = accepted（ADR の status は merge 時に accepted へ）」と定めており、**受理の時点はこのマージである**。ところが状態行は「proposed（…書き直した本文の承認待ち）」のまま残り、一覧表も proposed のままだった。Issue #264 のクローズコメント（2026-07-23）は「ADR-0014 accepted」と書いており、受理済みとして運用されていたが、本文と一覧には反映されていなかった。v1.0 の公開準備にあたり、**オーナー（YANAI Taketo）が 2026-11-16 にこの状態を確認した**。本改訂はその記帳の是正である。したがって v0.5.0 の署名付き公開（2026-07-23）と改訂履歴 1（2026-07-24）は、受理の後の出来事である。
+
+#### 2-A. v0.5.0 の署名付き公開（初の署名付きリリース）
+
+**公開の経路**: タグ `v0.5.0` の Release ワークフロー（run 30050433238、2026-07-23 UTC）で、build → smoke-x64／smoke-arm64（未署名 MSI の E2E）→ sign（x64・arm64）→ smoke-signed-x64／smoke-signed-arm64（署名済み MSI の E2E）→ create-release（公開直前の fail-closed 検証・公開・公開後検証）の全ジョブが成功し、2026-07-23T22:46:39Z に GitHub Release として公開された。決定 3 のワークフロー（未署名で機能検証 → 署名 → 署名済みで E2E → 署名済みのみ公開 → 公開後検証）が本番リリースで通った最初の実績である。リリースノートには署名の事実・検証手順・コード署名ポリシーへの導線が載っている（決定 5）。
+
+**公開資産の実体確認**（2026-11-16。公開資産を取り直し、osslsigncode 2.8 で確認）:
+
+| 資産 | 署名者 | 証明書 thumbprint（SHA-1） | タイムスタンプ |
+|---|---|---|---|
+| `Yagura-0.5.0-x64.msi` | `C=JP, ST=Yamaguchi, O=柳井建人, CN=柳井建人`（発行 CA: Sectigo Public Code Signing CA R36） | `36257D1DC06F7CDECA61B9727A88320DA24D27B6` | RFC 3161・2026-07-23T22:44:37Z（Sectigo Public Time Stamping Signer R37） |
+| `Yagura-0.5.0-arm64.msi` | 同上 | 同上 | RFC 3161・2026-07-23T22:44:22Z（同上） |
+
+- 両 MSI とも、公開された `.sha256` と実ファイルの SHA256 が一致した。署名に記録されたダイジェストは実ファイルから計算した値と一致し、署名者証明書のチェーンは USERTrust RSA Certification Authority まで構築できた。thumbprint はコード署名ポリシーの期待値と一致する
+- **CRL による失効確認は行っていない**（確認に使った環境から CRL 配布点へ到達できなかった）。公開時点の Windows 上の検証（`Get-AuthenticodeSignature` が `Valid`・Subject 一致・タイムスタンプ有）は、run 30050433238 の create-release の「Verify signed artifacts (fail-closed)」と「Post-publish verification」の成功で記録されている
+- **決定 2 の署名対象**: x64 MSI を展開し、`Yagura.Host.exe` と `Yagura.*.dll`（Abstractions・Host・Ingestion・Storage・Web）が同じ証明書（発行 CA とシリアル番号が一致）でタイムスタンプ付きで署名され、`MudBlazor.dll` は無署名、`coreclr.dll` は Microsoft（`CN=.NET`）の署名のままであることを確認した
+
+**改訂履歴 1 のバージョン注記を閉じる**: 改訂履歴 1 は「v0.5.0 の署名付きリリース物として記録する場合は 0.5.0 を焼いた署名 run の指定が要る」とオーナー確認事項を残していた。その run は上記 run 30050433238 である。改訂履歴 1 の SmartScreen の結果は、同じ証明書で署名した 0.4.0 の MSI によるものとしてそのまま有効である（発行元の表示は版数に依存しない）。
+
+**証跡の保持についての注意**: 決定 3 は公開後検証で「証明書の thumbprint と署名日時をリリースの証跡として記録する」と定めた。実装（release.yml の Post-publish verification）は thumbprint を**ジョブログへ出力するだけ**であり、run 30050433238 のジョブログは 2026-11-16 時点で保持期限が切れて取得できなかった（GitHub API の応答は 410）。v0.5.0 の thumbprint は上表のとおり公開資産から取り直せたが、ジョブログに頼る限り、遡及失効のときの影響範囲の確認（決定 8）は公開資産の取り直しに頼ることになる。証跡を恒久的に残す方法は未決である。
+
+#### 2-B. 委任事項の消化状況
+
+判定は 3 種類とする。**済** = 文書・コード・GitHub の記録で確認できた。**未実施** = 実施されていなかったことが記録から言える（記録の時点の状態であり、その後に変わった可能性は残る）。**記録上未確認** = 実施した記録が見つからない（実施されていないと断定するものではないが、済とはみなさない）。1 つの委任に複数が含まれる場合は分けて書く。GitHub API の結果は 2026-11-16 に取得した。
+
+| # | 状況 | 根拠 |
+|---|---|---|
+| A | **済**（個人名義 + GCP KMS 鍵での発行）。費用総額の確認は**記録上未確認** | v0.5.0 の署名者証明書は個人名義（2-A の表）で、鍵は GCP KMS（HSM 保護）の `codesign-rsa4096`。CSR と attestation を Sectigo の enrollment に提出して発行を受けた（[code-signing-setup.md](../development/code-signing-setup.md) フェーズ 1）。Issue #264（2026-07-23）は、氏名を訂正して再発行された証明書の公開鍵が同じ CSR／KMS 鍵と一致することを記録している。費用総額は code-signing-setup.md の費用表が「委任 A で確認（見込み）」のままで、確認結果の記録が見つからない |
+| B | **記録上未確認** | コード署名ポリシーは「GitHub / Google Cloud の MFA を必須」と掲示しているが、オーナーの両アカウントで MFA を有効化したことを確認した記録は見つからない |
+| C | **済** | Issue #264（2026-07-23）が、同じ証明書による ODV 側の署名導入の同日完了（Open-DUMP-Viewer/Open-DUMP-Viewer#40）と ODV v4.3.0 の公開を記録している（ODV リポジトリ側は本記帳で直接は確認していない）。GCP 側は WIF プロバイダを両リポジトリで共用し、リポジトリ別のサービスアカウント（`yagura-signer`・`odv-signer`）をそれぞれのリポジトリからだけ借用できるよう紐付けた（code-signing-setup.md フェーズ 2。2026-07-18 に実機確認） |
+| 1 | **済** | `Directory.Build.props` の `<YaguraVersion>` を単一の正とし、アセンブリと `installer/Package.wxs` がこれを参照する（PR #280）。release.yml がタグとの一致を検証する。[conventions.md](../development/conventions.md)「リリース」節に明記 |
+| 2 | **済** | 署名ツールは jsign 7.5（release.yml が jar の SHA256 を照合）。deep signing の対象は `Yagura.Host.exe` と `Yagura.*.dll`（release.yml の sign ジョブ）。v0.5.0 の公開 MSI で実体を確認した（2-A）。アセンブリメタデータは `Directory.Build.props`（`Product` = Yagura、`Company` = Yagura Project ほか） |
+| 3 | **済**（リポジトリと Environment による絞り込み）。ref（タグ）による絞り込みは**未実施**（2026-07-23 時点。現在の設定は記録上未確認） | WIF プロバイダの attribute condition は「リポジトリ = Yagura または ODV」かつ「`environment` = `release-signing`」で、サービスアカウントの借用はリポジトリ単位の principalSet に限っている（code-signing-setup.md フェーズ 2。2026-07-18 に describe で確認）。委任 3 が挙げた ref（タグ）は WIF の条件に入っていない。Environment の側でもタグに絞られていなかった。deployments API には、ブランチ `feat/264-signing-chain` からの `release-signing` へのデプロイ（2026-07-23。失敗した run 30016449276 と、MSI の署名まで成功した通し検証 run 30017908696）と、`main` からのデプロイ（2026-07-18。WIF 疎通確認の run）が残っている。release.yml の sign ジョブは、タグ push のほか workflow_dispatch なら任意の ref で走る（`if` 条件は workflow 内の条件にすぎない）。dispatch では選んだ ref 上の workflow ファイルが使われるため、任意のブランチで改変した workflow からでも、承認ゲートを通せば署名できる経路が残る。現在の Environment の設定は、environments API がこの確認環境から取得できず確認していない |
+| 4 | **記録上未確認** | code-signing-setup.md は 2026-07-18 時点の状態として「未了: 監査ログの有効化」と書き、有効化の手順を載せている。一方コード署名ポリシーは「Cloud Audit Logs で全署名操作を記録しています」と掲示している。有効化した記録は見つからず、どちらが現状かを記録からは判断できない。ログの保持期間・改ざん防止・保全責任を決めた記録もない |
+| 5 | **済**: 鍵単位の `roles/cloudkms.signerVerifier`、リポジトリ別サービスアカウント、release.yml の中での署名ジョブの分離、Environment の承認ゲート（承認の実績で確認）。**未実施**: タグ限定（委任 3 の欄）。**記録上未確認**: `roles/cloudkms.viewer` の付与範囲と付与先 | KMS 鍵の IAM は鍵リソース単位で `roles/cloudkms.signerVerifier`（2026-07-18 確認）。jsign はこれに加えて `roles/cloudkms.viewer` を要した。Issue #264（2026-07-23）は「IAM 修正済み」と記録しているが、付与した範囲（鍵単位かプロジェクト単位か）も付与先（`yagura-signer` だけか `odv-signer` もか）も記録がない。リポジトリ別サービスアカウントは委任 C の欄のとおり。release.yml の中では、署名は sign ジョブに閉じ、`id-token: write` もこのジョブにだけ付与している。ただしリポジトリ全体では、`.github/workflows/signing-wif-check.yml`（WIF 疎通確認。workflow_dispatch）も `environment: release-signing` と `id-token: write` を持ち、同じサービスアカウントを借用して、同じ鍵で固定文字列のダイジェストに `asymmetricSign` を呼ぶ。署名基盤への 2 つめの入口である（2026-07-18 に main から実行。deployments API）。承認ゲートについては、run のレビュー履歴（approvals API）が、v0.5.0 のタグ run 30050433238 の署名 2 ジョブ、通し検証 run 30017908696、WIF 疎通確認 run 29642420470 のいずれでも、Yanai-Taketo が `release-signing` へのデプロイを承認した（`state: approved`）ことを返す。同じ応答に含まれる環境の情報は `can_admins_bypass: true`（管理者は保護規則を飛ばしてジョブを走らせられる設定）である。現在の required reviewers の設定そのものは、environments API がこの確認環境から取得できず確認していない |
+| 6 | **済**（release.yml の中では） | sign ジョブは `vars.YAGURA_SIGNING == 'enabled'` かつタグ push または workflow_dispatch のときだけ走り、pull_request（fork を含む）では skip される。create-release は署名系ジョブの skip を許容する（release.yml）。release.yml の中では、署名基盤への依存は sign ジョブと `installer/sign/Invoke-YaguraSign.ps1` に閉じている。リリース経路の外では、WIF 疎通確認の `signing-wif-check.yml` が同じ署名基盤に依存している（委任 5 の欄） |
+| 7 | **済** | 主 `timestamp.sectigo.com`・副 `timestamp.digicert.com` を順に指定する（Invoke-YaguraSign.ps1）。jsign が失敗すれば署名ジョブも失敗し（fail-closed）、署名の直後と公開の直前にタイムスタンプの存在を検証する。リトライ回数は明示指定していない。なお決定 9 が公開後検証に求めた「タイムスタンプの存在と時刻の検証」は、公開後検証（Post-publish verification）には含まれていない（公開直前の検証で存在だけを確認している） |
+| 8 | **記録上未確認** | release.yml・Invoke-YaguraSign.ps1 に、署名を剥がして元のハッシュと突合するといった手順は見当たらない |
+| 9 | **済**。UAC の発行元表示は**記録上未確認** | 改訂履歴 1（2026-07-24 の lab）。UAC 昇格ダイアログの発行元表示は、Issue #264 のクローズコメントで「v0.5.0 の初回インストール時に採取」と申し送られたが、採取した記録は見つからない |
+| 10 | **記録上未確認** | SECURITY.md は受領確認 7 日・初期評価 14 日を目標とし、修正版の提供時期は約束しないと書く。承認ゲートや決定 8 の退避弁との両立を確認した記録は見つからない。なお決定 8 の退避弁（workflow_dispatch の明示的な入力による未署名の緊急リリース）は release.yml にない（dispatch の入力は `publish_release` だけで、署名有効時の create-release は署名済みの資産しか公開しない）。ただし専用の入力はなくても、リポジトリ変数 `YAGURA_SIGNING` を `enabled` 以外にすれば未署名で公開できる。その状態でタグ push か `publish_release=true` の dispatch をすると、create-release は未署名の `release-msi-*` を拾い、公開直前の fail-closed 検証と公開後検証はどちらも skip される。リリースノートに入る署名関連の文言は署名有効時のものだけなので、この経路では決定 8 の①（リリースノート冒頭での未署名の明示）と③（SECURITY.md／Advisory での明示）は自動では満たされない |
+| 11 | **記録上未確認** | 手順を書いた文書が見つからない（code-signing-setup.md も手順を持たない） |
+| 12 | **記録上未確認** | 導入した記録が見つからない。2026-11-16 に GitHub API でリポジトリの ruleset 一覧（上位を含む）を取得した結果は 0 件だった。導入されていないとみられるが、設定画面での確認を要する |
+| 13 | **記録上未確認** | code-signing-setup.md は「証明書運用が定常化してから設定でよい」とするだけで、設定した記録は見つからない |
+
+#### 2-C. オーナー確認事項
+
+記録からは判断できず、オーナーの確認か判断を要する事項を挙げる。1〜3 は、[コード署名ポリシー](../code-signing-policy.md)が利用者に掲示している内容の裏づけにあたる。
+
+1. **委任 B**: GitHub と Google Cloud の両アカウントで MFA が有効か（ポリシーは「MFA を必須」と掲示している）
+2. **委任 4**: Cloud KMS の Data Access 監査ログが有効か（ポリシーは「Cloud Audit Logs で全署名操作を記録しています」と掲示している）
+3. **Environment の管理者バイパス**: ポリシーは承認ゲートについて「承認がないと実行されません」「承認を経ないジョブには GCP がトークン自体を発行しません」と掲示している。しかし WIF の信頼条件が見るのは Environment 名だけである。`can_admins_bypass: true` のもとで管理者が保護規則を飛ばした場合も、ジョブは `release-signing` の Environment で走り、トークンが発行される。バイパスを無効にするか、ポリシーの文言を実態に合わせるか
+4. **Environment のブランチ・タグ制限**（委任 3・5）: 2026-07-23 時点ではタグ以外の ref を受け入れていた。現在の設定はどうか、タグ（`v*`）に限定するか。限定した場合、公開しない通し検証を feature ブランチから dispatch する運用（run 30017908696 のやり方）は使えなくなる
+5. **`signing-wif-check.yml` を残すか廃止するか**（委任 5・6）: 構築時の疎通確認という役目は終えたが、同じ Environment・サービスアカウント・鍵への 2 つめの入口として残っている
+6. **sign ジョブ内の汎用アクションのピン留め**: 決定 3 は署名を担う外部アクションのコミット SHA ピン留めを求め、その理由をタグの差し替えによる署名工程へのコード注入としている。sign ジョブは `id-token: write` を持ったまま、タグ参照の `actions/checkout`・`actions/setup-dotnet`・`actions/setup-java`・`actions/upload-artifact` を実行する（upload-artifact は認証の後に走る）。`id-token: write` はジョブ単位の権限なので、これらのステップも OIDC トークンを要求できる。ピン留めの範囲は構築時の計画（code-signing-setup.md は当初「全アクションを SHA ピン留め」と書いていた）より狭い。これを未達として扱うか
+7. **`YAGURA_SIGNING` の無効化による未署名公開**（委任 10）: 運用で使ってはならない経路とするか、決定 8 の退避弁の暫定手順として扱うか（後者なら、①③を手作業で満たす手順が要る）
+8. **`roles/cloudkms.viewer` の付与範囲と付与先**（委任 5）: 確定したら code-signing-setup.md の 2-3 に付与のコマンドを足す
+9. 上の表で記録上未確認とした残りの項目（委任 A の費用総額、委任 8・10・11・12・13、委任 9 の UAC の発行元表示）と、証跡を恒久的に残す方法（2-A）
+
+記録上未確認・未実施の項目は、確認・実施できた時点で改訂履歴に追記する。
