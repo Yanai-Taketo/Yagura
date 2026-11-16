@@ -1,9 +1,9 @@
 # M9-3 lab 検証手順書(YAGURA-STG——MSI 実機・ADR-0016 トリガ (d)・DB-8・アップグレード挙動)
 
-> **実施状況**: main `8be7a25` の版で A〜K を 2026-07-22 に実施した（[lab 検証記録の台帳](validation-ledger.md) L-09。
+> **実施状況**: main `8be7a25` の版で A〜K を 2026-07-22 に実施した（[lab 検証記録の台帳](validation-ledger.md) L-17。
 > 実施機は YAGURA-STG ではなく `WIN-DV7G9OMOF4U`〔Windows Server 2025 の DC〕、実施者は AI エージェント）。
 > 結果は [#76 のコメント](https://github.com/Yanai-Taketo/Yagura/issues/76#issuecomment-5045966172) にあり、
-> **本ファイルの結果記入欄は空のまま**である。同日に先行した v0.4.0 での実施（台帳 L-08）は結果の記録が無い。
+> **本ファイルの結果記入欄は空のまま**である。先行して行った v0.4.0 での実施（台帳 L-16）は、実施日も結果も記録が無い。
 > 本手順で実施したら台帳に 1 行足す。
 
 Issue #76 の lab 検証をオーナーが実機(YAGURA-STG = 10.0.0.156)で実行するための手順書。

@@ -8,10 +8,10 @@
 - 前提環境: AD DC（GPO 配布可能）+ ドメイン参加の Windows クライアント（Chrome・Edge・Firefox を導入）+
   Yagura サーバ（ドメイン参加。閲覧 HTTPS 有効化済み——構築は operations.md §9.1 の手順どおり。
   SAN = FQDN + 短名の両方を含む自己署名 + GPO ルート配布）
-- 実施状況: **本手順どおりの実施は無い**（M1〜M7 のすべて）。2026-07-26 の回（[lab 検証記録の台帳](validation-ledger.md) L-22）で、
+- 実施状況: **本手順どおりの実施は無い**（M1〜M7 のすべて）。2026-07-26 の回（[lab 検証記録の台帳](validation-ledger.md) L-31）で、
   ルート証明書を手動で投入したクライアントから FQDN と短名の URL が警告なしで開けた記録はあるが、
   クライアントの種別（Chrome / Edge）は記録されていない。この記録を M1・M2 の通過として扱うかは、v1.0 公開の判定
-  （[ADR-0025](../../docs/adr/0025-v1-release-criteria-revision.md)）で決める。本手順で実施したら台帳に 1 行足す
+  （ADR-0025。[PR #532](https://github.com/Yanai-Taketo/Yagura/pull/532) で審議中）で決める。本手順で実施したら台帳に 1 行足す
 
 ## 測定項目
 

@@ -1,7 +1,7 @@
 # フォワーダ MSI アップロードの受け入れ lab 検証手順 — ADR-0020 決定 5 lab ①〜④
 
 > **部分実施**（③-3 と ①-5 の画面表示が未実施）。各回の環境・版・実施者・結果は
-> [lab 検証記録の台帳](validation-ledger.md) の L-15・L-16・L-18〜L-21 を正とし、生出力は
+> [lab 検証記録の台帳](validation-ledger.md) の L-24・L-25・L-27〜L-30 を正とし、生出力は
 > [Issue #283](https://github.com/Yanai-Taketo/Yagura/issues/283) のコメントにある。確定分は
 > [security.md](../../docs/design/security.md) §5.1.1・[ADR-0020](../../docs/adr/0020-forwarder-msi-upload.md)
 > 委任 7 に反映済み。
