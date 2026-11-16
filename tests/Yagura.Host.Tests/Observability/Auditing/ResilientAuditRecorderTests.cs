@@ -99,6 +99,45 @@ public sealed class ResilientAuditRecorderTests : IDisposable
         Assert.Single(ReadAuditLines());
     }
 
+    // ---- 確認つきの記録（旧・組み込み DB ファイルの処分の削除前の記録。database.md §6.3） ----
+
+    [Fact]
+    public async Task Confirmed_ChannelHealthy_ReturnsTrue_AndWritesTheFile()
+    {
+        var sut = CreateSut(new FakeTimeProvider(Now));
+
+        Assert.True(await sut.TryRecordConfirmedAsync(Sample("confirmed")));
+
+        Assert.Contains(ReadAuditLines(), l => l.Detail == "confirmed");
+    }
+
+    [Fact]
+    public async Task Confirmed_FileWriteFails_ReturnsFalse_AndKeepsNothingForWriteBack()
+    {
+        // 呼び出し側は記録できなければ操作を行わない——行われなかった操作の記録を後から書き戻さない。
+        var sut = CreateSut(new FakeTimeProvider(Now));
+        BlockChannel();
+
+        Assert.False(await sut.TryRecordConfirmedAsync(Sample("not-performed")));
+
+        Assert.Equal(0, sut.BufferedCount);
+        UnblockChannel();
+        await sut.RecordAsync(Sample("after"));
+        Assert.DoesNotContain(ReadAuditLines(), l => l.Detail.Contains("not-performed"));
+    }
+
+    [Fact]
+    public async Task Confirmed_ThroughTheAggregatingDecorator_IsPassedThrough()
+    {
+        var resilient = CreateSut(new FakeTimeProvider(Now));
+        var aggregating = new AggregatingAuditRecorder(resilient, new FakeTimeProvider(Now));
+
+        BlockChannel();
+        Assert.False(await aggregating.TryRecordConfirmedAsync(Sample("blocked")));
+        UnblockChannel();
+        Assert.True(await aggregating.TryRecordConfirmedAsync(Sample("through")));
+    }
+
     [Fact]
     public async Task FileWriteFails_EventIsBuffered_NotInFile()
     {

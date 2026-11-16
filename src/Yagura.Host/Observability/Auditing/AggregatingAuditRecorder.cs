@@ -40,7 +40,7 @@ namespace Yagura.Host.Observability.Auditing;
 /// として登録し内側に FileAuditRecorder を注入する——全呼び出し側に透過的に効く。
 /// </para>
 /// </remarks>
-public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, IAsyncDisposable
+public sealed class AggregatingAuditRecorder : IConfirmedAuditRecorder, IHostedService, IAsyncDisposable
 {
     private static readonly Regex UsernamePattern =
         new(@"username=(?<u>\S+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -90,6 +90,18 @@ public sealed class AggregatingAuditRecorder : IAuditRecorder, IHostedService, I
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync() => await StopAsync(CancellationToken.None).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 確認つきの記録は集約しない（集約は拒否の連発に限る）。内側が確認に対応しない構成では、載ったことを
+    /// 確かめられないものとして <see langword="false"/> を返す（安全側——呼び出し側はその操作を行わない）。
+    /// </remarks>
+    public async Task<bool> TryRecordConfirmedAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(auditEvent);
+        return _inner is IConfirmedAuditRecorder confirmed
+            && await confirmed.TryRecordConfirmedAsync(auditEvent, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <inheritdoc />
     public async Task RecordAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)

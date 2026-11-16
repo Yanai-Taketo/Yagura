@@ -2,22 +2,40 @@ using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration.OldDatabaseDisposal;
+using Yagura.Host.Observability.Auditing;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
 
 namespace Yagura.Host.Tests.Administration.OldDatabaseDisposal;
 
-/// <summary>監査記録を保持する（背景の処理からも書かれるためスレッド安全）。</summary>
-internal sealed class ConcurrentAuditRecorder : IAuditRecorder
+/// <summary>
+/// 監査記録を保持する（背景の処理からも書かれるためスレッド安全）。確認つきの記録は
+/// <see cref="ConfirmedWriteFails"/> が真を返す事象について「正本に載らなかった」を返す。
+/// </summary>
+internal sealed class ConcurrentAuditRecorder : IConfirmedAuditRecorder
 {
     private readonly ConcurrentQueue<AuditEvent> _events = new();
 
     public IReadOnlyList<AuditEvent> Events => _events.ToArray();
 
+    /// <summary>確認つきの記録を失敗させる条件（既定は失敗させない）。</summary>
+    public Func<AuditEvent, bool> ConfirmedWriteFails { get; set; } = _ => false;
+
     public Task RecordAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
     {
         _events.Enqueue(auditEvent);
         return Task.CompletedTask;
+    }
+
+    public Task<bool> TryRecordConfirmedAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
+    {
+        if (ConfirmedWriteFails(auditEvent))
+        {
+            return Task.FromResult(false);
+        }
+
+        _events.Enqueue(auditEvent);
+        return Task.FromResult(true);
     }
 }
 

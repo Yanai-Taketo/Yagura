@@ -876,7 +876,8 @@ public static class Program
                 effectiveProviderIsSqlServer,
                 sp.GetRequiredService<ILogStore>(),
                 oldDatabaseAccessGate,
-                sp.GetRequiredService<IAuditRecorder>(),
+                // 削除の前の記録は正本に載ったことを確かめてから進む（database.md §6.3「監査記録」）。
+                sp.GetRequiredService<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>(),
                 OperatingSystem.IsWindows()
                     ? new Yagura.Host.Administration.OldDatabaseDisposal.WindowsArchivePlatform()
                     : new Yagura.Host.Administration.OldDatabaseDisposal.UnsupportedArchivePlatform(),

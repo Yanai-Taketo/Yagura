@@ -53,7 +53,7 @@ namespace Yagura.Host.Observability.Auditing;
 /// 沿う。計器を出しておくことで将来の状態画面がそれを読める）。
 /// </para>
 /// </remarks>
-public sealed class ResilientAuditRecorder : IAuditRecorder, IHostedService, IDisposable
+public sealed class ResilientAuditRecorder : IConfirmedAuditRecorder, IHostedService, IDisposable
 {
     private const string DeferredMarker = "[deferred-writeback: 監査チャネル障害中に発生した事象を復旧後に書き戻し]";
 
@@ -157,6 +157,31 @@ public sealed class ResilientAuditRecorder : IAuditRecorder, IHostedService, IDi
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 正本に載らなかった事象は保持しない（呼び出し側がその操作を行わないため）。載った場合は
+    /// <see cref="RecordAsync"/> と同じく、それを復旧の証拠として保持分を書き戻す。
+    /// </remarks>
+    public Task<bool> TryRecordConfirmedAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(auditEvent);
+
+        lock (_sync)
+        {
+            if (!_inner.TryRecordRequiringFile(auditEvent))
+            {
+                return Task.FromResult(false);
+            }
+
+            if (_failureActive)
+            {
+                AttemptWriteBackLocked();
+            }
+
+            return Task.FromResult(true);
+        }
     }
 
     private void BufferLocked(AuditEvent auditEvent)

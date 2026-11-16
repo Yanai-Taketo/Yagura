@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.Host.Observability.Auditing;
 using Yagura.Storage;
 
 namespace Yagura.Host.Administration.OldDatabaseDisposal;
@@ -37,6 +38,12 @@ public sealed record OldDatabaseDisposalObservation(
 /// <para>
 /// <b>排他</b>: 処分の検証から終了まで、旧ファイルの利用権（<see cref="OldDatabaseAccessGate"/>）を保持する。
 /// </para>
+/// <para>
+/// <b>削除の前の監査記録は必須</b>: 開始の記録（削除のみの方式では削除の前の記録を兼ねる）と、書き出して保管の
+/// 削除の開始の記録は、監査記録の正本に載ったことを確かめてから先へ進む（<see cref="IConfirmedAuditRecorder"/>）。
+/// 載らなければ処分を始めない・削除の段階に入らない——処分は急ぐ理由のない不可逆な後始末であり、ADR-0004 決定 7
+/// （監査記録の書き込み不能は要求処理を妨げない）の根拠である障害中の復旧操作にあたらない。
+/// </para>
 /// <para>スレッド安全。</para>
 /// </remarks>
 public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IAsyncDisposable
@@ -52,7 +59,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     private readonly bool _effectiveProviderIsSqlServer;
     private readonly ILogStore _targetStore;
     private readonly OldDatabaseAccessGate _accessGate;
-    private readonly IAuditRecorder _auditRecorder;
+    private readonly IConfirmedAuditRecorder _auditRecorder;
     private readonly IArchivePlatform _platform;
     private readonly OldDatabaseDisposalEnvironment _environment;
     private readonly OldDatabaseDisposalOptions _options;
@@ -75,7 +82,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         bool effectiveProviderIsSqlServer,
         ILogStore targetStore,
         OldDatabaseAccessGate accessGate,
-        IAuditRecorder auditRecorder,
+        IConfirmedAuditRecorder auditRecorder,
         IArchivePlatform platform,
         OldDatabaseDisposalEnvironment environment,
         OldDatabaseDisposalOptions? options = null,
@@ -274,6 +281,15 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             if (rejection is not null)
             {
                 return rejection;
+            }
+
+            if (!await RecordConfirmedAuditAsync(request, BuildStartDetail(plan!)).ConfigureAwait(false))
+            {
+                RemoveWorkDirectory(plan!.WorkDirectory);
+                return Rejected(OldDatabaseDisposalReason.AuditUnavailable,
+                    "監査記録を書き込めないため、後始末を開始しませんでした（元のファイルは変更していません）。" +
+                    "データフォルダの監査記録（audit フォルダ）に書き込めるか確かめてから、もう一度実行してください。",
+                    request.Method);
             }
 
             RunState run;
@@ -514,7 +530,6 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         ArchiveDestination? destination = null;
         string? workDirectory = null;
         string? archiveFileName = null;
-        IReadOnlyList<string> cleanedUp = [];
         (ArchiveVolumeInfo Volume, long Floor)? dataRootVolume = null;
         if (method == OldDatabaseDisposalMethod.Archive)
         {
@@ -538,8 +553,6 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                     "データフォルダのドライブの空き容量が足りないため、後始末を開始しませんでした。", method));
             }
 
-            cleanedUp = CleanUpAbandonedWorkDirectories(destination.ParentDirectory);
-
             var created = CreateWorkDirectory(destination.ParentDirectory, out var failure);
             if (created.Path is null)
             {
@@ -560,6 +573,15 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             archiveFileName = Path.GetFileName(workDirectory) + ".db";
         }
 
+        // 保存期間を過ぎたログも書き出したファイルに含める（元のファイルそのものの保管が目的）。その件数を
+        // 開始の記録で開示する。
+        long? beyondRetention = null;
+        if (method == OldDatabaseDisposalMethod.Archive && _environment.RetentionDays() is { } retentionDays)
+        {
+            beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
+                _targets.BodyPath, RetentionCutoff(retentionDays), cancellationToken).ConfigureAwait(false);
+        }
+
         return (new DisposalPlan(
             method,
             kind,
@@ -571,7 +593,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             dataRootVolume?.Floor,
             workDirectory,
             archiveFileName,
-            cleanedUp), null);
+            beyondRetention), null);
     }
 
     private (string? Path, WorkDirectoryCreation Creation) CreateWorkDirectory(string parent, out string? failure)
@@ -601,7 +623,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     /// クラッシュ後の掃除: 命名規則に一致し、かつ ACL が製品の作業中の構成と一致するサブフォルダだけを削除する
     /// （確定の前に止まったもの——元のファイルは変更されていない）。名前の一致だけでは削除しない。
     /// </summary>
-    private IReadOnlyList<string> CleanUpAbandonedWorkDirectories(string parent)
+    private IReadOnlyList<string> CleanUpAbandonedWorkDirectories(string parent, string currentWorkDirectory)
     {
         var removed = new List<string>();
         IEnumerable<string> candidates;
@@ -620,7 +642,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         {
             try
             {
-                if (!WorkDirectoryNamePattern.IsMatch(Path.GetFileName(candidate))
+                if (string.Equals(candidate, currentWorkDirectory, StringComparison.Ordinal)
+                    || !WorkDirectoryNamePattern.IsMatch(Path.GetFileName(candidate))
                     || (File.GetAttributes(candidate) & FileAttributes.ReparsePoint) != 0
                     || !_platform.HasWorkInProgressAcl(candidate))
                 {
@@ -703,7 +726,6 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         OldDatabaseDisposalResult result;
         try
         {
-            await RecordAuditAsync(plan.Request, BuildStartDetail(plan)).ConfigureAwait(false);
             result = plan.Method == OldDatabaseDisposalMethod.Archive
                 ? await RunArchiveAsync(plan, run).ConfigureAwait(false)
                 : await RunDeleteAsync(plan, run).ConfigureAwait(false);
@@ -753,6 +775,9 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         var workDirectory = plan.WorkDirectory!;
         var finalPath = Path.Combine(workDirectory, plan.ArchiveFileName!);
         ArchiveExportResult export;
+
+        // クラッシュ後の掃除は開始の記録の後に行う（最初の変更の前に開始を記録する）。
+        plan.CleanedUpWorkDirectories = CleanUpAbandonedWorkDirectories(plan.Destination!.ParentDirectory, workDirectory);
 
         using (var watchdogCts = new CancellationTokenSource())
         using (var linked = CancellationTokenSource.CreateLinkedTokenSource(run.Token, watchdogCts.Token))
@@ -824,7 +849,19 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 $"書き出したファイルの確定（名前の変更・アクセス権の適用）に失敗しました: {ex.Message}");
         }
 
-        await RecordAuditAsync(plan.Request, BuildDeletionStartDetail(plan, finalPath, export)).ConfigureAwait(false);
+        if (!await RecordConfirmedAuditAsync(plan.Request, BuildDeletionStartDetail(plan, finalPath, export)).ConfigureAwait(false))
+        {
+            // 確定済みの書き出しファイルは製品からはもう到達できない（最終の ACL）。残して結果から辿れるようにする。
+            return new OldDatabaseDisposalResult(
+                OldDatabaseDisposalOutcome.Interrupted,
+                "監査記録を書き込めないため、元のファイルの削除を始めませんでした（元のファイルは変更していません）。" +
+                $"書き出したファイル（{finalPath}）は確定済みです。データフォルダの監査記録（audit フォルダ）に" +
+                "書き込めるか確かめてから、もう一度実行してください。",
+                OldDatabaseDisposalReason.AuditUnavailable,
+                plan.Method,
+                ArchiveFilePath: finalPath,
+                ArchiveSha256: export.Sha256);
+        }
 
         var deletion = await DeleteTargetsAsync(run).ConfigureAwait(false);
         if (deletion.Remaining.Count > 0)
@@ -1091,29 +1128,49 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     }
 
     /// <summary>
-    /// 監査記録の書き込みは処分を妨げない（ADR-0004 決定 7）。記録の失敗が処分の結果を覆い隠さないよう、
-    /// 例外を投げない契約の呼び出し自体も保護する。
+    /// 削除の前ではない記録（終了・安全検査による拒否）。記録の失敗が処分の結果を覆い隠さないよう、例外を投げない
+    /// 契約の呼び出し自体も保護する。
     /// </summary>
     private async Task RecordAuditAsync(OldDatabaseDisposalRequest request, string detail)
     {
         try
         {
-            await _auditRecorder.RecordAsync(
-                new AuditEvent(
-                    OccurredAt: _timeProvider.GetUtcNow(),
-                    Kind: AuditEventKind.OldDatabaseDisposalExecuted,
-                    RemoteAddress: request.OperatorAddress,
-                    RemotePort: null,
-                    Detail: detail,
-                    AuthenticationScheme: request.OperatorScheme,
-                    AuthenticatedPrincipal: request.OperatorPrincipal),
-                CancellationToken.None).ConfigureAwait(false);
+            await _auditRecorder.RecordAsync(BuildAuditEvent(request, detail), CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "後始末の監査記録に失敗しました（後始末自体には影響しません）。");
+            _logger.LogWarning(ex, "後始末の監査記録に失敗しました（後始末の結果には影響しません）。");
         }
     }
+
+    /// <summary>削除の前の記録。正本に載ったら <see langword="true"/>（載らなければ呼び出し側は先へ進まない）。</summary>
+    private async Task<bool> RecordConfirmedAuditAsync(OldDatabaseDisposalRequest request, string detail)
+    {
+        try
+        {
+            if (await _auditRecorder.TryRecordConfirmedAsync(BuildAuditEvent(request, detail), CancellationToken.None)
+                .ConfigureAwait(false))
+            {
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "後始末の監査記録に失敗しました。");
+        }
+
+        _logger.LogWarning("後始末の削除の前の監査記録を書き込めないため、先へ進みません。");
+        return false;
+    }
+
+    private AuditEvent BuildAuditEvent(OldDatabaseDisposalRequest request, string detail) => new(
+        OccurredAt: _timeProvider.GetUtcNow(),
+        Kind: AuditEventKind.OldDatabaseDisposalExecuted,
+        RemoteAddress: request.OperatorAddress,
+        RemotePort: null,
+        Detail: detail,
+        AuthenticationScheme: request.OperatorScheme,
+        AuthenticatedPrincipal: request.OperatorPrincipal);
 
     private string BuildStartDetail(DisposalPlan plan)
     {
@@ -1126,10 +1183,6 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 $"、保管先の親フォルダ={destination.ParentDirectory}、作業用サブフォルダ={plan.WorkDirectory}、" +
                 $"保管ファイル名={plan.ArchiveFileName}、保管先のドライブ種別={destination.Volume.DriveKind}" +
                 $"（{destination.Volume.FileSystemName}）");
-            if (plan.CleanedUpWorkDirectories.Count > 0)
-            {
-                builder.Append(CultureInfo.InvariantCulture, $"、掃除した中断済みの作業用サブフォルダ={string.Join("; ", plan.CleanedUpWorkDirectories)}");
-            }
         }
 
         builder.Append("、移行の状態=").Append(FormatJudgment(plan.Judgment));
@@ -1145,6 +1198,11 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         if (plan.Summary is { } summary && _environment.RetentionDays() is { } days)
         {
             builder.Append(CultureInfo.InvariantCulture, $"、ログ件数={summary.RecordCount}、保存期間={days} 日");
+        }
+
+        if (plan.RecordsBeyondRetention is { } beyond)
+        {
+            builder.Append(CultureInfo.InvariantCulture, $"、保存期間を過ぎたログ={beyond} 件（書き出したファイルに含む）");
         }
 
         return builder.ToString();
@@ -1189,6 +1247,11 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         if (result.WorkDirectoryLeftBehind is { } leftBehind)
         {
             builder.Append("、残った作業用サブフォルダ=").Append(leftBehind);
+        }
+
+        if (plan.CleanedUpWorkDirectories.Count > 0)
+        {
+            builder.Append("、掃除した中断済みの作業用サブフォルダ=").Append(string.Join("; ", plan.CleanedUpWorkDirectories));
         }
 
         if (plan.CheckpointSummary is { } checkpoint)
@@ -1265,8 +1328,10 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         long? DataRootFloorBytes,
         string? WorkDirectory,
         string? ArchiveFileName,
-        IReadOnlyList<string> CleanedUpWorkDirectories)
+        long? RecordsBeyondRetention)
     {
+        public IReadOnlyList<string> CleanedUpWorkDirectories { get; set; } = [];
+
         public string? CheckpointSummary { get; set; }
     }
 

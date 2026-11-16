@@ -495,6 +495,86 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         Assert.All(audits, e => Assert.DoesNotContain("old-0", e.Detail));
     }
 
+    // ---- 削除の前の監査記録は必須（database.md §6.3「監査記録」） ----
+
+    [Fact]
+    public async Task Start_StartRecordCannotBeWritten_IsRejected_AndChangesNothing()
+    {
+        await SeedMigratedAsync(10);
+        _audit.ConfirmedWriteFails = _ => true;
+        var service = CreateService();
+        var token = await TokenAsync(service);
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(OldDatabaseDisposalMethod.Delete, token));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Rejected, result.Outcome);
+        Assert.Equal(OldDatabaseDisposalReason.AuditUnavailable, result.Reason);
+        Assert.Null(service.CurrentRun);
+        Assert.True(File.Exists(_targets.BodyPath));
+        Assert.Empty(_deleter.Deleted);
+        Assert.True(File.Exists(Path.Combine(_dataRoot, LogMigrationService.CheckpointFileName)));
+        Assert.Empty(DisposalAudits());
+
+        // 拒否はトークンを消費しない（監査の経路が戻れば同じ画面から実行できる）。
+        Assert.Equal(token, await TokenAsync(service));
+        Assert.Equal(OldDatabaseDisposalState.Pending, (await service.GetStatusAsync()).State);
+    }
+
+    [Fact]
+    public async Task Archive_StartRecordCannotBeWritten_RemovesTheWorkDirectory()
+    {
+        await SeedMigratedAsync(10);
+        _audit.ConfirmedWriteFails = _ => true;
+        var service = CreateService();
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalReason.AuditUnavailable, result.Reason);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(_archiveParent));
+        Assert.True(File.Exists(_targets.BodyPath));
+    }
+
+    [Fact]
+    public async Task Archive_DeletionStartRecordCannotBeWritten_StopsBeforeDeleting()
+    {
+        await SeedMigratedAsync(30);
+        _audit.ConfirmedWriteFails = e => e.Detail!.Contains("削除の開始", StringComparison.Ordinal);
+        var service = CreateService();
+
+        var result = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Interrupted, result.Outcome);
+        Assert.Equal(OldDatabaseDisposalReason.AuditUnavailable, result.Reason);
+        Assert.Empty(_deleter.Deleted);
+        Assert.True(File.Exists(_targets.BodyPath));
+
+        // 確定済みの書き出しファイルは残り、結果と終了の記録から辿れる。
+        Assert.NotNull(result.ArchiveFilePath);
+        Assert.True(File.Exists(result.ArchiveFilePath));
+        Assert.Null(result.WorkDirectoryLeftBehind);
+        var end = DisposalAudits().Last();
+        Assert.Contains("結果=中断", end.Detail);
+        Assert.Contains(result.ArchiveFilePath!, end.Detail);
+        Assert.Equal(OldDatabaseDisposalState.LastAttemptFailed, (await service.GetStatusAsync()).State);
+    }
+
+    [Fact]
+    public async Task Archive_StartRecord_DisclosesLogsBeyondRetention()
+    {
+        // 保存期間を過ぎたログも書き出したファイルに含める——その件数を開始の記録に残す。
+        await SeedMigratedAsync(10);
+        _retentionDays = 1;
+        var service = CreateService();
+
+        await RunToEndAsync(service, new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        var start = DisposalAudits().First();
+        Assert.Contains("保存期間を過ぎたログ=10 件（書き出したファイルに含む）", start.Detail);
+    }
+
     // ---- 書き出して保管 ----
 
     [Fact]

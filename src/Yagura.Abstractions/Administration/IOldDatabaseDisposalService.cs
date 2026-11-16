@@ -323,6 +323,12 @@ public enum OldDatabaseDisposalReason
     /// <summary>受信が逼迫している（一時保管への退避の継続中・保存待ちの高水位）。</summary>
     LiveIngestionUnderPressure,
 
+    /// <summary>
+    /// 削除の前の監査記録（開始・削除の開始）が監査記録の正本に書けない（書けるまで処分を始めない・
+    /// 削除の段階に入らない）。
+    /// </summary>
+    AuditUnavailable,
+
     /// <summary>旧ファイルを別のプログラムが使用中の可能性がある（WAL の反映が完了しない）。</summary>
     InUse,
 
