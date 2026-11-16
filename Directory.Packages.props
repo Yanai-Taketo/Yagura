@@ -24,9 +24,12 @@
     <PackageVersion Include="bunit" Version="2.8.6" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <!--
-      SQL Server provider（M5-3。Issue #47）。採用時のライブ検証: nuget.org の flat container index
-      (api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/index.json) で最新安定版を確認
-      （プレリリースは除外。採用日 2026-07-05）。
+      Microsoft.* の 10.0 系（Negotiate・Data.Sqlite・Extensions.Hosting.WindowsServices・
+      Extensions.Logging.Abstractions・System.Security.Cryptography.ProtectedData）は
+      同一のパッチ版に揃える。系列（10.0）は変えず、11.0 系・プレリリースへは上げない。
+      ライブ検証: 各 id の flat container index
+      (api.nuget.org/v3-flatcontainer/<id の小文字>/index.json) で 10.0 系の最新パッチを確認
+      （確認日 2026-11-16）。
     -->
     <!--
       Windows 統合認証（Negotiate: Kerberos/NTLM。ADR-0010 決定 2・委任事項 1）。
@@ -34,14 +37,32 @@
       (api.nuget.org/v3-flatcontainer/microsoft.aspnetcore.authentication.negotiate/index.json) で
       最新安定版を確認（プレリリースは除外。他の Microsoft.* と同一系列に揃える方針。
       採用日 2026-07-10）。
+      **下限の制約**: advisory GHSA-vrrp-6v32-2p8g（CVE-2026-70179。権限昇格・high）が 10.0 系を
+      「影響 10.0.0〜10.0.12 / 初回修正 10.0.13」としているため、10.0.13 未満へ下げてはならない
+      （advisory ページ github.com/advisories/GHSA-vrrp-6v32-2p8g で確認。2026-11-16）。
     -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.2" />
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.15" />
+    <!--
+      SQL Server provider（M5-3。Issue #47）。採用時のライブ検証: nuget.org の flat container index
+      (api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/index.json) で最新安定版を確認
+      （プレリリースは除外。採用日 2026-07-05）。
+      推移的依存の System.Security.Cryptography.Pkcs は直接 pin せず、本パッケージの更新で修正版に
+      している（MimeKit も同じ扱い）。修正版の下限を利用側パッケージ自身の依存宣言に持たせ、
+      役目を終えた pin が残り続けないようにするため。
+      **下限の制約**: advisory GHSA-846f-f764-76mx（CVE-2026-84008。high）と GHSA-2fmv-rv2c-59x7
+      （CVE-2026-70162。moderate）が Pkcs の 9.x 系を「影響 9.0.0〜9.0.20 / 初回修正 9.0.21」と
+      している。net10.0 で選ばれる net9.0 依存グループの Pkcs 最小版が 9.0.21 以上になるのは
+      7.1 系では 7.1.2、7.0 系では 7.0.4 からのため、それ未満へ下げてはならない（advisory ページと
+      各版の nuspec の依存グループ
+      api.nuget.org/v3-flatcontainer/microsoft.data.sqlclient/<版>/microsoft.data.sqlclient.nuspec
+      で確認。2026-11-16）。
+    -->
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.2" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.15" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.8.0" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
     <!--
       能動通知の背景監視コンポーネント（Issue #149。architecture.md §4.6）のテストで
       周期・抑制窓を FakeTimeProvider により決定的に検証するために追加。採用時のライブ検証:
@@ -63,9 +84,16 @@
       最新安定版を確認（プレリリースは除外）。2 点は同一版で揃える。
       ライセンス MIT（NOTICE 記載は本 PR で実施。採用日 2026-07-19）。
       **下限の制約**: CVE-2026-41319 の影響を受けるため 4.16.0 未満へ下げてはならない。
+      加えて、net10.0 依存グループの System.Security.Cryptography.Pkcs 最小版が修正版になるのは
+      MimeKit 4.18.2 からである（4.18.1 以前は 10.0.0）。advisory GHSA-846f-f764-76mx・
+      GHSA-2fmv-rv2c-59x7 が Pkcs の 10.0 系を「影響 10.0.0〜10.0.12 / 初回修正 10.0.13」として
+      いるため、2 点とも 4.18.2 未満へ下げてはならない（advisory ページと nuspec の依存グループ
+      api.nuget.org/v3-flatcontainer/mimekit/<版>/mimekit.nuspec で確認。2026-11-16）。
+      メジャー更新（5.0 系。メタパッケージ化と既定 S/MIME コンテキスト登録の廃止を含む）は、
+      4.x 系内の追従とは別に判断する。
     -->
-    <PackageVersion Include="MailKit" Version="4.17.0" />
-    <PackageVersion Include="MimeKit" Version="4.17.0" />
+    <PackageVersion Include="MailKit" Version="4.18.2" />
+    <PackageVersion Include="MimeKit" Version="4.18.2" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <!--
       UI コンポーネントライブラリ（M8-1。Issue #68。採用判断は ADR-0003 決定 3）。
@@ -82,7 +110,7 @@
       最新安定版を確認（プレリリースは除外。他の Microsoft.* と同一系列に揃える方針。
       採用日 2026-07-06）。
     -->
-    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <!--
@@ -106,10 +134,21 @@
     <PackageVersion Include="WixToolset.Util.wixext" Version="7.0.0" />
 
     <!--
-      Microsoft.Data.Sqlite が要求する SQLitePCLRaw.core の最小版 2.1.11 には既知の高深刻度の
-      脆弱性 CVE-2025-6965 (GHSA-2m69-gcr7-jv3q) があり NU1903 でブロックされるため、修正版へ
-      明示 pin する。**下限の制約**: 2.1.11 系は影響を受けるため、この 2 点を 2.x 系へ
-      下げてはならない（採用日 2026-07-05）。
+      SQLitePCLRaw の 2 点（core と、ネイティブ SQLite を収めた lib.e_sqlite3）は、
+      Microsoft.Data.Sqlite の依存宣言より新しいメジャー版へ明示 pin している（採用日 2026-07-05）。
+      推移的 pin は無効なので、pin は src/Yagura.Storage の直接参照で効かせる。provider・bundle は
+      Microsoft.Data.Sqlite の依存宣言どおりの版で解決されるため、SQLitePCLRaw の依存グラフは
+      メジャー版をまたいで混在する。
+      この pin は脆弱性の回避には要らず、撤去候補である。advisory GHSA-2m69-gcr7-jv3q
+      （CVE-2025-6965）の影響範囲は lib.e_sqlite3 の 2.1.11 以下で、Microsoft.Data.Sqlite は
+      10.0.11 から依存する SQLitePCLRaw の最小版を 2.1.12 以上にしている（NuGet の脆弱性 DB
+      api.nuget.org/v3/vulnerabilities/index.json と各版の nuspec の依存グループで確認）。
+      2026-11-16 の確認では、pin を外しても監査付き restore が通り、同梱されるネイティブの
+      e_sqlite3.dll（win-x64・win-x86・win-arm64）は pin 時とバイト単位で一致した。撤去は出荷物の
+      SQLitePCLRaw.core のメジャー版を下げる変更なので、CI と Installer E2E での確認を伴う
+      別の判断として行う。
+      **下限の制約**: lib.e_sqlite3 を 2.1.11 以下へ下げてはならない。pin を撤去するときは、
+      この制約を「Microsoft.Data.Sqlite を 10.0.11 未満へ下げてはならない」に置き換える。
     -->
     <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.5" />
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
