@@ -954,7 +954,13 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         Assert.True(inspection.Migration.Migrated, string.Join(",", inspection.Migration.Gaps));
         Assert.Equal(1, inspection.RetentionDays);
         Assert.Equal(30, inspection.RecordsBeyondRetentionCount);
+
+        // 保管先の入力の前に示す目安: 作業ファイル 2 つ分（本体 + -wal の 2 倍）に空き容量の下限を足したもの。
+        var oldBytes = SizeOrZero(_targets.BodyPath) + SizeOrZero(_targets.WalPath);
+        Assert.Equal((2 * oldBytes) + 1024, inspection.RequiredArchiveFreeBytes);
     }
+
+    private static long SizeOrZero(string path) => File.Exists(path) ? new FileInfo(path).Length : 0;
 
     [Fact]
     public async Task Inspect_WhileDisposalHoldsTheGate_DoesNotOpenTheFile()

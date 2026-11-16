@@ -375,6 +375,25 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Run_WhileTheDisposalCheckReadsTheOldFile_SaysSoInsteadOfClaimingAMigrationIsRunning()
+    {
+        // 後始末の照合（確認材料の読み取り）が排他を持つ間に移行を押した利用者へ「移行は既に実行中」と
+        // 返すと、動いていない移行を待ち続けることになる。
+        await SeedSourceAsync(5);
+        var gate = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessGate();
+        var service = new LogMigrationService(
+            _dataRoot, _sourcePath, currentProviderIsSqlServer: true, _target, writeGate: null, _auditRecorder,
+            new FakeLogger<LogMigrationService>(), gate);
+
+        using (await gate.TryAcquireAsync(Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Inspection, TimeSpan.Zero))
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RunAsync(null, null, null));
+            Assert.DoesNotContain("既に実行中", ex.Message);
+            Assert.Contains("照合", ex.Message);
+        }
+    }
+
+    [Fact]
     public async Task Status_WhileDisposalOrMigrationHoldsTheGate_ReturnsWithoutWaiting()
     {
         // 後始末・移行は排他を長く保持する——画面の表示を排他の待ち時間で止めない。

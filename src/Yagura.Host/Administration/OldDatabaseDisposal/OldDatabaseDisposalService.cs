@@ -49,7 +49,7 @@ public sealed record OldDatabaseDisposalObservation(
 public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IAsyncDisposable
 {
     /// <summary>作業用サブフォルダ名の接頭辞。</summary>
-    public const string WorkDirectoryPrefix = "yagura-archive-";
+    public const string WorkDirectoryPrefix = OldDatabaseArchiveNaming.WorkDirectoryPrefix;
 
     private static readonly Regex WorkDirectoryNamePattern = new(
         @"^yagura-archive-\d{8}T\d{6}Z(-\d+)?$",
@@ -164,12 +164,12 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         var status = BuildStatus();
         var bodyBytes = SizeOf(status, _targets.BodyPath);
         var walBytes = SizeOf(status, _targets.WalPath);
-        var estimate = bodyBytes + walBytes;
+        var requiredArchiveFreeBytes = ArchiveDestinationValidator.EstimateRequiredBytes(bodyBytes, walBytes) + _options.FreeSpaceFloorBytes;
 
         // 対象外・実行中（移行・処分が排他を長く保持する）は旧ファイルを開かずに返す。
         if (status.State is not (OldDatabaseDisposalState.Pending or OldDatabaseDisposalState.LastAttemptFailed))
         {
-            return EmptyInspection(status, OldDatabaseTargetInspector.Inspect(_targets).Kind, estimate);
+            return EmptyInspection(status, OldDatabaseTargetInspector.Inspect(_targets).Kind, requiredArchiveFreeBytes);
         }
 
         using var lease = await _accessGate.TryAcquireAsync(
@@ -177,13 +177,13 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         var targetInspection = OldDatabaseTargetInspector.Inspect(_targets);
         if (lease is null || targetInspection.Kind != OldDatabaseTargetKind.SqliteDatabase)
         {
-            return EmptyInspection(BuildStatus(), targetInspection.Kind, estimate, targetInspection.RejectionReason);
+            return EmptyInspection(BuildStatus(), targetInspection.Kind, requiredArchiveFreeBytes, targetInspection.RejectionReason);
         }
 
         var read = await ReadContentAsync(cancellationToken).ConfigureAwait(false);
         if (read.Kind != OldDatabaseTargetKind.SqliteDatabase)
         {
-            return EmptyInspection(BuildStatus(), read.Kind, estimate, read.RejectionReason);
+            return EmptyInspection(BuildStatus(), read.Kind, requiredArchiveFreeBytes, read.RejectionReason);
         }
 
         long? beyondRetention = null;
@@ -213,7 +213,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             read.Summary.SystemEventCount,
             retentionDays,
             beyondRetention,
-            estimate);
+            requiredArchiveFreeBytes);
     }
 
     /// <inheritdoc />
@@ -593,7 +593,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             }
 
             workDirectory = created.Path;
-            archiveFileName = Path.GetFileName(workDirectory) + ".db";
+            archiveFileName = Path.GetFileName(workDirectory) + OldDatabaseArchiveNaming.FileExtension;
         }
 
         return (new DisposalPlan(
@@ -1322,9 +1322,9 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     private static OldDatabaseDisposalInspection EmptyInspection(
         OldDatabaseDisposalStatus status,
         OldDatabaseTargetKind kind,
-        long estimate,
+        long requiredArchiveFreeBytes,
         string? rejectionReason = null) =>
-        new(status, kind, rejectionReason, ArchiveAllowed: false, null, null, null, null, null, null, null, estimate);
+        new(status, kind, rejectionReason, ArchiveAllowed: false, null, null, null, null, null, null, null, requiredArchiveFreeBytes);
 
     private static OldDatabaseDisposalResult Rejected(OldDatabaseDisposalReason reason, string message, OldDatabaseDisposalMethod method) =>
         new(OldDatabaseDisposalOutcome.Rejected, message, reason, method);

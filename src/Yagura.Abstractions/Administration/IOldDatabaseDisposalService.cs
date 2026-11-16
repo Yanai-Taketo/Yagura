@@ -231,7 +231,11 @@ public sealed record OldDatabaseMigrationJudgment(
 /// <param name="RecordsBeyondRetentionCount">
 /// 保存期間を過ぎたログの件数——書き出して保管ではこれも書き出したファイルに含まれる（画面で開示する）。
 /// </param>
-/// <param name="EstimatedArchiveBytes">書き出しに要る見込みの容量（本体 + <c>-wal</c>）。</param>
+/// <param name="RequiredArchiveFreeBytes">
+/// 書き出して保管で保管先のドライブに要る空き容量の見込み（書き出しに使う容量 + 空き容量の下限）。
+/// 保管先の入力の前に示す目安であり、一時保管と同じドライブでは下限がこれより大きくなり得る
+/// （確定は <see cref="IOldDatabaseDisposalService.CheckArchiveDestinationAsync"/>）。
+/// </param>
 public sealed record OldDatabaseDisposalInspection(
     OldDatabaseDisposalStatus Status,
     OldDatabaseTargetKind TargetKind,
@@ -244,7 +248,20 @@ public sealed record OldDatabaseDisposalInspection(
     long? SystemEventCount,
     int? RetentionDays,
     long? RecordsBeyondRetentionCount,
-    long EstimatedArchiveBytes);
+    long RequiredArchiveFreeBytes);
+
+/// <summary>書き出して保管で製品が付ける名前（画面の確認ダイアログと実体で同じ規則を使う）。</summary>
+public static class OldDatabaseArchiveNaming
+{
+    /// <summary>
+    /// 作業用サブフォルダ名の接頭辞。後ろに実行時の UTC 日時が付き、保管ファイル名はフォルダ名に
+    /// <see cref="FileExtension"/> を付けたもの。
+    /// </summary>
+    public const string WorkDirectoryPrefix = "yagura-archive-";
+
+    /// <summary>保管ファイルの拡張子。</summary>
+    public const string FileExtension = ".db";
+}
 
 /// <summary>処分の要求。</summary>
 /// <param name="Method">方式（既定値は持たない——呼び出し側が必ず指定する）。</param>

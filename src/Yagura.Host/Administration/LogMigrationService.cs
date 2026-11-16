@@ -220,9 +220,13 @@ public sealed class LogMigrationService : ILogMigrationService
             OldDatabaseAccessHolder.Migration, TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
         if (lease is null)
         {
-            throw new InvalidOperationException(_accessGate.Holder == OldDatabaseAccessHolder.Disposal
-                ? "以前の保存先のファイルの後始末を実行中のため、移行を開始できません。"
-                : "蓄積ログの移行は既に実行中です。");
+            throw new InvalidOperationException(_accessGate.Holder switch
+            {
+                OldDatabaseAccessHolder.Disposal => "以前の保存先のファイルの後始末を実行中のため、移行を開始できません。",
+                OldDatabaseAccessHolder.Inspection =>
+                    "以前の保存先のファイルを照合のために読み取り中です。しばらくしてから、もう一度実行してください。",
+                _ => "蓄積ログの移行は既に実行中です。",
+            });
         }
 
         var status = await GetStatusCoreAsync(cancellationToken).ConfigureAwait(false);
