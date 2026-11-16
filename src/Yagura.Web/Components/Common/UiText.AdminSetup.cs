@@ -571,6 +571,59 @@ public static partial class UiText
     /// </summary>
     public const string IngestionTlsObservabilityMetricsLinkText = "計器一覧（ハンドシェイク失敗を含む）";
 
+    // ---- 受信許可規則（Windows ファイアウォール）の案内（TLS 受信・管理リモート HTTPS。configuration.md §4.3） ----
+
+    /// <summary>
+    /// TLS 受信画面: 案内の見出し。{0} に保存済みの設定から求めたポート番号が入る。
+    /// 規則の有無は判定せず常に表示する——インストーラも Yagura も規則を作らないため。
+    /// </summary>
+    public const string IngestionTlsFirewallNoticeTitleFormat =
+        "TLS 受信を有効にするときは、Windows ファイアウォールに TCP {0} の受信許可規則を追加してください";
+
+    /// <summary>TLS 受信画面: 案内の本文（なぜ自分で足す必要があるか・足さないと何が起きるか）。</summary>
+    public const string IngestionTlsFirewallNoticeBody =
+        "インストーラが作成する受信許可規則は UDP 514・TCP 514・TCP 8514 の 3 つだけで、後から有効にする TLS 受信の" +
+        "規則は作られません（Yagura 自身もファイアウォールを変更しません）。規則が無いと、サーバ自身からの接続確認は" +
+        "通る一方で、ほかの機器からの TLS 接続だけが届かなくなります。";
+
+    /// <summary>管理リモート画面: 案内の見出し。{0} に保存済みの設定から求めたポート番号が入る。</summary>
+    public const string AdminRemoteAccessFirewallNoticeTitleFormat =
+        "リモートアクセスを有効にするときは、Windows ファイアウォールに TCP {0} の受信許可規則を追加してください";
+
+    /// <summary>管理リモート画面: 案内の本文。</summary>
+    public const string AdminRemoteAccessFirewallNoticeBody =
+        "インストーラは管理画面用の受信許可規則を作りません（既定ではサーバ自身からしか開けないためです）。" +
+        "後から有効にするリモートアクセスの規則も自動では作られず、Yagura 自身もファイアウォールを変更しません。" +
+        "規則が無いと、サーバ上のブラウザでは開けても、ほかの端末からは管理画面に接続できません。";
+
+    /// <summary>規則を追加するコマンドの見出し（両画面共通）。</summary>
+    public const string FirewallRuleCommandLabel = "規則を追加するコマンド（管理者権限の PowerShell で実行）";
+
+    /// <summary>
+    /// <c>-Program</c> に実行中の本体を指定できた場合の説明。{0} に Yagura.Host.exe のパスが入る。
+    /// </summary>
+    public const string FirewallRuleProgramResolvedFormat =
+        "-Program には、このサーバで動いている Yagura 本体（{0}）を指定しています。インストーラが作る規則と同じく、" +
+        "Yagura 以外のプログラムにはこのポートを開けません。";
+
+    /// <summary>
+    /// 本体の実行ファイルを特定できず <c>-Program</c> を省いた場合の説明（違うパスで限定すると
+    /// 規則が一致せず、受信が届かないまま気づけないため、推測のパスは入れない）。
+    /// </summary>
+    public const string FirewallRuleProgramUnresolved =
+        "Yagura 本体の実行ファイルを特定できなかったため、実行ファイルを限定する -Program を省いています。" +
+        @"インストーラが作る規則と同じ条件にする場合は、-Program 'インストール先\Yagura.Host.exe' を付け加えてください。";
+
+    /// <summary>
+    /// 規則を足したあとの注意（両画面共通）: ポート変更時の付け替え・アンインストールで消えないこと・
+    /// 起動時の警告・運用ガイドの該当節。
+    /// </summary>
+    public const string FirewallRuleFollowUp =
+        "コマンドのポートは保存済みの設定から組み立てています。ポートを変えて保存したら、古い番号の規則は削除してください。" +
+        "自分で追加した規則は、Yagura をアンインストールしても削除されません。規則が足りないと、サービスの起動時に" +
+        "イベントログへ警告（イベント ID 1023）が出ます。手順の詳細は運用ガイド（docs/operations.md）の" +
+        "§14「ファイアウォール規則を自分で足す」を参照してください。";
+
     // ---- 閲覧 UI の HTTPS 設定（ADR-0022） ----
 
     /// <summary>閲覧 HTTPS 設定画面の見出し（決定 3——証明書設定 3 画面の書き分け）。</summary>

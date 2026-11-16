@@ -77,6 +77,14 @@ else
         </div>
     </MudPaper>
 
+    @* 受信許可規則の案内。ポートは保存済みの値（= 再起動後に待ち受けるポート）から組み立てる——
+       入力中の未保存の値で規則を作ると、保存しなかったときに使われないポートを開けることになる。 *@
+    <div class="mt-4">
+        <FirewallRuleNotice Title="@FirewallNoticeTitle"
+                            Body="@UiText.IngestionTlsFirewallNoticeBody"
+                            Rule="_firewallRule" />
+    </div>
+
     @* 証明書の選択（管理 HTTPS 画面と同一の列挙契約を共有する）。バッジ・注記の重大度は
        CertificateSeverityPolicy（期限切れ = Warning・秘密鍵読取不可 = Error。管理 HTTPS と逆——
        「受信を止めない」原則で期限切れを通し、秘密鍵読取不可は受信断になるため拒否する）。 *@
@@ -143,6 +151,12 @@ else
     private string? _errorMessage;
     private string? _savedSummary;
     private bool _expiredAfterSave;
+    private FirewallRuleCommand _firewallRule = FirewallRuleGuidance.ForIngestionTls(null, null);
+
+    private string FirewallNoticeTitle => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        UiText.IngestionTlsFirewallNoticeTitleFormat,
+        _firewallRule.Port);
 
     /// <summary>
     /// TLS 受信のバッジ・注記ポリシー: 期限切れ = Warning（「受信を止めない」原則で通す）・
@@ -180,6 +194,8 @@ else
         _enabled = status.Enabled;
         _selectedThumbprint = status.CertificateThumbprint ?? string.Empty;
         _port = status.Port ?? string.Empty;
+        // 画面は Yagura 本体のプロセス内で動くため、実行中のプロセスのパスが本体の実行ファイルになる。
+        _firewallRule = FirewallRuleGuidance.ForIngestionTls(status.Port, Environment.ProcessPath);
     }
 
     private void RefreshCertificates()
