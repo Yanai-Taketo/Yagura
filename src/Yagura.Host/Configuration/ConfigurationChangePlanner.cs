@@ -19,12 +19,13 @@
 /// 比較ロジックと <see cref="ConfigurationKeyMetadata"/> の両方を同じ PR で更新する。
 /// </para>
 /// <para>
-/// <b>意図的な除外</b>: <see cref="ConfigurationKeyMetadata.RegisteredKeys"/> のうち
-/// <c>Storage:Provider</c>・<c>Storage:SqlServer:ConnectionString</c> の 2 キーは本メソッドの
-/// 比較対象に含めない——database.md §6.1 の専用切替手順が扱うため、通常の差分適用の対象外
-/// である。それ以外の登録済みキーは全て比較する。この網羅性は
-/// <c>ConfigurationChangePlannerTests</c> のリフレクションによる機械検証テストで担保する
-/// （新しいキーの追加時に本メソッドへの追加を忘れると、当該テストが失敗して検出する）。
+/// <see cref="ConfigurationKeyMetadata.RegisteredKeys"/> の登録済みキーは<b>例外なく全て</b>
+/// 比較する。この網羅性は <c>ConfigurationChangePlannerTests</c> のリフレクションによる機械検証
+/// テストで担保する（新しいキーの追加時に本メソッドへの追加を忘れると、当該テストが失敗して検出する）。
+/// 保存先の切替キー（<c>Storage:Provider</c>・<c>Storage:SqlServer:ConnectionString</c>）も
+/// 含める——専用の切替手順（database.md §6.1）で保存される値であっても、ここで検出しなければ
+/// 再読み込みが「再起動待ち」として計上できず、保存先を切り替えたのに旧保存先のまま動いている
+/// 状態が見えなくなる。計画が持つのは変更キー名だけで、接続文字列の値は含まれない。
 /// </para>
 /// </remarks>
 public static class ConfigurationChangePlanner
@@ -70,6 +71,11 @@ public static class ConfigurationChangePlanner
         CompareKey(changedKeys, "Admin:Https:Port", before.Admin?.Https?.Port, after.Admin?.Https?.Port);
         CompareKey(changedKeys, "Admin:ForwarderKit:MsiUpload:Enabled", before.Admin?.ForwarderKit?.MsiUpload?.Enabled, after.Admin?.ForwarderKit?.MsiUpload?.Enabled);
         CompareKey(changedKeys, "Storage:SqliteFileName", before.Storage?.SqliteFileName, after.Storage?.SqliteFileName);
+        CompareKey(changedKeys, "Storage:Provider", before.Storage?.Provider, after.Storage?.Provider);
+        // DPAPI 暗号化表現は保存のたびに暗号文が変わるため、同じ接続先への保存し直しも変更として
+        // 現れる。過検出側に倒れるだけで、値そのものは比較結果に出ない。
+        CompareKey(changedKeys, "Storage:SqlServer:ConnectionString",
+            before.Storage?.SqlServer?.ConnectionString, after.Storage?.SqlServer?.ConnectionString);
         CompareKey(changedKeys, "Spool:Enabled", before.Spool?.Enabled, after.Spool?.Enabled);
         CompareKey(changedKeys, "Spool:Directory", before.Spool?.Directory, after.Spool?.Directory);
         CompareKey(changedKeys, "Spool:QuotaBytes", before.Spool?.QuotaBytes, after.Spool?.QuotaBytes);
