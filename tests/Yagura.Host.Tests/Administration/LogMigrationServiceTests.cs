@@ -375,6 +375,31 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Status_WhileDisposalOrMigrationHoldsTheGate_ReturnsWithoutWaiting()
+    {
+        // 後始末・移行は排他を長く保持する——画面の表示を排他の待ち時間で止めない。
+        await SeedSourceAsync(5);
+        var gate = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessGate();
+        var service = new LogMigrationService(
+            _dataRoot, _sourcePath, currentProviderIsSqlServer: true, _target, writeGate: null, _auditRecorder,
+            new FakeLogger<LogMigrationService>(), gate);
+
+        foreach (var (holder, expected) in new[]
+                 {
+                     (Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Disposal, LogMigrationAvailability.DisposalInProgress),
+                     (Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Migration, LogMigrationAvailability.Running),
+                 })
+        {
+            using (await gate.TryAcquireAsync(holder, TimeSpan.Zero))
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                Assert.Equal(expected, (await service.GetStatusAsync()).Availability);
+                Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"状態の取得に {stopwatch.Elapsed} かかった。");
+            }
+        }
+    }
+
+    [Fact]
     public async Task Status_SourceMissing_DoesNotCreateTheFile()
     {
         File.Delete(_sourcePath);

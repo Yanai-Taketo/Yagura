@@ -107,17 +107,28 @@ public sealed class LogMigrationService : ILogMigrationService
             return new LogMigrationStatus(LogMigrationAvailability.NotPromoted);
         }
 
+        // 移行・後始末は長く保持するため待たずに返す（画面の表示を待たせない）。待つのは短い読み取りとの競合だけ。
+        if (HolderStatus(_accessGate.Holder) is { } busy)
+        {
+            return busy;
+        }
+
         using var lease = await _accessGate.TryAcquireAsync(
             OldDatabaseAccessHolder.Inspection, StatusGateWait, cancellationToken).ConfigureAwait(false);
         if (lease is null)
         {
-            return new LogMigrationStatus(_accessGate.Holder == OldDatabaseAccessHolder.Disposal
-                ? LogMigrationAvailability.DisposalInProgress
-                : LogMigrationAvailability.Running);
+            return HolderStatus(_accessGate.Holder) ?? new LogMigrationStatus(LogMigrationAvailability.Running);
         }
 
         return await GetStatusCoreAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private static LogMigrationStatus? HolderStatus(OldDatabaseAccessHolder holder) => holder switch
+    {
+        OldDatabaseAccessHolder.Migration => new LogMigrationStatus(LogMigrationAvailability.Running),
+        OldDatabaseAccessHolder.Disposal => new LogMigrationStatus(LogMigrationAvailability.DisposalInProgress),
+        _ => null,
+    };
 
     /// <summary>
     /// 状態の判定（呼び出し側が旧ファイルの排他を保持する）。完了の判定は database.md §6.3 の規則 1・2:

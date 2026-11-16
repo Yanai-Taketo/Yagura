@@ -166,9 +166,10 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         var walBytes = SizeOf(status, _targets.WalPath);
         var estimate = bodyBytes + walBytes;
 
-        if (status.State is OldDatabaseDisposalState.NotApplicable)
+        // 対象外・実行中（移行・処分が排他を長く保持する）は旧ファイルを開かずに返す。
+        if (status.State is not (OldDatabaseDisposalState.Pending or OldDatabaseDisposalState.LastAttemptFailed))
         {
-            return EmptyInspection(status, OldDatabaseTargetKind.SidecarFilesOnly, estimate);
+            return EmptyInspection(status, OldDatabaseTargetInspector.Inspect(_targets).Kind, estimate);
         }
 
         using var lease = await _accessGate.TryAcquireAsync(
@@ -273,6 +274,12 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             if (!_effectiveProviderIsSqlServer)
             {
                 return Rejected(OldDatabaseDisposalReason.NotPromoted, "保存先が SQL Server ではないため、後始末はできません。", request.Method);
+            }
+
+            // 移行は排他を長く保持するため待たずに拒否する。待つのは短い読み取りとの競合だけ。
+            if (_accessGate.Holder == OldDatabaseAccessHolder.Migration)
+            {
+                return Rejected(OldDatabaseDisposalReason.MigrationRunning, "蓄積ログの移行を実行中のため、後始末を開始できません。", request.Method);
             }
 
             lease = await _accessGate.TryAcquireAsync(
