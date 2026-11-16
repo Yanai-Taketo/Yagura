@@ -38,6 +38,10 @@ public static partial class UiText
         "SQL Server に保存できなかった間に、組み込みデータベースへ保存したログが {0:N0} 件あります。" +
         "これらは SQL Server にはありません。先に『蓄積ログの移行』を実行してください。";
 
+    /// <summary>サービスの停止で移行が中断した表示（チェックポイントから再開できる）。</summary>
+    public const string MigrationInterruptedByServiceStop =
+        "サービスの停止のため、移行を中断しました。もう一度実行すると、続きから移行します。";
+
     /// <summary>別の画面で移行を実行中の表示。</summary>
     public const string MigrationRunningElsewhere = "蓄積ログの移行を実行中です。";
 

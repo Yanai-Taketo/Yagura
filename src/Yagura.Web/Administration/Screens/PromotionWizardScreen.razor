@@ -427,6 +427,10 @@ else
         {
             _migrationResult = new LogMigrationResult(false, 0, 0, 0, ex.Message);
         }
+        catch (OperationCanceledException)
+        {
+            _migrationResult = new LogMigrationResult(false, 0, 0, 0, UiText.MigrationInterruptedByServiceStop);
+        }
         finally
         {
             _migrationRunning = false;

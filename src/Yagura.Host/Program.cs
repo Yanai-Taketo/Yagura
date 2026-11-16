@@ -863,7 +863,8 @@ public static class Program
             sp.GetRequiredService<LogStoreWriteGate>(),
             sp.GetRequiredService<IAuditRecorder>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.LogMigrationService>(),
-            oldDatabaseAccessGate));
+            oldDatabaseAccessGate,
+            sp.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping));
 
         // 旧・組み込み DB ファイルの後始末（database.md §6.3。昇格の最終段）。対象は SQLite provider の書き込み先・
         // 移行元と同じ導出（データルート + Storage:SqliteFileName）。処分の実行は停止要求に結び付けた背景の処理と

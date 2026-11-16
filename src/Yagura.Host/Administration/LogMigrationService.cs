@@ -63,6 +63,7 @@ public sealed class LogMigrationService : ILogMigrationService
     private readonly IAuditRecorder _auditRecorder;
     private readonly ILogger<LogMigrationService> _logger;
     private readonly OldDatabaseAccessGate _accessGate;
+    private readonly CancellationToken _stopping;
 
     /// <summary>状態取得が旧ファイルの排他を待つ上限（確認材料の読み取りなど短い保持と競合した場合）。</summary>
     private static readonly TimeSpan StatusGateWait = TimeSpan.FromSeconds(5);
@@ -75,7 +76,8 @@ public sealed class LogMigrationService : ILogMigrationService
         LogStoreWriteGate? writeGate,
         IAuditRecorder auditRecorder,
         ILogger<LogMigrationService>? logger = null,
-        OldDatabaseAccessGate? accessGate = null)
+        OldDatabaseAccessGate? accessGate = null,
+        CancellationToken stopping = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(oldSqliteDatabasePath);
@@ -90,6 +92,7 @@ public sealed class LogMigrationService : ILogMigrationService
         _auditRecorder = auditRecorder;
         _logger = logger ?? NullLogger<LogMigrationService>.Instance;
         _accessGate = accessGate ?? new OldDatabaseAccessGate();
+        _stopping = stopping;
     }
 
     private string CheckpointPath => CheckpointPathOf(_dataRoot);
@@ -197,6 +200,11 @@ public sealed class LogMigrationService : ILogMigrationService
         IProgress<LogMigrationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        // サービスの停止要求でも止める——呼び出し側（画面）が取り消しトークンを渡さなくても、停止手順
+        // （メモリ上のログの一時保管への退避）を移行が待たせない。中断はチェックポイントから再開できる。
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping);
+        cancellationToken = linked.Token;
+
         using var lease = await _accessGate.TryAcquireAsync(
             OldDatabaseAccessHolder.Migration, TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
         if (lease is null)

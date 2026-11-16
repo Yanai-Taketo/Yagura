@@ -160,6 +160,36 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Run_ServiceStopRequest_CancelsEvenWithoutTheCallersToken()
+    {
+        // 画面は取り消しトークンを渡さない——サービスの停止要求だけで移行が止まり、チェックポイントが残る。
+        await SeedSourceAsync(2000);
+        using var stopping = new CancellationTokenSource();
+        var service = new LogMigrationService(
+            _dataRoot,
+            _sourcePath,
+            currentProviderIsSqlServer: true,
+            _target,
+            writeGate: null,
+            _auditRecorder,
+            new FakeLogger<LogMigrationService>(),
+            stopping: stopping.Token);
+        var progressCount = 0;
+        var progress = new Progress<LogMigrationProgress>(_ =>
+        {
+            if (Interlocked.Increment(ref progressCount) == 1)
+            {
+                stopping.Cancel();
+            }
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.RunAsync(null, null, null, progress));
+
+        Assert.Equal(LogMigrationAvailability.Ready, (await service.GetStatusAsync()).Availability);
+        Assert.Contains(_auditRecorder.Recorded, e => e.Detail!.Contains("途中失敗", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Run_TargetWriteFails_RecordsFailureAudit_AndRethrows()
     {
         // レビュー指摘(fail-open): 移行の途中失敗も監査に残す——DB を変更した管理操作が
