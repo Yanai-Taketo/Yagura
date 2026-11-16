@@ -299,11 +299,5 @@
 
     private string? DatabaseSizeSupplement => _databaseSizeUnavailableReason;
 
-    private static string FormatBytes(long bytes) => bytes switch
-    {
-        >= 1024L * 1024 * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024 * 1024):0.#} GB"),
-        >= 1024L * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024):0.#} MB"),
-        >= 1024L => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1024.0:0.#} KB"),
-        _ => string.Create(CultureInfo.InvariantCulture, $"{bytes} B"),
-    };
+    private static string FormatBytes(long bytes) => YaguraByteFormatter.Format(bytes);
 }

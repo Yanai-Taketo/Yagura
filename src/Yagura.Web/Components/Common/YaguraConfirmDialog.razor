@@ -9,6 +9,10 @@
     ダイアログ面の角丸 8px（ui.md §2.3）は M8-3 で適用済み——共通コンポーネントの内部
     スタイル（yagura-components.css の .mud-dialog 規則。ポータル描画のため部品側の
     ラッパクラスでは面に届かない）が本ダイアログを含む全ダイアログ面に効く。
+
+    並び順は「要約 → 要確認事項（必須の確認チェックボックス）→ 補足の項目」で固定する。
+    取り消せないことと、利用者が能動的に確かめるべきことを最上段に置き、それ以外を下に回す
+    （同じ重みで並べると読まれない）。必須の確認は既定で未確認とし、確認するまで確認ボタンを押せない。
 *@
 <MudDialog>
     <TitleContent>
@@ -17,12 +21,36 @@
     <DialogContent>
         @* 何が起きるかの要約（色だけに頼らない——文言で伝える。ui.md §8） *@
         <MudText>@Summary</MudText>
+        @if (AcknowledgementLines is { Count: > 0 } || AcknowledgementLabel is not null)
+        {
+            <div class="mt-3 yagura-confirm-acknowledgement" role="group">
+                @foreach (var line in AcknowledgementLines ?? [])
+                {
+                    <MudText Typo="Typo.body2" Class="mb-2">@line</MudText>
+                }
+                @if (AcknowledgementLabel is not null)
+                {
+                    <YaguraCheckboxField Label="@AcknowledgementLabel" @bind-Value="_acknowledged" />
+                }
+            </div>
+        }
+        @if (Details is { Count: > 0 })
+        {
+            <div class="mt-3 yagura-confirm-details">
+                @foreach (var detail in Details)
+                {
+                    <MudText Typo="Typo.subtitle2">@detail.Label</MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">@detail.Value</MudText>
+                }
+            </div>
+        }
     </DialogContent>
     <DialogActions>
         @* 既定フォーカスは安全側（キャンセル）: autofocus 属性で明示する（ui.md §3.1）。 *@
         <MudButton OnClick="Cancel" Variant="Variant.Outlined" autofocus>@UiText.ConfirmDialogCancel</MudButton>
         <MudButton OnClick="Confirm"
                    Variant="Variant.Filled"
+                   Disabled="@(!CanConfirm)"
                    Color="@(Destructive ? Color.Error : Color.Primary)">@ConfirmLabel</MudButton>
     </DialogActions>
 </MudDialog>
@@ -49,7 +77,35 @@
     [Parameter]
     public bool Destructive { get; set; } = true;
 
-    private void Confirm() => MudDialog.Close(DialogResult.Ok(true));
+    /// <summary>要約の直下に置く要確認事項（任意。件数・期間など、確認の前に読ませたいこと）。</summary>
+    [Parameter]
+    public IReadOnlyList<string>? AcknowledgementLines { get; set; }
+
+    /// <summary>
+    /// 必須の確認チェックボックスの文言（任意）。指定すると既定で未確認のチェックボックスを置き、
+    /// 確認するまで確認ボタンを押せない。
+    /// </summary>
+    [Parameter]
+    public string? AcknowledgementLabel { get; set; }
+
+    /// <summary>要確認事項の下に置く補足の項目（任意）。</summary>
+    [Parameter]
+    public IReadOnlyList<YaguraConfirmDetail>? Details { get; set; }
+
+    private bool _acknowledged;
+
+    private bool CanConfirm => AcknowledgementLabel is null || _acknowledged;
+
+    private void Confirm()
+    {
+        // 押せない状態のボタンへ届いたイベント（描画の更新前のクリック）も通さない。
+        if (!CanConfirm)
+        {
+            return;
+        }
+
+        MudDialog.Close(DialogResult.Ok(true));
+    }
 
     private void Cancel() => MudDialog.Cancel();
 
@@ -61,7 +117,10 @@
         string title,
         string summary,
         string confirmLabel,
-        bool destructive = true)
+        bool destructive = true,
+        IReadOnlyList<string>? acknowledgementLines = null,
+        string? acknowledgementLabel = null,
+        IReadOnlyList<YaguraConfirmDetail>? details = null)
     {
         ArgumentNullException.ThrowIfNull(dialogService);
 
@@ -71,6 +130,9 @@
             { d => d.Summary, summary },
             { d => d.ConfirmLabel, confirmLabel },
             { d => d.Destructive, destructive },
+            { d => d.AcknowledgementLines, acknowledgementLines },
+            { d => d.AcknowledgementLabel, acknowledgementLabel },
+            { d => d.Details, details },
         };
 
         // Esc で閉じられること（ui.md §8）を常に保証する。
