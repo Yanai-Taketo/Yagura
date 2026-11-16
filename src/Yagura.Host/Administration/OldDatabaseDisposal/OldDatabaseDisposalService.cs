@@ -189,8 +189,15 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         var retentionDays = _environment.RetentionDays();
         if (retentionDays is { } days)
         {
-            beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
-                _targets.BodyPath, RetentionCutoff(days), cancellationToken).ConfigureAwait(false);
+            try
+            {
+                beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
+                    _targets.BodyPath, RetentionCutoff(days), cancellationToken).ConfigureAwait(false);
+            }
+            catch (SqliteException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogInformation(ex, "保存期間を過ぎたログの件数を数えられません。");
+            }
         }
 
         return new OldDatabaseDisposalInspection(
@@ -531,8 +538,17 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         string? workDirectory = null;
         string? archiveFileName = null;
         (ArchiveVolumeInfo Volume, long Floor)? dataRootVolume = null;
+        long? beyondRetention = null;
         if (method == OldDatabaseDisposalMethod.Archive)
         {
+            // 保存期間を過ぎたログも書き出したファイルに含める（元のファイルそのものの保管が目的）。その件数を
+            // 開始の記録で開示する。
+            if (_environment.RetentionDays() is { } retentionDays)
+            {
+                beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
+                    _targets.BodyPath, RetentionCutoff(retentionDays), cancellationToken).ConfigureAwait(false);
+            }
+
             var bodyBytes = targetInspection.ExistingFiles.FirstOrDefault(file => file.Path == _targets.BodyPath)?.SizeBytes ?? 0;
             var walBytes = targetInspection.ExistingFiles.FirstOrDefault(file => file.Path == _targets.WalPath)?.SizeBytes ?? 0;
             var validation = _destinationValidator.Validate(
@@ -571,15 +587,6 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
             workDirectory = created.Path;
             archiveFileName = Path.GetFileName(workDirectory) + ".db";
-        }
-
-        // 保存期間を過ぎたログも書き出したファイルに含める（元のファイルそのものの保管が目的）。その件数を
-        // 開始の記録で開示する。
-        long? beyondRetention = null;
-        if (method == OldDatabaseDisposalMethod.Archive && _environment.RetentionDays() is { } retentionDays)
-        {
-            beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
-                _targets.BodyPath, RetentionCutoff(retentionDays), cancellationToken).ConfigureAwait(false);
         }
 
         return (new DisposalPlan(
@@ -695,7 +702,13 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 retentionDays is { } days ? RetentionCutoff(days) : null,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException && ex is not SqliteException)
+        catch (SqliteException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            // 要約は読めたが照合の途中で旧ファイルを読めない（部分的な破損）: 内容を検証できないものとして扱う。
+            _logger.LogInformation(ex, "以前の保存先のファイルを照合の途中で読めません（破損の可能性）。");
+            return new ContentRead(OldDatabaseTargetKind.UnverifiableBody, null, null, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // 移行先へ問い合わせられない（SQL Server の一時的な障害等）: 照合できないものとして、すべてを
             // 未移行とみなす（安全側——明示確認に回す）。
@@ -738,7 +751,9 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 $"後始末を完了できませんでした（{ex.Message}）。",
                 OldDatabaseDisposalReason.Unexpected,
                 plan.Method,
-                RemainingFiles: ListExistingTargets().Select(file => file.Path).ToList());
+                RemainingFiles: ListExistingTargets().Select(file => file.Path).ToList(),
+                // 確定済みの書き出しファイルは消さない（確定の前なら作業用サブフォルダごと片付ける）。
+                WorkDirectoryLeftBehind: plan.Finalized ? null : RemoveWorkDirectory(plan.WorkDirectory));
         }
 
         result = result with { FinishedAt = _timeProvider.GetUtcNow() };
@@ -841,6 +856,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             {
                 throw new InvalidOperationException("最終のアクセス権を確認できません。");
             }
+
+            plan.Finalized = true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
             or PlatformNotSupportedException)
@@ -1331,6 +1348,9 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         long? RecordsBeyondRetention)
     {
         public IReadOnlyList<string> CleanedUpWorkDirectories { get; set; } = [];
+
+        /// <summary>書き出したファイルを確定した（改名と最終の ACL）か。確定後は作業用サブフォルダを片付けない。</summary>
+        public bool Finalized { get; set; }
 
         public string? CheckpointSummary { get; set; }
     }
