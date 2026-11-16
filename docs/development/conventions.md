@@ -117,4 +117,4 @@ CI の回帰ベンチ（`.github/workflows/ci.yml` の「Regression bench」ス�
 
 ## リリース
 
-リリースの規則（バージョンの単一の正・chore(release) PR・タグの再 push 禁止・`.sha256` の添付・MSI のサイズと SHA256 を文書に書かないこと）と手順（当日の確認・タグの push・署名の承認・公開後の確認・途中で止まったときの復旧）は、[release-process.md](release-process.md) を正とする。
+**バージョンの単一の正は `Directory.Build.props` の `<YaguraVersion>`**（ADR-0014 決定 7）。そのほかのリリースの規則（chore(release) PR・タグの再 push 禁止・`.sha256` の添付・MSI のサイズと SHA256 を文書に書かないこと）と手順（当日の確認・タグの push・署名の承認・公開後の確認・途中で止まったときの復旧）は、[release-process.md](release-process.md) を正とする。

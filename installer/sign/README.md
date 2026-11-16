@@ -86,5 +86,6 @@ TSA(タイムスタンプ)は主 `http://timestamp.sectigo.com` + 副 `http://ti
 第 1 段(WIF 疎通)は 2026-07-18 に実証済み。第 2 段は、訂正版証明書(2026-07-23 再発行)の
 `codesign-chain.pem` で公開せずに署名する通し検証と、署名済み MSI の SmartScreen の lab 確認
 ([ADR-0014](../../docs/adr/0014-code-signing.md) 改訂履歴 1)を通過済みで、v0.5.0 から署名付きで
-公開している。署名基盤の設定を変えたとき(証明書の更新・WIF や IAM の変更など)は、本番の
-リリースの前に手順 7 で公開せずに署名を試す。
+公開している。署名基盤の設定を変えたとき(証明書の更新・WIF や IAM の変更など)の予行と、
+予行で署名した MSI の扱いは、[release-process.md](../../docs/development/release-process.md)
+§7.1 を正とする。

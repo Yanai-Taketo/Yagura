@@ -140,15 +140,29 @@ build (x64 / arm64)
 - `create-release` は、タグの push では常に動き、手動 dispatch では入力 `publish_release` が `true` のときだけ動く
 - 所要時間の目安: v0.5.0 のときは承認待ちを含めて約 11 分だった
 
-**手動 dispatch での予行**: `gh workflow run release.yml -f publish_release=false` で、公開せずに build から smoke-signed までを通せる（署名が有効なら承認を求められる）。署名済み MSI は run の artifact として残る。この経路は、署名基盤を有効にする前の通し検証で通している（[installer/sign/README.md](../../installer/sign/README.md)「通し検証」の手順 7）。
+**手動 dispatch での予行**: `gh workflow run release.yml -f publish_release=false` で、公開せずに build から smoke-signed までを通せる（`--ref` を付けないので既定ブランチの main で動く。署名が有効なら承認を求められる）。この経路は、署名基盤を本番のリリースに使う前の通し検証で通している（[installer/sign/README.md](../../installer/sign/README.md)「通し検証」の手順 7）。
+
+- **署名基盤の設定を変えたとき（証明書の更新・WIF や IAM の変更など）は、本番のリリースの前にこの予行で署名を試す**
+- **予行に `publish_release=true` を付けない**。§9.3 のタグからの dispatch とは `--ref` の有無しか違わないため取り違えやすいが、ブランチから `publish_release=true` で動かすと、タグの push（§5・§6 の確認）を経ずに Release が作られる（§9.5）
+- **予行で署名した MSI は配布物ではない**。いまの `<YaguraVersion>`（多くは公開済みの版）を名乗り、中身は main の先頭のコードで、本物の証明書で正しく署名されている。しかも run の artifact（`release-msi-signed-x64`・`release-msi-signed-arm64`）は、保持期間（既定 90 日）のあいだ、GitHub にサインインした誰でも取得できる（公開リポジトリのため。GitHub 公式文書）。そこで次のようにする
+  - 予行が済んだら、署名済み MSI の artifact を消す。run のページの「Artifacts」で、`release-msi-signed-*` の横のごみ箱のアイコンを押す（GitHub 公式文書「Removing workflow artifacts」）。gh では次のとおり（未検証）:
+
+    ```bash
+    gh api repos/{owner}/{repo}/actions/runs/<run-id>/artifacts --jq '.artifacts[] | {id, name}'
+    gh api -X DELETE repos/{owner}/{repo}/actions/artifacts/<release-msi-signed-* の id>
+    ```
+
+  - リリースに合わせて予行する場合は、版を上げた chore(release) PR のマージの後、タグを付ける前に行う。名乗る版と中身が、これから公開するものと同じコミットになる（それでも MSI はビルドごとに再現しないため、公開資産とは別のファイルであり、artifact は上のとおり消す）
 
 ### 7.2 承認の前に確かめること
 
 承認の要求は、`sign` の前のジョブ（build・smoke）がすべて成功してから run のページに出る。承認する前に次を確かめる。
 
-1. ワークフローが `Release`（`.github/workflows/release.yml`）で、イベントが push、ref がいま push したタグ、起動者が自分であること。**身に覚えのない承認要求は却下する**——署名鍵を使えるのは Environment `release-signing` を通ったジョブだけなので、この承認が最後の関門になる
+1. ワークフローが `Release`（`.github/workflows/release.yml`）で、起動者が自分であること。イベントと ref が次のどちらかであること。**身に覚えのない承認要求は却下する**——署名鍵を使えるのは Environment `release-signing` を通ったジョブだけなので、この承認が最後の関門になる
+   - タグの push で起動した run: イベントが push、ref がいま push したタグ
+   - タグからの dispatch で起動した run（§9.3）: イベントが workflow_dispatch、ref がタグ `vX.Y.Z`（`refs/tags/vX.Y.Z`）。ref が main などのブランチなら公開してはいけない run なので、承認しない（§9.5）。例外は、§7.1 の予行（`publish_release=false`）を自分で起動したときだけである
 2. run のコミットが §5 で確かめたコミットと一致すること
-3. build ジョブの「Resolve release version」のログに `resolved version = X.Y.Z (source: git tag)` と出ていること
+3. build ジョブの「Resolve release version」のログに `resolved version = X.Y.Z (source: git tag)` と出ていること。ブランチから動いた run では `(source: Directory.Build.props (workflow_dispatch))` と出る（release.yml の実装）
 4. build・smoke-x64・smoke-arm64 がすべて success であること
 
 ### 7.3 承認の操作
@@ -194,6 +208,14 @@ run のページで「Review deployments」→ `release-signing` を選ぶ →�
    ```
 
    期待値: `Status` が `Valid`、`Subject` と `Thumbprint` が code-signing-policy.md の期待値どおり、`TimeStamped` と `Sha256Match` が `True`
+
+   上の PowerShell が出すのはタイムスタンプの有無だけで、時刻は出さない（`TimeStamperCertificate` は TSA の証明書であり、時刻ではない）。**タイムスタンプの時刻**は osslsigncode で読む。出力の `Countersignatures:` の下の `Timestamp time:` が時刻である（osslsigncode 2.8 で、公開済みの v0.5.0 の MSI に対して確認。Debian・Ubuntu では `apt install osslsigncode`）。
+
+   ```bash
+   osslsigncode verify -in Yagura-X.Y.Z-x64.msi | grep 'Timestamp time'
+   osslsigncode verify -in Yagura-X.Y.Z-arm64.msi | grep 'Timestamp time'
+   ```
+
 4. **リリースノート**: 表示された本文を読み、ダウンロード表のファイル名と版、署名の節の署名者名、リンク先、雛形の文言がこのリリースに合っていることを確かめる。直すときは `gh release edit vX.Y.Z --notes-file <ファイル>` で書き換える（再実行してもノートは更新されない。§9.1）
 5. **同梱 .NET の版**: 公開された x64 MSI を検証用の端末に導入し、収められたランタイムの版が §3.2 で控えた最新パッチと一致することを確かめる。
 
@@ -208,10 +230,10 @@ run のページで「Review deployments」→ `release-signing` を選ぶ →�
 次の値を、リリースを追跡する Issue（なければ chore(release) PR）にコメントで残す。
 
 - release.yml の run の URL
-- 各 MSI の SHA256（`.sha256` の値）と、証明書の Thumbprint・NotAfter
+- 各 MSI の SHA256（`.sha256` の値）と、証明書の Thumbprint・NotAfter、タイムスタンプの時刻（§8.2 の 3）
 - §8.2 の 3・5 の結果（同梱 .NET の版を含む）と、Fluent Bit の検証済み版
 
-Actions の run・ログ・artifact は保持期間（公開リポジトリでは最長 90 日）を過ぎると消えるため、run の中だけに残しておくと後から辿れない。どのリリースをどの証明書で署名したかの記録は、証明書が失効したときに影響範囲を告知するのにも要る（ADR-0014 決定 3）。
+Actions の run・ログ・artifact は保持期間（公開リポジトリでは最長 90 日）を過ぎると消えるため、run の中だけに残しておくと後から辿れない。どのリリースをどの証明書で署名したか、いつ署名したかの記録は、証明書が失効したときに影響範囲を告知するのにも要る（ADR-0014 決定 3 は証明書の thumbprint と署名日時の記録を求めている）。公開資産を削除して配布を止めた後（§9.4）は、時刻を取り直す手段が残らない。
 
 ## 9. 途中で止まったときの復旧
 
@@ -227,12 +249,20 @@ GitHub 公式文書で確かめた事実（2026-11-16 確認）:
 release.yml の実装から読み取れること:
 
 - `create-release` は、Release がまだなければ `gh release create` でノート付きで作り、既にあれば `gh release upload --clobber` で資産を上書きするだけでノートは変えない
-- `gh release create` は、資産付きのとき「下書きの作成 → 資産のアップロード → 公開」を別々の API 呼び出しで行う（`gh release create --help`）。この途中で失敗すると、下書きの Release が残ることがある
+- `gh release create` は、資産付きのとき「下書きの作成 → 資産のアップロード → 公開」を別々の API 呼び出しで行う（`gh release create --help`）。アップロードや公開の呼び出しが失敗したときは gh が下書きを消すが、ランナーのタイムアウトやキャンセルで gh 自体が止まると、下書きの Release が残る（gh 2.89 のソース `pkg/cmd/release/create/create.go` の `cleanupDraftRelease`）
+- `gh release view`・`upload`・`download`・`delete` は、タグ名で公開済みの Release だけでなく**下書きも見つける**（gh 2.89 のソース `pkg/cmd/release/shared/fetch.go` の `FetchRelease`）。そのため下書きが残っていると、`create-release` は「既にある」と判断して下書きへ資産を上げるだけで、**公開もノートの更新もしない**。続く公開後検証も下書きから資産を取り直して成功しうるため、run は緑で終わっても何も公開されていないことがある
+- `gh release create` に `--verify-tag` を付けていない。そのため、指定したタグがまだリポジトリになければ、gh が既定ブランチのその時点の最新に軽量タグを自動で作る（`gh release create --help`）
 
 ### 9.2 まず「公開されたか」を見分ける
 
 - `create-release` の「Create or update GitHub Release」まで進んでいない: **何も公開されていない**（タグは push 済み、Release はない）
-- 「Create or update GitHub Release」で失敗した: Releases 画面（または `gh release list`）で、Release や下書きが残っていないかを確かめる
+- 「Create or update GitHub Release」で失敗した: Releases 画面（または `gh release list`）で、Release や下書きが残っていないかを確かめる。**下書きが残っていたら、再実行の前に消す**（未検証）。下書きを残したまま再実行すると、run は緑で終わっても何も公開されない（§9.1）
+
+  ```bash
+  gh release delete vX.Y.Z --yes
+  ```
+
+  `--cleanup-tag` は付けない（付けるとタグも消える。§1）
 - 「Post-publish verification」で失敗した: **公開済み**。利用者が既に取得している可能性がある
 
 ### 9.3 公開前に止まった場合
@@ -267,6 +297,7 @@ release.yml の実装から読み取れること:
 gh workflow run release.yml --ref vX.Y.Z -f publish_release=true
 ```
 
+- **`--ref vX.Y.Z`（push 済みのタグ）を必ず付ける**。付けないと既定ブランチの main で動き、公開まで進んでしまう（§9.5）
 - `GITHUB_REF` がタグになるため、build の版の照合はタグと `<YaguraVersion>` で行われる。`sign` は dispatch でも動き、`create-release` は `publish_release=true` で動く
 - Environment の「Deployment branches and tags」の判定も `GITHUB_REF` に対して行われるため、タグの push の run と同じ結果になる
 - 30 日を過ぎて再実行できない場合のほか、新しい run で最初からやり直したい場合にも使える
@@ -291,6 +322,12 @@ gh workflow run release.yml --ref vX.Y.Z -f publish_release=true
 ### 9.5 してはいけないこと
 
 - タグを消して、同じ名前で付け直す（§1）
+- **`publish_release=true` の dispatch をブランチから実行する**（`--ref` を付けない、または `--ref main` などを付ける）。`publish_release=true` の dispatch は、必ず `--ref vX.Y.Z`（push 済みのタグ）で行う。ブランチから動かすと、版はブランチの `<YaguraVersion>` から取られてタグとの照合が行われず、`sign` も `create-release` も動く。その結果、次のいずれかになる
+  - タグ `vX.Y.Z` が既に別のコミットを指している場合: Release はそのタグに付くが、資産はブランチの先頭からビルドされる。ソースのタグと署名済み MSI が食い違う Release になる
+  - その版のタグがまだない場合: `gh release create` が既定ブランチの最新に軽量タグを自動で作り（§9.1）、§5 の CI の確認と §6 の注釈付きタグを経ずに公開される
+  - その版の Release が既にある場合: 公開済みの資産が、ブランチの先頭からビルドした MSI で上書きされる（`gh release upload --clobber`。§9.1）
+
+  dispatch を起動するのも承認するのもオーナー自身なので、§7.2 の確認でも気づきにくい。コマンドを打つ前に `--ref` を確かめる
 - `YAGURA_SIGNING` を `enabled` 以外にして、未署名のまま公開する（ADR-0014 決定 8 の条件を満たさない。§10）
 - 署名済みと未署名が混在する Release を手で作る
 
@@ -300,7 +337,7 @@ gh workflow run release.yml --ref vX.Y.Z -f publish_release=true
 
 | 状態 | 既定の判断 |
 |---|---|
-| 何も公開されていない・原因は一時的 | 同じ run を再実行する（§9.3） |
+| 何も公開されていない・原因は一時的 | 同じ run を再実行する（§9.3）。下書きの Release が残っていれば先に消す（§9.2） |
 | 何も公開されていない・原因はコミット側（製品・MSI・release.yml） | main で直し、次のパッチ版で出す。押したタグは欠番 |
 | 公開済み・資産は正しい（検証側の一時的な失敗） | `create-release` を再実行する（§9.4）か、§8.2 の手の確認で検証を完了して記録する |
 | 公開済み・資産が疑わしい | 配布を止め、次のパッチ版で出す（§9.4） |
@@ -312,6 +349,10 @@ gh workflow run release.yml --ref vX.Y.Z -f publish_release=true
 - 証明書の年次更新（現行の証明書の期限は [code-signing-policy.md](../code-signing-policy.md) に記載）。更新すると `installer/sign/codesign-chain.pem`・リポジトリ変数 `SIGNER_SUBJECT`・code-signing-policy.md の期待値が変わる
 - 署名基盤が使えないときの緊急リリース（ADR-0014 決定 8 の退避弁）と、承認ゲートと緊急対応の両立（ADR-0014 委任 10）
 - KMS の署名操作の監視とアラート（ADR-0014 委任 13）
+- release.yml の改善（release.yml を変える後続の PR の候補。それまではこの文書の手順と §9.5 で防ぐ）
+  - `gh release create` に `--verify-tag` を付け、タグがないときに Release と軽量タグを自動で作らないようにする
+  - `--verify-tag` だけでは、タグや Release が既にある場合のブランチからの dispatch（§9.5）を防げない。`create-release` の条件に、dispatch でも ref がタグ（`refs/tags/v`）であることを加える
+  - 公開後検証のログに、各 MSI のタイムスタンプの時刻を出す（いまは Thumbprint・NotAfter だけで、時刻は §8.2 の 3 で手で読んでいる。ADR-0014 決定 3・決定 9）
 
 ## 出典（2026-11-16 確認）
 
@@ -321,7 +362,10 @@ gh workflow run release.yml --ref vX.Y.Z -f publish_release=true
 - GitHub Docs: [Reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)（承認・却下の操作）
 - GitHub Docs: [Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)（4 つ以上のタグの同時 push ではイベントが作られない・workflow_dispatch のタグ指定）
 - GitHub Docs: Actions の成果物とログの保持期間（既定 90 日。公開リポジトリは 1〜90 日で設定）
-- gh 2.89: `gh release create --help`・`gh run rerun --help`・`gh workflow run --help`・`gh release edit --help`
+- GitHub Docs: [Downloading workflow artifacts](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)（サインインしていて読み取り権限があれば artifact を取得できる）・[Removing workflow artifacts](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/remove-workflow-artifacts)（run のページからの削除）・REST API の「List workflow run artifacts」「Delete an artifact」
+- gh 2.89: `gh release create --help`・`gh release delete --help`・`gh run rerun --help`・`gh workflow run --help`・`gh release edit --help`
+- gh 2.89 のソース（[cli/cli v2.89.0](https://github.com/cli/cli/tree/v2.89.0/pkg/cmd/release)）: `pkg/cmd/release/shared/fetch.go` の `FetchRelease`（下書きもタグ名で見つける。`view`・`upload`・`download`・`delete`・`edit` が使う）、`pkg/cmd/release/create/create.go` の `cleanupDraftRelease`（アップロードや公開が失敗したときに下書きを消す）
+- osslsigncode 2.8: 公開済みの `Yagura-0.5.0-arm64.msi` に `osslsigncode verify -in` を実行し、`Countersignatures:` の下に `Timestamp time:` が出ることを確認した
 - [actions/setup-dotnet README](https://github.com/actions/setup-dotnet#using-the-global-json-file-input)（`rollForward` の `latest*` の扱い）
 - .NET 公式文書: [Self-contained deployment runtime roll forward](https://learn.microsoft.com/dotnet/core/deploying/runtime-patch-selection)
 - self-contained で publish した出力の `runtimeconfig.json` が `includedFrameworks` に版を持つことは、`dotnet publish -r win-x64 --self-contained true` で確認した
