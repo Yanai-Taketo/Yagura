@@ -37,7 +37,7 @@ Yagura の既定構成は、次の条件を満たすネットワークでの利�
 
 提供済み（opt-in。既定は無効）:
 
-- **TLS の syslog 受信**（RFC 5425。TCP 6514）: 証明書は Windows 証明書ストア参照方式、サーバ認証のみで相互 TLS は対象外。期限切れ・失効時も受信は止めません。証明書の選択・差し替えは管理画面（[ADR-0019](docs/adr/0019-ingestion-tls-cert-ui.md)）から行えます——このため、**管理面に到達できるローカル実行主体は TLS 受信の無効化・ポート変更・証明書差し替えを保存できます**（反映は再起動時で、独立の監査 ID が残ります）。TLS 受信が止まる事故は「送信元のサイレント脱落」として現れ気づきにくいため、第三者がローカル実行し得る環境では管理 UI 認証（loopback を含む opt-in）の併用を推奨します
+- **TLS の syslog 受信**（RFC 5425。TCP 6514）: 証明書は Windows 証明書ストア参照方式、サーバ認証のみで相互 TLS は対象外。期限切れ・失効時も受信は止めません。証明書の選択・差し替えは管理画面（[ADR-0019](docs/adr/0019-ingestion-tls-cert-ui.md)）から行えます——このため、**管理面に到達できるローカル実行主体は TLS 受信の無効化・ポート変更・証明書差し替えを保存できます**（反映は再起動時で、独立の監査 ID が残ります）。TLS 受信が止まる事故は「送信元のサイレント脱落」として現れ気づきにくいため、第三者がローカル実行し得る環境では管理 UI 認証（loopback を含む opt-in）の併用を推奨します。なお Yagura はファイアウォールを変更しないため、TLS 受信ポートの受信許可規則は有効化時に管理者が追加します（管理画面のリモート HTTPS も同じ。手順は[運用ガイド §14](docs/operations.md#14-ファイアウォール規則を自分で足す)）
 - **能動通知のメール送信**（SMTP。既定無効）: 有効化すると、Yagura から利用者設定の SMTP サーバへの外向き通信が発生します（宛先は設定次第で管理セグメント外・公衆網上のサービスにもなり得ます）。SMTP パスワードは Windows DPAPI で暗号化保存し、認証交換の内容（サーバ応答を含む）はログ・監査に記録しません。設定変更・テスト送信は監査に記録されます。停止手段は `Notification:Email:Enabled=false`（[ADR-0017](docs/adr/0017-email-notification.md)）
 - **管理 UI 認証**: Windows 統合認証（AD/Kerberos。Kerberos-only 可）またはアプリ独自 ID/パスワード認証。リモート公開時は HTTPS 必須（fail-closed）（[ADR-0010](docs/adr/0010-admin-ui-authentication.md)・[ADR-0011](docs/adr/0011-app-auth-failure-backoff.md)・[ADR-0012](docs/adr/0012-admin-https-cert-ui.md)）
 - **閲覧 UI 認証**（v0.4.0）: Windows 統合認証 + AD グループマッピング（「閲覧」「管理」役割・ネストグループ対応・名/SID 両指定。管理 ⊇ 閲覧）。既定は現状どおり無認証（[ADR-0010](docs/adr/0010-admin-ui-authentication.md) Phase 4）

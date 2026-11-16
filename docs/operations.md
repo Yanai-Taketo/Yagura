@@ -97,7 +97,7 @@ Kerberos のみを許可し NTLM を拒否したい場合は `Viewer:Authenticat
 
 ## 9. 閲覧 UI の HTTPS（8514）を有効化する（CF-D2）
 
-閲覧 UI（既定 `http://<サーバ名>:8514/`）を HTTPS にする opt-in（[ADR-0022](adr/0022-viewer-https.md)）。有効化すると**同じポートのまま** `https://` に切り替わり、平文の面は残らない。**ファイアウォール規則には一切触らなくてよい**（ポートが変わらないため。「HTTPS にしたら FW も何かやるはず」と思って余計な穴を開けないこと）。
+閲覧 UI（既定 `http://<サーバ名>:8514/`）を HTTPS にする opt-in（[ADR-0022](adr/0022-viewer-https.md)）。有効化すると**同じポートのまま** `https://` に切り替わり、平文の面は残らない。**ファイアウォール規則には一切触らなくてよい**（ポートが変わらないため。「HTTPS にしたら FW も何かやるはず」と思って余計な穴を開けないこと）。別のポートで待ち受ける TLS 受信（6514）と管理画面のリモートアクセス（8516）は事情が異なり、規則を自分で足す必要がある（[§14](#14-ファイアウォール規則を自分で足す)）。
 
 証明書は利用者の持ち込みが基本で、Yagura は生成しない（[configuration.md](design/configuration.md) §6）。環境別の入手指針:
 
@@ -308,29 +308,7 @@ SECURITY.md のとおり修正は最新リリースにのみ提供され、過�
 
 対応 OS への移行が難しい事情がある場合は、[Discussions](https://github.com/Yanai-Taketo/Yagura/discussions) で相談してほしい。
 
-### 12.5 TLS 受信（6514）を有効化したら、ファイアウォール規則を自分で足す
-
-MSI が作成する受信許可規則は **UDP 514 / TCP 514 / TCP 8514 の 3 本だけ**である。TLS 受信は opt-in で導入後に有効化するため、**MSI は 6514 の規則を作れない**。
-
-規則が無いまま TLS 受信を有効化すると、起動時とその後の周期監視で次の警告が出る（loopback からの検証は通るため、**リモートの送信元だけが届かない**という気づきにくい状態になる）。
-
-```
-[firewall-rule-mismatch] リスナの実ポートと Yagura 名前空間のファイアウォール規則に不一致があります:
-  syslog TLS 受信（TCP 6514）に対応する有効な受信許可規則がありません
-```
-
-管理者権限の PowerShell で、MSI が作る規則と同じ条件（Domain + Private・受信許可・実行ファイル限定）を満たす規則を追加する。
-
-```powershell
-New-NetFirewallRule -DisplayName 'Yagura Syslog (TLS 6514)' `
-  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6514 `
-  -Profile Domain,Private `
-  -Program 'C:\Program Files\Yagura\Yagura.Host.exe'
-```
-
-インストール先を既定から変えた場合は `-Program` のパスを合わせる。規則を追加すると次回の突合で警告は消える。**ポート番号を `Ingestion:Tls:Port` で変更した場合も同じ警告が出る**（古いポートの規則が「どのリスナにも対応していない」として併せて列挙される）。
-
-### 12.6 Windows Server 2019 の送信元から TLS 受信へ送るとき
+### 12.5 Windows Server 2019 の送信元から TLS 受信へ送るとき
 
 Yagura の TLS 受信は **TLS 1.2 を下限**とする（1.0 / 1.1 は受け付けない）。一方 **Windows Server 2019 の既定のクライアント設定は、.NET Framework 系のツールで TLS 1.0 までしか提示しない**ことがある。
 
@@ -400,3 +378,69 @@ Start-Service Yagura
 ### 13.3 退避したファイルを後で読みたい場合
 
 退避先の `yagura.db` は**そのままの SQLite ファイル**である。Yagura に読み込ませる機能は現時点では無いため、SQLite の閲覧ツール（`sqlite3` コマンド等）で直接開く。
+
+## 14. ファイアウォール規則を自分で足す
+
+MSI が作成する受信許可規則は **UDP 514 / TCP 514 / TCP 8514 の 3 本だけ**である（セットアップ画面で規則の作成を外さなかった場合。いずれも Domain + Private プロファイル・`Yagura.Host.exe` 限定）。次の待ち受けは導入後に opt-in で有効化するため、**MSI はその規則を作れない**。**Yagura 自身も規則を作らない**——サービスアカウントにファイアウォールを書き換える権限を持たせない設計であり、規則は管理者が管理するものとして扱う。
+
+| 有効化するもの | 必要な規則 | コマンドを表示する管理画面 |
+|---|---|---|
+| TLS 受信（`Ingestion:Tls:Enabled`） | TCP 6514（`Ingestion:Tls:Port` を変えた場合はその番号） | 「TLS 受信の証明書設定」 |
+| 管理画面のリモートアクセス（`Admin:RemoteBinding:Enabled`） | TCP 8516（`Admin:Https:Port` を変えた場合はその番号） | 「管理 UI のリモートアクセス（HTTPS）」 |
+
+上の 2 画面には、**保存済みのポートと、動作中の `Yagura.Host.exe` のパスから組み立てた規則作成コマンド**がコピーできる形で常に表示される（ポートを変えて保存するとコマンドも変わる）。画面は規則があるかどうかまでは判定しない——判定はサービス起動時の突合で行う（§14.3）。
+
+### 14.1 規則を追加する
+
+管理者権限の PowerShell で、MSI が作る規則と同じ条件（受信許可・Domain + Private・実行ファイル限定）を満たす規則を追加する。**規則名は「Yagura」で始める**（Yagura はこの名前の規則だけを突合する——§14.3）。
+
+TLS 受信（6514）:
+
+```powershell
+New-NetFirewallRule -DisplayName 'Yagura Syslog (TLS 6514)' `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 6514 `
+  -Profile Domain,Private `
+  -Program 'C:\Program Files\Yagura\Yagura.Host.exe'
+```
+
+管理画面のリモートアクセス（8516）:
+
+```powershell
+New-NetFirewallRule -DisplayName 'Yagura Admin Remote (HTTPS 8516)' `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8516 `
+  -Profile Domain,Private `
+  -Program 'C:\Program Files\Yagura\Yagura.Host.exe'
+```
+
+- インストール先を既定から変えた場合は `-Program` のパスを合わせる。管理画面の表示は実際のパスで組み立てる。実行ファイルを特定できなかった場合は `-Program` を省いた形を表示するので、必要なら付け足す
+- TLS 受信もリモートアクセスも、設定の反映はサービス再起動時である。規則は有効化を保存したら（再起動の前でも後でも）追加する
+- 規則が無くても、**サーバ自身（loopback）からの接続確認は通る**。そのため**リモートの送信元・端末だけが届かない**という気づきにくい状態になる。動作確認は別の機器から行う
+- ファイアウォールを GPO 等で集中管理している環境（インストール時に規則の作成を外した環境）では、上記に相当する規則を集中管理の側で配布する
+
+### 14.2 ポートを変えたとき・無効に戻したとき・アンインストールしたとき
+
+- ポート（`Ingestion:Tls:Port` / `Admin:Https:Port`、受信・閲覧のポートも同じ）を変えた場合は、新しい番号の規則を足し、**古い番号の規則を削除する**。古い規則は「どのリスナにも対応していない」として §14.3 の警告に列挙される
+
+  ```powershell
+  Remove-NetFirewallRule -DisplayName 'Yagura Syslog (TLS 6514)'
+  ```
+
+- TLS 受信・リモートアクセスを無効に戻した場合も、対応する規則を削除する（使わないポートを開けたままにしない。残すと同じく警告に列挙される）
+- **自分で追加した規則は、Yagura をアンインストールしても削除されない**。MSI がアンインストール時に削除するのは MSI 自身が作った 3 本だけである。アンインストール後は残った規則を確認し、不要なら削除する
+
+  ```powershell
+  Get-NetFirewallRule | Where-Object DisplayName -like 'Yagura*'
+  ```
+
+### 14.3 規則の突合と警告（イベント ID 1023）
+
+Yagura は **サービスの起動時と、受信リスナの再構成（UDP / TCP 受信のポート等の変更を再読み込みで反映したとき）の適用時に**、待ち受けているポートと Yagura の名前の規則（規則名が「Yagura」で始まる、またはグループが「Yagura」）を突合する。**周期的な監視はしない**。規則が足りない、またはどの待ち受けにも対応しない規則がある場合は、イベントログ（ソース Yagura）に次の警告が出る。
+
+```
+[firewall-rule-mismatch] リスナの実ポートと Yagura 名前空間のファイアウォール規則に不一致があります: syslog TLS 受信（TCP 6514）に対応する有効な受信許可規則がありません。この状態では該当ポートへの受信がファイアウォールで破棄され、Yagura のカウンタにも現れません（規則の作成・修正手順は運用ガイド docs/operations.md §14「ファイアウォール規則を自分で足す」を参照）。
+```
+
+- 突合の対象は、UDP / TCP 受信・閲覧 UI（LAN 公開時）・TLS 受信（有効時）・管理画面のリモートアクセス（有効時）の各ポートである
+- **規則を足しても、出た警告がその場で取り消されるわけではない**（周期的には突合しないため）。次に突合されるのは、通常は**次回のサービス起動時**である（TLS 受信とリモートアクセスの設定はサービス再起動で反映されるため、有効化を反映する再起動と同じ機会になる）。そこで警告が出なければ、規則は認識されている
+- 規則名を「Yagura」で始めなかった規則は突合から見えない。規則があっても警告が出続ける場合は、規則名を確認する
+- インストール時に規則の作成を外し、かつ Yagura の名前の規則が 1 本も無い環境では警告しない（集中管理された規則は突合の対象外のため）
