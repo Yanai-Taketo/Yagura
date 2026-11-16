@@ -47,6 +47,20 @@ public static class ReportWriter
         sb.AppendLine(CultureInfo.InvariantCulture, $"送出所要時間: {report.LoadResult.Elapsed} (実効レート: {ComputeEffectiveRate(report.LoadResult):F1} msg/sec)");
         sb.AppendLine();
 
+        if (report.Conditions is { } c)
+        {
+            sb.AppendLine("--- ホストの構成 ---");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"保存先: {c.Provider}");
+            sb.AppendLine(CultureInfo.InvariantCulture,
+                $"流量制御: {(c.FlowControlEnabled ? $"有効（持続 {c.FlowControlMessagesPerSecond} 件/秒・バースト {c.FlowControlBurstSize} 件）" : "無効")}" +
+                $"{(c.FlowControlOverridden ? "（ベンチ指定）" : "（製品既定）")}");
+            sb.AppendLine(CultureInfo.InvariantCulture,
+                $"UDP 受信バッファ: {c.UdpReceiveBufferBytes} バイト{(c.UdpReceiveBufferOverridden ? "（ベンチ指定）" : "（製品既定）")}");
+            sb.AppendLine(CultureInfo.InvariantCulture,
+                $"drain 待ち: {(c.DrainCompleted ? "完了" : "上限到達（drain 途中で突合）")} / 所要 {c.DrainWaitElapsed} / 上限 {c.DrainTimeoutSeconds} 秒");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("--- 突合（送信数 = 保存件数 + 全カウンタの合計）---");
         var r = report.Reconciliation;
         sb.AppendLine(CultureInfo.InvariantCulture, $"送信数: {r.SentCount}");

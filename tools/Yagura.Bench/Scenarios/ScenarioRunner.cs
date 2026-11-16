@@ -27,6 +27,7 @@ public static class ScenarioRunner
         var startedAt = DateTimeOffset.UtcNow;
 
         Directory.CreateDirectory(dataRoot);
+        BenchConfigurationFile.Write(dataRoot, BuildHostConfiguration(options));
 
         try
         {
@@ -57,6 +58,27 @@ public static class ScenarioRunner
         }
     }
 
+    /// <summary>
+    /// CLI 指定から、ホスト起動前に設定ファイルへ書く項目を組み立てる。受信バッファと流量制御は
+    /// 全シナリオ共通、SQL Server は <see cref="BenchScenario.ProviderWriteCeiling"/> 専用、
+    /// スプール容量は <see cref="BenchScenario.SpoolActivationRecovery"/> 専用（発動を短時間で
+    /// 再現するため常に縮小値を書く）。
+    /// </summary>
+    public static BenchHostConfiguration BuildHostConfiguration(ScenarioOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        return new BenchHostConfiguration(
+            SqlServerConnectionString: options.Scenario == BenchScenario.ProviderWriteCeiling && !string.IsNullOrWhiteSpace(options.SqlServerConnectionString)
+                ? options.SqlServerConnectionString
+                : null,
+            SpoolQuotaBytes: options.Scenario == BenchScenario.SpoolActivationRecovery ? options.SpoolQuotaBytes : null,
+            UdpReceiveBufferBytes: options.UdpReceiveBufferBytes,
+            FlowControlEnabled: options.FlowControlEnabled,
+            FlowControlMessagesPerSecond: options.FlowControlMessagesPerSecond,
+            FlowControlBurstSize: options.FlowControlBurstSize);
+    }
+
     /// <summary>受信スループット（UDP/TCP 別）。指定レートで持続送出し、スループット・突合を報告する。</summary>
     private static async Task<ScenarioReport> RunThroughputAsync(ScenarioOptions options, string runId, string dataRoot, DateTimeOffset startedAt)
     {
@@ -78,7 +100,7 @@ public static class ScenarioRunner
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
 
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
+        var outcome = await StopAndReconcileAsync(host, dataRoot, loadResult, DrainTimeout(options), osUdpBaseline, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
         wallClock.Stop();
 
         return BuildReport(
@@ -86,9 +108,10 @@ public static class ScenarioRunner
             runId,
             startedAt,
             dataRoot,
+            options,
             loadOptions,
             loadResult,
-            reconciliation,
+            outcome,
             wallClock.Elapsed,
             new Dictionary<string, string>(),
             [$"目標レート {options.RatePerSecond} msg/sec を {options.DurationSeconds} 秒間、{options.Transport} で送出した。"],
@@ -99,12 +122,6 @@ public static class ScenarioRunner
     private static async Task<ScenarioReport> RunSustainedZeroDropAsync(ScenarioOptions options, string runId, string dataRoot, DateTimeOffset startedAt)
     {
         var wallClock = System.Diagnostics.Stopwatch.StartNew();
-
-        if (options.UdpReceiveBufferBytes is { } udpReceiveBufferBytes)
-        {
-            // 受信バッファ値別の破棄ゼロ上限比較（M-2 実測。BenchConfigurationFile 参照）。
-            BenchConfigurationFile.WriteUdpReceiveBufferConfiguration(dataRoot, udpReceiveBufferBytes);
-        }
 
         await using var host = await BenchHostProcess.StartAsync(dataRoot).ConfigureAwait(false);
         var osUdpBaseline = OsUdpStatsProbe.GetCurrentTotalDiscarded();
@@ -122,7 +139,8 @@ public static class ScenarioRunner
             PaddingBytes: options.PaddingBytes);
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
+        var outcome = await StopAndReconcileAsync(host, dataRoot, loadResult, DrainTimeout(options), osUdpBaseline, transportIsUdp: options.Transport == LoadTransport.Udp).ConfigureAwait(false);
+        var reconciliation = outcome.Reconciliation;
         wallClock.Stop();
 
         // 「破棄ゼロ」はアプリ内カウンタに加えて OS バッファ破棄（導出値）もゼロであることを
@@ -141,9 +159,10 @@ public static class ScenarioRunner
             runId,
             startedAt,
             dataRoot,
+            options,
             loadOptions,
             loadResult,
-            reconciliation,
+            outcome,
             wallClock.Elapsed,
             new Dictionary<string, string> { ["破棄ゼロ維持"] = dropFree.ToString() },
             notes,
@@ -157,12 +176,6 @@ public static class ScenarioRunner
     private static async Task<ScenarioReport> RunBurstQ1DropAsync(ScenarioOptions options, string runId, string dataRoot, DateTimeOffset startedAt)
     {
         var wallClock = System.Diagnostics.Stopwatch.StartNew();
-
-        if (options.UdpReceiveBufferBytes is { } udpReceiveBufferBytes)
-        {
-            // 受信バッファ値別の OS バッファ破棄（導出値）比較（M-2 実測。BenchConfigurationFile 参照）。
-            BenchConfigurationFile.WriteUdpReceiveBufferConfiguration(dataRoot, udpReceiveBufferBytes);
-        }
 
         await using var host = await BenchHostProcess.StartAsync(dataRoot).ConfigureAwait(false);
         var osUdpBaseline = OsUdpStatsProbe.GetCurrentTotalDiscarded();
@@ -178,7 +191,8 @@ public static class ScenarioRunner
             PaddingBytes: options.PaddingBytes);
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline).ConfigureAwait(false);
+        var outcome = await StopAndReconcileAsync(host, dataRoot, loadResult, DrainTimeout(options), osUdpBaseline).ConfigureAwait(false);
+        var reconciliation = outcome.Reconciliation;
         wallClock.Stop();
 
         var q1DropOccurred = reconciliation.Counters.InternalBufferDropped > 0;
@@ -198,9 +212,10 @@ public static class ScenarioRunner
             runId,
             startedAt,
             dataRoot,
+            options,
             loadOptions,
             loadResult,
-            reconciliation,
+            outcome,
             wallClock.Elapsed,
             new Dictionary<string, string> { ["Q1破棄発生"] = q1DropOccurred.ToString() },
             notes,
@@ -212,9 +227,8 @@ public static class ScenarioRunner
     {
         var wallClock = System.Diagnostics.Stopwatch.StartNew();
 
-        // スプール容量を縮小した設定ファイルを事前に書く（既定 1GiB では短時間の負荷で
-        // 上限到達を再現できないため。BenchConfigurationFile 参照）。
-        BenchConfigurationFile.WriteSpoolQuotaConfiguration(dataRoot, options.SpoolQuotaBytes);
+        // スプール容量の縮小値は RunAsync が設定ファイルへ書き済み（既定 1GiB では短時間の負荷で
+        // 上限到達を再現できないため。BuildHostConfiguration 参照）。
 
         await using var host = await BenchHostProcess.StartAsync(dataRoot).ConfigureAwait(false);
         var osUdpBaseline = OsUdpStatsProbe.GetCurrentTotalDiscarded();
@@ -237,10 +251,11 @@ public static class ScenarioRunner
         var spoolActivated = ExternalSpoolUsageProbe.GetSegmentBytesOnDisk(spoolDirectory) > 0;
 
         var drainStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var drained = await ExternalSpoolUsageProbe.WaitForDrainCompletionAsync(spoolDirectory, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+        var drained = await ExternalSpoolUsageProbe.WaitForDrainCompletionAsync(spoolDirectory, DrainTimeout(options)).ConfigureAwait(false);
         drainStopwatch.Stop();
 
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline).ConfigureAwait(false);
+        var outcome = await StopAndReconcileAsync(host, dataRoot, loadResult, DrainTimeout(options), osUdpBaseline).ConfigureAwait(false);
+        var reconciliation = outcome.Reconciliation;
         wallClock.Stop();
 
         var notes = new List<string>
@@ -251,7 +266,7 @@ public static class ScenarioRunner
                 : "スプールは発動しなかった（バースト規模またはレートが発動条件に届かなかった——burst-count を増やして再試行すること）。",
             drained
                 ? $"drain が完了し、スプール使用量は 0 に戻った（所要 {drainStopwatch.Elapsed}）。"
-                : $"drain が 2 分以内に完了しなかった（タイムアウト。所要 {drainStopwatch.Elapsed} で打ち切り）。",
+                : $"drain が {DrainTimeout(options)} 以内に完了しなかった（タイムアウト。所要 {drainStopwatch.Elapsed} で打ち切り）。",
         };
 
         return BuildReport(
@@ -259,9 +274,10 @@ public static class ScenarioRunner
             runId,
             startedAt,
             dataRoot,
+            options,
             loadOptions,
             loadResult,
-            reconciliation,
+            outcome,
             wallClock.Elapsed,
             new Dictionary<string, string>
             {
@@ -279,11 +295,6 @@ public static class ScenarioRunner
     {
         var wallClock = System.Diagnostics.Stopwatch.StartNew();
         var usingSqlServer = !string.IsNullOrWhiteSpace(options.SqlServerConnectionString);
-
-        if (usingSqlServer)
-        {
-            BenchConfigurationFile.WriteSqlServerConfiguration(dataRoot, options.SqlServerConnectionString!);
-        }
 
         // SQL Server は SQLite(実行ごとに新規の一時データルート)と異なり同一データベースを
         // 実行間で使い回すため、保存件数は実行前の既存件数との差分で数える必要がある
@@ -309,7 +320,8 @@ public static class ScenarioRunner
             PaddingBytes: options.PaddingBytes);
 
         var loadResult = await SendAsync(loadOptions).ConfigureAwait(false);
-        var reconciliation = await StopAndReconcileAsync(host, dataRoot, loadResult, osUdpBaseline, sqlServerConnectionString: options.SqlServerConnectionString, transportIsUdp: options.Transport == LoadTransport.Udp, savedBaseline: savedBaseline).ConfigureAwait(false);
+        var outcome = await StopAndReconcileAsync(host, dataRoot, loadResult, DrainTimeout(options), osUdpBaseline, sqlServerConnectionString: options.SqlServerConnectionString, transportIsUdp: options.Transport == LoadTransport.Udp, savedBaseline: savedBaseline).ConfigureAwait(false);
+        var reconciliation = outcome.Reconciliation;
         wallClock.Stop();
 
         var approachingCeiling = reconciliation.SpoolEvacuatedCount > 0;
@@ -326,9 +338,10 @@ public static class ScenarioRunner
             runId,
             startedAt,
             dataRoot,
+            options,
             loadOptions,
             loadResult,
-            reconciliation,
+            outcome,
             wallClock.Elapsed,
             new Dictionary<string, string>
             {
@@ -356,10 +369,11 @@ public static class ScenarioRunner
     /// 検証してしまい、突合が実機で不成立になっていた（バースト系シナリオで顕在化）。
     /// グレースフル停止は停止手順 3 を同期的に実行させるため、この種の取りこぼしを避けられる。
     /// </remarks>
-    private static async Task<ReconciliationResult> StopAndReconcileAsync(
+    private static async Task<ReconcileOutcome> StopAndReconcileAsync(
         BenchHostProcess host,
         string dataRoot,
         LoadGeneratorResult loadResult,
+        TimeSpan drainTimeout,
         long osUdpBaselineDiscarded = 0,
         string? sqlServerConnectionString = null,
         bool transportIsUdp = true,
@@ -369,7 +383,15 @@ public static class ScenarioRunner
         // 「スプール退避」と「保存件数」の間で二重計上のように見えるため。
         // CounterReconciler.Reconcile のコメント参照）。
         var spoolDirectory = Path.Combine(dataRoot, "spool");
-        await ExternalSpoolUsageProbe.WaitForDrainCompletionAsync(spoolDirectory, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+        var drainStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var drainCompleted = await ExternalSpoolUsageProbe.WaitForDrainCompletionAsync(spoolDirectory, drainTimeout).ConfigureAwait(false);
+        drainStopwatch.Stop();
+        if (!drainCompleted)
+        {
+            Console.Error.WriteLine(
+                $"[警告] drain が {drainTimeout} 以内に完了しなかった。drain 途中の件数で突合する" +
+                "（--drain-timeout で上限を延ばせる）。");
+        }
 
         // Q2 の消費・書き込みが完全に落ち着くまで軽く待ってから停止する（グレースフル停止
         // 自体が停止手順内で Q2 残量を drain するため必須ではないが、停止直前まで大量の
@@ -418,17 +440,23 @@ public static class ScenarioRunner
                 "直近の定期永続化以降の増分が突合に反映されていない可能性がある。");
         }
 
-        return reconciliation;
+        return new ReconcileOutcome(reconciliation, drainCompleted, drainStopwatch.Elapsed);
     }
+
+    private static TimeSpan DrainTimeout(ScenarioOptions options) => TimeSpan.FromSeconds(options.DrainTimeoutSeconds);
+
+    /// <summary>突合結果と、その前段の drain 待ちの観測。</summary>
+    private sealed record ReconcileOutcome(ReconciliationResult Reconciliation, bool DrainCompleted, TimeSpan DrainWaitElapsed);
 
     private static ScenarioReport BuildReport(
         string scenarioName,
         string runId,
         DateTimeOffset startedAt,
         string dataRoot,
+        ScenarioOptions options,
         LoadGeneratorOptions loadOptions,
         LoadGeneratorResult loadResult,
-        ReconciliationResult reconciliation,
+        ReconcileOutcome outcome,
         TimeSpan elapsed,
         Dictionary<string, string> additionalMetrics,
         List<string> notes,
@@ -440,9 +468,10 @@ public static class ScenarioRunner
             EnvironmentInfo.Collect(dataRoot),
             loadOptions,
             loadResult,
-            reconciliation,
+            outcome.Reconciliation,
             elapsed,
             additionalMetrics,
             notes,
-            hostStdout ?? []);
+            hostStdout ?? [],
+            BenchConditions.From(options, outcome.DrainCompleted, outcome.DrainWaitElapsed));
 }
