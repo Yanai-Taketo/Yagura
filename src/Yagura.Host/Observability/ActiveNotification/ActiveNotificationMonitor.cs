@@ -73,7 +73,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
-    private readonly Dictionary<string, DateTimeOffset> _lastNotifiedAt = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NotificationSuppression> _lastNotifiedAt = new(StringComparer.Ordinal);
 
     /// <summary>現在保持している通知抑制エントリ数（テスト・可観測性用。#314 の掃引検証）。</summary>
     internal int SuppressionEntryCount => _lastNotifiedAt.Count;
@@ -1310,15 +1310,18 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     {
         var now = _timeProvider.GetUtcNow();
 
-        if (_lastNotifiedAt.TryGetValue(triggerKey, out var lastAt) &&
-            now - lastAt < suppressionWindow)
+        if (_lastNotifiedAt.TryGetValue(triggerKey, out var last) &&
+            now - last.LastAt < suppressionWindow)
         {
             return;
         }
 
-        _lastNotifiedAt[triggerKey] = now;
+        _lastNotifiedAt[triggerKey] = new NotificationSuppression(now, suppressionWindow);
         emit();
     }
+
+    /// <summary>トリガごとの最終発火時刻と、その発火に適用した抑制窓（掃引の猶予を窓ごとに測るため）。</summary>
+    private readonly record struct NotificationSuppression(DateTimeOffset LastAt, TimeSpan Window);
 
     /// <summary>
     /// 抑制窓を十分に超過した <see cref="_lastNotifiedAt"/> エントリを間引く（<see cref="EvaluateOnceAsync"/>
@@ -1326,17 +1329,19 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 攻撃者が制御できる次元）を含むものがあり、<see cref="NotifyIfDue"/> は挿入のみで除去しないため、
     /// 放置すると辞書が単調増加する（<c>AdminAuthFailureDefense.SweepIdleIpRateLimitEntries</c> #233 と
     /// 同種の掃引）。抑制窓を超えたエントリはもう抑制に寄与しない（<see cref="NotifyIfDue"/> の判定が必ず
-    /// 通り、通れば <c>now</c> で上書きされる）ため安全に除去できる。単一スレッド前提（クラス remarks）の
+    /// 通り、通れば <c>now</c> で上書きされる）ため安全に除去できる。猶予は**エントリ自身の抑制窓**の
+    /// 2 倍で測る——既定の窓で一律に測ると、それより長い窓を持つトリガ（開放継続の通知 1034 の 7 日）の
+    /// 記録が窓の途中で消え、次の周期で再通知されてしまう。単一スレッド前提（クラス remarks）の
     /// ため素の <see cref="Dictionary{TKey,TValue}"/> をロックなしで操作してよい。
     /// </summary>
     private void PruneStaleNotificationSuppression()
     {
-        var cutoff = _timeProvider.GetUtcNow() - (ActiveNotificationConstants.SuppressionWindow * 2);
+        var now = _timeProvider.GetUtcNow();
 
         List<string>? stale = null;
-        foreach (var (key, lastAt) in _lastNotifiedAt)
+        foreach (var (key, entry) in _lastNotifiedAt)
         {
-            if (lastAt <= cutoff)
+            if (entry.LastAt <= now - (entry.Window * 2))
             {
                 (stale ??= new()).Add(key);
             }
