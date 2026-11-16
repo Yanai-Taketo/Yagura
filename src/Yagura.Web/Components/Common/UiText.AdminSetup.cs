@@ -684,6 +684,12 @@ public static partial class UiText
     public const string ViewerHttpsSanNoExtension =
         "この証明書は SAN（サブジェクト代替名）拡張を持ちません。現代のブラウザは SAN のみを照合するため、どの名前でアクセスしても証明書名の不一致警告になります。SAN 付きの証明書への差し替えを推奨します。";
 
+    /// <summary>
+    /// SAN 検査そのものの失敗（{0} = 理由）。証明書は解決できたが SAN 拡張を読めない（破損など）場合。
+    /// </summary>
+    public const string ViewerHttpsSanInspectionFailedFormat =
+        "選択中の証明書のホスト名（SAN）を検査できませんでした: {0}";
+
     /// <summary>SAN 検査: 警告なしでアクセスできる URL の提示（決定 4 の文言方針）。</summary>
     public const string ViewerHttpsSanUrlListIntro = "この証明書で警告なしになる見込みの閲覧 URL:";
 
