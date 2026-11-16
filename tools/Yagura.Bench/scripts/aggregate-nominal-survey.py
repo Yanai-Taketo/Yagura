@@ -56,8 +56,10 @@ REQUIRED_VERSIONS = ("windows-2022", "windows-2025")
 # 受け切れたかどうかを語れないため不合格にする。
 REQUIRED_SEND_RATIO = 0.99
 
-# 確定時の検証: X で K ジョブを走らせ全数合格を要求する。全数合格なら、個体ごとの
-# 不合格率の 95% 上側信頼限界は 1 - 0.05**(1/30) ≈ 9.5% になる。
+# 確定時の検証: X で版ごとに K ジョブを走らせ、全数合格を要求する。全数合格なら、その版の
+# 個体ごとの不合格率の 95% 上側信頼限界は 1 - 0.05**(1/30) ≈ 9.5% になる。K は両版の合計ではなく
+# 版あたりの数（公称値は版ごとに成り立つ必要があり、片方の版だけの合格では律速の版を検証できない）。
+# 1 段の持続秒数は VERIFY_MIN_DURATION_SECONDS 以上を要求する（短い段の合格は確定の根拠にしない）。
 VERIFY_JOBS_REQUIRED = 30
 VERIFY_MIN_DURATION_SECONDS = 300
 LONG_RUN_DURATION_SECONDS = 1800
@@ -448,17 +450,49 @@ def judge_samples(samples: list[dict[str, Any]], phase: str) -> list[dict[str, A
     return judged
 
 
+UNRECORDED_CONDITION = "rcvbuf=記録なし"
+
+
 def condition_key(step: dict[str, Any]) -> str:
     """測定条件の違いで分布を混ぜないためのキー（受信バッファ。M-2 の再確認を別集計にする）。"""
     buffer_bytes = step.get("udp_receive_buffer_bytes")
     overridden = step.get("udp_receive_buffer_overridden")
     if buffer_bytes is None:
-        return "rcvbuf=記録なし"
+        return UNRECORDED_CONDITION
     return f"rcvbuf={buffer_bytes}" + ("" if overridden else "（製品既定）")
+
+
+def _has_recorded_condition(step: dict[str, Any]) -> bool:
+    return bool(step.get("file")) and step.get("udp_receive_buffer_bytes") is not None
+
+
+def _sample_condition(sample: dict[str, Any], default_keys: list[str]) -> str:
+    """系列に条件の記録が無いとき（段がすべて結果 JSON なし等）の、その標本の条件。
+
+    受信バッファはジョブ単位の入力で、同じ標本の全系列に同じ値が効く。そのため、同じ標本の
+    ほかの系列の記録 → runner-identity.json の測定入力（Inputs.Rcvbuf）の順に決める。
+    入力が空欄（製品既定）のときは、ほかの標本が記録した製品既定のキーを使う。決められなければ
+    UNRECORDED_CONDITION を返す（呼び出し側で、その系列の公称値を確定扱いにしない）。
+    """
+    recorded = next((s for s in sample["steps"] if _has_recorded_condition(s)), None)
+    if recorded is not None:
+        return condition_key(recorded)
+    inputs = sample["identity"].get("Inputs")
+    if isinstance(inputs, dict) and "Rcvbuf" in inputs:
+        raw = inputs.get("Rcvbuf")
+        text = "" if raw is None else str(raw).strip()
+        if text.isdigit():
+            # ベンチは指定値をそのまま UdpReceiveBufferBytes に記録する（condition_key と同じ書式）。
+            return f"rcvbuf={int(text)}"
+        if not text and len(default_keys) == 1:
+            return default_keys[0]
+    return UNRECORDED_CONDITION
 
 
 def aggregate_ladders(judged: list[dict[str, Any]]) -> dict[str, Any]:
     """explore / sample: 個体ごとの R_i と、版ごとの分布・L・X。"""
+    default_keys = sorted({condition_key(s) for sample in judged for s in sample["steps"]
+                           if _has_recorded_condition(s) and not s.get("udp_receive_buffer_overridden")})
     per_sample = []
     for sample in judged:
         values: dict[str, Any] = {}
@@ -466,11 +500,14 @@ def aggregate_ladders(judged: list[dict[str, Any]]) -> dict[str, Any]:
             steps = [s for s in sample["steps"] if s.get("series") == series]
             if steps:
                 info = individual_value(steps)
-                recorded = next((s for s in steps if s.get("file")), None)
-                info["condition"] = condition_key(recorded) if recorded else "rcvbuf=記録なし"
+                recorded = next((s for s in steps if _has_recorded_condition(s)), None)
+                # 結果 JSON の無い段だけの系列（最悪の個体であることが多い）を、条件不明として
+                # 本来の表から外さない。
+                info["condition"] = condition_key(recorded) if recorded else _sample_condition(sample, default_keys)
                 values[series] = info
         per_sample.append({"label": sample["label"], "version": sample["version"], "cpu": sample["cpu"], "values": values})
 
+    warnings: list[str] = []
     series_summary: dict[str, Any] = {}
     for series, spec in SERIES.items():
         groups: dict[str, dict[str, list[tuple[int, dict[str, Any]]]]] = {}
@@ -481,6 +518,13 @@ def aggregate_ladders(judged: list[dict[str, Any]]) -> dict[str, Any]:
             groups.setdefault(info["condition"], {}).setdefault(sample["version"], []).append((info["value"], sample))
         if not groups:
             continue
+
+        unrecorded = sum(len(entries) for entries in groups.get(UNRECORDED_CONDITION, {}).values())
+        if unrecorded:
+            warnings.append(
+                f"{series}: 受信バッファの条件を決められない個体が {unrecorded} 件ある（{UNRECORDED_CONDITION} の表）。"
+                "どの条件の個体か分からないため、この系列の公称値はどの表も確定扱いにしない"
+            )
 
         by_condition = {}
         for condition, by_version in sorted(groups.items()):
@@ -499,18 +543,28 @@ def aggregate_ladders(judged: list[dict[str, Any]]) -> dict[str, Any]:
                 dist["below_ladder"] = sum(1 for _, s in entries if s["values"][series]["below_ladder"])
                 dist["non_monotonic"] = sum(1 for _, s in entries if s["values"][series]["non_monotonic"])
                 versions[version] = dist
-            by_condition[condition] = {"versions": versions, "nominal": _nominal_candidate(versions) if spec["nominal"] else None}
+            nominal = _nominal_candidate(versions, unrecorded) if spec["nominal"] else None
+            by_condition[condition] = {"versions": versions, "nominal": nominal}
         series_summary[series] = {"label": spec["label"], "unit": spec["unit"], "by_condition": by_condition}
 
-    return {"samples": per_sample, "series": series_summary}
+    return {"samples": per_sample, "series": series_summary, "warnings": warnings}
 
 
-def _nominal_candidate(versions: dict[str, Any]) -> dict[str, Any]:
+def _nominal_candidate(versions: dict[str, Any], unrecorded: int = 0) -> dict[str, Any]:
+    """公称値の候補と、確定条件を満たすか（final）。
+
+    final の条件: 両方の版があり、各版 n ≥ SAMPLES_PER_VERSION、最下段で不合格の個体が無く
+    （R_i = 0 は実測値ではなく「梯子より下」の意味で、L として使えない）、系列内に条件を
+    決められない個体が無いこと。上限未到達（censored）の個体は R_i が真の上限より小さく出る
+    だけで、L は控えめな側に偏る（保証は崩れない）ため final を妨げない。
+    """
     present = [v for v in REQUIRED_VERSIONS if v in versions]
     notes = []
     missing = [v for v in REQUIRED_VERSIONS if v not in versions]
     if missing:
         notes.append(f"{', '.join(missing)} の標本がない（両方の版で測ってから確定する）")
+    if unrecorded:
+        notes.append(f"この系列に受信バッファの条件を決められない個体が {unrecorded} 件ある（{UNRECORDED_CONDITION} の表）")
     if not present:
         return {"value": None, "lower_bound": None, "limiting_version": None, "final": False, "notes": notes + ["推奨区分の版の標本がない"]}
 
@@ -523,8 +577,14 @@ def _nominal_candidate(versions: dict[str, Any]) -> dict[str, Any]:
         if dist["censored"]:
             notes.append(f"{version} の {dist['censored']} 個体は梯子の最上段まで合格（上限未到達。L は控えめに出る）")
         if dist["below_ladder"]:
-            notes.append(f"{version} の {dist['below_ladder']} 個体は最下段で不合格（梯子の下限を下げて測り直す）")
-    final = not missing and all(versions[v]["lower_bound_valid"] for v in present)
+            notes.append(f"{version} の {dist['below_ladder']} 個体は最下段で不合格（梯子の下限を下げて測り直す。"
+                         "L = 0 は実測値ではないため確定扱いにしない）")
+    final = (
+        not missing
+        and not unrecorded
+        and all(versions[v]["lower_bound_valid"] for v in present)
+        and not any(versions[v]["below_ladder"] for v in present)
+    )
     return {
         "value": nominal_from_lower_bound(lower_bound),
         "lower_bound": lower_bound,
@@ -546,7 +606,11 @@ def margin_verdict(lower_bound: int, nominal: int) -> dict[str, Any]:
 
 
 def aggregate_verify(judged: list[dict[str, Any]]) -> dict[str, Any]:
-    """verify: 各系列について、指定レート・指定時間の 1 段が全ジョブで合格したか。"""
+    """verify: 各系列について、指定レート・指定時間の 1 段が全ジョブで合格したか。
+
+    verified の条件: 全ジョブ合格、レートが 1 つ、全段の持続秒数が VERIFY_MIN_DURATION_SECONDS
+    以上、REQUIRED_VERSIONS の各版でジョブ数が VERIFY_JOBS_REQUIRED 以上（版あたり）。
+    """
     result = {}
     for series in SUSTAINED_SERIES:
         jobs = []
@@ -560,7 +624,9 @@ def aggregate_verify(judged: list[dict[str, Any]]) -> dict[str, Any]:
                 "cpu": sample["cpu"],
                 "pass": all(s["pass"] for s in steps),
                 "rates": sorted({s["value"] for s in steps}),
-                "durations": sorted({s.get("duration_seconds") or 0 for s in steps}),
+                # 結果 JSON の無い段（ladder-log 由来）は持続秒数を持たない。その段は不合格として
+                # all_pass で落ちるため、秒数の判定には記録のある段だけを使う。
+                "durations": sorted({s["duration_seconds"] for s in steps if s.get("duration_seconds") is not None}),
                 "reasons": sorted({r for s in steps for r in s["reasons"]}),
             })
         if not jobs:
@@ -570,21 +636,30 @@ def aggregate_verify(judged: list[dict[str, Any]]) -> dict[str, Any]:
         notes = []
         if len(rates) != 1:
             notes.append(f"レートが 1 つに揃っていない: {rates}")
-        if durations and min(durations) < VERIFY_MIN_DURATION_SECONDS:
+        duration_ok = bool(durations) and min(durations) >= VERIFY_MIN_DURATION_SECONDS
+        if not durations:
+            notes.append("持続秒数の記録がある段が無い")
+        elif not duration_ok:
             notes.append(f"{VERIFY_MIN_DURATION_SECONDS} 秒未満の段がある（最短 {min(durations)} 秒）")
         passed = sum(1 for j in jobs if j["pass"])
         all_pass = passed == len(jobs)
-        enough = len(jobs) >= VERIFY_JOBS_REQUIRED
-        if not enough:
-            notes.append(f"ジョブ数 {len(jobs)}（{VERIFY_JOBS_REQUIRED} 未満）。追加の dispatch で合算する")
+        jobs_by_version = {v: sum(1 for j in jobs if j["version"] == v) for v in REQUIRED_VERSIONS}
+        short_versions = [v for v, n in jobs_by_version.items() if n < VERIFY_JOBS_REQUIRED]
+        for version in short_versions:
+            notes.append(f"{version} のジョブ数 {jobs_by_version[version]}（版あたり {VERIFY_JOBS_REQUIRED} 未満）。追加の dispatch で合算する")
+        others = len(jobs) - sum(jobs_by_version.values())
+        if others:
+            notes.append(f"推奨区分以外の版のジョブが {others} 件ある（版あたりのジョブ数には数えない。不合格は判定に含める）")
         result[series] = {
             "label": SERIES[series]["label"],
             "rates": rates,
             "jobs": len(jobs),
+            "jobs_by_version": jobs_by_version,
             "passed": passed,
-            "long_runs": sum(1 for j in jobs if max(j["durations"]) >= LONG_RUN_DURATION_SECONDS),
+            "min_duration_seconds": min(durations) if durations else None,
+            "long_runs": sum(1 for j in jobs if j["durations"] and max(j["durations"]) >= LONG_RUN_DURATION_SECONDS),
             "all_pass": all_pass,
-            "verified": all_pass and enough and len(rates) == 1,
+            "verified": all_pass and not short_versions and len(rates) == 1 and duration_ok,
             "failed_jobs": [j for j in jobs if not j["pass"]],
             "notes": notes,
         }
@@ -674,6 +749,7 @@ def aggregate(root: Path, phase: str, nominal: dict[str, int] | None = None) -> 
     }
     if phase in ("explore", "sample"):
         output["ladders"] = aggregate_ladders(judged)
+        warnings.extend(output["ladders"]["warnings"])
         if nominal:
             output["margins"] = _margins(output["ladders"], nominal)
     elif phase == "verify":
@@ -721,7 +797,7 @@ def method_description() -> dict[str, Any]:
             "公称値の測定では流量制御を外している",
             "ホストをグレースフル停止できている（Kill の段はカウンタが欠け得るため合格にしない）",
         ],
-        "verify_jobs_required": VERIFY_JOBS_REQUIRED,
+        "verify_jobs_required_per_version": VERIFY_JOBS_REQUIRED,
         "verify_min_duration_seconds": VERIFY_MIN_DURATION_SECONDS,
         "margin_release_gate": MARGIN_RELEASE_GATE,
         "margin_breach": MARGIN_BREACH,
@@ -845,12 +921,21 @@ def _render_ladders(output: dict[str, Any]) -> list[str]:
 
 
 def _render_verify(verify: dict[str, Any]) -> list[str]:
-    lines = ["## 確定時の検証（全数合格）", "", "| 系列 | レート | ジョブ | 合格 | 長時間版 | 判定 |", "|---|---|---:|---:|---:|---|"]
+    lines = [
+        "## 確定時の検証（全数合格）",
+        "",
+        f"確定の条件: 全ジョブ合格、レートが 1 つ、1 段 {VERIFY_MIN_DURATION_SECONDS} 秒以上、"
+        f"{' / '.join(REQUIRED_VERSIONS)} の各版で {VERIFY_JOBS_REQUIRED} ジョブ以上。",
+        "",
+        "| 系列 | レート | ジョブ | 版別ジョブ | 合格 | 最短の秒数 | 長時間版 | 判定 |",
+        "|---|---|---:|---|---:|---:|---:|---|",
+    ]
     for series, entry in verify.items():
         verdict = "合格" if entry["verified"] else ("全数合格（条件未達）" if entry["all_pass"] else "不合格")
+        by_version = " / ".join(f"{v} {n}" for v, n in entry["jobs_by_version"].items())
         lines.append(
-            f"| {series} | {', '.join(_fmt(r) for r in entry['rates'])} | {entry['jobs']} | {entry['passed']} | "
-            f"{entry['long_runs']} | {verdict} |"
+            f"| {series} | {', '.join(_fmt(r) for r in entry['rates'])} | {entry['jobs']} | {by_version} | {entry['passed']} | "
+            f"{_fmt(entry['min_duration_seconds'])} | {entry['long_runs']} | {verdict} |"
         )
     lines.append("")
     for series, entry in verify.items():
@@ -926,11 +1011,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "judge":
+        # 出力は ASCII に限る（json.dumps の既定 ensure_ascii=True で日本語を \uXXXX にする）。
+        # workflow は PowerShell のパイプで受けるため、Windows の Python は標準出力を ANSI コード
+        # ページ（GitHub の Windows ランナーでは cp1252）で書き、日本語の reasons で
+        # UnicodeEncodeError になる。ConvertFrom-Json は \uXXXX を元の文字へ戻す。
         report = load_json(args.report)
         if not is_scenario_report(report):
-            print(json.dumps({"pass": False, "reasons": ["ScenarioReport 形式ではない"]}, ensure_ascii=False))
+            print(json.dumps({"pass": False, "reasons": ["ScenarioReport 形式ではない"]}))
             return 2
-        print(json.dumps(judge_step(report, args.flow_control), ensure_ascii=False))
+        print(json.dumps(judge_step(report, args.flow_control)))
         return 0
 
     output = aggregate(args.root, args.phase, args.nominal)

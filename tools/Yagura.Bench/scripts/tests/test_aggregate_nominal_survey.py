@@ -14,6 +14,9 @@ import copy
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -104,7 +107,8 @@ def make_report(
 
 
 def write_sample(root: Path, label: str, version: str, steps: list[dict], phase: str = "sample",
-                 cpu: str = "AMD EPYC 7763 64-Core Processor", ladder_log: list[dict] | None = None) -> Path:
+                 cpu: str = "AMD EPYC 7763 64-Core Processor", ladder_log: list[dict] | None = None,
+                 inputs: dict | None = None) -> Path:
     sample_dir = root / label
     sample_dir.mkdir(parents=True)
     identity = {
@@ -115,6 +119,8 @@ def write_sample(root: Path, label: str, version: str, steps: list[dict], phase:
         "CpuName": cpu,
         "LogicalProcessors": 4,
     }
+    if inputs is not None:
+        identity["Inputs"] = inputs
     (sample_dir / "runner-identity.json").write_text(json.dumps(identity), encoding="utf-8-sig")
     for i, report in enumerate(steps):
         series_dir = sample_dir / report["ScenarioName"]
@@ -143,6 +149,7 @@ class MethodConstantsTests(unittest.TestCase):
         self.assertEqual(survey.NOMINAL_STEP, 500)
         self.assertEqual(survey.REQUIRED_SEND_RATIO, 0.99)
         self.assertEqual(survey.VERIFY_JOBS_REQUIRED, 30)
+        self.assertEqual(survey.VERIFY_MIN_DURATION_SECONDS, 300)
         self.assertEqual(survey.REQUIRED_VERSIONS, ("windows-2022", "windows-2025"))
         self.assertEqual(survey.MARGIN_RELEASE_GATE, 0.10)
 
@@ -384,6 +391,92 @@ class AggregateSampleTests(unittest.TestCase):
         self.assertEqual(margin["lower_bound"], 4000)
         self.assertIn("割れ", margin["verdict"])
 
+    @staticmethod
+    def write_population(root: Path, w22: int = 29, w25: int = 29) -> None:
+        """両版の標本（windows-2025 の上限 8000、windows-2022 の上限 6000）。"""
+        for i in range(w25):
+            write_sample(root, f"w25-{i:02d}", "windows-2025", udp_ladder(8000, version="windows-2025"))
+        for i in range(w22):
+            write_sample(root, f"w22-{i:02d}", "windows-2022", udp_ladder(6000, version="windows-2022"))
+
+    @staticmethod
+    def n1_missing_log(rates=(2000, 4000)) -> list[dict]:
+        return [{"Series": "N1", "Value": r, "Json": None, "ExitCode": 1} for r in rates]
+
+    def test_series_with_only_missing_steps_stays_in_the_sample_condition(self):
+        # N1 の 2 段がどちらも結果 JSON なし（ホストの起動失敗など）で梯子が打ち切られた個体。
+        # 同じ標本の N2 には記録がある。この最悪の個体を「記録なし」の別表へ逃がさない。
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_population(root)
+            write_sample(root, "w22-broken", "windows-2022",
+                         [make_report(transport=1, rate=2000, os_build=BUILD["windows-2022"])],
+                         ladder_log=self.n1_missing_log())
+
+            output = survey.aggregate(root, "sample")
+
+        n1 = output["ladders"]["series"]["N1"]["by_condition"]
+        self.assertEqual(list(n1), ["rcvbuf=1048576（製品既定）"])
+        data = n1["rcvbuf=1048576（製品既定）"]
+        self.assertEqual(data["versions"]["windows-2022"]["n"], 30)
+        self.assertEqual(data["versions"]["windows-2022"]["min"], 0)
+        self.assertEqual(data["versions"]["windows-2022"]["below_ladder"], 1)
+        self.assertEqual(data["nominal"]["value"], 0)
+        self.assertFalse(data["nominal"]["final"])
+
+    def test_sample_without_any_result_json_uses_the_recorded_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_population(root, w22=1, w25=1)
+            # 入力が空欄（製品既定）→ ほかの標本が記録した製品既定の表へ。
+            write_sample(root, "w22-default", "windows-2022", [], ladder_log=self.n1_missing_log(),
+                         inputs={"Rcvbuf": ""})
+            # PowerShell は空の環境変数を null で書くことがある。
+            write_sample(root, "w22-null", "windows-2022", [], ladder_log=self.n1_missing_log(),
+                         inputs={"Rcvbuf": None})
+            # 入力で指定した受信バッファ → その値の表へ。
+            write_sample(root, "w22-4m", "windows-2022", [], ladder_log=self.n1_missing_log(),
+                         inputs={"Rcvbuf": "4194304"})
+
+            output = survey.aggregate(root, "sample")
+
+        samples = {s["label"]: s for s in output["ladders"]["samples"]}
+        self.assertEqual(samples["w22-default"]["values"]["N1"]["condition"], "rcvbuf=1048576（製品既定）")
+        self.assertEqual(samples["w22-null"]["values"]["N1"]["condition"], "rcvbuf=1048576（製品既定）")
+        self.assertEqual(samples["w22-4m"]["values"]["N1"]["condition"], "rcvbuf=4194304")
+        self.assertNotIn(survey.UNRECORDED_CONDITION, output["ladders"]["series"]["N1"]["by_condition"])
+
+    def test_undeterminable_condition_blocks_final_for_every_table_of_the_series(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_population(root)
+            # 結果 JSON も測定入力の記録も無い個体は、条件を決められない。
+            write_sample(root, "w22-unknown", "windows-2022", [], ladder_log=self.n1_missing_log())
+
+            output = survey.aggregate(root, "sample")
+
+        n1 = output["ladders"]["series"]["N1"]["by_condition"]
+        self.assertIn(survey.UNRECORDED_CONDITION, n1)
+        main = n1["rcvbuf=1048576（製品既定）"]
+        self.assertEqual(main["versions"]["windows-2022"]["n"], 29)
+        self.assertFalse(main["nominal"]["final"])
+        self.assertTrue(any("条件を決められない" in note for note in main["nominal"]["notes"]))
+        self.assertTrue(any(w.startswith("N1:") and "条件を決められない" in w for w in output["warnings"]))
+
+    def test_below_ladder_individual_makes_the_nominal_provisional(self):
+        # 最下段 2000 を 1 台が落とすと L = 0。0 は実測値ではないので確定扱いにしない。
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_population(root, w22=28)
+            write_sample(root, "w22-slow", "windows-2022", udp_ladder(1000, version="windows-2022"))
+
+            output = survey.aggregate(root, "sample")
+
+        data = next(iter(output["ladders"]["series"]["N1"]["by_condition"].values()))
+        self.assertEqual(data["nominal"]["lower_bound"], 0)
+        self.assertFalse(data["nominal"]["final"])
+        self.assertIn("暫定", survey.render_markdown(output))
+
     def test_recorded_m5_results_aggregate_as_six_samples(self):
         output = survey.aggregate(M5_RESULTS, "explore")
 
@@ -395,22 +488,28 @@ class AggregateSampleTests(unittest.TestCase):
 
 
 class AggregateVerifyTests(unittest.TestCase):
-    def build(self, root: Path, jobs: int, failing: int = 0, rate: int = 4500, duration: int = 300):
-        for i in range(jobs):
-            version = "windows-2025" if i % 2 else "windows-2022"
-            loss = 5 if i < failing else 0
-            write_sample(root, f"v-{i:02d}", version,
-                         [make_report(rate=rate, duration=duration, accounted_loss=loss, os_build=BUILD[version])],
-                         phase="verify")
+    @staticmethod
+    def build(root: Path, jobs_per_version: int, failing: int = 0, rate: int = 4500, duration: int = 300,
+              versions: tuple[str, ...] = ("windows-2022", "windows-2025")):
+        """各版に jobs_per_version ジョブ。先頭の版の先頭 failing ジョブは Q1 破棄で不合格。"""
+        for version in versions:
+            for i in range(jobs_per_version):
+                loss = 5 if version == versions[0] and i < failing else 0
+                write_sample(root, f"{version}-{i:02d}", version,
+                             [make_report(rate=rate, duration=duration, accounted_loss=loss, os_build=BUILD[version])],
+                             phase="verify")
 
-    def test_thirty_jobs_all_passing_verifies(self):
+    def test_thirty_jobs_per_version_all_passing_verifies(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.build(Path(tmp), 30)
             output = survey.aggregate(Path(tmp), "verify", nominal={"N1": 4500})
 
         entry = output["verify"]["N1"]
-        self.assertEqual((entry["jobs"], entry["passed"]), (30, 30))
+        self.assertEqual((entry["jobs"], entry["passed"]), (60, 60))
+        self.assertEqual(entry["jobs_by_version"], {"windows-2022": 30, "windows-2025": 30})
+        self.assertEqual(entry["min_duration_seconds"], 300)
         self.assertTrue(entry["verified"])
+        self.assertFalse(survey.verdict_is_negative(output))
 
     def test_one_failure_rejects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -431,6 +530,50 @@ class AggregateVerifyTests(unittest.TestCase):
             self.build(Path(tmp), 30, rate=5000)
             output = survey.aggregate(Path(tmp), "verify", nominal={"N1": 4500})
         self.assertFalse(output["verify"]["N1"]["verified"])
+
+    def test_thirty_jobs_on_one_version_only_is_not_verified(self):
+        # 律速の版（windows-2022）を一度も検証していない。
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build(Path(tmp), 30, versions=("windows-2025",))
+            output = survey.aggregate(Path(tmp), "verify", nominal={"N1": 4500})
+
+        entry = output["verify"]["N1"]
+        self.assertTrue(entry["all_pass"])
+        self.assertFalse(entry["verified"])
+        self.assertTrue(any("windows-2022 のジョブ数 0" in note for note in entry["notes"]))
+        self.assertTrue(survey.verdict_is_negative(output))
+
+    def test_thirty_jobs_split_across_versions_is_not_verified(self):
+        # K = 30 は版あたり。両版合計で 30（15 + 15）では足りない。
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build(Path(tmp), 15)
+            output = survey.aggregate(Path(tmp), "verify")
+
+        self.assertEqual(output["verify"]["N1"]["jobs"], 30)
+        self.assertFalse(output["verify"]["N1"]["verified"])
+
+    def test_steps_shorter_than_the_minimum_duration_are_not_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build(Path(tmp), 30, duration=60)
+            output = survey.aggregate(Path(tmp), "verify", nominal={"N1": 4500})
+
+        entry = output["verify"]["N1"]
+        self.assertTrue(entry["all_pass"])
+        self.assertFalse(entry["verified"])
+        self.assertTrue(any("300 秒未満" in note for note in entry["notes"]))
+
+    def test_job_with_missing_json_fails_without_a_bogus_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build(root, 30)
+            write_sample(root, "w22-broken", "windows-2022", [], phase="verify",
+                         ladder_log=[{"Series": "N1", "Value": 4500, "Json": None, "ExitCode": 1}])
+            output = survey.aggregate(root, "verify")
+
+        entry = output["verify"]["N1"]
+        self.assertFalse(entry["verified"])
+        self.assertEqual(entry["min_duration_seconds"], 300)
+        self.assertFalse(any("秒未満" in note for note in entry["notes"]))
 
 
 class AggregateFlowControlTests(unittest.TestCase):
@@ -483,7 +626,7 @@ class CliTests(unittest.TestCase):
     def test_aggregate_writes_markdown_and_json_and_strict_exit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "artifacts"
-            AggregateVerifyTests().build(root, 3, failing=1)
+            AggregateVerifyTests.build(root, 3, failing=1)
             md = Path(tmp) / "summary.md"
             js = Path(tmp) / "summary.json"
 
@@ -491,7 +634,37 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertIn("確定時の検証", md.read_text(encoding="utf-8"))
-            self.assertEqual(json.loads(js.read_text(encoding="utf-8"))["verify"]["N1"]["jobs"], 3)
+            self.assertEqual(json.loads(js.read_text(encoding="utf-8"))["verify"]["N1"]["jobs"], 6)
+
+    def run_judge_with_ansi_code_page(self, report: dict) -> subprocess.CompletedProcess:
+        """Windows ランナーの Python がパイプへ書くときと同じく、標準出力を cp1252 にして judge を実行する。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+            env["PYTHONIOENCODING"] = "cp1252"
+            return subprocess.run([sys.executable, str(SCRIPT), "judge", str(path)],
+                                  capture_output=True, env=env, timeout=60)
+
+    def test_judge_output_survives_a_cp1252_stdout(self):
+        # 不合格の段は日本語の reasons を持つ。ASCII で出さないと UnicodeEncodeError で exit 1 になり、
+        # workflow の Measure ステップが最初の不合格段で打ち切られる。
+        completed = self.run_judge_with_ansi_code_page(make_report(accounted_loss=100, spool_evacuated=3))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8", "replace"))
+        lines = completed.stdout.decode("ascii").splitlines()
+        self.assertEqual(len(lines), 1)
+        verdict = json.loads(lines[0])
+        self.assertFalse(verdict["pass"])
+        self.assertIn("計上済みの破棄 100 件", verdict["reasons"])
+        self.assertIn("スプール退避 3 件", verdict["reasons"])
+
+    def test_judge_rejection_of_a_non_report_is_ascii_too(self):
+        completed = self.run_judge_with_ansi_code_page({"not": "a report"})
+
+        self.assertEqual(completed.returncode, 2, completed.stderr.decode("utf-8", "replace"))
+        verdict = json.loads(completed.stdout.decode("ascii"))
+        self.assertEqual(verdict["reasons"], ["ScenarioReport 形式ではない"])
 
 
 if __name__ == "__main__":

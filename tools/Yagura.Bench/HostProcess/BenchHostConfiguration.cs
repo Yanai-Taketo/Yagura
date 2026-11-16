@@ -2,12 +2,15 @@ namespace Yagura.Bench.HostProcess;
 
 /// <summary>
 /// ベンチがホスト起動前に <c>yagura.json</c> へ書く設定の集合。<c>null</c> の項目は書かず、
-/// ホストの既定値（または既存の設定ファイルの値）に委ねる。
+/// ホストの既定値に委ねる。
 /// </summary>
 /// <remarks>
 /// 設定ファイルは 1 つしかないため、項目ごとにファイルを書くと後の書き込みが前の書き込みを消す。
 /// 組み合わせ（SQL Server + 流量制御無効 + 受信バッファ指定など）はこの型にまとめてから
 /// <see cref="BenchConfigurationFile.Write(string, BenchHostConfiguration)"/> で 1 回だけ書く。
+/// 書き込みは既存ファイルとのマージではなく、ファイル全体の置き換えである: 1 項目でも指定すると
+/// データルートの既存 <c>yagura.json</c> は消え、指定しなかった項目は製品既定になる。既存ファイルの
+/// 値が効くのは、全項目が <c>null</c>（<see cref="IsEmpty"/>）で何も書かない場合だけである。
 /// </remarks>
 /// <param name="SqlServerConnectionString">指定時は SQL Server provider を使う（<c>Storage:Provider</c> = sqlserver）。</param>
 /// <param name="SpoolQuotaBytes">スプールのディスク使用量上限（<c>Spool:QuotaBytes</c>）。</param>

@@ -87,9 +87,13 @@ permissions:
 
 # 調査どうしを並走させない（同時実行枠の奪い合いで互いの標本の条件が変わるため）。
 # 走行中の調査は止めない——途中で止めると標本が版ごとに偏る。
+# queue: max で後続の dispatch を待たせる。既定（queue: single）では待機できる run は 1 本だけで、
+# 次の run が来ると待機中の run が取り消される（検証の通常版・長時間版・M-4 を続けて投げると
+# 2 本目が消える）。max は最大 100 本まで待機でき、cancel-in-progress: true とは併用できない。
 concurrency:
   group: perf-nominal-survey
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # 入力を検証して matrix と各ジョブの設定に展開する。matrix は範囲を直接書けないため、
@@ -286,6 +290,9 @@ jobs:
       DRAIN_TIMEOUT: ${{ needs.plan.outputs.drain_timeout }}
       SURVEY_OS: ${{ matrix.os }}
       SURVEY_INDEX: ${{ matrix.idx }}
+      # judge の出力は ASCII に限っているが、Python の標準入出力を UTF-8 に固定して、ANSI コード
+      # ページ（cp1252）で日本語を書こうとして落ちる経路を二重に塞ぐ。
+      PYTHONUTF8: '1'
 
     steps:
       # 集計スクリプト（梯子の合否判定）のために取得する。ビルドはしない。

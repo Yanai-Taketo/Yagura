@@ -10,8 +10,10 @@ namespace Yagura.Bench.Reporting;
 /// <remarks>
 /// 同じシナリオ・同じレートでも、流量制御の有無や受信バッファで結果の意味が変わる。集計
 /// （tools/Yagura.Bench/scripts/aggregate-nominal-survey.py）はこの記録で、条件を外れた標本を
-/// 見分ける。値はベンチが渡した設定から導く期待値であり、ホスト内部の実値を読み戻したものではない
-/// （<c>--data-root</c> に既存の設定ファイルがある場合、ベンチが上書きしない項目はそちらが効く）。
+/// 見分ける。値はベンチが渡した設定から導く期待値であり、ホスト内部の実値を読み戻したものではない。
+/// ベンチが設定を 1 項目でも書くときは <c>--data-root</c> の既存 <c>yagura.json</c> をファイルごと
+/// 置き換えるため、書かなかった項目は製品既定になり、この記録と一致する。ベンチが何も書かない場合
+/// だけは既存の設定ファイルの値が効き、この記録（製品既定）と食い違い得る。
 /// </remarks>
 /// <param name="Provider">保存先（<c>Sqlite</c> / <c>SqlServer</c>）。</param>
 /// <param name="FlowControlEnabled">流量制御が有効な構成か。</param>

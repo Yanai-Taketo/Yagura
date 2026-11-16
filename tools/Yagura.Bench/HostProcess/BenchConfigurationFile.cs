@@ -23,6 +23,7 @@ public static class BenchConfigurationFile
 
     /// <summary>
     /// <paramref name="configuration"/> のうち指定された項目だけを 1 つの設定ファイルへまとめて書く。
+    /// 既存の設定ファイルとはマージせず、ファイル全体を置き換える（既存ファイルの他の項目は残らない）。
     /// 指定項目が 1 つもなければ何も書かない（既存の設定ファイルを上書きせず、ゼロ設定で起動させる）。
     /// </summary>
     /// <returns>設定ファイルを書いた場合 <c>true</c>。</returns>
