@@ -21,6 +21,8 @@ namespace Yagura.Bench.Reporting;
 /// <param name="HostStdout">本体（Yagura.Host 子プロセス）の全出力（stderr は接頭辞 [stderr] 付き）。
 /// 飽和の形態分析（M-7/M-13: スプール退避が Q2 溢れ由来かタイムアウト由来か——本体の警告ログに
 /// 現れる）と障害調査のための一次情報。Program.cs が .hostlog.txt へも書き出す。</param>
+/// <param name="Conditions">ホストの構成（流量制御・受信バッファ・保存先）と drain 待ちの記録。
+/// この欄を持たない旧形式の JSON もあるため、読む側は欠落を許容すること。</param>
 public sealed record ScenarioReport(
     string ScenarioName,
     string RunId,
@@ -32,4 +34,5 @@ public sealed record ScenarioReport(
     TimeSpan ElapsedWallClock,
     IReadOnlyDictionary<string, string> AdditionalMetrics,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<string> HostStdout);
+    IReadOnlyList<string> HostStdout,
+    BenchConditions? Conditions = null);

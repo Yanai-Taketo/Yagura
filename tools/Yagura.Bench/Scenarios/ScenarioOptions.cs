@@ -31,13 +31,24 @@ namespace Yagura.Bench.Scenarios;
 /// <param name="UdpReceiveBufferBytes">
 /// UDP 受信ソケットの受信バッファサイズ（バイト。M-2）。<c>null</c> は「製品既定のまま」
 /// （<see cref="Yagura.Ingestion.Udp.UdpSyslogListenerOptions.DefaultReceiveBufferBytes"/>
-/// を明示的に上書きしない——bench 側で yagura.json を書かない）を意味する。
-/// <see cref="BenchScenario.SustainedZeroDrop"/>・<see cref="BenchScenario.BurstQ1Drop"/> で
+/// を明示的に上書きしない）を意味する。受信パイプラインを測る 5 シナリオすべてに効き、
+/// 主に <see cref="BenchScenario.SustainedZeroDrop"/>・<see cref="BenchScenario.BurstQ1Drop"/> で
 /// バッファ値別の破棄ゼロ上限・OS バッファ破棄（導出値）を比較測定するために使う。
 /// </param>
 /// <param name="RowCounts">
 /// <see cref="BenchScenario.QueryLatency"/>・<see cref="BenchScenario.SchemaMigrationDdl"/> が
 /// 行数規模別に計測する際の対象行数の一覧（<c>--rows</c>。既定はシナリオ側が持つ既定値を使う）。
+/// </param>
+/// <param name="FlowControlEnabled">
+/// 送信元単位の流量制御（<c>Ingestion:FlowControl:Enabled</c>）の明示指定。<c>null</c> は製品既定
+/// （有効）のまま上書きしない。ベンチの送信元は 127.0.0.1 の 1 つだけなので、製品既定の閾値を
+/// 超えるレートは流量制御に削られる——受信能力そのものを測るときは <c>false</c> にする。
+/// </param>
+/// <param name="FlowControlMessagesPerSecond">流量制御の持続速度（件/秒）の明示指定。<c>null</c> は製品既定。</param>
+/// <param name="FlowControlBurstSize">流量制御のバーストサイズ（件）の明示指定。<c>null</c> は製品既定。</param>
+/// <param name="DrainTimeoutSeconds">
+/// 送出後、スプールの drain 完了を待つ上限（秒）。上限を過ぎても停止・突合へ進むため、退避が
+/// 長く続く高レートの段では上限を延ばさないと、drain 途中の件数で突合することになる。
 /// </param>
 public sealed record ScenarioOptions(
     BenchScenario Scenario,
@@ -54,4 +65,12 @@ public sealed record ScenarioOptions(
     bool KeepDataRoot,
     string? CompareBaselinePath = null,
     int? UdpReceiveBufferBytes = null,
-    IReadOnlyList<long>? RowCounts = null);
+    IReadOnlyList<long>? RowCounts = null,
+    bool? FlowControlEnabled = null,
+    int? FlowControlMessagesPerSecond = null,
+    int? FlowControlBurstSize = null,
+    int DrainTimeoutSeconds = ScenarioOptions.DefaultDrainTimeoutSeconds)
+{
+    /// <summary>drain 待ちの上限の既定値（秒）。CI 回帰ベンチはこの値を前提に所要時間を見積もっている。</summary>
+    public const int DefaultDrainTimeoutSeconds = 120;
+}
