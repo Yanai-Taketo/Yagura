@@ -105,6 +105,16 @@ else
 
     @* SAN ホスト名検査（決定 4）。選択中の拇印（初期表示では永続値）の結果を出す。選択・転写・一覧の
        更新のたびに再検査するため、保存前に確認でき、保存後も同じ面で読み出せる *@
+    @if (_sanInspectionError is not null)
+    {
+        <MudPaper Elevation="1" Class="pa-4 mt-4">
+            <MudText Typo="Typo.h6">@UiText.ViewerHttpsSanTitle</MudText>
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @string.Format(UiText.ViewerHttpsSanInspectionFailedFormat, _sanInspectionError)
+            </MudAlert>
+        </MudPaper>
+    }
+
     @if (_sanInspection is not null)
     {
         <MudPaper Elevation="1" Class="pa-4 mt-4">
@@ -190,6 +200,7 @@ else
     private string _selectedThumbprint = string.Empty;
     private IReadOnlyList<CertificateCandidate> _candidates = [];
     private ViewerHttpsSanInspection? _sanInspection;
+    private string? _sanInspectionError;
     private string? _certificateListError;
     private string? _errorMessage;
     private string? _savedSummary;
@@ -198,6 +209,9 @@ else
     // 検査の世代。InspectCertificateAsync の契約は非同期で応答順を保証しないため、選択を素早く
     // 切り替えたときに古い選択の結果が後から届いて表示を上書きしないよう、最後の検査以外の結果は捨てる。
     private int _inspectionVersion;
+
+    // 選択の世代。保存の待ち合わせ中に選択が変わったかを判定し、変わっていれば保存結果を表示しない。
+    private int _selectionVersion;
 
     /// <summary>閲覧 HTTPS のバッジ・注記ポリシー: 期限切れ・秘密鍵読取不可とも保存拒否 = Error。</summary>
     private static readonly YaguraCertificateSeverityPolicy CertificateSeverityPolicy = new()
@@ -279,6 +293,7 @@ else
         }
 
         _selectedThumbprint = thumbprint;
+        _selectionVersion++;
 
         // 保存結果の表示（特に保存後案内の新 URL）は現在の検査結果から組み立てるため、選択を変えると
         // 未保存の証明書の内容に入れ替わってしまう。保存済みの内容と取り違えないよう消す。
@@ -292,16 +307,30 @@ else
     {
         var version = ++_inspectionVersion;
         _sanInspection = null;
+        _sanInspectionError = null;
 
         if (string.IsNullOrWhiteSpace(_selectedThumbprint))
         {
             return;
         }
 
-        var inspection = await ViewerHttpsAdminService.InspectCertificateAsync(_selectedThumbprint);
-        if (version == _inspectionVersion)
+        // 検査は選択・一覧の更新のイベントハンドラで走るため、YaguraButton の受け皿を通らない。
+        // 漏れた例外は circuit ごと画面を落とすので、SAN 拡張の破損などで検査できない証明書を
+        // 選んでも画面を使い続けられるよう、理由を表示して受け止める（検査は助言であり選択を妨げない）。
+        try
         {
-            _sanInspection = inspection;
+            var inspection = await ViewerHttpsAdminService.InspectCertificateAsync(_selectedThumbprint);
+            if (version == _inspectionVersion)
+            {
+                _sanInspection = inspection;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (version == _inspectionVersion)
+            {
+                _sanInspectionError = ex.Message;
+            }
         }
     }
 
@@ -331,11 +360,18 @@ else
             // 後から届いても、選択欄（保存値へ戻した）と食い違わないよう世代を進めて捨てる。
             _inspectionVersion++;
             _sanInspection = result.SanInspection;
+            _sanInspectionError = null;
+
+            // 再読み込みの待ち合わせ中も選択は変えられる。その間に選択が変わっていれば、選択変更で
+            // 消した保存結果を待ち合わせ明けに表示し直さない（保存した証明書と選択中の証明書を
+            // 取り違えて見せないため）。保存後案内は待ち合わせの前に表示され、その後の選択変更が
+            // 消すので、ここで判定するのは保存要約だけでよい。
+            var selectionVersion = _selectionVersion;
 
             // 決定 6 の保存時案内は「有効な状態を保存した」ときに表示する（無効化の保存では
             // 旧 URL 断絶が起きないため出さない）。保存を再起動待ちカードへ計上する経路
             // （決定 1 の受信断レール。TLS 受信画面と同じ経路）は共有ヘルパへ委譲する。
-            _savedSummary = await CertificateAdminScreenSupport.ApplyChangeSummaryAsync(
+            var savedSummary = await CertificateAdminScreenSupport.ApplyChangeSummaryAsync(
                 result.ChangedKeys,
                 UiText.ViewerHttpsSavedFormat,
                 UiText.ViewerHttpsSavedNoChanges,
@@ -346,6 +382,11 @@ else
                 operatorScheme,
                 operatorPrincipal,
                 onSaved: () => _showAfterEnableGuidance = _enabled);
+
+            if (selectionVersion == _selectionVersion)
+            {
+                _savedSummary = savedSummary;
+            }
         }
         catch (WizardValidationException ex)
         {

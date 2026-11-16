@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using Bunit;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 using Yagura.Abstractions.Administration;
@@ -15,7 +17,9 @@ namespace Yagura.Web.Tests.Components;
 /// SAN 検査は「警告が出続ける証明書」を保存前に見分けるための面である（ADR-0022 決定 4）。
 /// 選択を変えても表示が追随しなければ、利用者は前に選んだ証明書の結果を見て判断してしまう。
 /// 選択変更は共通パネルの <c>SelectedThumbprintChanged</c> を直接呼んで起こし、MudRadio の
-/// DOM 構造には依存しない。
+/// DOM 構造には依存しない。この操作は画面からパネルへの <c>SelectedThumbprint</c> の束縛を通らない
+/// ため、パネルが受け取った値も併せて確かめる（string 型パラメータの <c>@</c> を落とすとフィールド名が
+/// リテラルとして渡り、選択が一切表示されなくなるが、SAN の表示はフィールドから組み立てるので気づけない）。
 /// </remarks>
 public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
 {
@@ -46,6 +50,7 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
     private readonly BunitContext _ctx = new();
     private readonly SwitchableStoreReader _store = new();
     private readonly ScriptedViewerHttpsAdminService _service = new();
+    private readonly DeferrableReloadService _reload = new();
 
     public ViewerHttpsScreenSanInspectionTests()
     {
@@ -60,7 +65,7 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         _ctx.Services.AddSingleton(new YaguraCircuitContext());
         _ctx.Services.AddSingleton(new YaguraCircuitAuthenticationStateProvider());
         _ctx.Services.AddScoped<IYaguraNotifier, YaguraSnackbarNotifier>();
-        _ctx.Services.AddSingleton<IConfigurationReloadService>(new NoopReloadService());
+        _ctx.Services.AddSingleton<IConfigurationReloadService>(_reload);
     }
 
     public Task InitializeAsync() => Task.CompletedTask;
@@ -76,14 +81,17 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         Assert.DoesNotContain(UiText.ViewerHttpsSanTitle, cut.Markup, StringComparison.Ordinal);
 
         await SelectAsync(cut, ThumbprintA);
+        Assert.Equal(ThumbprintA, PanelSelection(cut));
         Assert.Contains(MissingTextA, cut.Markup, StringComparison.Ordinal);
         Assert.DoesNotContain(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
 
         await SelectAsync(cut, ThumbprintB);
+        Assert.Equal(ThumbprintB, PanelSelection(cut));
         Assert.Contains(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
         Assert.DoesNotContain(MissingTextA, cut.Markup, StringComparison.Ordinal);
 
         await SelectAsync(cut, ThumbprintA);
+        Assert.Equal(ThumbprintA, PanelSelection(cut));
         Assert.Contains(MissingTextA, cut.Markup, StringComparison.Ordinal);
         Assert.DoesNotContain(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
 
@@ -99,6 +107,7 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
 
         await SelectAsync(cut, string.Empty);
 
+        Assert.Equal(string.Empty, PanelSelection(cut));
         Assert.DoesNotContain(UiText.ViewerHttpsSanTitle, cut.Markup, StringComparison.Ordinal);
         Assert.Equal([ThumbprintA], _service.InspectedThumbprints);
     }
@@ -131,6 +140,7 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
 
         await ClickButtonAsync(cut, UiText.ViewerHttpsCopyFromAdminButton);
 
+        Assert.Equal(ThumbprintB, PanelSelection(cut));
         Assert.Contains(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
         Assert.Equal([ThumbprintB], _service.InspectedThumbprints);
     }
@@ -144,6 +154,9 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         _store.Candidates = [Candidate(ThumbprintB, "viewer-b")];
         var cut = _ctx.Render<ViewerHttpsScreen>();
         Assert.DoesNotContain(UiText.ViewerHttpsSanTitle, cut.Markup, StringComparison.Ordinal);
+        Assert.Contains(
+            string.Format(UiText.ViewerHttpsThumbprintNotInListFormat, ThumbprintA), cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("_selectedThumbprint", cut.Markup, StringComparison.Ordinal);
 
         _service.Inspections[ThumbprintA] = InspectionA;
         _store.Candidates = [Candidate(ThumbprintA, "viewer-a"), Candidate(ThumbprintB, "viewer-b")];
@@ -173,8 +186,53 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
 
         await SelectAsync(cut, ThumbprintB);
 
+        Assert.Equal(ThumbprintB, PanelSelection(cut));
         Assert.DoesNotContain(savedPrefix, cut.Markup, StringComparison.Ordinal);
         Assert.DoesNotContain(UiText.ViewerHttpsAfterEnableTitle, cut.Markup, StringComparison.Ordinal);
+        Assert.Contains(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChangingSelectionWhileTheSaveIsReloading_DoesNotBringBackTheSavedSummary()
+    {
+        // 保存要約は再読み込みの待ち合わせ明けに表示される。その間に選んだ証明書の検査結果の横へ、
+        // 前の証明書を保存した旨を出してはならない。
+        _service.Status = StatusWith(enabled: true, certificateThumbprint: ThumbprintA);
+        _service.NextChangedKeys = ["Viewer:Https:Enabled"];
+        var cut = _ctx.Render<ViewerHttpsScreen>();
+        var pendingReload = _reload.DeferNext();
+
+        var apply = ClickButtonAndWaitAsync(cut, "適用する");
+        Assert.False(apply.IsCompleted);
+
+        await SelectAsync(cut, ThumbprintB);
+        pendingReload.SetResult();
+        await apply;
+
+        var savedPrefix = UiText.ViewerHttpsSavedFormat[..UiText.ViewerHttpsSavedFormat.IndexOf("{0}", StringComparison.Ordinal)];
+        Assert.Equal(ThumbprintB, PanelSelection(cut));
+        Assert.Contains(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain(savedPrefix, cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain(UiText.ViewerHttpsAfterEnableTitle, cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InspectionFailure_IsShownAndTheScreenKeepsWorking()
+    {
+        // 選択のイベントハンドラから例外が漏れると、実機では circuit ごと画面が落ちる。
+        _service.Failures[ThumbprintA] = new CryptographicException("ASN1 corrupted data.");
+        var cut = _ctx.Render<ViewerHttpsScreen>();
+
+        await SelectAsync(cut, ThumbprintA);
+
+        Assert.Contains(
+            string.Format(UiText.ViewerHttpsSanInspectionFailedFormat, "ASN1 corrupted data."),
+            cut.Markup,
+            StringComparison.Ordinal);
+
+        await SelectAsync(cut, ThumbprintB);
+
+        Assert.DoesNotContain("ASN1 corrupted data.", cut.Markup, StringComparison.Ordinal);
         Assert.Contains(SatisfiedTextB, cut.Markup, StringComparison.Ordinal);
     }
 
@@ -186,6 +244,10 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         cut.InvokeAsync(() =>
             cut.FindComponent<YaguraCertificateSelectionPanel>().Instance.SelectedThumbprintChanged.InvokeAsync(thumbprint));
 
+    /// <summary>画面からパネルへ束縛された選択中の拇印（ラジオ群の Value になる値）。</summary>
+    private static string PanelSelection(IRenderedComponent<ViewerHttpsScreen> cut) =>
+        cut.FindComponent<YaguraCertificateSelectionPanel>().Instance.SelectedThumbprint;
+
     /// <summary>
     /// 探索とクリックを 1 つの <c>InvokeAsync</c> に収め、その間の再描画でイベントハンドラ ID が
     /// 失効する競合を閉じる（SourceSilenceScreenEditTests と同じ理由）。
@@ -194,6 +256,12 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         cut.InvokeAsync(() =>
             cut.FindAll("button").Single(b => b.TextContent.Contains(buttonText, StringComparison.Ordinal))
                 .Click());
+
+    /// <summary>クリックし、ハンドラの完了（途中の await を含む）まで待つタスクを返す。</summary>
+    private static Task ClickButtonAndWaitAsync(IRenderedComponent<ViewerHttpsScreen> cut, string buttonText) =>
+        cut.InvokeAsync(() =>
+            cut.FindAll("button").Single(b => b.TextContent.Contains(buttonText, StringComparison.Ordinal))
+                .ClickAsync(new MouseEventArgs()));
 
     // ------------------------------------------------------------------
     // フェイク
@@ -239,6 +307,9 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
 
         internal List<string> InspectedThumbprints { get; } = [];
 
+        /// <summary>検査が例外で失敗する拇印（SAN 拡張の破損などを模す）。</summary>
+        internal Dictionary<string, Exception> Failures { get; } = [];
+
         /// <summary>指定拇印の次の検査応答を、返り値の完了まで保留する。</summary>
         internal TaskCompletionSource<ViewerHttpsSanInspection?> DeferNext(string thumbprint)
         {
@@ -273,6 +344,11 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         {
             InspectedThumbprints.Add(certificateThumbprint);
 
+            if (Failures.TryGetValue(certificateThumbprint, out var failure))
+            {
+                throw failure;
+            }
+
             if (_deferred.Remove(certificateThumbprint, out var pending))
             {
                 return pending.Task;
@@ -282,16 +358,32 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
         }
     }
 
-    private sealed class NoopReloadService : IConfigurationReloadService
+    private sealed class DeferrableReloadService : IConfigurationReloadService
     {
+        private TaskCompletionSource? _deferred;
+
+        /// <summary>次の再読み込みの完了を、返り値の完了まで保留する。</summary>
+        internal TaskCompletionSource DeferNext()
+        {
+            _deferred = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _deferred;
+        }
+
         public IReadOnlyList<PendingRestartKey> GetPendingRestartKeys() => [];
 
-        public Task<ConfigurationReloadResult> ReloadAsync(
+        public async Task<ConfigurationReloadResult> ReloadAsync(
             string? operatorAddress,
             string? authenticationScheme,
             string? authenticatedPrincipal,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ConfigurationReloadResult(
+            CancellationToken cancellationToken = default)
+        {
+            if (_deferred is { } deferred)
+            {
+                _deferred = null;
+                await deferred.Task;
+            }
+
+            return new ConfigurationReloadResult(
                 Rejected: false,
                 RejectionReason: null,
                 ChangedKeys: [],
@@ -299,6 +391,7 @@ public sealed class ViewerHttpsScreenSanInspectionTests : IAsyncLifetime
                 PendingRestartKeys: [],
                 WarningMessages: [],
                 UnknownKeys: [],
-                TypeCoercionNotes: []));
+                TypeCoercionNotes: []);
+        }
     }
 }
