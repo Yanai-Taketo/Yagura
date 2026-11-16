@@ -60,7 +60,7 @@
   - **手編集の平文は受理し、自動書き換え（平文 → 暗号化への書き戻し）はしない**（2026-07-06 オーナー決定。本節の旧設計「起動時・再読み込み時に検出して暗号化表現へ書き換える」をこの決定で置き換えた——利用者のファイルを勝手に変更しない）: 手編集で平文パスワードが書かれた場合、起動時および設定の再読み込み時（§3）に検出して強い警告を出し続けるが、値はそのまま使用する（手編集ユーザーを壊さない）。警告は対象キー名のみを含み、**パスワード値そのものは記録しない**。暗号化表現への移行は昇格ウィザードでの再入力による
   - **限界の明示**: 平文のまま運用される手編集環境では、**平文が存在する期間に取得された構成バックアップには平文が残る**。ストレージ上の残留への対抗（上書き消去）も行わない（architecture.md §3.2.4 と同じ扱い）。利用者向けドキュメントに明記する（[§10](#10-利用者向けドキュメントへの申し送り) CF-D3）
   - **構成管理でファイルを配布する環境への注意**: DPAPI 暗号文はサーバに束縛されるため配布できない。資格情報キーを配布対象から外し、各マシンでウィザードにより投入する運用が必要である（CF-D3）。なお自動書き換えをしない決定により、旧設計で懸念した「配布 → 書き換え → 差分検知 → 平文再配布」のループは発生しなくなった
-  - **実装参照**: 暗号化・復号は `DpapiConnectionStringProtector`、平文検出は `SqlServerConnectionStringCredentialGuard`（M5-3 / Issue #47 の枠組みを本実装で読み込み経路へ配線）、復号と警告は `YaguraConfigurationLoader`、暗号化保存は `PromotionWizardService`（いずれも `Yagura.Host`）。依存パッケージは `System.Security.Cryptography.ProtectedData` 10.0.9（当日ライブ検証の記録は `Directory.Packages.props`）
+  - **実装参照**: 暗号化・復号は `DpapiConnectionStringProtector`、平文検出は `SqlServerConnectionStringCredentialGuard`（M5-3 / Issue #47 の枠組みを本実装で読み込み経路へ配線）、復号と警告は `YaguraConfigurationLoader`、暗号化保存は `PromotionWizardService`（いずれも `Yagura.Host`）。依存パッケージは `System.Security.Cryptography.ProtectedData`（版と当日ライブ検証の記録は `Directory.Packages.props`）
 
 ## 3. ウィザードと手編集の関係
 
