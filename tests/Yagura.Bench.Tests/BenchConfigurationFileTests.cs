@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Yagura.Bench.HostProcess;
 using Yagura.Host.Configuration;
 using Yagura.TestSupport;
@@ -99,5 +100,76 @@ public sealed class BenchConfigurationFileTests : IDisposable
 
         Assert.Equal("sqlserver", snapshot.Options.Storage?.Provider);
         Assert.Equal(ConnectionString, snapshot.Options.Storage?.SqlServer?.ConnectionString);
+    }
+
+    /// <summary>
+    /// 個別の writer はファイルをまるごと上書きするため、組み合わせを 1 回の書き出しで表せる
+    /// ことが要る（例: SQL Server + 流量制御無効 + 受信バッファ指定）。
+    /// </summary>
+    [Fact]
+    public void Write_CompositeConfiguration_HostReadsBackEverySection()
+    {
+        const string ConnectionString = "Server=(localdb)\\MSSQLLocalDB;Database=YaguraBench;Integrated Security=true";
+
+        var written = BenchConfigurationFile.Write(_dataRoot, new BenchHostConfiguration(
+            SqlServerConnectionString: ConnectionString,
+            SpoolQuotaBytes: 2L * 1024 * 1024,
+            UdpReceiveBufferBytes: 4 * 1024 * 1024,
+            FlowControlEnabled: false));
+
+        Assert.True(written);
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        Assert.Equal("sqlserver", snapshot.Options.Storage?.Provider);
+        Assert.Equal(ConnectionString, snapshot.Options.Storage?.SqlServer?.ConnectionString);
+        Assert.Equal("2097152", snapshot.Options.Spool?.QuotaBytes);
+        Assert.Equal("4194304", snapshot.Options.Ingestion?.Udp?.ReceiveBufferBytes);
+        Assert.Equal("false", snapshot.Options.Ingestion?.FlowControl?.Enabled);
+    }
+
+    /// <summary>
+    /// 書いた値がホストの解決結果まで届くこと（警告なし・未知キーなし・型の読み替えなし）。
+    /// 解決段で既定値へ縮退すると、測定は「流量制御を外したつもりで効いている」状態になる。
+    /// </summary>
+    [Fact]
+    public void Write_FlowControlAndReceiveBuffer_AreResolvedByHostLoaderWithoutWarnings()
+    {
+        BenchConfigurationFile.Write(_dataRoot, new BenchHostConfiguration(
+            UdpReceiveBufferBytes: 4 * 1024 * 1024,
+            FlowControlEnabled: true,
+            FlowControlMessagesPerSecond: 50_000,
+            FlowControlBurstSize: 100_000));
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, NullLogger.Instance);
+
+        Assert.Empty(result.Warnings);
+        Assert.Empty(result.UnknownKeys);
+        Assert.Empty(result.TypeCoercions);
+        Assert.True(result.Configuration.FlowControlEnabled);
+        Assert.Equal(50_000, result.Configuration.FlowControlMessagesPerSecond);
+        Assert.Equal(100_000, result.Configuration.FlowControlBurstSize);
+        Assert.Equal(4 * 1024 * 1024, result.Configuration.UdpReceiveBufferBytes);
+    }
+
+    [Fact]
+    public void Write_FlowControlDisabled_IsResolvedAsDisabled()
+    {
+        BenchConfigurationFile.Write(_dataRoot, new BenchHostConfiguration(FlowControlEnabled: false));
+
+        var result = YaguraConfigurationLoader.Load(_dataRoot, NullLogger.Instance);
+
+        Assert.Empty(result.Warnings);
+        Assert.False(result.Configuration.FlowControlEnabled);
+    }
+
+    /// <summary>
+    /// 何も指定しないときはファイルを書かない（既存の yagura.json を上書きせず、ゼロ設定で起動する）。
+    /// </summary>
+    [Fact]
+    public void Write_EmptyConfiguration_WritesNoFile()
+    {
+        var written = BenchConfigurationFile.Write(_dataRoot, new BenchHostConfiguration());
+
+        Assert.False(written);
+        Assert.False(File.Exists(Path.Combine(_dataRoot, BenchConfigurationFile.FileName)));
     }
 }

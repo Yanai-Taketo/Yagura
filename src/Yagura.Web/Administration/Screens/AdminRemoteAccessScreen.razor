@@ -86,6 +86,14 @@ else
         </div>
     </MudPaper>
 
+    @* 受信許可規則の案内。ポートは保存済みの値（= 再起動後に待ち受けるポート）から組み立てる——
+       入力中の未保存の値で規則を作ると、保存しなかったときに使われないポートを開けることになる。 *@
+    <div class="mt-4">
+        <FirewallRuleNotice Title="@FirewallNoticeTitle"
+                            Body="@UiText.AdminRemoteAccessFirewallNoticeBody"
+                            Rule="_firewallRule" />
+    </div>
+
     @* 証明書の選択（ADR-0012 決定 2 の本体）。バッジ・注記の重大度は CertificateSeverityPolicy
        （期限切れ = Error・秘密鍵読取不可 = Warning。ADR-0012 決定 3 = (b) の非対称）。 *@
     <YaguraCertificateSelectionPanel Title="@UiText.AdminRemoteAccessCertificatesTitle"
@@ -143,6 +151,12 @@ else
     private string? _errorMessage;
     private string? _savedSummary;
     private bool _privateKeyUnreadableAfterSave;
+    private FirewallRuleCommand _firewallRule = FirewallRuleGuidance.ForAdminRemoteHttps(null, null);
+
+    private string FirewallNoticeTitle => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        UiText.AdminRemoteAccessFirewallNoticeTitleFormat,
+        _firewallRule.Port);
 
     /// <summary>
     /// 管理リモート HTTPS のバッジ・注記ポリシー: 期限切れ = Error（起動時解決が拒否し待ち受けを
@@ -181,6 +195,8 @@ else
         _httpsEnabled = status.HttpsEnabled;
         _selectedThumbprint = status.CertificateThumbprint ?? string.Empty;
         _httpsPort = status.HttpsPort ?? string.Empty;
+        // 画面は Yagura 本体のプロセス内で動くため、実行中のプロセスのパスが本体の実行ファイルになる。
+        _firewallRule = FirewallRuleGuidance.ForAdminRemoteHttps(status.HttpsPort, Environment.ProcessPath);
     }
 
     private void RefreshCertificates()

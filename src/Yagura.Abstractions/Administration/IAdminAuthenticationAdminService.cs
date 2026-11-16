@@ -56,7 +56,11 @@ public interface IAdminAuthenticationAdminService : IYaguraWriteService
     /// またはアップロード機能有効時に未サインインの操作者が設定を変更しようとした場合
     /// （ADR-0021 決定 1）。
     /// </exception>
-    Task<AdminAuthenticationStatus> ConfigureAsync(
+    /// <returns>
+    /// 実効値が変わった設定キーと、保存後の状態。アカウントのパスワードは設定ファイルの外に
+    /// 保存されるため、パスワードだけの変更では変更キーは空になる。
+    /// </returns>
+    Task<AdminAuthenticationConfigureResult> ConfigureAsync(
         bool windowsAuthEnabled,
         bool kerberosOnly,
         bool appAuthEnabled,
@@ -69,6 +73,17 @@ public interface IAdminAuthenticationAdminService : IYaguraWriteService
         bool operatorIsUploadOperationAuthenticated = false,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>管理 UI 認証設定の保存結果。</summary>
+/// <param name="ChangedKeys">
+/// 実効値が変わった設定キー（<c>true</c>/<c>True</c> のような表記ゆれは変更と数えない）。
+/// 空でなければ反映にサービス再起動が要る——画面はこれを見て再読み込みを呼び、
+/// 再起動待ちとして計上する。
+/// </param>
+/// <param name="Status">保存後の状態。</param>
+public sealed record AdminAuthenticationConfigureResult(
+    IReadOnlyList<string> ChangedKeys,
+    AdminAuthenticationStatus Status);
 
 /// <summary>管理 UI 認証の現在状態（表示用）。</summary>
 /// <param name="WindowsAuthEnabled">Windows 統合認証の有効/無効。</param>

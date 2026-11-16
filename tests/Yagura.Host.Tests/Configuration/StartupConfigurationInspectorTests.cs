@@ -100,6 +100,25 @@ public sealed class StartupConfigurationInspectorTests : IDisposable
     }
 
     [Fact]
+    public async Task Inspect_StorageProviderSwitchedWhileStopped_RecordsKeyNamesWithoutConnectionString()
+    {
+        // 保存先の切替（昇格ウィザードの保存、または手編集）を再読み込みせずに再起動した経路。
+        WriteConfigurationFile("""{ }""");
+        LastAppliedConfigurationSnapshotStore.TrySave(_dataRoot, ReadStartupOptions());
+        WriteConfigurationFile("""
+            { "Storage": { "Provider": "sqlserver", "SqlServer": { "ConnectionString": "Server=db01;Integrated Security=true" } } }
+            """);
+
+        await CreateInspector().InspectAndRefreshSnapshotAsync(ReadStartupOptions());
+
+        var audit = Assert.Single(_audit.Recorded);
+        Assert.Equal(AuditEventKind.StartupConfigurationChangeDetected, audit.Kind);
+        Assert.Contains("Storage:Provider", audit.Detail);
+        Assert.Contains("Storage:SqlServer:ConnectionString", audit.Detail);
+        Assert.DoesNotContain("db01", audit.Detail);
+    }
+
+    [Fact]
     public async Task Inspect_RefreshesBaseline_SoNextBootDoesNotRepeatTheReport()
     {
         WriteConfigurationFile("""{ "Retention": { "Days": "30" } }""");

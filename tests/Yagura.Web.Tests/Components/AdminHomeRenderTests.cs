@@ -44,6 +44,14 @@ public sealed class AdminHomeRenderTests
     }
 
     [Fact]
+    public void RestartNotes_ReferToTheCardByItsDisplayedTitle()
+    {
+        // 他画面の案内文がカードを名指しするときは、管理ホームに実際に出る見出しで呼ぶ
+        // （違う名前で案内すると、利用者が入口で該当カードを見つけられない）。
+        Assert.Contains($"「{UiText.AdminPendingRestartCardTitle}」", UiText.ViewerHttpsRestartNote);
+    }
+
+    [Fact]
     public async Task StorageAvailable_DoesNotShowTheDegradedBanner()
     {
         var html = await RenderAsync([]);

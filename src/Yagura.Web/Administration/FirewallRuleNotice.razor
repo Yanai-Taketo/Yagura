@@ -1,0 +1,35 @@
+@namespace Yagura.Web.Administration
+
+@*
+    後から有効化する待ち受け（TLS 受信・管理リモート HTTPS）の受信許可規則の案内（configuration.md §4.3）。
+    インストーラも Yagura も規則を作らないため、規則の有無は判定せず常に表示する固定の案内。
+    通知の見た目は設定・システム由来の案内（YaguraSystemNotice。アイコン + 見出し + 本文）に揃え、
+    コマンドはコピー部品で示す。コピーはサーバ状態を変えない操作のため、案内の中に置いてよい。
+*@
+<YaguraSystemNotice Severity="YaguraNoticeSeverity.Info"
+                    Message="@Title"
+                    Supplement="@Body">
+    <div class="mt-3">
+        <YaguraCopyBlock Label="@UiText.FirewallRuleCommandLabel" Value="@Rule.Command" />
+    </div>
+    <MudText Typo="Typo.body2">@ProgramNote</MudText>
+    <MudText Typo="Typo.body2" Class="mt-1">@UiText.FirewallRuleFollowUp</MudText>
+</YaguraSystemNotice>
+
+@code {
+    /// <summary>見出し（必要なポートを含む一文）。</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>本文（なぜ自分で規則を足す必要があるか）。</summary>
+    [Parameter, EditorRequired]
+    public string Body { get; set; } = string.Empty;
+
+    /// <summary>表示するコマンド（<see cref="FirewallRuleGuidance"/> で組み立てたもの）。</summary>
+    [Parameter, EditorRequired]
+    public FirewallRuleCommand Rule { get; set; } = default!;
+
+    private string ProgramNote => Rule.ProgramPath is { } programPath
+        ? string.Format(System.Globalization.CultureInfo.InvariantCulture, UiText.FirewallRuleProgramResolvedFormat, programPath)
+        : UiText.FirewallRuleProgramUnresolved;
+}

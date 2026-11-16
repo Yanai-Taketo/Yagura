@@ -15,7 +15,7 @@ namespace Yagura.Host.Administration.Https;
 /// （<see cref="CertificateCandidate"/>）へのフィールド追加ではなく、<b>選択後の拇印による
 /// 個別読み出し</b>を採る。理由: ①SAN は閲覧 HTTPS 画面だけが使う情報であり、共有 record へ
 /// 足すと既存 2 画面（管理 HTTPS・TLS 受信）の列挙にも読み出しコストと露出面（ADR-0012 決定 8 の
-/// 列挙 API は既定無認証 loopback で到達可能）を増やす。②検査は保存前検証・保存後の再確認
+/// 列挙 API は既定無認証 loopback で到達可能）を増やす。②検査は保存前検証・選択時と保存後の読み出し
 /// （<see cref="IViewerHttpsAdminService.InspectCertificateAsync"/>）と同じ「選択済み 1 枚」への
 /// 操作であり、列挙（全候補）とはアクセスパターンが異なる。既存 2 画面の表示・挙動は変えない
 /// （委任 8 の条件どおり）。
@@ -47,7 +47,7 @@ public static class ViewerHttpsSanInspector
 
         // FQDN: IPGlobalProperties の HostName + DomainName（プライマリ DNS サフィックス）。
         // Dns.GetHostEntry による自己解決は DNS 到達不能時に例外・遅延の面を作るため使わない
-        // （検査は保存操作の同期経路で走る）。
+        // （検査は保存と証明書選択の操作の同期経路で走る）。
         try
         {
             var properties = IPGlobalProperties.GetIPGlobalProperties();

@@ -13,29 +13,13 @@ namespace Yagura.Host.Tests.Configuration;
 /// が返ることを確認する。
 /// </remarks>
 /// <remarks>
-/// <b>網羅性テストについて（Issue #191 / #210）</b>: <c>YaguraConfigurationOptionsClonerTests</c>
-/// や <c>RetentionTests</c> の <c>KnownKeys</c> ⇔ <see cref="ConfigurationKeyMetadata"/> 双方向
-/// 同期テストと同種の「<see cref="ConfigurationChangePlanner.Compare"/> が
-/// <see cref="ConfigurationKeyMetadata.RegisteredKeys"/> を全て比較している」ことを機械検証する
-/// テスト（<see cref="Compare_EveryRegisteredKey_ExceptProviderSwitchKeys_IsDetectedAsChanged"/>）
-/// は Issue #191 対応時点では PR #209 で試作されたが、当時は <c>Compare</c> が本テストの対象と
-/// なる 5 キー（<c>Ingestion:Udp:ReceiveBufferBytes</c>・<c>Ingestion:Tcp:BindAddress</c>・
-/// <c>Ingestion:Tcp:Port</c>・<c>Retention:Days</c>・<c>Retention:ExecutionTimeOfDay</c>）の比較を
-/// 欠いており即座に失敗するため見送られた。Issue #210 で当該 5 キーの比較漏れを修正したことで
-/// 有効化した——以後、新しい設定キーの追加時に本メソッドへの追加を忘れると、このテストが
-/// 個別キー名を知らなくても機械的に検出する。
+/// <b>網羅性テスト</b>: <see cref="Compare_EveryRegisteredKey_IsDetectedAsChanged"/> は
+/// <see cref="ConfigurationChangePlanner.Compare"/> が <see cref="ConfigurationKeyMetadata.RegisteredKeys"/>
+/// を例外なく比較していることをリフレクションで機械検証する——新しい設定キーの追加時に
+/// <c>Compare</c> への追加を忘れると、個別キー名を知らなくても検出する。
 /// </remarks>
 public sealed class ConfigurationChangePlannerTests
 {
-    /// <summary>
-    /// <see cref="ConfigurationChangePlanner"/> のクラスコメントに記載の意図的な除外
-    /// （database.md §6.1 の専用切替手順が扱う provider 切替キー）。
-    /// </summary>
-    private static readonly string[] ProviderSwitchKeys =
-    [
-        "Storage:Provider",
-        "Storage:SqlServer:ConnectionString",
-    ];
     [Fact]
     public void Compare_NoChanges_ReturnsImmediateAndNoChangedKeys()
     {
@@ -569,20 +553,69 @@ public sealed class ConfigurationChangePlannerTests
     }
 
     // ------------------------------------------------------------------
-    // 網羅性テスト（Issue #210。PR #209 で試作され、当時は既存 5 漏れで即失敗するため
-    // 見送られていたもの。本 Issue で Compare が全キーを比較するようになったため有効化する）。
+    // 保存先の切替キー。昇格ウィザードの保存後の再読み込みが「再起動待ち」として
+    // 計上できるのは、ここで変更として検出される場合に限られる。
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Compare_EveryRegisteredKey_ExceptProviderSwitchKeys_IsDetectedAsChanged()
+    public void Compare_StorageProviderSwitchedToSqlServer_DetectsBothKeysAsRestartRequired()
+    {
+        var before = new YaguraConfigurationOptions();
+        var after = new YaguraConfigurationOptions
+        {
+            Storage = new YaguraConfigurationOptions.StorageOptions
+            {
+                Provider = "sqlserver",
+                SqlServer = new YaguraConfigurationOptions.SqlServerOptions
+                {
+                    ConnectionString = "dpapi:AAAA",
+                },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Storage:Provider", "Storage:SqlServer:ConnectionString" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.RestartRequired, plan.RequiredEffect);
+    }
+
+    [Fact]
+    public void Compare_ConnectionStringReEncryptedForSameProvider_DetectsChange()
+    {
+        // DPAPI 暗号文は保存のたびに変わる。同じ接続先への保存し直しでも変更として扱う
+        // （見逃すより過検出のほうが害が小さい）。
+        var before = new YaguraConfigurationOptions
+        {
+            Storage = new YaguraConfigurationOptions.StorageOptions
+            {
+                Provider = "sqlserver",
+                SqlServer = new YaguraConfigurationOptions.SqlServerOptions { ConnectionString = "dpapi:AAAA" },
+            },
+        };
+        var after = new YaguraConfigurationOptions
+        {
+            Storage = new YaguraConfigurationOptions.StorageOptions
+            {
+                Provider = "sqlserver",
+                SqlServer = new YaguraConfigurationOptions.SqlServerOptions { ConnectionString = "dpapi:BBBB" },
+            },
+        };
+
+        var plan = ConfigurationChangePlanner.Compare(before, after);
+
+        Assert.Equal(new[] { "Storage:SqlServer:ConnectionString" }, plan.ChangedKeys);
+        Assert.Equal(ConfigurationReloadEffect.RestartRequired, plan.RequiredEffect);
+    }
+
+    // ------------------------------------------------------------------
+    // 網羅性テスト
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Compare_EveryRegisteredKey_IsDetectedAsChanged()
     {
         foreach (var key in ConfigurationKeyMetadata.RegisteredKeys)
         {
-            if (ProviderSwitchKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             var before = new YaguraConfigurationOptions();
             var after = new YaguraConfigurationOptions();
             SetValueByKeyPath(after, key, "changed-value");

@@ -73,7 +73,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ActiveNotificationMonitor> _logger;
 
-    private readonly Dictionary<string, DateTimeOffset> _lastNotifiedAt = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NotificationSuppression> _lastNotifiedAt = new(StringComparer.Ordinal);
 
     /// <summary>現在保持している通知抑制エントリ数（テスト・可観測性用。#314 の掃引検証）。</summary>
     internal int SuppressionEntryCount => _lastNotifiedAt.Count;
@@ -171,6 +171,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
     /// <summary>開放（書き込み ACE あり）を最初に観測した時刻（開放継続の通知——1034——の起点）。</summary>
     private DateTimeOffset? _forwarderMsiOpenSince;
+
+    private const string ForwarderMsiOpenContinuationTriggerKey = "forwarder-msi-open-continuation";
 
     /// <summary>
     /// 起動時 seed の照会口（ADR-0018 決定 3。<c>ILogStore.QuerySourceActivityAsync</c> を
@@ -488,10 +490,18 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         var writable = _forwarderMsiFolderWritableProbe();
-        if (writable is not true)
+        if (writable is null)
         {
-            // 未開放（既定）・判定不能（非 Windows / ACL 読み取り失敗——安全側で沈黙）。
+            // 判定不能（非 Windows / ACL 読み取り失敗）——安全側で沈黙する。撤去を確認できたわけでは
+            // ないため 1034 の抑制記録は残す: 読み取り失敗が断続すると、続いている同じ開放に対して
+            // 抑制窓より短い間隔で再通知されてしまう。
             _forwarderMsiOpenSince = null;
+            return;
+        }
+
+        if (writable is false)
+        {
+            EndForwarderMsiOpen();
             return;
         }
 
@@ -499,7 +509,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         if (!_forwarderMsiUploadEnabled)
         {
-            _forwarderMsiOpenSince = null;
+            EndForwarderMsiOpen();
             NotifyIfDue("forwarder-msi-acl-drift", () =>
                 _logger.LogWarning(
                     ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
@@ -522,7 +532,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         if (openDuration >= ActiveNotificationConstants.ForwarderMsiOpenContinuationThreshold)
         {
             NotifyIfDue(
-                "forwarder-msi-open-continuation",
+                ForwarderMsiOpenContinuationTriggerKey,
                 ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow,
                 () => _logger.LogInformation(
                     ActiveNotificationEventIds.ForwarderMsiWritePathOpenContinuing,
@@ -534,6 +544,17 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     openDuration.TotalDays,
                     ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow));
         }
+    }
+
+    /// <summary>
+    /// 書き込み ACE が無いこと（撤去）を確認したときに、開放継続の起点と 1034 の抑制記録をともに捨てる。
+    /// 抑制記録を残すと、撤去後に開き直した別の開放が前回の通知から抑制窓が明けるまで通知されず、
+    /// 閉じ忘れの検出が最大で抑制窓の分だけ遅れる。
+    /// </summary>
+    private void EndForwarderMsiOpen()
+    {
+        _forwarderMsiOpenSince = null;
+        _lastNotifiedAt.Remove(ForwarderMsiOpenContinuationTriggerKey);
     }
 
     /// <summary>
@@ -1310,15 +1331,18 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     {
         var now = _timeProvider.GetUtcNow();
 
-        if (_lastNotifiedAt.TryGetValue(triggerKey, out var lastAt) &&
-            now - lastAt < suppressionWindow)
+        if (_lastNotifiedAt.TryGetValue(triggerKey, out var last) &&
+            now - last.LastAt < suppressionWindow)
         {
             return;
         }
 
-        _lastNotifiedAt[triggerKey] = now;
+        _lastNotifiedAt[triggerKey] = new NotificationSuppression(now, suppressionWindow);
         emit();
     }
+
+    /// <summary>トリガごとの最終発火時刻と、その発火に適用した抑制窓（掃引の猶予を窓ごとに測るため）。</summary>
+    private readonly record struct NotificationSuppression(DateTimeOffset LastAt, TimeSpan Window);
 
     /// <summary>
     /// 抑制窓を十分に超過した <see cref="_lastNotifiedAt"/> エントリを間引く（<see cref="EvaluateOnceAsync"/>
@@ -1326,17 +1350,19 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// 攻撃者が制御できる次元）を含むものがあり、<see cref="NotifyIfDue"/> は挿入のみで除去しないため、
     /// 放置すると辞書が単調増加する（<c>AdminAuthFailureDefense.SweepIdleIpRateLimitEntries</c> #233 と
     /// 同種の掃引）。抑制窓を超えたエントリはもう抑制に寄与しない（<see cref="NotifyIfDue"/> の判定が必ず
-    /// 通り、通れば <c>now</c> で上書きされる）ため安全に除去できる。単一スレッド前提（クラス remarks）の
+    /// 通り、通れば <c>now</c> で上書きされる）ため安全に除去できる。猶予は**エントリ自身の抑制窓**の
+    /// 2 倍で測る——既定の窓で一律に測ると、それより長い窓を持つトリガ（開放継続の通知 1034 の 7 日）の
+    /// 記録が窓の途中で消え、次の周期で再通知されてしまう。単一スレッド前提（クラス remarks）の
     /// ため素の <see cref="Dictionary{TKey,TValue}"/> をロックなしで操作してよい。
     /// </summary>
     private void PruneStaleNotificationSuppression()
     {
-        var cutoff = _timeProvider.GetUtcNow() - (ActiveNotificationConstants.SuppressionWindow * 2);
+        var now = _timeProvider.GetUtcNow();
 
         List<string>? stale = null;
-        foreach (var (key, lastAt) in _lastNotifiedAt)
+        foreach (var (key, entry) in _lastNotifiedAt)
         {
-            if (lastAt <= cutoff)
+            if (entry.LastAt <= now - (entry.Window * 2))
             {
                 (stale ??= new()).Add(key);
             }
