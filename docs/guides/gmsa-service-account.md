@@ -103,6 +103,8 @@ msiexec /i Yagura-x64.msi /qn YAGURA_SERVICE_ACCOUNT=EXAMPLE\gmsaYagura$
 
 一度指定した実行アカウントは記録され（remember property）、**アップグレード・修復時にプロパティを指定し直さなくても前回値が継承されます**。指定漏れで黙って仮想サービスアカウントへ戻ることはありません。
 
+ただし 0.5.0 はこの記録を持たないため、**0.5.0 から更新するときは継承されません**。0.5.0 を gMSA で動かしている場合は、更新時に `YAGURA_SERVICE_ACCOUNT` を指定し直してください（[運用ガイド「アップグレードとアンインストール」](../operations/upgrade-and-uninstall.md#gmsa-で動かしている場合)）。
+
 ## 4. DB 接続（Windows 統合認証）
 
 gMSA 実行時、SQL Server への Windows 統合認証は gMSA の識別（`DOMAIN\name$`）で行われます。**SQL Server 側の `CREATE LOGIN` は gMSA 名に対して作成してください**（本番昇格ウィザードが接続に使う実効アカウント名を画面に表示します——その名前がそのまま `CREATE LOGIN` の対象です）:

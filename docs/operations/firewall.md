@@ -47,7 +47,7 @@ New-NetFirewallRule -DisplayName 'Yagura Admin Remote (HTTPS 8516)' `
   ```
 
 - TLS 受信・リモートアクセスを無効に戻した場合も、対応する規則を削除する（使わないポートを開けたままにしない。残すと同じく警告に列挙される）
-- **自分で追加した規則は、Yagura をアンインストールしても削除されない**。MSI がアンインストール時に削除するのは MSI 自身が作った 3 本だけである。アンインストール後は残った規則を確認し、不要なら削除する
+- **自分で追加した規則は、Yagura をアンインストールしても削除されない**。MSI がアンインストール時に削除するのは MSI 自身が作った 3 本だけである。アンインストール後は残った規則を確認し、不要なら削除する（アンインストールで消えるもの・残るものの全体は[アップグレードとアンインストール](upgrade-and-uninstall.md#アンインストール)）
 
   ```powershell
   Get-NetFirewallRule | Where-Object DisplayName -like 'Yagura*'
