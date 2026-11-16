@@ -85,7 +85,7 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
     [Fact]
     public async Task ConfigureAsync_EnableAppAuthWithNewAccount_CreatesAccountAndSavesConfiguration()
     {
-        var status = await _service.ConfigureAsync(
+        var status = (await _service.ConfigureAsync(
             windowsAuthEnabled: false,
             kerberosOnly: false,
             appAuthEnabled: true,
@@ -94,7 +94,7 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
             newAppPassword: "correct-horse-battery-staple",
             operatorAddress: "127.0.0.1",
             operatorScheme: "windows",
-            operatorPrincipal: "CONTOSO\\jdoe");
+            operatorPrincipal: "CONTOSO\\jdoe")).Status;
 
         Assert.True(status.AppAuthEnabled);
         Assert.True(status.HasAppAccount);
@@ -147,13 +147,13 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
     [Fact]
     public async Task ConfigureAsync_EnableWindowsAuthOnly_SucceedsWithoutAccount()
     {
-        var status = await _service.ConfigureAsync(
+        var status = (await _service.ConfigureAsync(
             windowsAuthEnabled: true,
             kerberosOnly: true,
             appAuthEnabled: false,
             requireForLoopback: true,
             newAppUsername: null,
-            newAppPassword: null);
+            newAppPassword: null)).Status;
 
         Assert.True(status.WindowsAuthEnabled);
         Assert.True(status.KerberosOnly);
@@ -168,9 +168,9 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
             windowsAuthEnabled: false, kerberosOnly: false, appAuthEnabled: true, requireForLoopback: false,
             newAppUsername: "admin1", newAppPassword: "first-password");
 
-        var status = await _service.ConfigureAsync(
+        var status = (await _service.ConfigureAsync(
             windowsAuthEnabled: false, kerberosOnly: false, appAuthEnabled: true, requireForLoopback: false,
-            newAppUsername: "admin1", newAppPassword: "second-password");
+            newAppUsername: "admin1", newAppPassword: "second-password")).Status;
 
         Assert.True(status.HasAppAccount);
 
@@ -245,13 +245,13 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         // 設定変更は Phase 2 判定では拒否しない（fail-closed 検証はリモート公開時のみに限る）。
         SeedRemoteBindingEnabled(false);
 
-        var status = await _service.ConfigureAsync(
+        var status = (await _service.ConfigureAsync(
             windowsAuthEnabled: false,
             kerberosOnly: false,
             appAuthEnabled: false,
             requireForLoopback: false,
             newAppUsername: null,
-            newAppPassword: null);
+            newAppPassword: null)).Status;
 
         Assert.False(status.WindowsAuthEnabled);
         Assert.False(status.AppAuthEnabled);
@@ -289,7 +289,7 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         var service = new AdminAuthenticationAdminService(
             _dataRoot, _accountStore, _appAuthService, _audit, forwarderMsiUploadEnabled: true);
 
-        var status = await service.ConfigureAsync(
+        var status = (await service.ConfigureAsync(
             windowsAuthEnabled: false,
             kerberosOnly: false,
             appAuthEnabled: true,
@@ -298,7 +298,7 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
             newAppPassword: "correct-horse-battery-staple",
             operatorScheme: "app",
             operatorPrincipal: "app:admin0",
-            operatorIsUploadOperationAuthenticated: true);
+            operatorIsUploadOperationAuthenticated: true)).Status;
 
         Assert.True(status.AppAuthEnabled);
         Assert.True(status.HasAppAccount);
@@ -309,14 +309,14 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
     {
         // 機能無効の構成では従来どおり（ADR-0010 決定 3 の bootstrap 設計は不変——
         // 既定構成の loopback 中セットアップを壊さない）。既定 ctor は forwarderMsiUploadEnabled=false。
-        var status = await _service.ConfigureAsync(
+        var status = (await _service.ConfigureAsync(
             windowsAuthEnabled: false,
             kerberosOnly: false,
             appAuthEnabled: true,
             requireForLoopback: false,
             newAppUsername: "admin1",
             newAppPassword: "correct-horse-battery-staple",
-            operatorIsUploadOperationAuthenticated: false);
+            operatorIsUploadOperationAuthenticated: false)).Status;
 
         Assert.True(status.AppAuthEnabled);
     }
@@ -342,6 +342,63 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
                 operatorIsUploadOperationAuthenticated: true));
 
         Assert.Contains("先にアップロード機能を無効化", exception.Message);
+    }
+
+    // ---- 変更キーの報告（画面が保存後の再読み込みを呼ぶか決める材料） ----
+
+    [Fact]
+    public async Task ConfigureAsync_FlagChanged_ReportsOnlyKeysWhoseEffectiveValueChanged()
+    {
+        var result = await _service.ConfigureAsync(
+            windowsAuthEnabled: true,
+            kerberosOnly: false,
+            appAuthEnabled: false,
+            requireForLoopback: false,
+            newAppUsername: null,
+            newAppPassword: null);
+
+        // 未設定は無効と同値——無効のまま書き込まれた 3 キーは変更に数えない。
+        Assert.Equal(new[] { "Admin:Authentication:Windows:Enabled" }, result.ChangedKeys);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_PasswordOnlyChange_ReportsNoChangedKeys()
+    {
+        await _service.ConfigureAsync(
+            windowsAuthEnabled: false, kerberosOnly: false, appAuthEnabled: true, requireForLoopback: false,
+            newAppUsername: "admin1", newAppPassword: "first-password");
+
+        // パスワードは設定ファイルの外に保存され、再起動なしで効く——再起動待ちに載せる変更ではない。
+        var result = await _service.ConfigureAsync(
+            windowsAuthEnabled: false, kerberosOnly: false, appAuthEnabled: true, requireForLoopback: false,
+            newAppUsername: "admin1", newAppPassword: "second-password");
+
+        Assert.Empty(result.ChangedKeys);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_HandEditedLowercaseValue_SameEffectiveValue_IsNotAChange()
+    {
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        var options = snapshot.Options;
+        options.Admin = new YaguraConfigurationOptions.AdminOptions
+        {
+            Authentication = new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions
+            {
+                Windows = new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.WindowsOptions { Enabled = "true" },
+            },
+        };
+        YaguraConfigurationWriter.Save(_dataRoot, options, snapshot.VersionToken);
+
+        var result = await _service.ConfigureAsync(
+            windowsAuthEnabled: true,
+            kerberosOnly: false,
+            appAuthEnabled: false,
+            requireForLoopback: false,
+            newAppUsername: null,
+            newAppPassword: null);
+
+        Assert.Empty(result.ChangedKeys);
     }
 
     private void SeedMsiUploadEnabled(bool enabled)

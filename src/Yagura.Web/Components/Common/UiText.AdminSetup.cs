@@ -268,6 +268,16 @@ public static partial class UiText
     /// <summary>認証設定画面側に置く、本画面への相互リンクの文言（ADR-0012 決定 1）。</summary>
     public const string AdminAuthSetupRemoteAccessLinkText = "リモートアクセス（HTTPS）設定へ";
 
+    /// <summary>認証設定の保存成功（認証方式・Kerberos-only・loopback 認証のいずれかが変わった場合）。</summary>
+    public const string AdminAuthSetupSaved = "管理 UI 認証設定を保存しました。反映にはサービス再起動が必要です。";
+
+    /// <summary>
+    /// 認証設定の保存成功（再起動を要する変更がない場合——パスワードの変更のみ、または同じ内容の保存）。
+    /// パスワードは再起動なしで次のサインインから効く。
+    /// </summary>
+    public const string AdminAuthSetupSavedNoRestart =
+        "管理 UI 認証設定を保存しました。サービス再起動が必要な変更はありません。";
+
     /// <summary>HTTPS 有効化（Admin:Https:Enabled）のスイッチ文言。</summary>
     public const string AdminRemoteAccessHttpsLabel = "リモート管理の HTTPS 待ち受けを有効にする";
 
@@ -696,7 +706,8 @@ public static partial class UiText
     public const string ViewerHttpsRestartNote =
         "この画面の変更は保存だけでは反映されません。反映は次回サービス再起動時で、再起動中は syslog の受信を含む" +
         "すべての機能が一時停止します。管理リモート HTTPS・TLS 受信の証明書変更がある場合は、まとめて保存してから" +
-        "1 回の再起動で反映することを推奨します（未反映の変更は管理ホームの「再起動待ちの変更」に表示されます）。";
+        "1 回の再起動で反映することを推奨します（未反映の変更は管理ホームの「" + AdminPendingRestartCardTitle +
+        "」に表示されます）。";
 
     /// <summary>保存成功（{0} = 変更キーの列挙）。</summary>
     public const string ViewerHttpsSavedFormat = "保存しました（変更: {0}）。反映にはサービス再起動が必要です。";

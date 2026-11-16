@@ -135,6 +135,39 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reload_StorageProviderSwitched_CountsBothKeysAsPendingRestartWithoutRecordingValues()
+    {
+        // 昇格ウィザードの保存と同じ 2 キーを書き換える。統合認証の接続文字列なら DPAPI を経ずに
+        // 読み込める（ウィザードは暗号化表現で保存するが、差分の検出はファイル上の文字列で行う）。
+        const string connectionString = "Server=db01.contoso.local;Database=YaguraLogs;Integrated Security=true";
+        WriteConfigurationFile("""{ }""");
+        var logger = new FakeLogger<ConfigurationReloadService>();
+        var service = new ConfigurationReloadService(
+            _dataRoot, YaguraConfigurationWriter.Read(_dataRoot).Options, [], _auditRecorder, logger: logger);
+
+        WriteConfigurationFile($$"""
+            { "Storage": { "Provider": "sqlserver", "SqlServer": { "ConnectionString": "{{connectionString}}" } } }
+            """);
+        var result = await service.ReloadAsync("127.0.0.1", null, null);
+
+        // 保存先の切替には適用の口が無いため、2 キーとも再起動待ちとして常設カードの読み取り口に載る。
+        string[] expected = ["Storage:Provider", "Storage:SqlServer:ConnectionString"];
+        Assert.False(result.Rejected);
+        Assert.Equal(expected, result.ChangedKeys);
+        Assert.Empty(result.AppliedKeys);
+        Assert.Equal(expected, result.PendingRestartKeys);
+        Assert.Equal(expected, service.GetPendingRestartKeys().Select(entry => entry.Key));
+
+        // 記録に残るのはキー名だけで、接続文字列の値は監査（2016）にもログにも出ない。
+        var audit = Assert.Single(_auditRecorder.Recorded);
+        Assert.Equal(AuditEventKind.ConfigurationReloaded, audit.Kind);
+        Assert.Contains("Storage:SqlServer:ConnectionString", audit.Detail);
+        Assert.DoesNotContain("db01", audit.Detail);
+        Assert.All(logger.Collector.GetSnapshot(), record => Assert.DoesNotContain("db01", record.Message));
+        Assert.All(result.WarningMessages, message => Assert.DoesNotContain("db01", message));
+    }
+
+    [Fact]
     public async Task Reload_ValidationFailure_RejectsAndKeepsOldConfiguration()
     {
         WriteConfigurationFile("""{ }""");
