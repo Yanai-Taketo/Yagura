@@ -172,6 +172,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
     /// <summary>開放（書き込み ACE あり）を最初に観測した時刻（開放継続の通知——1034——の起点）。</summary>
     private DateTimeOffset? _forwarderMsiOpenSince;
 
+    private const string ForwarderMsiOpenContinuationTriggerKey = "forwarder-msi-open-continuation";
+
     /// <summary>
     /// 起動時 seed の照会口（ADR-0018 決定 3。<c>ILogStore.QuerySourceActivityAsync</c> を
     /// 結線する）。未注入（テスト等）や照会失敗時は seed を行わず、全エントリが起動時刻仮基準の
@@ -488,10 +490,18 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         }
 
         var writable = _forwarderMsiFolderWritableProbe();
-        if (writable is not true)
+        if (writable is null)
         {
-            // 未開放（既定）・判定不能（非 Windows / ACL 読み取り失敗——安全側で沈黙）。
+            // 判定不能（非 Windows / ACL 読み取り失敗）——安全側で沈黙する。撤去を確認できたわけでは
+            // ないため 1034 の抑制記録は残す: 読み取り失敗が断続すると、続いている同じ開放に対して
+            // 抑制窓より短い間隔で再通知されてしまう。
             _forwarderMsiOpenSince = null;
+            return;
+        }
+
+        if (writable is false)
+        {
+            EndForwarderMsiOpen();
             return;
         }
 
@@ -499,7 +509,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
 
         if (!_forwarderMsiUploadEnabled)
         {
-            _forwarderMsiOpenSince = null;
+            EndForwarderMsiOpen();
             NotifyIfDue("forwarder-msi-acl-drift", () =>
                 _logger.LogWarning(
                     ActiveNotificationEventIds.ForwarderMsiFolderAclDrift,
@@ -522,7 +532,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         if (openDuration >= ActiveNotificationConstants.ForwarderMsiOpenContinuationThreshold)
         {
             NotifyIfDue(
-                "forwarder-msi-open-continuation",
+                ForwarderMsiOpenContinuationTriggerKey,
                 ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow,
                 () => _logger.LogInformation(
                     ActiveNotificationEventIds.ForwarderMsiWritePathOpenContinuing,
@@ -534,6 +544,17 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     openDuration.TotalDays,
                     ActiveNotificationConstants.ForwarderMsiOpenContinuationSuppressionWindow));
         }
+    }
+
+    /// <summary>
+    /// 書き込み ACE が無いこと（撤去）を確認したときに、開放継続の起点と 1034 の抑制記録をともに捨てる。
+    /// 抑制記録を残すと、撤去後に開き直した別の開放が前回の通知から抑制窓が明けるまで通知されず、
+    /// 閉じ忘れの検出が最大で抑制窓の分だけ遅れる。
+    /// </summary>
+    private void EndForwarderMsiOpen()
+    {
+        _forwarderMsiOpenSince = null;
+        _lastNotifiedAt.Remove(ForwarderMsiOpenContinuationTriggerKey);
     }
 
     /// <summary>

@@ -7,8 +7,8 @@ using Yagura.Ingestion.Diagnostics;
 namespace Yagura.Host.Tests.Observability.ActiveNotification;
 
 /// <summary>
-/// フォワーダ MSI 配置フォルダの ACL 検出二系統——乖離警告（1033）と開放継続の通知（1034）。
-/// ADR-0020 決定 2・委任 7——の発火経路の単体テスト（Issue #465 の回帰防止を含む）。
+/// フォワーダ MSI 配置フォルダの ACL 検出二系統——乖離警告（1033）と開放継続の通知（1034）——の
+/// 発火経路の単体テスト（ADR-0020 決定 2）。
 /// </summary>
 /// <remarks>
 /// 1033 で固定する不変条件は 2 つ:
@@ -165,6 +165,59 @@ public sealed class ActiveNotificationMonitorForwarderMsiAclTests
 
         await PollForAsync(monitor, timeProvider, PollInterval);
         Assert.Equal(1, CountOpenContinuationNotifications(collector));
+    }
+
+    [Fact]
+    public async Task OpenContinuation_ReopenAfterNotifiedRemoval_NotifiesAfterThresholdFromReopen()
+    {
+        // 通知のあとに撤去し、抑制窓の途中で開き直して再び閉じ忘れた場合: 新しい開放は前回の通知の
+        // 抑制を持ち越さず、開き直しから継続判定期間で通知される（持ち越すと閉じ忘れの検出が
+        // 前回の通知から抑制窓が明けるまで遅れる）。
+        var collector = new FakeLogCollector();
+        bool? writable = true;
+        var monitor = CreateMonitor(collector, out var timeProvider, () => writable, uploadEnabled: true);
+
+        monitor.EvaluateForwarderMsiFolderAclAtStartup();
+        await PollForAsync(monitor, timeProvider, ContinuationThreshold);
+        Assert.Equal(1, CountOpenContinuationNotifications(collector));
+
+        writable = false;
+        await PollForAsync(monitor, timeProvider, PollInterval);
+
+        // 開き直しを観測した周期が新しい起点になる。
+        writable = true;
+        await PollForAsync(monitor, timeProvider, PollInterval);
+        await PollForAsync(monitor, timeProvider, ContinuationThreshold - PollInterval);
+        Assert.Equal(1, CountOpenContinuationNotifications(collector));
+
+        await PollForAsync(monitor, timeProvider, PollInterval);
+        Assert.Equal(2, CountOpenContinuationNotifications(collector));
+    }
+
+    [Fact]
+    public async Task OpenContinuation_ReadFailureIsNotRemoval_KeepsSuppression()
+    {
+        // 判定不能（ACL の読み取り失敗）は撤去の確認ではない: 開放が続いている可能性があるため、
+        // 前回の通知の抑制窓が明けるまでは再通知しない（読み取り失敗が断続する環境で、継続判定期間
+        // ごとの騒音にしない）。窓明けの再通知は撤去を挟まない場合と変わらない。
+        var collector = new FakeLogCollector();
+        bool? writable = true;
+        var monitor = CreateMonitor(collector, out var timeProvider, () => writable, uploadEnabled: true);
+
+        monitor.EvaluateForwarderMsiFolderAclAtStartup();
+        await PollForAsync(monitor, timeProvider, ContinuationThreshold);
+        Assert.Equal(1, CountOpenContinuationNotifications(collector));
+
+        writable = null;
+        await PollForAsync(monitor, timeProvider, PollInterval);
+
+        // 抑制窓の最後の周期まで。読み取り失敗後の起点からは継続判定期間を十分に超えている。
+        writable = true;
+        await PollForAsync(monitor, timeProvider, ContinuationSuppressionWindow - (PollInterval * 2));
+        Assert.Equal(1, CountOpenContinuationNotifications(collector));
+
+        await PollForAsync(monitor, timeProvider, PollInterval);
+        Assert.Equal(2, CountOpenContinuationNotifications(collector));
     }
 
     /// <summary>
