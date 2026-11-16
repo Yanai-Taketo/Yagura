@@ -21,7 +21,7 @@
 | [0003](0003-ui-policy.md) | UI 方針 — Blazor・デザインシステム先行・テーマ | accepted |
 | [0004](0004-security-model.md) | セキュリティモデル — 信頼ネットワーク前提の定義と防御の既定 | accepted（決定 2 が想定する Server Core 構成は ADR-0024〔accepted 2026-08-01〕により**未検証を理由に対応外**へ。手編集による管理経路の設計自体は不変） |
 | [0005](0005-oss-packaging.md) | OSS 体裁 — README・貢献導線・脆弱性報告窓口 | accepted |
-| [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | accepted |
+| [0006](0006-v1-release-criteria.md) | v1.0 公開基準 | superseded by [ADR-0025](0025-v1-release-criteria-revision.md)（ADR-0025 の accepted をもって発効。それまでは accepted のまま有効） |
 | [0007](0007-reverse-dns-display.md) | 閲覧画面の送信元逆引き（PTR）ホスト名表示 | accepted |
 | [0008](0008-forwarder-kit-generation.md) | フォワーダ配布キットの動的生成（管理 UI） | accepted（設計条件 9 の「手順は提供しない」無条件文は ADR-0020〔accepted 2026-07-24〕により部分的に superseded） |
 | [0009](0009-architecture-support.md) | アーキテクチャ対応拡張 — x64 に加えて ARM64 を採用（x86 は不採用） | accepted（決定 2 の x64 行の**対象環境の範囲**は ADR-0024〔accepted 2026-08-01〕により部分的に superseded。アーキテクチャの判断自体は不変） |
@@ -40,6 +40,7 @@
 | [0022](0022-viewer-https.md) | 閲覧 UI の HTTPS 化（opt-in。8514 同一ポート切替。ADR-0004 決定 3 の予告・ADR-0006 基準 1 の最終残件。Discussion #449） | accepted（改訂 1 = 2026-07-26: 委任 1〜8 の実施結果を記録〔採番 1035〜1038・2028・2029、CF-D2 = operations.md §9、ブラウザ実機検証は lab 手順書へ〕。決定は不変） |
 | [0023](0023-upgrade-availability.md) | アップグレード時の可用性 — DB 到達不能での起動継続とインストーラのロールバック安全性（ADR-0015 決定 2 の rollback CA 判断の部分 supersession。Issue #466・#467） | accepted |
 | [0024](0024-supported-environments.md) | 対応環境と推奨環境の定義 — v1.0 で表明するサポート行列（OS・SQL Server・ブラウザ・ハードウェア。ADR-0009 決定 2 の x64 行の部分 supersession。ADR-0006 基準 3・ADR-0009 委任事項 7） | accepted |
+| [0025](0025-v1-release-criteria-revision.md) | v1.0 公開基準の改定 — 実運用実績と文書の実地確認を、作者 lab の検証記録と「ペルソナ通読 + 作者による手順実施」で代替する（ADR-0006 の supersession） | proposed |
 
 ## 起案予定
 

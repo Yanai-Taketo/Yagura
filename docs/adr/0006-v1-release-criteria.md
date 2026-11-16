@@ -1,6 +1,6 @@
 # ADR-0006: v1.0 公開基準
 
-- 状態: accepted
+- 状態: superseded by [ADR-0025](0025-v1-release-criteria-revision.md)（2026-11-16 起案。**ADR-0025 のマージ = accepted をもって発効し、それまでは本 ADR が有効**。基準 2・3 を作者 lab の検証記録と「ペルソナ通読 + 作者による手順実施」で代替し、基準 1・4 の証拠形式を改める全体 supersession。重大不具合の定義と全域条件・基準 5 は ADR-0025 が文言を変えずに引き継ぐ。本文の決定は履歴として書き換えない）
 - 日付: 2026-07-04
 - 決定者: YANAI Taketo
 - 関連: [ADR-0001](0001-project-founding.md) 決定 8（バージョン戦略の委任元）、[ADR-0002](0002-architecture-principles.md)（基準 1 の実装範囲の根拠）、[ADR-0004](0004-security-model.md) 決定 3（opt-in 強化の提供時期）、[ADR-0005](0005-oss-packaging.md)（脆弱性報告窓口）
