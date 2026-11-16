@@ -4,6 +4,8 @@
 > 結果は [security.md](../../docs/design/security.md) §5.2・§7 SEC-14 行、および [ADR-0015](../../docs/adr/0015-gmsa-service-account.md) 改訂履歴 3・4 に確定として記録済み。本手順書は再実施用に残す。
 >
 > **要点**: (a)〜(f) すべて実測。実施中に**インストーラのサイレントアカウント切替が無言 no-op になる欠陥（[#426](https://github.com/Yanai-Taketo/Yagura/issues/426)）を検出し、CLI 上書き対応（PR #427）で修正のうえ (d) を成立させた**。残るのは (f) の認可済み管理者 Kerberos による監査 2008 `scheme=windows` の E2E（ADR-0013 の Cookie/circuit 自動化の残件と重複）のみ——(e) 2009 の実発火は SEC-13 で確定済みの CNG 自己付与制約により構造的に成立せず（実行アカウント種別に非依存）、残項目に数えない（ADR-0015 改訂履歴 4・security.md SEC-14 行と同じ整理）。
+>
+> **各回の記録**: [lab 検証記録の台帳](validation-ledger.md) の L-14（(a)〜(f)。本手順書はこの回の結果から作った）・L-20・L-21（(d)）。**(d)④（#474 で追加）は修正後の実施記録が無い**（修正はコードで確認しただけ）。
 
 [ADR-0015](../../docs/adr/0015-gmsa-service-account.md) 決定 7 / [security.md](../../docs/design/security.md) §5.2・§7 SEC-14 / Issue #263 の lab 検証手順。設計の根拠は各設計書を参照し、本書は**再現手順と実測結果**に絞る。
 
@@ -55,7 +57,7 @@
 **結果**:
 - ① 仮想 SA → gMSA: 切替成立。データルート/forwarder に加え**既存子ファイル（`yagura.db` 等）まで継承（`(I)`）で gMSA ACE が反映**、旧仮想 SA の ACE を `/remove:g *S-1-5-80-…` で除去（再帰対象で残存 0）、保存先復旧でスプール drain、監査 2025「旧=NT SERVICE\Yagura、新=YAGURA\gmsaYagura$」発火。
 - ② gMSA → 仮想 SA（明示指定）: 切替成立、gMSA ACE 残存 0。
-- ③ 実在しないアカウント指定: 再構成失敗 1603 でロールバックし、**元アカウント・元 ACL へクリーン着地**（部分適用なし。CLI 値自体は正しく解決され、失敗はサービス構成段）。
+- ③ 実在しないアカウント指定: 再構成失敗 1603 でロールバックし、**元アカウント・元 ACL へクリーン着地**（部分適用なし。CLI 値自体は正しく解決され、失敗はサービス構成段）。ただし**製品そのものが残らない**ことを見落としていた（2026-07-26 に判明。[#467](https://github.com/Yanai-Taketo/Yagura/issues/467)、台帳 §7.3）。
 
 - ④ **gMSA → 別 gMSA の失敗着地**（[#474](https://github.com/Yanai-Taketo/Yagura/issues/474) で追加。③ は「仮想 SA ⇄ gMSA」の 2 状態しか見ておらず、この経路が視界に入っていなかった）: gMSA 稼働中の環境から、**本機でパスワードを取得できない gMSA**（`PrincipalsAllowedToRetrieveManagedPassword` に本機を含めない）へ切替を試み、`StartServices` で 1920 → 1603 を誘発する。
 

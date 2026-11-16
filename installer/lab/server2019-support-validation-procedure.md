@@ -1,8 +1,9 @@
 # Windows Server 2019 対応区分の検証手順（ADR-0024 委任事項 1）
 
-> **条件付き実施済み**（2026-08-02。Windows Server 2019 Standard Evaluation 10.0.17763.3650 / Desktop Experience / Proxmox）。
-> 結果は [ADR-0024 改訂 7](../../docs/adr/0024-supported-environments.md) に記録済みで、**Server 2019 の「対応」区分は確定**し README のシステム要件表へ転記した。
-> **残条件はすべて解消した**（2026-08-08 の第 2 回検証で A を完了。§A-4 の推奨環境比較は 2026-08-02 に CI で完了）。ADR-0024 改訂 8・10 を参照。
+> **実施済み**（第 1 回 = 2026-08-02 に §A〜G、第 2 回 = 2026-08-08 に §A-1〜§A-3・§F。各回の環境・版・実施者・結果は [lab 検証記録の台帳](validation-ledger.md) の L-23・L-24 を正とする）。
+> 結果は [ADR-0024](../../docs/adr/0024-supported-environments.md) 改訂 7・10 に記録済みで、**Server 2019 の「対応」区分は確定**し README のシステム要件表へ転記した。
+> **残条件はすべて解消した**（第 2 回で A を完了。§A-4 の推奨環境比較は 2026-08-02 に CI で完了。ADR-0024 改訂 8）。
+> **両回のアップグレード確認は無効だった**（版だけ上がって中身が旧版の MSI を使っていた。[#514](https://github.com/Yanai-Taketo/Yagura/issues/514)。台帳 §7.1）。
 
 [Issue #494](https://github.com/Yanai-Taketo/Yagura/issues/494) の lab 検証手順。
 
@@ -318,9 +319,9 @@ Server 2019 で `Ingestion:Udp:ReceiveBufferBytes` の既定が実際に適用�
 
 ## 記録様式
 
-conventions.md の実体検証記録の作法に従い、**実施した PR の body に残す**。
+conventions.md の実体検証記録の作法に従い、**実施した PR の body に残し**、[lab 検証記録の台帳](validation-ledger.md) に 1 行足す。
 
-- 実施日・実施者
+- 実施日・実施者（人間の作者か AI エージェントか。両方なら人が操作した範囲も。判定の基準は台帳 §4）
 - ゲストの OS ビルド（`winver`）と Windows Update 適用状況
 - 検証した Yagura のバージョンとビルド元コミット SHA
 - §A の `Probe-YaguraTls.ps1` の出力（3 か所 + `Get-TlsCipherSuite` の全文）
@@ -333,9 +334,7 @@ conventions.md の実体検証記録の作法に従い、**実施した PR の b
 
 ## 実施記録
 
-| 実施日 | 環境 | 対象 | 結果 |
-|---|---|---|---|
-| 2026-08-02 | Windows Server 2019 Standard Evaluation 10.0.17763.3650（Desktop Experience / Proxmox） | v0.5.0（`7f638da`） | **条件付き合格**。§A-1・§A-2・§B・§D・§E・§F・§G 合格。§A-3 実施不能・§A-4 未実施・§C 観測不能 → [ADR-0024 改訂 7](../../docs/adr/0024-supported-environments.md) に全文記録。残条件は本ファイル冒頭 |
+実施の記録は [lab 検証記録の台帳](validation-ledger.md) に一本化している（本手順書に沿った回は L-23・L-24）。本手順書で実施したら、PR body への記録に加えて台帳に 1 行足すこと。
 
 ## 参照
 

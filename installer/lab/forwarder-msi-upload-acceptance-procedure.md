@@ -1,12 +1,15 @@
 # フォワーダ MSI アップロードの受け入れ lab 検証手順 — ADR-0020 決定 5 lab ①〜④
 
-> **部分実施済み（2026-07-25。lab: メンバー機 `DESKTOP-9MNR1CM`〔Windows 10 `10.0.26100`〕・
-> gMSA `YAGURA\gmsaYagura$`・保存先 SQL Server 2022 Express・`main` post-#431 の自ビルド 0.5.3）**。
-> 結果は [Issue #283](https://github.com/Yanai-Taketo/Yagura/issues/283) にコメント、確定分は
+> **部分実施**（③-3 と ①-5 の画面表示が未実施）。各回の環境・版・実施者・結果は
+> [lab 検証記録の台帳](validation-ledger.md) の L-15・L-16・L-18〜L-21 を正とし、生出力は
+> [Issue #283](https://github.com/Yanai-Taketo/Yagura/issues/283) のコメントにある。確定分は
 > [security.md](../../docs/design/security.md) §5.1.1・[ADR-0020](../../docs/adr/0020-forwarder-msi-upload.md)
 > 委任 7 に反映済み。
-> - **実測済み**: P-1 fail-closed（成立。ただし 1032 がサービス構成で Windows イベントログに出ない=[#433](https://github.com/Yanai-Taketo/Yagura/issues/433) で追跡）／ ①の ACL 機構（非波及・撤去復帰）／ ③-1・③-2（1033 稼働中・起動時）／ ④切替レール（手動 ACE も除去=安全側。委任 7 確定）
-> - **残（ヘッドレス制約）**: ②アップロード E2E 9 ケース（管理 UI 対話ログインを要する）・①の UI 表示部分・③-3（1034=24 時間待ち）。実施できる ready 環境は整備済み（`C:\YaguraLab\READY-432-remaining-verification.md`。検証用 MSI 2 版〔5.0.8・4.0.14〕配置済み）
+> - **P-1**: 合格（2026-07-26。[#433](https://github.com/Yanai-Taketo/Yagura/issues/433) の修正後に、1032 が Yagura ソースで Windows イベントログに出ることを確認）
+> - **①**: 仮想 SA 構成で ①-1〜①-4 合格（2026-07-26。①-4 の削除ボタン側は [#457](https://github.com/Yanai-Taketo/Yagura/issues/457) の修正後に確認）。①-5（gMSA 構成）は ACL 機構（非波及・撤去復帰）のみ実測（2026-07-25）で、画面の付与コマンド案内が gMSA 名になることは未確認
+> - **②**: A〜I 合格（2026-07-26。G は #457 の修正後に成立）
+> - **③**: ③-1・③-2 合格。抑制窓は [#465](https://github.com/Yanai-Taketo/Yagura/issues/465) の修正後に合格（2026-07-26）。**③-3（1034。24 時間の継続）は未実施**——計測を一度始めたが、再インストールで起点が戻り成立していない
+> - **④**: 合格（2026-07-25。切替レールは手動付与の ACE も除去する＝安全側。委任 7 確定）
 
 **実施環境**: AD lab（`yagura.test`）。Yagura は **PR #431 マージ後のビルド**（または v0.5.1 以降の
 リリース MSI）をインストール済みであること。項目①の gMSA 側・項目④には gMSA
@@ -217,6 +220,6 @@ Get-WinEvent -ProviderName Yagura -MaxEvents 10 | Where-Object Id -eq 1034 | For
    設定（`MsiUpload:Enabled` 等)も運用方針に合わせて整理する
 2. 実測出力一式を **Issue #283 へコメント**する（各項目の合否 + `icacls`/イベントログ/監査の生出力）
 3. security.md §5.1.1 への実測反映（項目④の結果次第で委任 7 の記述更新を含む）と、
-   本ファイル冒頭注記の「実施済み」化を同一 PR で行う
+   本ファイル冒頭注記の実施状況の更新、[lab 検証記録の台帳](validation-ledger.md) への 1 行追加を同一 PR で行う
 4. 全項目合格なら、ADR-0020 決定 5 の受け入れ条件は CI 側（実装済み）と合わせて完了となる
    （Issue #283 のクローズ判断はオーナー。クローズ時に委任 8——効果測定の追跡 Issue——を起票する）
