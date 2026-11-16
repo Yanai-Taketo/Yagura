@@ -99,10 +99,11 @@ public sealed class FirewallRuleGuidanceTests
     public void ScreenFollowUp_PointsToAnExistingOperationsGuideHeading()
     {
         // 画面が名指しする節が運用ガイドに実在すること（節の付け替えで参照が宙に浮くのを防ぐ）。
-        Assert.Contains("§14「ファイアウォール規則を自分で足す」", UiText.FirewallRuleFollowUp, StringComparison.Ordinal);
-        Assert.Contains("\n## 14. ファイアウォール規則を自分で足す\n", ReadOperationsGuide(), StringComparison.Ordinal);
+        Assert.Contains("docs/operations/firewall.md", UiText.FirewallRuleFollowUp, StringComparison.Ordinal);
+        Assert.Contains("「ファイアウォール規則を自分で足す」", UiText.FirewallRuleFollowUp, StringComparison.Ordinal);
+        Assert.StartsWith("# ファイアウォール規則を自分で足す\n", ReadOperationsGuide(), StringComparison.Ordinal);
     }
 
     private static string ReadOperationsGuide() =>
-        File.ReadAllText(Path.Combine(RepositoryPaths.FindRoot(), "docs", "operations.md")).ReplaceLineEndings("\n");
+        File.ReadAllText(Path.Combine(RepositoryPaths.FindRoot(), "docs", "operations", "firewall.md")).ReplaceLineEndings("\n");
 }

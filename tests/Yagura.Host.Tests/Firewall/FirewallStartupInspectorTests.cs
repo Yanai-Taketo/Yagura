@@ -42,7 +42,7 @@ public sealed class FirewallStartupInspectorTests : IDisposable
     }
 
     /// <summary>警告文が名指しする運用ガイドの節（運用ガイドの見出しと一致させる）。</summary>
-    private const string OperationsGuideSectionReference = "docs/operations.md §14「ファイアウォール規則を自分で足す」";
+    private const string OperationsGuideSectionReference = "docs/operations/firewall.md「ファイアウォール規則を自分で足す」";
 
     private FirewallStartupInspector CreateInspector(IReadOnlyList<FirewallRuleInfo>? rules) =>
         new(_dataRoot, new FakeRuleReader(rules), _auditRecorder, _logger);
@@ -198,9 +198,9 @@ public sealed class FirewallStartupInspectorTests : IDisposable
     public void WarningSectionReference_ExistsAsHeadingInOperationsGuide()
     {
         // 警告文が名指しする節が運用ガイドに実在すること（節の付け替えで参照が宙に浮くのを防ぐ）。
-        var guide = File.ReadAllText(Path.Combine(RepositoryPaths.FindRoot(), "docs", "operations.md"));
+        var guide = File.ReadAllText(Path.Combine(RepositoryPaths.FindRoot(), "docs", "operations", "firewall.md"));
 
-        Assert.Contains("\n## 14. ファイアウォール規則を自分で足す\n", guide.ReplaceLineEndings("\n"));
+        Assert.StartsWith("# ファイアウォール規則を自分で足す\n", guide.ReplaceLineEndings("\n"), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -959,7 +959,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "できなくなっています（平文 HTTP へは落としません——ADR-0022 決定 2）。" +
                     "syslog 受信・保存・管理画面は影響を受けません。証明書の差し替え・HTTPS の無効化は" +
                     "サーバ上の管理画面（閲覧 UI の HTTPS 設定）から実行でき、反映にはサービス再起動が" +
-                    "必要です。更新手順は利用者ガイド（operations.md の閲覧 HTTPS 証明書の項）を参照して" +
+                    "必要です。更新手順は運用ガイド（docs/operations/viewer-https.md）を参照して" +
                     "ください。同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.FailureReason,
                     ActiveNotificationConstants.SuppressionWindow));
@@ -975,7 +975,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "有効期限（{NotAfter}）が切れました。LAN のブラウザからの閲覧（新規 TLS ハンドシェイク）は" +
                     "拒否されています（平文 HTTP へは落としません——ADR-0022 決定 2）。" +
                     "syslog 受信・保存・管理画面は影響を受けません。証明書を更新してサービスを再起動して" +
-                    "ください（手順は利用者ガイド〔operations.md の閲覧 HTTPS 証明書の項〕参照）。" +
+                    "ください（手順は運用ガイド〔docs/operations/viewer-https.md〕参照）。" +
                     "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.NotAfter,
                     ActiveNotificationConstants.SuppressionWindow));
@@ -993,7 +993,7 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
                     "期限切れになると LAN のブラウザからの閲覧ができなくなります（平文 HTTP へは落とさず、" +
                     "syslog 受信は継続します）。証明書の更新を計画してください——更新は「新しい証明書の" +
                     "取り込み → 管理画面（閲覧 UI の HTTPS 設定）で再選択 → サービス再起動」の順です" +
-                    "（手順は利用者ガイド〔operations.md の閲覧 HTTPS 証明書の項〕参照）。" +
+                    "（手順は運用ガイド〔docs/operations/viewer-https.md〕参照）。" +
                     "同種の警告は {SuppressionWindow} の間は再表示を抑制します。",
                     status.NotAfter,
                     remaining.TotalDays,

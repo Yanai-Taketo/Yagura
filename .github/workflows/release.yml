@@ -589,12 +589,12 @@ jobs:
           - **``1920``(サービスを開始できませんでした)や ``1603``(致命的なエラー)で失敗する / 再インストール
             しても ``Access to the path ... is denied`` で起動しない**: データルート配下のアクセス権が
             壊れている可能性があります。復旧手順(コピー可能な 1 ブロック)は
-            [運用ガイド](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/operations.md) の
-            「11. アップグレードに失敗した / 製品が消えた・起動しないとき」を参照してください
+            [運用ガイド](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/operations/upgrade-recovery.md) の
+            「アップグレードに失敗した / 製品が消えた・起動しないとき」を参照してください
           - **データベースに接続できない**: 0.6.0 以降は DB に接続できなくても起動して受信を続けます
             (縮退運転)。ID/パスワードでのサインインだけが一時的に使えなくなります。詳細は
-            [運用ガイド](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/operations.md) の
-            「10. データベースに接続できないとき(縮退運転)」
+            [運用ガイド](https://github.com/Yanai-Taketo/Yagura/blob/main/docs/operations/degraded-operation.md) の
+            「データベースに接続できないとき(縮退運転)」
 
           ## アップグレードに関する注意 (Issue #343)
 
