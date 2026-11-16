@@ -1,6 +1,6 @@
 # ADR-0014: リリース成果物のコード署名 — Sectigo + Google Cloud KMS による Authenticode 署名（Yagura・Open DUMP Viewer 共用）
 
-- 状態: proposed（決定 1 はオーナー裁定済み 2026-07-15 = (C2)。書き直した本文の承認待ち）
+- 状態: accepted（2026-11-16 オーナー決定。決定 1 の裁定は 2026-07-15 = (C2)。v0.5.0〔2026-07-23〕から署名付きで公開。委任事項の消化状況は改訂履歴 2）
 - 日付: 2026-07-14（決定 1 の裁定: 2026-07-15）
 - 決定者: YANAI Taketo
 - 関連: [Issue #264](https://github.com/Yanai-Taketo/Yagura/issues/264)（本 ADR がこの Issue の「証明書の調達方針を決める」「ADR を起案するか判断する」に応える）、[ADR-0006](0006-v1-release-criteria.md)（基準 5「リリースの完全性」の実現手段を確定する）、[ADR-0009](0009-architecture-support.md)（委任事項 8「コード署名方針」を閉じる）、[ADR-0005](0005-oss-packaging.md)（入口文書の体裁）、[ADR-0004](0004-security-model.md)（セキュリティモデル）、[SECURITY.md](../../SECURITY.md)、[conventions.md](../development/conventions.md)（リリース）
@@ -476,3 +476,53 @@ required_approving_review_count: 1
 **オーナー裁定（2026-07-24）: (i) 現状受容で確定**。理由: 本証明書は**マイナンバーカードによる本人確認（IV）で取得しており、検証名がカード記載の漢字氏名になる。マイナンバーカードにローマ字表記が無いため、ローマ字 subject の証明書は本人確認経路の制約上そもそも発行できない**（(ii) は選択肢として成立しない——将来「ローマ字にすればよい」の蒸し返しを防ぐため理由を明記する）。したがって v0.5.0 以降も漢字 subject のまま進める。**緩和と正しい発行者名の確認手段**: ①SmartScreen の「認識されないアプリ」警告自体は評判蓄積で解消していく（決定 1・本 amendment 上表の想定どおり——警告ダイアログが出なくなれば化けた発行元行も表に出なくなる）。②署名の真正性と正しい発行者名（`柳井建人`）は `Get-AuthenticodeSignature` およびファイルのプロパティ→デジタル署名の詳細で正しく確認できる（SmartScreen とは別の Unicode 対応経路。本 lab で `Get-AuthenticodeSignature` = `CN=柳井建人`・`Status=Valid` を実測）。README／SECURITY.md には「SmartScreen ダイアログ上の発行者名が一部の日本語 Windows で文字化けし得るが、署名は有効であり正しい発行者はファイルのデジタル署名詳細で確認できる」旨を注記するのが望ましい（利用者の不信を招かないため。**文言化済み**: PR #412〈マージ済み〉が README の SmartScreen 節と docs/code-signing-policy.md「既知の表示問題」節に同旨の注記を追加している）。
 
 **バージョン注記**: run 30017908696 の署名済み MSI は **ProductVersion 0.4.0**（0.5.0 ではない——版数 bump 前の run）。SmartScreen の発行元表示は版数に依存しないため本検証には支障ないが、v0.5.0 の署名付きリリース物として記録する場合は 0.5.0 を焼いた署名 run の指定が要る（オーナー確認事項）。
+
+### 2. 2026-11-16（状態の記帳）: accepted とし、v0.5.0 の署名付き公開と委任事項の消化状況を記録する
+
+**分類**: 状態を accepted へ進めた記帳と、実施状況の記録。決定 1〜9 の本文と委任事項の表は書き換えない（判断は何も反転していない）。ヘッダーの日付は起案日（2026-07-14）のまま据える。
+
+**契機**: 本 ADR は PR #278 でマージされたが、状態行は「proposed（…書き直した本文の承認待ち）」のまま残り、一覧表も proposed のままだった。Issue #264 のクローズコメント（2026-07-23）は「ADR-0014 accepted」と書いているが、本文と一覧には反映されていなかった。v1.0 の公開準備にあたり、**オーナー（YANAI Taketo）が 2026-11-16 に本 ADR を accepted と決定した**。本改訂はその記帳である。
+
+#### 2-A. v0.5.0 の署名付き公開（初の署名付きリリース）
+
+**公開の経路**: タグ `v0.5.0` の Release ワークフロー（run 30050433238、2026-07-23 UTC）で、build → smoke-x64／smoke-arm64（未署名 MSI の E2E）→ sign（x64・arm64）→ smoke-signed-x64／smoke-signed-arm64（署名済み MSI の E2E）→ create-release（公開直前の fail-closed 検証・公開・公開後検証）の全ジョブが成功し、2026-07-23T22:46:39Z に GitHub Release として公開された。決定 3 のワークフロー（未署名で機能検証 → 署名 → 署名済みで E2E → 署名済みのみ公開 → 公開後検証）が本番リリースで通った最初の実績である。リリースノートには署名の事実・検証手順・コード署名ポリシーへの導線が載っている（決定 5）。
+
+**公開資産の実体確認**（2026-11-16。公開資産を取り直し、osslsigncode 2.8 で確認）:
+
+| 資産 | 署名者 | 証明書 thumbprint（SHA-1） | タイムスタンプ |
+|---|---|---|---|
+| `Yagura-0.5.0-x64.msi` | `C=JP, ST=Yamaguchi, O=柳井建人, CN=柳井建人`（発行 CA: Sectigo Public Code Signing CA R36） | `36257D1DC06F7CDECA61B9727A88320DA24D27B6` | RFC 3161・2026-07-23T22:44:37Z（Sectigo Public Time Stamping Signer R37） |
+| `Yagura-0.5.0-arm64.msi` | 同上 | 同上 | RFC 3161・2026-07-23T22:44:22Z（同上） |
+
+- 両 MSI とも、公開された `.sha256` と実ファイルの SHA256 が一致した。署名に記録されたダイジェストは実ファイルから計算した値と一致し、署名者証明書のチェーンは USERTrust RSA Certification Authority まで構築できた。thumbprint はコード署名ポリシーの期待値と一致する
+- **CRL による失効確認は行っていない**（確認に使った環境から CRL 配布点へ到達できなかった）。公開時点の Windows 上の検証（`Get-AuthenticodeSignature` が `Valid`・Subject 一致・タイムスタンプ有）は、run 30050433238 の create-release の「Verify signed artifacts (fail-closed)」と「Post-publish verification」の成功で記録されている
+- **決定 2 の署名対象**: x64 MSI を展開し、`Yagura.Host.exe` と `Yagura.*.dll`（Abstractions・Host・Ingestion・Storage・Web）が同じ証明書（発行 CA とシリアル番号が一致）でタイムスタンプ付きで署名され、`MudBlazor.dll` は無署名、`coreclr.dll` は Microsoft（`CN=.NET`）の署名のままであることを確認した
+
+**改訂履歴 1 のバージョン注記を閉じる**: 改訂履歴 1 は「v0.5.0 の署名付きリリース物として記録する場合は 0.5.0 を焼いた署名 run の指定が要る」とオーナー確認事項を残していた。その run は上記 run 30050433238 である。改訂履歴 1 の SmartScreen の結果は、同じ証明書で署名した 0.4.0 の MSI によるものとしてそのまま有効である（発行元の表示は版数に依存しない）。
+
+**証跡の保持についての注意**: 決定 3 は公開後検証で「証明書の thumbprint と署名日時をリリースの証跡として記録する」と定めた。実装（release.yml の Post-publish verification）は thumbprint を**ジョブログへ出力するだけ**であり、run 30050433238 のジョブログは 2026-11-16 時点で保持期限が切れて取得できなかった（GitHub API の応答は 410）。v0.5.0 の thumbprint は上表のとおり公開資産から取り直せたが、ジョブログに頼る限り、遡及失効のときの影響範囲の確認（決定 8）は公開資産の取り直しに頼ることになる。証跡を恒久的に残す方法は未決である。
+
+#### 2-B. 委任事項の消化状況
+
+判定は 2 種類とする。**済** = 文書・コード・GitHub の記録で確認できた。**記録上未確認** = 実施した記録が見つからない（実施されていないと断定するものではないが、済とはみなさない）。1 つの委任に両方が含まれる場合は分けて書く。
+
+| # | 状況 | 根拠 |
+|---|---|---|
+| A | **済**（個人名義 + GCP KMS 鍵での発行）。費用総額の確認は**記録上未確認** | v0.5.0 の署名者証明書は個人名義（2-A の表）で、鍵は GCP KMS（HSM 保護）の `codesign-rsa4096`。CSR と attestation を Sectigo の enrollment に提出して発行を受けた（[code-signing-setup.md](../development/code-signing-setup.md) フェーズ 1）。Issue #264（2026-07-23）は、氏名を訂正して再発行された証明書の公開鍵が同じ CSR／KMS 鍵と一致することを記録している。費用総額は code-signing-setup.md の費用表が「委任 A で確認（見込み）」のままで、確認結果の記録が見つからない |
+| B | **記録上未確認** | コード署名ポリシーは「GitHub / Google Cloud の MFA を必須」と掲示しているが、オーナーの両アカウントで MFA を有効化したことを確認した記録は見つからない |
+| C | **済** | Issue #264（2026-07-23）が、同じ証明書による ODV 側の署名導入の同日完了（Open-DUMP-Viewer/Open-DUMP-Viewer#40）と ODV v4.3.0 の公開を記録している（ODV リポジトリ側は本記帳で直接は確認していない）。GCP 側は WIF プロバイダを両リポジトリで共用し、リポジトリ別のサービスアカウント（`yagura-signer`・`odv-signer`）をそれぞれのリポジトリからだけ借用できるよう紐付けた（code-signing-setup.md フェーズ 2。2026-07-18 に実機確認） |
+| 1 | **済** | `Directory.Build.props` の `<YaguraVersion>` を単一の正とし、アセンブリと `installer/Package.wxs` がこれを参照する（PR #280）。release.yml がタグとの一致を検証する。[conventions.md](../development/conventions.md)「リリース」節に明記 |
+| 2 | **済** | 署名ツールは jsign 7.5（release.yml が jar の SHA256 を照合）。deep signing の対象は `Yagura.Host.exe` と `Yagura.*.dll`（release.yml の sign ジョブ）。v0.5.0 の公開 MSI で実体を確認した（2-A）。アセンブリメタデータは `Directory.Build.props`（`Product` = Yagura、`Company` = Yagura Project ほか） |
+| 3 | **済**（リポジトリと Environment による絞り込み）。ref（タグ）による絞り込みは**記録上未確認** | WIF プロバイダの attribute condition は「リポジトリ = Yagura または ODV」かつ「`environment` = `release-signing`」で、サービスアカウントの借用はリポジトリ単位の principalSet に限っている（code-signing-setup.md フェーズ 2。2026-07-18 に describe で確認）。委任 3 が挙げた ref（タグ）は WIF の条件に入っていない。release.yml の sign ジョブはタグ push と workflow_dispatch のときだけ走るが、これは workflow 内の条件である。Environment 側のブランチ・タグ制限の有無は記録がなく、GitHub API でも取得できなかった |
+| 4 | **記録上未確認** | code-signing-setup.md は 2026-07-18 時点の状態として「未了: 監査ログの有効化」と書き、有効化の手順を載せている。一方コード署名ポリシーは「Cloud Audit Logs で全署名操作を記録しています」と掲示している。有効化した記録は見つからず、どちらが現状かを記録からは判断できない。ログの保持期間・改ざん防止・保全責任を決めた記録もない |
+| 5 | **済**（最小権限 IAM・リポジトリ別サービスアカウント・署名ジョブの分離）。Environment の承認者設定とタグ限定は**記録上未確認** | KMS 鍵の IAM は鍵リソース単位で `roles/cloudkms.signerVerifier`（2026-07-18 確認）。jsign がこれに加えて `roles/cloudkms.viewer` を要したため追加で付与した（Issue #264、2026-07-23）。リポジトリ別サービスアカウントは委任 C の欄のとおり。署名は release.yml の sign ジョブに閉じ、`id-token: write` はこのジョブにだけ付与している。Environment `release-signing` の required reviewers の実設定は記録がなく、GitHub API でも取得できなかった。タグ限定は委任 3 の欄のとおり |
+| 6 | **済** | sign ジョブは `vars.YAGURA_SIGNING == 'enabled'` かつタグ push または workflow_dispatch のときだけ走り、pull_request（fork を含む）では skip される。create-release は署名系ジョブの skip を許容する（release.yml）。署名基盤への依存は sign ジョブと `installer/sign/Invoke-YaguraSign.ps1` に閉じている |
+| 7 | **済** | 主 `timestamp.sectigo.com`・副 `timestamp.digicert.com` を順に指定する（Invoke-YaguraSign.ps1）。jsign が失敗すれば署名ジョブも失敗し（fail-closed）、署名の直後と公開の直前にタイムスタンプの存在を検証する。リトライ回数は明示指定していない。なお決定 9 が公開後検証に求めた「タイムスタンプの存在と時刻の検証」は、公開後検証（Post-publish verification）には含まれていない（公開直前の検証で存在だけを確認している） |
+| 8 | **記録上未確認** | release.yml・Invoke-YaguraSign.ps1 に、署名を剥がして元のハッシュと突合するといった手順は見当たらない |
+| 9 | **済**。UAC の発行元表示は**記録上未確認** | 改訂履歴 1（2026-07-24 の lab）。UAC 昇格ダイアログの発行元表示は、Issue #264 のクローズコメントで「v0.5.0 の初回インストール時に採取」と申し送られたが、採取した記録は見つからない |
+| 10 | **記録上未確認** | SECURITY.md は受領確認 7 日・初期評価 14 日を目標とし、修正版の提供時期は約束しないと書く。承認ゲートや決定 8 の退避弁との両立を確認した記録は見つからない。なお決定 8 の退避弁（workflow_dispatch の明示的な入力による未署名の緊急リリース）は release.yml にない（dispatch の入力は `publish_release` だけで、署名有効時の create-release は署名済みの資産しか公開しない） |
+| 11 | **記録上未確認** | 手順を書いた文書が見つからない（code-signing-setup.md も手順を持たない） |
+| 12 | **記録上未確認** | 導入した記録が見つからない。2026-11-16 に GitHub API でリポジトリの ruleset 一覧（上位を含む）を取得した結果は 0 件だった。導入されていないとみられるが、設定画面での確認を要する |
+| 13 | **記録上未確認** | code-signing-setup.md は「証明書運用が定常化してから設定でよい」とするだけで、設定した記録は見つからない |
+
+委任 B と委任 4 は、コード署名ポリシーが利用者に掲示している内容（MFA 必須・Cloud Audit Logs による記録）の裏づけにあたる。記録上未確認の委任は、確認できた時点で改訂履歴に追記する。
