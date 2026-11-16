@@ -121,8 +121,8 @@ public static partial class UiText
         "組み込みデータベースのファイルとして確認できない（先頭の識別子が無い・壊れている）ため、内容を確かめられません。" +
         "削除でのみ後始末できます。";
 
-    /// <summary>旧ファイルのログ件数（{0} = 件数・{1} = 期間）。</summary>
-    public const string OldDatabaseDisposalRecordCountFormat = "ログ {0:N0} 件（{1}）";
+    /// <summary>旧ファイルのログ件数（{0} = 件数・{1} = 期間〔<see cref="OldDatabaseDisposalRangeFormat"/>。不明なら空〕）。</summary>
+    public const string OldDatabaseDisposalRecordCountFormat = "ログ {0:N0} 件{1}";
 
     /// <summary>旧ファイルのログ件数（0 件）。</summary>
     public const string OldDatabaseDisposalRecordCountZero = "ログ 0 件";
@@ -130,19 +130,22 @@ public static partial class UiText
     /// <summary>旧ファイルのシステムイベント件数（{0} = 件数）。用語対応表: システムイベント → 受信できなかった時間帯などの記録。</summary>
     public const string OldDatabaseDisposalSystemEventCountFormat = "受信できなかった時間帯などの記録 {0:N0} 件";
 
-    /// <summary>期間の表示（{0} = 最古・{1} = 最新）。</summary>
-    public const string OldDatabaseDisposalRangeFormat = "{0}〜{1}";
+    /// <summary>
+    /// 期間の表示（{0} = 最古・{1} = 最新）。件数の文言の後ろに付ける——期間が分からないときは付けない
+    /// （空の括弧を出さない）。
+    /// </summary>
+    public const string OldDatabaseDisposalRangeFormat = "（{0}〜{1}）";
 
     /// <summary>照合の結果: 移行済み。</summary>
     public const string OldDatabaseDisposalMigrated =
         "移行済みです（時間帯ごとの照合に合格しました）。ログは SQL Server に移っています。";
 
     /// <summary>
-    /// 移行の完了後に追加されたログ・照合できない区間のログ（{0} = 件数・{1} = 期間。ui.md §5.4）。
+    /// 移行の完了後に追加されたログ・照合できない区間のログ（{0} = 件数・{1} = 期間〔不明なら空〕。ui.md §5.4）。
     /// 縮退運転で書き込まれたログは他のどこにも無いため、「古い残骸」と読ませない。
     /// </summary>
     public const string OldDatabaseDisposalRecordsAfterSwitchFormat =
-        "SQL Server に保存できなかった間に、組み込みデータベースへ保存したログが {0:N0} 件あります（{1}）。" +
+        "SQL Server に保存できなかった間に、組み込みデータベースへ保存したログが {0:N0} 件あります{1}。" +
         "これらは SQL Server にはありません。先に『蓄積ログの移行』を実行してください。";
 
     /// <summary>移行の完了後に追加されたログ（件数を数えられない場合——切り替えの時点の記録が無い）。</summary>
@@ -150,12 +153,12 @@ public static partial class UiText
         "SQL Server に保存できなかった間に、組み込みデータベースへ保存したログがあります。" +
         "これらは SQL Server にはありません。先に『蓄積ログの移行』を実行してください。";
 
-    /// <summary>未移行のログ（{0} = 件数・{1} = 期間）。</summary>
-    public const string OldDatabaseDisposalUnmigratedFormat = "まだ移行していないログが {0:N0} 件あります（{1}）。";
+    /// <summary>未移行のログ（{0} = 件数・{1} = 期間〔不明なら空〕）。</summary>
+    public const string OldDatabaseDisposalUnmigratedFormat = "まだ移行していないログが {0:N0} 件あります{1}。";
 
-    /// <summary>移行先に無いシステムイベント（{0} = 件数・{1} = 期間）。</summary>
+    /// <summary>移行先に無いシステムイベント（{0} = 件数・{1} = 期間〔不明なら空〕）。</summary>
     public const string OldDatabaseDisposalUnmigratedSystemEventsFormat =
-        "SQL Server に無い『受信できなかった時間帯』などの記録が {0:N0} 件あります（{1}）。蓄積ログの移行で引き継げます。";
+        "SQL Server に無い『受信できなかった時間帯』などの記録が {0:N0} 件あります{1}。蓄積ログの移行で引き継げます。";
 
     /// <summary>照合の不合格: 時間帯ごとの照合で移行先が少ない時間帯がある。</summary>
     public const string OldDatabaseDisposalGapHourly =
@@ -253,19 +256,19 @@ public static partial class UiText
 
     /// <summary>未移行のログ（削除。{0} = 件数・{1} = 期間。ui.md §5.4）。</summary>
     public const string OldDatabaseDisposalConfirmUnmigratedDeleteFormat =
-        "まだ移行していないログが {0:N0} 件あります（{1}）。削除すると、これらのログは画面から参照できないまま失われます。";
+        "まだ移行していないログが {0:N0} 件あります{1}。削除すると、これらのログは画面から参照できないまま失われます。";
 
     /// <summary>未移行のログ（書き出して保管。{0} = 件数・{1} = 期間。ui.md §5.4）。</summary>
     public const string OldDatabaseDisposalConfirmUnmigratedArchiveFormat =
-        "まだ移行していないログが {0:N0} 件あります（{1}）。書き出したファイルには残りますが、この製品の画面からは参照できません。";
+        "まだ移行していないログが {0:N0} 件あります{1}。書き出したファイルには残りますが、この製品の画面からは参照できません。";
 
     /// <summary>移行先に無いシステムイベント（削除。{0} = 件数・{1} = 期間）。</summary>
     public const string OldDatabaseDisposalConfirmSystemEventsDeleteFormat =
-        "SQL Server に無い『受信できなかった時間帯』などの記録が {0:N0} 件あります（{1}）。削除すると失われます。";
+        "SQL Server に無い『受信できなかった時間帯』などの記録が {0:N0} 件あります{1}。削除すると失われます。";
 
     /// <summary>移行先に無いシステムイベント（書き出して保管。{0} = 件数・{1} = 期間）。</summary>
     public const string OldDatabaseDisposalConfirmSystemEventsArchiveFormat =
-        "SQL Server に無い『受信できなかった時間帯』などの記録が {0:N0} 件あります（{1}）。" +
+        "SQL Server に無い『受信できなかった時間帯』などの記録が {0:N0} 件あります{1}。" +
         "書き出したファイルには残りますが、この製品の画面からは参照できません。";
 
     /// <summary>「移行せずに処分する」の明示確認（既定は未確認）。</summary>

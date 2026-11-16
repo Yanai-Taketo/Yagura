@@ -249,6 +249,39 @@ public sealed class PromotionWizardDisposalSectionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TargetCannotReconcile_CountsWithoutAKnownPeriod_AreShownWithoutEmptyParentheses()
+    {
+        // 移行先へ問い合わせられないとき、システムイベントの期間は分からない——空の括弧で期間を欠いたように見せない。
+        var judgment = new OldDatabaseMigrationJudgment(
+            false,
+            [OldDatabaseMigrationGap.TargetCannotReconcile],
+            UnmigratedRecordCount: 1200,
+            UnmigratedOldest: new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
+            UnmigratedNewest: new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
+            RecordsAfterSwitchCount: 0,
+            RecordsAfterSwitchOldest: null,
+            RecordsAfterSwitchNewest: null,
+            UnmigratedSystemEventCount: 3,
+            UnmigratedSystemEventOldest: null,
+            UnmigratedSystemEventNewest: null);
+        Pending(FakeOldDatabaseDisposalService.SqliteInspection(judgment));
+        var cut = Render();
+        await InspectAsync(cut);
+
+        Assert.Contains(UiText.OldDatabaseDisposalGapTargetCannotReconcile, cut.Markup);
+        Assert.Contains("記録が 3 件あります。", cut.Markup);
+        Assert.DoesNotContain("（）", cut.Markup);
+
+        MethodSelect(cut).Change("delete");
+        var executing = ClickExecuteAsync(cut);
+        var dialog = WaitForDialog(cut);
+        Assert.Contains("記録が 3 件あります。削除すると失われます。", dialog.TextContent);
+        Assert.DoesNotContain("（）", dialog.TextContent);
+        await ButtonByText(cut, UiText.ConfirmDialogCancel).ClickAsync(new MouseEventArgs());
+        await executing;
+    }
+
+    [Fact]
     public async Task Unmigrated_Dialog_PutsIrreversibilityAndTheUnmigratedCountsOnTop_AndRequiresTheCheckbox()
     {
         Pending(FakeOldDatabaseDisposalService.SqliteInspection(FakeOldDatabaseDisposalService.UnmigratedAfterSwitch()));

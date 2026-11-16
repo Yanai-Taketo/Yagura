@@ -423,7 +423,7 @@
             var inspection = await Disposal.InspectAsync();
             _status = inspection.Status;
             _inspection = inspection;
-            _method = inspection.ArchiveAllowed ? null : MethodDeleteValue;
+            _method = null;
         }
         finally
         {
