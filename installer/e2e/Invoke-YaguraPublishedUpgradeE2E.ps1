@@ -25,7 +25,7 @@
             実行アカウント・記憶プロパティ・ACL・旧版 MSI の再実行がダウングレードとして拒否
             されること
          5. アンインストール
-      B. 失敗注入(ADR-0023 決定 6 / ADR-0025 基準 4 の「製品の存続」の失敗側)
+      B. 失敗注入(ADR-0023 決定 6 が指摘した「製品の存続」の失敗側)
          データルートを消して更新元を入れ直し、稼働中の更新元に対して installer-e2e と同じ
          「実在しない gMSA 形式のアカウント」で更新を失敗させる。旧版の製品エントリ・サービス・
          バイナリ一式・サービス構成・ACL が元に戻り、受信が再開することを確認する。A と分けるのは、
@@ -170,6 +170,14 @@ $script:NotExercised = @(
     [pscustomobject]@{
         item   = 'ingestion-gap-under-load'
         reason = 'The upgrade duration is recorded, but the ingestion gap under a known EPS load (ADR-0023 acceptance criterion 11) is not measured.'
+    },
+    [pscustomobject]@{
+        item   = 'arm64-upgrade'
+        reason = 'Only the x64 MSI is exercised (heavy installer E2E stays x64-only, ADR-0009 decision 5). Upgrading from the published Yagura-0.5.0-arm64.msi (experimental tier, ADR-0024 decision 1) is not exercised; the ARM64 smoke in release.yml installs a single version and does not upgrade.'
+    },
+    [pscustomobject]@{
+        item   = 'supported-tier-os'
+        reason = 'Only Windows Server 2025 and 2022 (the recommended tier, ADR-0024 decision 1) are exercised. Upgrading on the supported tier (Windows Server 2019, Windows 11, Windows 10 LTSC / Enterprise) is not exercised; the windows-2019 hosted runner is retired (ADR-0024 decision 5).'
     }
 )
 
@@ -1727,8 +1735,29 @@ try {
                 $left = Get-SpoolTokenOccurrences -Token $token
                 throw ('spool backlog not drained within {0}s: {1} record(s) still in {2}; {3} of {4} visible in the viewer' -f $SpoolTimeoutSec, $left.Occurrences, ($left.Files -join ', '), $script:SpoolViewerCount, $expected)
             }
+            # 件数は一致を求める。前提は揃っている: 更新前の DB にこのトークンは 0 件(seed-spool-backlog
+            # で確認済み)、切れた末尾は数えず新版も消化しない、セグメントは DB への書き込みの確定後に
+            # 削除される。確定と削除の間でプロセスが落ちると、次の起動で同じセグメントを読み直して
+            # 重複する(at-least-once。SpoolDrainCoordinator の remarks)。中断のない更新でそれが
+            # 起きれば、更新の経路がサービスを落としたか drain の不具合であり、「以上」で合格にすると
+            # その重複を見逃す。件数が落ち着くまで待ってから比べる。
+            $previous = $script:SpoolViewerCount
+            $settleDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            while ($true) {
+                Start-Sleep -Seconds 3
+                $script:SpoolViewerCount = Get-ViewerTokenCount -Token $token
+                if ($script:SpoolViewerCount -ge 0 -and $script:SpoolViewerCount -eq $previous) { break }
+                if ([DateTime]::UtcNow -ge $settleDeadline) { throw ('row count for token {0} did not settle within 30s after the spool emptied (last: {1}; -1 = viewer export failed)' -f $token, $script:SpoolViewerCount) }
+                $previous = $script:SpoolViewerCount
+            }
+            if ($script:SpoolViewerCount -gt $expected) {
+                throw ('{0} row(s) with token {1} visible after the drain, but only {2} complete record(s) were spooled: a spooled record was stored more than once (a segment was drained again after its rows had been committed)' -f $script:SpoolViewerCount, $token, $expected)
+            }
+            if ($script:SpoolViewerCount -ne $expected) {
+                throw ('{0} row(s) with token {1} visible after the drain, expected {2}' -f $script:SpoolViewerCount, $token, $expected)
+            }
             $script:State['spoolRowsAfterUpgrade'] = $script:SpoolViewerCount
-            return ('all {0} spooled record(s) written by the source were drained by the target ({1} row(s) visible)' -f $expected, $script:SpoolViewerCount)
+            return ('all {0} spooled record(s) written by the source were drained by the target exactly once ({1} row(s) visible)' -f $expected, $script:SpoolViewerCount)
         }
 
         Invoke-E2EStep -Name 'verify-stored-logs-preserved' -ContinueOnFailure $true -Action {
