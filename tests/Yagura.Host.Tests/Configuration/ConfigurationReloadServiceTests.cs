@@ -168,6 +168,38 @@ public sealed class ConfigurationReloadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reload_StorageSwitchedWithPlaintextSqlCredential_WarnsWithoutRecordingTheConnectionString()
+    {
+        // 資格情報入りの平文には loader が警告を出す。値が警告・ログ・監査へ漏れ得る経路はここにある
+        // （統合認証の平文では警告自体が出ないため、漏れないことの確認にならない）。
+        const string connectionString =
+            "Server=db01.contoso.local;Database=YaguraLogs;User Id=yagura_svc;Password=S3cret-Pa55";
+        WriteConfigurationFile("""{ }""");
+        var logger = new FakeLogger<ConfigurationReloadService>();
+        var service = new ConfigurationReloadService(
+            _dataRoot, YaguraConfigurationWriter.Read(_dataRoot).Options, [], _auditRecorder, logger: logger);
+
+        WriteConfigurationFile($$"""
+            { "Storage": { "Provider": "sqlserver", "SqlServer": { "ConnectionString": "{{connectionString}}" } } }
+            """);
+        var result = await service.ReloadAsync("127.0.0.1", null, null);
+
+        Assert.False(result.Rejected);
+        Assert.Contains(
+            result.WarningMessages,
+            message => message.StartsWith("Storage:SqlServer:ConnectionString", StringComparison.Ordinal));
+        var audit = Assert.Single(_auditRecorder.Recorded);
+        var logMessages = logger.Collector.GetSnapshot().Select(record => record.Message).ToArray();
+        Assert.NotEmpty(logMessages);
+        foreach (var secret in new[] { "S3cret-Pa55", "db01" })
+        {
+            Assert.All(result.WarningMessages, message => Assert.DoesNotContain(secret, message));
+            Assert.All(logMessages, message => Assert.DoesNotContain(secret, message));
+            Assert.DoesNotContain(secret, audit.Detail);
+        }
+    }
+
+    [Fact]
     public async Task Reload_ValidationFailure_RejectsAndKeepsOldConfiguration()
     {
         WriteConfigurationFile("""{ }""");

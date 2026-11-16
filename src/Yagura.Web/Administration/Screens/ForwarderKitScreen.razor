@@ -465,6 +465,7 @@
     private bool _operationAuthenticated;
 
     // ---- opt-in トグル（ADR-0021 決定 4） ----
+    private static readonly string[] UploadSettingKeys = ["Admin:ForwarderKit:MsiUpload:Enabled"];
     private Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus? _uploadSetting;
     private bool _enableInventoryAcknowledged;
     private bool _settingInProgress;
@@ -533,7 +534,7 @@
 
             // 再起動まで効かない変更を、再読み込みで再起動待ちカードへ計上する。
             await ConfigurationSaveReload.ReloadAfterSaveAsync(
-                ReloadService, Notifier, CircuitContext.RemoteAddress, scheme, principal);
+                ReloadService, Notifier, UploadSettingKeys, CircuitContext.RemoteAddress, scheme, principal);
         }
         catch (Yagura.Abstractions.Administration.WizardValidationException ex)
         {

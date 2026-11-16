@@ -78,7 +78,7 @@ public static class CertificateAdminScreenSupport
         onSaved?.Invoke();
 
         await ConfigurationSaveReload.ReloadAfterSaveAsync(
-            reloadService, notifier, operatorAddress, operatorScheme, operatorPrincipal, reloadRejectedFormat);
+            reloadService, notifier, changedKeys, operatorAddress, operatorScheme, operatorPrincipal, reloadRejectedFormat);
 
         return summary;
     }

@@ -13,6 +13,9 @@ internal sealed class RecordingConfigurationReloadService : IConfigurationReload
     /// <summary>次の <see cref="ReloadAsync"/> が返す結果（既定は変更なしの成功）。</summary>
     internal ConfigurationReloadResult NextResult { get; set; } = Succeeded([]);
 
+    /// <summary>設定すると、<see cref="ReloadAsync"/> は結果を返さずにこの例外を投げる。</summary>
+    internal Exception? NextException { get; set; }
+
     public IReadOnlyList<PendingRestartKey> GetPendingRestartKeys() => [];
 
     public Task<ConfigurationReloadResult> ReloadAsync(
@@ -22,15 +25,25 @@ internal sealed class RecordingConfigurationReloadService : IConfigurationReload
         CancellationToken cancellationToken = default)
     {
         ReloadCount++;
-        return Task.FromResult(NextResult);
+        return NextException is { } exception
+            ? Task.FromException<ConfigurationReloadResult>(exception)
+            : Task.FromResult(NextResult);
     }
 
     /// <summary>適用の口が無い変更キーがすべて再起動待ちに載った、成功時の結果。</summary>
-    internal static ConfigurationReloadResult Succeeded(IReadOnlyList<string> pendingRestartKeys) => new(
+    internal static ConfigurationReloadResult Succeeded(IReadOnlyList<string> pendingRestartKeys) =>
+        Succeeded(appliedKeys: [], pendingRestartKeys);
+
+    /// <summary>
+    /// 即時反映されたキーと再起動待ちに載ったキーがある、成功時の結果（変更キーは両者の和）。
+    /// </summary>
+    internal static ConfigurationReloadResult Succeeded(
+        IReadOnlyList<string> appliedKeys,
+        IReadOnlyList<string> pendingRestartKeys) => new(
         Rejected: false,
         RejectionReason: null,
-        ChangedKeys: pendingRestartKeys,
-        AppliedKeys: [],
+        ChangedKeys: [.. appliedKeys, .. pendingRestartKeys],
+        AppliedKeys: appliedKeys,
         PendingRestartKeys: pendingRestartKeys,
         WarningMessages: [],
         UnknownKeys: [],

@@ -76,6 +76,20 @@ public static partial class UiText
     public const string AdminSaveReloadRejectedFormat =
         "保存は完了しましたが、再起動待ちへの計上（設定の再読み込み）が拒否されました: {0}。設定の再読み込み画面から手動で実行してください";
 
+    /// <summary>
+    /// 保存後の自動再読み込みが例外で中断したときの通知（設定ファイルの一時的なロック等）。
+    /// {0} に例外の説明が入る。保存自体は成立している。
+    /// </summary>
+    public const string AdminSaveReloadFailedFormat =
+        "保存は完了しましたが、再起動待ちへの計上（設定の再読み込み）を実行できませんでした: {0}。設定の再読み込み画面から手動で実行してください";
+
+    /// <summary>
+    /// 保存後の自動再読み込みで、その画面が保存したキー以外の変更（保存のみで残された初期セットアップ
+    /// ウィザードの変更・手編集）が即時反映されたときの通知。{0} に反映されたキーの列挙が入る。
+    /// </summary>
+    public const string AdminSaveReloadAppliedOtherChangesFormat =
+        "保存に続く設定の再読み込みで、この画面以外で保存・手編集され未反映だった次の変更も反映されました: {0}";
+
     // ---- 管理面入口のメール通知チャネル健全性カード（ADR-0017 決定 5） ----
 
     /// <summary>カードの見出し。</summary>
@@ -105,7 +119,9 @@ public static partial class UiText
     /// <summary>保存後すぐ反映するチェックボックスの補足。</summary>
     public const string WizardAutoApplyHelp =
         "オンにすると、保存の直後に即時反映できる項目をライブ反映します（設定の再読み込みと同じ経路）。" +
-        "オフにすると保存のみを行い、反映は再読み込み操作または再起動で行います（複数の変更をまとめてから一括反映する運用向け）。";
+        "オフにすると保存のみを行い、反映は再読み込み操作または再起動で行います（複数の変更をまとめてから一括反映する運用向け）。" +
+        "ただし反映前に、証明書・管理 UI 認証・フォワーダ MSI・本番昇格の画面で設定を保存すると、" +
+        "その保存に続く再読み込みでこの変更も反映されます。";
 
     /// <summary>自動反映の実行結果（{0} = 即時反映のキー数）。</summary>
     public const string WizardAutoApplyAppliedFormat = "保存後の自動反映を実行しました（即時反映: {0} 件）。";

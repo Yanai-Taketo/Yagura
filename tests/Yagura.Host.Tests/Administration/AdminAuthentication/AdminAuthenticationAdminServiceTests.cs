@@ -401,6 +401,62 @@ public sealed class AdminAuthenticationAdminServiceTests : IAsyncLifetime
         Assert.Empty(result.ChangedKeys);
     }
 
+    // ---- 生値の保持（再起動待ちカードは再読み込みの生値比較で決まる） ----
+
+    [Fact]
+    public async Task ConfigureAsync_FlagChanged_RewritesOnlyThatKey_SoTheReloadCountsOnlyIt()
+    {
+        var before = YaguraConfigurationWriter.Read(_dataRoot).Options;
+
+        await _service.ConfigureAsync(
+            windowsAuthEnabled: true,
+            kerberosOnly: false,
+            appAuthEnabled: false,
+            requireForLoopback: false,
+            newAppUsername: null,
+            newAppPassword: null);
+
+        // 操作していない 3 キーが未設定から "False" へ書き換わると、再読み込みの差分（生値の比較）が
+        // それらまで再起動待ちとして数える。
+        var after = YaguraConfigurationWriter.Read(_dataRoot).Options;
+        Assert.Equal(
+            new[] { "Admin:Authentication:Windows:Enabled" },
+            ConfigurationChangePlanner.Compare(before, after).ChangedKeys);
+        Assert.Null(after.Admin?.Authentication?.Windows?.KerberosOnly);
+        Assert.Null(after.Admin?.Authentication?.App?.Enabled);
+        Assert.Null(after.Admin?.Authentication?.RequireForLoopback);
+    }
+
+    [Fact]
+    public async Task ConfigureAsync_HandEditedLowercaseValue_SameEffectiveValue_KeepsTheRawValue()
+    {
+        var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
+        var options = snapshot.Options;
+        options.Admin = new YaguraConfigurationOptions.AdminOptions
+        {
+            Authentication = new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions
+            {
+                Windows = new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.WindowsOptions { Enabled = "true" },
+            },
+        };
+        YaguraConfigurationWriter.Save(_dataRoot, options, snapshot.VersionToken);
+        var before = YaguraConfigurationWriter.Read(_dataRoot).Options;
+
+        await _service.ConfigureAsync(
+            windowsAuthEnabled: true,
+            kerberosOnly: false,
+            appAuthEnabled: false,
+            requireForLoopback: false,
+            newAppUsername: null,
+            newAppPassword: null);
+
+        // 画面は変更キーなしとして再読み込みを呼ばない。ここで "True" に書き換わると、後で別の画面の
+        // 保存に続く再読み込みが、このキーを再起動待ちとして拾ってしまう。
+        var after = YaguraConfigurationWriter.Read(_dataRoot).Options;
+        Assert.Equal("true", after.Admin?.Authentication?.Windows?.Enabled);
+        Assert.Empty(ConfigurationChangePlanner.Compare(before, after).ChangedKeys);
+    }
+
     private void SeedMsiUploadEnabled(bool enabled)
     {
         var snapshot = YaguraConfigurationWriter.Read(_dataRoot);

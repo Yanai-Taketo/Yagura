@@ -122,14 +122,9 @@ public sealed class PromotionWizardScreenRenderTests
                 services.AddSingleton<IPromotionWizardService>(new FakePromotionWizardService(snapshot));
                 services.AddSingleton<ILogMigrationService>(new FakeLogMigrationService());
                 services.AddSingleton(new YaguraCircuitContext());
-                // 切替の保存後に再読み込みを呼ぶため、本画面は IConfigurationReloadService を要求する。
-                // 結果は実物の再読み込みが切替後に返すものに合わせる——昇格ウィザードが書き換える
-                // 2 キーはどちらも適用の口を持たないため、両方とも再起動待ちに載る。
-                services.AddSingleton<IConfigurationReloadService>(new RecordingConfigurationReloadService
-                {
-                    NextResult = RecordingConfigurationReloadService.Succeeded(
-                        ["Storage:Provider", "Storage:SqlServer:ConnectionString"]),
-                });
+                // 本画面は切替の保存後に再読み込みを呼ぶため注入を要求する。初期描画では切替を実行しない
+                // ので呼ばれない（実行後の呼び出しは PromotionWizardScreenExecuteTests が固定する）。
+                services.AddSingleton<IConfigurationReloadService>(new RecordingConfigurationReloadService());
             });
 
     /// <summary>移行セクション（Issue #266）の初期描画（GetStatusAsync のみ）に応答するフェイク。</summary>
