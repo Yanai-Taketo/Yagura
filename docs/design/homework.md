@@ -66,15 +66,15 @@ ADR 0001〜0006 の本文とペルソナレビュー（PR #1・#3・#5・#7・#9
 
 ## operations.md・利用者向けドキュメント
 
-- ⬜ 信頼ネットワーク成立チェックリスト（VPN 在宅端末・保守業者持ち込み・ゲスト無線同居の例を含む）（ADR-0004 決定 1）
-- ⬜ リバースプロキシ前置時の要件（HTTPS 前提の充足判定を含む。**v0.x では前置しない**ことの明示）（ADR-0004 委任）
+- ✅ 解決 → [operations/prerequisites-and-hand-editing.md](../operations/prerequisites-and-hand-editing.md#信頼ネットワークが成り立つかを確かめる)「信頼ネットワークが成り立つかを確かめる」: 信頼ネットワーク成立チェックリスト（VPN 在宅端末・保守業者持ち込み・ゲスト無線同居の例を含む）（ADR-0004 決定 1）
+- ✅ 解決 → [operations/prerequisites-and-hand-editing.md](../operations/prerequisites-and-hand-editing.md#リバースプロキシの前置はサポートしない)「リバースプロキシの前置はサポートしない」（v1.0 も非サポート。プロキシの TLS 終端はリモート管理の HTTPS 前提を満たさない）: リバースプロキシ前置時の要件（HTTPS 前提の充足判定を含む。**v0.x では前置しない**ことの明示）（ADR-0004 委任）
 - ⬜ DPAPI のサーバ束縛とバックアップ・移行手順（資格情報の再入力）（ADR-0004 決定 5）
-- ⬜ localhost 監査の個人特定の限界（OS ログオン監査との突合が前提）（ADR-0004 決定 7）
-- ⬜ 機微ログ環境での認証有効化の推奨（ADR-0004 帰結）
-- ⬜ 管理操作の想定頻度の目安（ADR-0004 帰結）
+- ✅ 解決 → [operations/prerequisites-and-hand-editing.md](../operations/prerequisites-and-hand-editing.md#監査記録で誰が操作したかが分かる範囲)「監査記録で「誰が操作したか」が分かる範囲」: localhost 監査の個人特定の限界（OS ログオン監査との突合が前提）（ADR-0004 決定 7）
+- ✅ 解決 → [operations/prerequisites-and-hand-editing.md](../operations/prerequisites-and-hand-editing.md#機微なログを扱う環境での推奨)「機微なログを扱う環境での推奨」: 機微ログ環境での認証有効化の推奨（ADR-0004 帰結）
+- ✅ 解決 → [operations/prerequisites-and-hand-editing.md](../operations/prerequisites-and-hand-editing.md#管理操作の想定頻度の目安)「管理操作の想定頻度の目安」（操作ごとの契機で示し、数値の頻度は置かない）: 管理操作の想定頻度の目安（ADR-0004 帰結）
 - ⬜ 試用協力の呼びかけ文書 + 報告様式（並行受信可 / 計画再起動は中断扱いにしない / カウンタ値は UI からコピペ 1 回で取れること / 再起動によるカウンタリセットの扱い / 下限流量の目安は呼びかけ時点で確定済みであること）（ADR-0006 基準 2 / PR #11 佐藤・鈴木）
 - ⬜ 重大不具合⑤「持続的な閲覧不能」の閾値目安（ADR-0006 / PR #11 鈴木）
-- ⬜ NXLog 等の第三者ツール設定例の免責一行（PR #3 田中）
+- ✅ 解決 → [operations/prerequisites-and-hand-editing.md](../operations/prerequisites-and-hand-editing.md#インストール直後に最初のログを見るまで)「インストール直後に最初のログを見るまで」末尾の注記: NXLog 等の第三者ツール設定例の免責一行（PR #3 田中）
 - ⬜ スプール異常（退避継続・上限接近/到達・書込失敗・縮退起動）の警告を受けたときの行動手順（architecture.md §10 D-5 の受け皿）（PR #14 鈴木・クリス）
 - ⬜ Web UI 停止時のカウンタ・状態の代替取得経路（メタデータ領域の直接参照可否。試用報告様式 = ui.md §12 UI-7 と合同で確定）（PR #17 鈴木）
 

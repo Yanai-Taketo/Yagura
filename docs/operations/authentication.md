@@ -4,7 +4,7 @@
 
 ## 認証は既定でオフ（信頼ネットワーク前提 + opt-in 強化）
 
-Yagura は既定で**認証なし**（[ADR-0004](../adr/0004-security-model.md)・[ADR-0001](../adr/0001-project-founding.md) の「信頼ネットワーク前提」）で動く。管理 UI（既定ポート 8515）は loopback 束縛のみ、閲覧 UI（既定ポート 8514）は LAN 公開。**機微なログを扱う環境で「LAN 内の誰でも読める」を締めたい場合にのみ**、認証を opt-in で有効化する。有効化しない限り本書の内容は関係しない。
+Yagura は既定で**認証なし**（[ADR-0004](../adr/0004-security-model.md)・[ADR-0001](../adr/0001-project-founding.md) の「信頼ネットワーク前提」）で動く。管理 UI（既定ポート 8515）は loopback 束縛のみ、閲覧 UI（既定ポート 8514）は LAN 公開。**機微なログを扱う環境で「LAN 内の誰でも読める」を締めたい場合にのみ**、認証を opt-in で有効化する。有効化しない限り本書の内容は関係しない。前提が成り立っているかは[信頼ネットワークが成り立つかを確かめる](prerequisites-and-hand-editing.md#信頼ネットワークが成り立つかを確かめる)のチェックリストで確かめる。
 
 ## 閲覧 UI 認証（8514）を有効化する
 
@@ -69,7 +69,7 @@ Kerberos のみを許可し NTLM を拒否したい場合は `Viewer:Authenticat
 ## ブレークグラス（非常口）の推奨
 
 - **リモート管理を Windows 統合認証で運用する場合も、アプリ独自 ID/パスワードの管理者アカウントを最低 1 つ持つことを強く推奨する**（[ADR-0010](../adr/0010-admin-ui-authentication.md) 決定 3）。AD/DC 障害時に RDP 経路も同じ AD に依存していると、Windows 認証単独では AD 障害 1 点で管理面全体を失う。
-- **loopback 認証 opt-in（`Admin:Authentication:RequireForLoopback = true`）を有効化した環境の最終復旧**は「物理到達（RDP/コンソール）→ 設定ファイル手編集で opt-in を解除 → サービス再起動」。ただし現状、**設定反映にはサービス再起動が必要で、その間 syslog 受信が止まる**（受信断）。この代償を承知の上で opt-in を有効化する。
+- **loopback 認証 opt-in（`Admin:Authentication:RequireForLoopback = true`）を有効化した環境の最終復旧**は「物理到達（RDP/コンソール）→ 設定ファイル手編集で opt-in を解除 → サービス再起動」（手編集の手順と注意は[設定ファイルを手で編集する](prerequisites-and-hand-editing.md#設定ファイルを手で編集する)）。ただし現状、**設定反映にはサービス再起動が必要で、その間 syslog 受信が止まる**（受信断）。この代償を承知の上で opt-in を有効化する。
 - **手編集の実行可能者はローカル Administrators に限られる**（設定ファイルの書き込み ACL）。AD グループ経由で「管理」役割のみを持つ（ローカル Administrators 非所属の）利用者は、この手編集復旧を自分では行えない——別途ローカル Administrator への依頼が要る。
 - **DC 障害中の相互作用**: DC 障害中は既存セッションは寿命まで生存するが、寿命が切れた後の Windows 再ログインはグループ解決ができず失敗する。実質のレジリエンス窓が Cookie 寿命に縮む——ブレークグラス（アプリ管理者アカウント／手編集）で救う。
 
