@@ -2,6 +2,8 @@
 
 [ADR-0014](../adr/0014-code-signing.md) の実装に向けた運用手順。**証明書の発注・本人確認・アカウント作成・支払いはオーナー本人が行う**（AI エージェントは代行しない）。この文書は「オーナーがやること」と「実装で自動化すること」を分け、発注前に片づける確認事項（ADR-0014 委任 A/B/C）を実行可能な形にまとめる。
 
+> この文書は署名基盤を構築したときの記録である。構築後のリリースの実施手順（署名の承認・公開後の確認・途中で止まったときの復旧）は [release-process.md](release-process.md)、署名基盤の現在の設定値は [installer/sign/README.md](../../installer/sign/README.md) を正とする。
+
 方式の確定事項（ADR-0014 決定 1、オーナー裁定 2026-07-15）:
 
 - **CA**: Sectigo（正規リセラー経由）の OV コード署名証明書
@@ -180,11 +182,11 @@ build (x64 / arm64)  … 未署名 MSI を artifact 化
 - **署名ツールは jsign**（決定 9 の TSA フォールバック要件に素直に合う。`--tsaurl <主> <副>` で複数指定できる）。`--storetype GOOGLECLOUD`、`--keystore <鍵リングパス>`、`--alias codesign-rsa4096`、`--storepass <WIF アクセストークン>`、`--certfile <Sectigo 発行の証明書チェーン>`。SignTool + Cloud KMS CNG は代替（Windows ランナー・単一 TSA）
 - **認証**: `google-github-actions/auth`（**SHA ピン留め**: `@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093` = v3.0.0）で `token_format: access_token` を取り、jsign の `--storepass` に渡す。長期鍵 JSON は置かない
 - **deep signing（委任 2）**: MSI 内部の自前バイナリ（`Yagura.Host.exe`・`Yagura.*.dll`）を署名してから WiX で再パッケージし、最後に MSI を署名する。上流バイナリ（.NET ランタイム・MudBlazor）は署名しない。sign ジョブは署名済み publish 出力から `-p:SkipYaguraHostPublish=true -p:YaguraPublishDir=<署名済み出力>` で MSI を焼く
-- **承認ゲート**: GitHub Environment `release-signing`（required reviewers = オーナー）で人間の承認を挟む（決定 3。(A) SignPath の手動承認に相当する統制を (C2) で再現）。WIF の紐付けを将来この Environment に絞ると更に堅い（委任 3 の hardening）
+- **承認ゲート**: GitHub Environment `release-signing`（required reviewers = オーナー）で人間の承認を挟む（決定 3。(A) SignPath の手動承認に相当する統制を (C2) で再現）。WIF の信頼条件もこの Environment を要求しているため（フェーズ 2 の `attribute-condition`）、承認を経ないジョブには GCP がトークンを発行しない
 - **skip 条件**: WIF 設定が使えない実行（`pull_request`・fork）では sign ジョブを skip し、未署名ビルド + E2E の確認までで止める（Release は作らない）。決定 3
-- **証明書チェーン**: Sectigo 発行の証明書（+中間証明書）をどこから供給するか（リポジトリ同梱の公開証明書 or Secrets）は実装 PR で確定。公開証明書自体は秘密ではない
+- **証明書チェーン**: Sectigo 発行の証明書（+中間証明書）はリポジトリ同梱の `installer/sign/codesign-chain.pem` から供給する。公開証明書自体は秘密ではない
 - **全アクションを SHA ピン留め**（決定 3。`cla.yml` に前例）
-- **退避弁・復旧手順・公開後検証・全アーキ all-or-nothing** は決定 3・8・9・委任 11 のとおり実装する
+- **公開後検証・全アーキ all-or-nothing**（決定 3）は release.yml に実装済み。署名フローが途中で止まったときの復旧（委任 11）は [release-process.md](release-process.md) §9 にまとめた。**署名基盤が使えないときの退避弁（決定 8）は release.yml にまだ実装していない**
 
 ---
 
