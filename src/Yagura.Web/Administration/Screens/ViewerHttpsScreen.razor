@@ -20,7 +20,7 @@
       （8514 同一ポート切替——決定 1）
     - 検証ポリシー（決定 3）: 期限切れ・秘密鍵読取不可・EKU 不適合は保存拒否（管理 HTTPS と
       同じ停止面の扱い。TLS 受信との差分理由も表示する）。SAN ホスト名不整合のみ「警告して通す」
-      ——検査結果と「警告なしになる見込みの URL」を具体的に提示し、保存後も確認できる
+      ——証明書を選んだ時点で検査結果と「警告なしになる見込みの URL」を具体的に提示し、保存後も確認できる
     - 決定 6: 有効化の保存時に (a) 反映は再起動後 (b) 新 URL (c) 旧 URL 断絶の周知依頼
       (d) メール通知無効時の指摘、を案内する
     - 決定 9: 管理リモート HTTPS の拇印の明示コピー（転写のみ・連動なし・検証はバイパスしない）
@@ -75,7 +75,7 @@ else
        CertificateSeverityPolicy（期限切れ・秘密鍵読取不可とも保存拒否 = Error）。 *@
     <YaguraCertificateSelectionPanel Title="@UiText.ViewerHttpsCertificatesTitle"
                                       RefreshButtonText="@UiText.ViewerHttpsRefreshButton"
-                                      OnRefresh="RefreshCertificates"
+                                      OnRefresh="RefreshCertificatesAsync"
                                       CertificateListError="@_certificateListError"
                                       EnumerationFailedFormat="@UiText.ViewerHttpsEnumerationFailedFormat"
                                       Candidates="_candidates"
@@ -85,7 +85,8 @@ else
                                       CertificatesIntro="@UiText.ViewerHttpsCertificatesIntro"
                                       SelectedThumbprintMissingFromList="SelectedThumbprintMissingFromList"
                                       ThumbprintNotInListFormat="@UiText.ViewerHttpsThumbprintNotInListFormat"
-                                      @bind-SelectedThumbprint="_selectedThumbprint"
+                                      SelectedThumbprint="@_selectedThumbprint"
+                                      SelectedThumbprintChanged="SelectThumbprintAsync"
                                       Policy="CertificateSeverityPolicy">
         <HeaderExtra>
             @if (_status.AdminHttpsCertificateThumbprint is not null)
@@ -95,14 +96,15 @@ else
                 <div class="mt-2">
                     <MudButton Variant="Variant.Outlined"
                                StartIcon="@Icons.Material.Filled.ContentCopy"
-                               OnClick="CopyFromAdminHttps">@UiText.ViewerHttpsCopyFromAdminButton</MudButton>
+                               OnClick="CopyFromAdminHttpsAsync">@UiText.ViewerHttpsCopyFromAdminButton</MudButton>
                     <MudText Typo="Typo.caption" Class="mt-1">@UiText.ViewerHttpsCopyFromAdminNote</MudText>
                 </div>
             }
         </HeaderExtra>
     </YaguraCertificateSelectionPanel>
 
-    @* SAN ホスト名検査（決定 4——保存後も確認できる読み出し面）。選択中の拇印に対して随時実行 *@
+    @* SAN ホスト名検査（決定 4）。選択中の拇印（初期表示では永続値）の結果を出す。選択・転写・一覧の
+       更新のたびに再検査するため、保存前に確認でき、保存後も同じ面で読み出せる *@
     @if (_sanInspection is not null)
     {
         <MudPaper Elevation="1" Class="pa-4 mt-4">
@@ -193,6 +195,10 @@ else
     private string? _savedSummary;
     private bool _showAfterEnableGuidance;
 
+    // 検査の世代。InspectCertificateAsync の契約は非同期で応答順を保証しないため、選択を素早く
+    // 切り替えたときに古い選択の結果が後から届いて表示を上書きしないよう、最後の検査以外の結果は捨てる。
+    private int _inspectionVersion;
+
     /// <summary>閲覧 HTTPS のバッジ・注記ポリシー: 期限切れ・秘密鍵読取不可とも保存拒否 = Error。</summary>
     private static readonly YaguraCertificateSeverityPolicy CertificateSeverityPolicy = new()
     {
@@ -233,10 +239,7 @@ else
         LoadCertificates();
 
         // 保存後も検査結果を確認できるようにする（決定 4）: 永続値に拇印があれば初期表示で検査する。
-        if (_status.CertificateThumbprint is not null)
-        {
-            _sanInspection = await ViewerHttpsAdminService.InspectCertificateAsync(_status.CertificateThumbprint);
-        }
+        await InspectSelectedCertificateAsync();
     }
 
     private void ApplyStatusToFields(ViewerHttpsStatus status)
@@ -245,9 +248,12 @@ else
         _selectedThumbprint = status.CertificateThumbprint ?? string.Empty;
     }
 
-    private void RefreshCertificates()
+    private async Task RefreshCertificatesAsync()
     {
         LoadCertificates();
+
+        // 一覧に無かった証明書が取り込まれた場合など、選択は同じでも検査が解決できるようになり得る。
+        await InspectSelectedCertificateAsync();
     }
 
     private void LoadCertificates()
@@ -255,12 +261,47 @@ else
         (_candidates, _certificateListError) = CertificateAdminScreenSupport.LoadCertificates(CertificateStoreReader);
     }
 
-    private void CopyFromAdminHttps()
+    private async Task CopyFromAdminHttpsAsync()
     {
-        // 決定 9: 転写のみ（保存はしない）。保存時に通常の検証 + SAN 検査を通る。
+        // 決定 9: 転写のみ（保存はしない）。通常の選択と同じく転写した時点で SAN 検査を行い、
+        // 保存時には通常の検証 + SAN 検査を通る。
         if (_status?.AdminHttpsCertificateThumbprint is { } adminThumbprint)
         {
-            _selectedThumbprint = adminThumbprint;
+            await SelectThumbprintAsync(adminThumbprint);
+        }
+    }
+
+    private async Task SelectThumbprintAsync(string thumbprint)
+    {
+        if (string.Equals(thumbprint, _selectedThumbprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _selectedThumbprint = thumbprint;
+
+        // 保存結果の表示（特に保存後案内の新 URL）は現在の検査結果から組み立てるため、選択を変えると
+        // 未保存の証明書の内容に入れ替わってしまう。保存済みの内容と取り違えないよう消す。
+        _savedSummary = null;
+        _showAfterEnableGuidance = false;
+
+        await InspectSelectedCertificateAsync();
+    }
+
+    private async Task InspectSelectedCertificateAsync()
+    {
+        var version = ++_inspectionVersion;
+        _sanInspection = null;
+
+        if (string.IsNullOrWhiteSpace(_selectedThumbprint))
+        {
+            return;
+        }
+
+        var inspection = await ViewerHttpsAdminService.InspectCertificateAsync(_selectedThumbprint);
+        if (version == _inspectionVersion)
+        {
+            _sanInspection = inspection;
         }
     }
 
@@ -285,6 +326,10 @@ else
 
             _status = result.Status;
             ApplyStatusToFields(_status);
+
+            // 保存結果の検査は保存した拇印に対するもの。保存の待ち合わせ中に始まった検査の結果が
+            // 後から届いても、選択欄（保存値へ戻した）と食い違わないよう世代を進めて捨てる。
+            _inspectionVersion++;
             _sanInspection = result.SanInspection;
 
             // 決定 6 の保存時案内は「有効な状態を保存した」ときに表示する（無効化の保存では
