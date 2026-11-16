@@ -48,6 +48,7 @@ def make_report(
     flow_control_enabled: bool | None = False,
     flow_control_overridden: bool = True,
     conditions: bool = True,
+    graceful_stop: bool | None = True,
     os_build: str = "10.0.26100",
     cpu: str = "AMD EPYC 7763 64-Core Processor",
 ) -> dict:
@@ -95,6 +96,7 @@ def make_report(
             "DrainTimeoutSeconds": 120,
             "DrainCompleted": True,
             "DrainWaitElapsed": "00:00:00.0010000",
+            "GracefulStopSucceeded": graceful_stop,
         }
     else:
         report.pop("Conditions", None)
@@ -205,6 +207,14 @@ class JudgeStepTests(unittest.TestCase):
         self.assertTrue(survey.judge_step(enabled, "on")["pass"])
         self.assertTrue(survey.judge_step(enabled, "any")["pass"])
         self.assertFalse(survey.judge_step(make_report(flow_control_enabled=False), "on")["pass"])
+
+    def test_kill_fallback_is_not_trusted_as_a_pass(self):
+        # Kill では直近の永続化以降の退避・破棄が欠け、0 に見え得る。
+        result = survey.judge_step(make_report(graceful_stop=False))
+
+        self.assertFalse(result["pass"])
+        self.assertTrue(any("Kill" in r for r in result["reasons"]))
+        self.assertTrue(survey.judge_step(make_report(graceful_stop=None))["pass"])
 
     def test_old_format_without_conditions_is_judged_on_counters_with_warning(self):
         result = survey.judge_step(make_report(conditions=False))

@@ -126,6 +126,7 @@ public sealed class BenchHostConfigurationTests
         Assert.False(conditions.UdpReceiveBufferOverridden);
         Assert.Equal(ScenarioOptions.DefaultDrainTimeoutSeconds, conditions.DrainTimeoutSeconds);
         Assert.True(conditions.DrainCompleted);
+        Assert.Null(conditions.GracefulStopSucceeded);
     }
 
     [Fact]
@@ -134,7 +135,8 @@ public sealed class BenchHostConfigurationTests
         var conditions = BenchConditions.From(
             Options(BenchScenario.ProviderWriteCeiling, sqlServer: "Server=.;Database=B", udpReceiveBufferBytes: 4 * 1024 * 1024, flowControlEnabled: false, drainTimeoutSeconds: 600),
             drainCompleted: false,
-            drainWaitElapsed: TimeSpan.FromSeconds(600));
+            drainWaitElapsed: TimeSpan.FromSeconds(600),
+            gracefulStopSucceeded: false);
 
         Assert.Equal("SqlServer", conditions.Provider);
         Assert.False(conditions.FlowControlEnabled);
@@ -145,6 +147,7 @@ public sealed class BenchHostConfigurationTests
         Assert.True(conditions.UdpReceiveBufferOverridden);
         Assert.Equal(600, conditions.DrainTimeoutSeconds);
         Assert.False(conditions.DrainCompleted);
+        Assert.False(conditions.GracefulStopSucceeded);
     }
 
     /// <summary>集計スクリプトは JSON のキー名で測定条件を読む。名前の変更は集計を黙って壊す。</summary>
@@ -163,7 +166,7 @@ public sealed class BenchHostConfigurationTests
             AdditionalMetrics: new Dictionary<string, string>(),
             Notes: [],
             HostStdout: [],
-            Conditions: BenchConditions.From(Options(BenchScenario.SustainedZeroDrop, flowControlEnabled: false), drainCompleted: true, drainWaitElapsed: TimeSpan.Zero));
+            Conditions: BenchConditions.From(Options(BenchScenario.SustainedZeroDrop, flowControlEnabled: false), drainCompleted: true, drainWaitElapsed: TimeSpan.Zero, gracefulStopSucceeded: true));
 
         var json = ReportWriter.ToJson(report);
 
@@ -172,5 +175,6 @@ public sealed class BenchHostConfigurationTests
         Assert.Contains("\"Provider\": \"Sqlite\"", json, StringComparison.Ordinal);
         Assert.Contains("\"UdpReceiveBufferBytes\"", json, StringComparison.Ordinal);
         Assert.Contains("\"DrainCompleted\": true", json, StringComparison.Ordinal);
+        Assert.Contains("\"GracefulStopSucceeded\": true", json, StringComparison.Ordinal);
     }
 }

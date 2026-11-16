@@ -58,6 +58,8 @@ public static class ReportWriter
                 $"UDP 受信バッファ: {c.UdpReceiveBufferBytes} バイト{(c.UdpReceiveBufferOverridden ? "（ベンチ指定）" : "（製品既定）")}");
             sb.AppendLine(CultureInfo.InvariantCulture,
                 $"drain 待ち: {(c.DrainCompleted ? "完了" : "上限到達（drain 途中で突合）")} / 所要 {c.DrainWaitElapsed} / 上限 {c.DrainTimeoutSeconds} 秒");
+            sb.AppendLine(CultureInfo.InvariantCulture,
+                $"ホストの停止: {c.GracefulStopSucceeded switch { true => "グレースフル停止", false => "Kill へフォールバック（カウンタの最終値が欠け得る）", null => "(不明)" }}");
             sb.AppendLine();
         }
 

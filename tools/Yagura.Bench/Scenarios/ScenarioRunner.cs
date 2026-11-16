@@ -440,13 +440,17 @@ public static class ScenarioRunner
                 "直近の定期永続化以降の増分が突合に反映されていない可能性がある。");
         }
 
-        return new ReconcileOutcome(reconciliation, drainCompleted, drainStopwatch.Elapsed);
+        return new ReconcileOutcome(reconciliation, drainCompleted, drainStopwatch.Elapsed, host.GracefulStopSucceeded);
     }
 
     private static TimeSpan DrainTimeout(ScenarioOptions options) => TimeSpan.FromSeconds(options.DrainTimeoutSeconds);
 
     /// <summary>突合結果と、その前段の drain 待ちの観測。</summary>
-    private sealed record ReconcileOutcome(ReconciliationResult Reconciliation, bool DrainCompleted, TimeSpan DrainWaitElapsed);
+    private sealed record ReconcileOutcome(
+        ReconciliationResult Reconciliation,
+        bool DrainCompleted,
+        TimeSpan DrainWaitElapsed,
+        bool? GracefulStopSucceeded);
 
     private static ScenarioReport BuildReport(
         string scenarioName,
@@ -473,5 +477,5 @@ public static class ScenarioRunner
             additionalMetrics,
             notes,
             hostStdout ?? [],
-            BenchConditions.From(options, outcome.DrainCompleted, outcome.DrainWaitElapsed));
+            BenchConditions.From(options, outcome.DrainCompleted, outcome.DrainWaitElapsed, outcome.GracefulStopSucceeded));
 }

@@ -249,6 +249,10 @@ def judge_step(report: dict[str, Any], flow_control: str = "off") -> dict[str, A
             reasons.append("流量制御が無効（M-4 の確認条件外）")
         if conditions.get("DrainCompleted") is False:
             warnings.append("drain 待ちが上限に達し、drain 途中の件数で突合している")
+        # Kill で止めた段は、直近の定期永続化以降のカウンタ増分（退避・破棄）が欠け、
+        # 実際には退避が起きていても 0 に見え得る。合格の根拠にできないため不合格にする。
+        if conditions.get("GracefulStopSucceeded") is False:
+            reasons.append("ホストをグレースフル停止できず Kill した（カウンタの最終値が欠け得る）")
 
     if series is None:
         warnings.append("どの系列にも当たらない実行（シナリオ・トランスポート・保存先の組み合わせ）")
@@ -715,6 +719,7 @@ def method_description() -> dict[str, Any]:
             f"実効送出レートが目標の {REQUIRED_SEND_RATIO:.0%} 以上（持続系列のみ）",
             "突合成立",
             "公称値の測定では流量制御を外している",
+            "ホストをグレースフル停止できている（Kill の段はカウンタが欠け得るため合格にしない）",
         ],
         "verify_jobs_required": VERIFY_JOBS_REQUIRED,
         "verify_min_duration_seconds": VERIFY_MIN_DURATION_SECONDS,

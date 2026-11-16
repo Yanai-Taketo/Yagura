@@ -26,6 +26,11 @@ namespace Yagura.Bench.Reporting;
 /// 保存件数・導出値の解釈に注意が要る。
 /// </param>
 /// <param name="DrainWaitElapsed">drain 完了の待ちに要した時間。</param>
+/// <param name="GracefulStopSucceeded">
+/// ホストをグレースフル停止できたか（<c>false</c> = Kill へフォールバック）。Kill では直近の定期
+/// 永続化以降のカウンタ増分が失われ、退避や破棄が 0 に見えることがあるため、合否の判定では
+/// <c>false</c> の段を信用しない。
+/// </param>
 public sealed record BenchConditions(
     string Provider,
     bool FlowControlEnabled,
@@ -36,13 +41,18 @@ public sealed record BenchConditions(
     bool UdpReceiveBufferOverridden,
     int DrainTimeoutSeconds,
     bool DrainCompleted,
-    TimeSpan DrainWaitElapsed)
+    TimeSpan DrainWaitElapsed,
+    bool? GracefulStopSucceeded = null)
 {
     /// <summary>
     /// CLI 指定と drain 待ちの観測から測定条件を組み立てる。ホストへ渡す設定の規則は
     /// <see cref="ScenarioRunner.BuildHostConfiguration"/> と同じものを使う。
     /// </summary>
-    public static BenchConditions From(ScenarioOptions options, bool drainCompleted, TimeSpan drainWaitElapsed)
+    public static BenchConditions From(
+        ScenarioOptions options,
+        bool drainCompleted,
+        TimeSpan drainWaitElapsed,
+        bool? gracefulStopSucceeded = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -69,6 +79,7 @@ public sealed record BenchConditions(
             UdpReceiveBufferOverridden: host.UdpReceiveBufferBytes is not null,
             DrainTimeoutSeconds: options.DrainTimeoutSeconds,
             DrainCompleted: drainCompleted,
-            DrainWaitElapsed: drainWaitElapsed);
+            DrainWaitElapsed: drainWaitElapsed,
+            GracefulStopSucceeded: gracefulStopSucceeded);
     }
 }
