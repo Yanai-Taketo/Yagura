@@ -1,8 +1,13 @@
 # コード署名(Sectigo + Google Cloud KMS)
 
 [ADR-0014](../../docs/adr/0014-code-signing.md) の実装。リリース成果物(MSI と自前アセンブリ)を
-GCP KMS の HSM 鍵で Authenticode 署名する。運用の全体像・発注手順は
-[docs/development/code-signing-setup.md](../../docs/development/code-signing-setup.md) を参照。
+GCP KMS の HSM 鍵で Authenticode 署名する。この文書は署名基盤の参照資料(署名対象・ピン留め・
+GCP リソース・GitHub の設定値)。
+
+- リリースの実施手順(当日の確認・署名の承認・公開後の確認・途中で止まったときの復旧)は
+  [docs/development/release-process.md](../../docs/development/release-process.md) を正とする
+- 署名基盤を構築したときの記録(発注・GCP・WIF)は
+  [docs/development/code-signing-setup.md](../../docs/development/code-signing-setup.md)
 
 ## この配下
 
@@ -78,6 +83,8 @@ TSA(タイムスタンプ)は主 `http://timestamp.sectigo.com` + 副 `http://ti
    (`create-release` は publish_release=false では走らないため、署名・署名検証まで確認できる)
 8. 署名済み MSI の SmartScreen 実挙動を lab で確認(委任事項)
 
-**未検証のまま本番リリースに使わないこと。** WIF 疎通(第 1 段)は 2026-07-18 に実証済み。
-`codesign-chain.pem` は訂正版証明書(2026-07-23 再発行)受領後に追加済み。第 2 段(手順 7〜8)を
-通してから本番リリースに使う。
+第 1 段(WIF 疎通)は 2026-07-18 に実証済み。第 2 段は、訂正版証明書(2026-07-23 再発行)の
+`codesign-chain.pem` で公開せずに署名する通し検証と、署名済み MSI の SmartScreen の lab 確認
+([ADR-0014](../../docs/adr/0014-code-signing.md) 改訂履歴 1)を通過済みで、v0.5.0 から署名付きで
+公開している。署名基盤の設定を変えたとき(証明書の更新・WIF や IAM の変更など)は、本番の
+リリースの前に手順 7 で公開せずに署名を試す。
