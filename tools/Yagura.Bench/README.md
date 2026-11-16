@@ -17,6 +17,10 @@ CI 回帰判定は M7-3（Issue #62）で行った。
 ProviderWriteCeiling）を全テストの後に実行している。基準値の更新手続きは
 [conventions.md](../../docs/development/conventions.md)「CI 回帰ベンチの基準値更新」節を参照。
 
+CI 回帰ベンチも本物の `Yagura.Host` を既定構成で起動するため、**製品既定の流量制御
+（送信元単位の token bucket）が有効なまま動いている**。回帰ベンチのレートは既定の閾値より
+低いので結果に影響しないが、閾値を超えるレートを測るときは下記「流量制御とベンチ」を参照。
+
 ## 前提
 
 - Windows 上で `dotnet build` 済みであること（`tools/Yagura.Bench` は `Yagura.sln` に含まれる）
@@ -66,6 +70,14 @@ Yagura.Bench SpoolActivationRecovery --spool-quota-bytes 2097152 --burst-count 5
 # SQLite の書き込み上限確認（既定 provider）
 Yagura.Bench ProviderWriteCeiling --rate 5000 --duration 20
 
+# 流量制御を外して UDP の受信能力を測る（約 200 B のメッセージで毎秒 12000 通を 60 秒間）
+Yagura.Bench SustainedZeroDrop --transport udp --rate 12000 --duration 60 --padding-bytes 100 --flow-control off
+
+# SQL Server + 流量制御無効 + 受信バッファ指定の組み合わせ（drain 待ちの上限を 15 分に延ばす）
+Yagura.Bench ProviderWriteCeiling --transport tcp --rate 8000 --duration 60 --flow-control off `
+    --udp-receive-buffer-bytes 4194304 --drain-timeout 900 `
+    --sqlserver "Server=(localdb)\MSSQLLocalDB;Database=YaguraBench;Integrated Security=true;TrustServerCertificate=true;"
+
 # SQL Server の書き込み上限確認（LocalDB 例）
 Yagura.Bench ProviderWriteCeiling --rate 5000 --duration 20 `
     --sqlserver "Server=(localdb)\MSSQLLocalDB;Database=YaguraBench;Integrated Security=true;TrustServerCertificate=true;"
@@ -95,9 +107,27 @@ Yagura.Bench SchemaMigrationDdl --rows 100000,1000000 `
 | `--output-dir <path>` | 結果 JSON・サマリの出力先 | `./bench-results` |
 | `--sqlserver <接続文字列>` | SQL Server provider を対象にする（`ProviderWriteCeiling` 専用） | 未指定（SQLite 対象） |
 | `--spool-quota-bytes <N>` | スプール容量（`SpoolActivationRecovery` 専用） | `4194304`（4 MiB） |
+| `--udp-receive-buffer-bytes <N>` | UDP 受信バッファ（`Ingestion:Udp:ReceiveBufferBytes`。バイト）。受信パイプラインを測る 5 シナリオすべてに効く | 未指定（製品既定のまま） |
+| `--flow-control <on\|off>` | 送信元単位の流量制御（`Ingestion:FlowControl:Enabled`）の有効/無効。受信能力を測るときは `off`（下記「流量制御とベンチ」） | 未指定（製品既定 = 有効） |
+| `--flow-control-rate <N>` | 流量制御の持続速度（件/秒。`Ingestion:FlowControl:MessagesPerSecond`）。`--flow-control off` とは併用不可 | 未指定（製品既定） |
+| `--flow-control-burst <N>` | 流量制御のバーストサイズ（件。`Ingestion:FlowControl:BurstSize`）。`--flow-control off` とは併用不可 | 未指定（製品既定） |
+| `--drain-timeout <秒>` | 送出後にスプールの drain 完了を待つ上限。超えると drain 途中の件数で突合する | `120` |
 | `--keep-data-root` | 終了後にデータルートを削除せず残す（障害調査用） | 残さない |
 | `--compare-baseline <path>` | 基準値ファイルと比較し、許容帯超過の劣化を検知する（CI 回帰判定。M7-3） | 未指定（比較しない） |
 | `--rows <N1,N2,...>` | `QueryLatency`/`SchemaMigrationDdl` の対象行数規模（カンマ区切り） | `100000,1000000` |
+
+### 流量制御とベンチ
+
+ベンチは本物の `Yagura.Host` を子プロセスで起動するため、何も指定しなければ製品既定の流量制御
+（[architecture.md §3.3](../../docs/design/architecture.md#33-流量制御)）が効く。ベンチの送信元は
+`127.0.0.1` の 1 つだけなので、**既定の持続速度を超えるレートは流量制御に削られ、受信能力では
+なく閾値を測ることになる**（削られた分は「流量制御破棄」に計上され、突合は成立する）。
+受信能力そのものを測るときは `--flow-control off` を付ける。
+
+設定ファイル（`yagura.json`）はシナリオ開始前に 1 回だけ書き、SQL Server・スプール容量・受信
+バッファ・流量制御の指定をまとめて入れる（指定が 1 つもなければ書かない）。`--sqlserver` は
+`ProviderWriteCeiling` 専用、`--spool-quota-bytes` は `SpoolActivationRecovery` 専用で、受信
+バッファと流量制御は受信パイプラインを測る 5 シナリオすべてに効く。
 
 ## 結果出力
 
@@ -105,6 +135,13 @@ Yagura.Bench SchemaMigrationDdl --rows 100000,1000000 `
 `<シナリオ名>-<タイムスタンプ>.summary.txt`（人間可読サマリ。実行時に標準出力にも表示する）を書く。
 両方に実行環境情報（OS・CPU・論理コア数・メモリ量・データルートのドライブ種別・.NET ランタイム）を
 必ず含める。
+
+JSON の `Conditions` 欄は、その実行が「どの構成のホストで測ったか」を記録する: 保存先
+（`Provider`）、流量制御の有効/無効と閾値（`FlowControlEnabled` 等。ベンチが指定したか製品既定かは
+`FlowControlOverridden`）、UDP 受信バッファ（`UdpReceiveBufferBytes`）、drain 待ちの上限と完了
+（`DrainTimeoutSeconds`・`DrainCompleted`）、ホストをグレースフル停止できたか
+（`GracefulStopSucceeded`）。値はベンチが渡した設定から導く期待値で、`--data-root` に既存の設定
+ファイルがある場合、ベンチが書かない項目はそちらが効く。この欄の無い旧形式の JSON もある。
 
 終了コードは「突合成立（差分 0）」なら `0`、「突合不成立」なら `2`、CLI 引数エラー等は `1`、
 `--compare-baseline` 指定時に基準比較が不合格なら `3`。
@@ -184,4 +221,75 @@ Win32 の仕様上「呼び出し元プロセス自身が対象と同じコン�
 - 送信側のボトルネック回避: 負荷生成器は `--sender-sockets` 個の並行ソケット（UDP）・接続（TCP）に
   送出を分散する。既定 4。単一ソケットでは送信側 API の同期コストが計測対象（受信側）の性能より
   先にボトルネックになり得るため
-- 長時間ベンチ（実測値確定・公称値検証）は本 Issue の対象外。動作確認レベルの短時間実行のみ
+- 長時間の実行（性能公称値の標本・検証）は下記「性能公称値の調査」の workflow で行う
+
+## 性能公称値の調査（M-6 / M-4）
+
+性能公称値（[architecture.md §9](../../docs/design/architecture.md#9-実測待ち一覧) M-6）と流量制御の
+既定閾値（M-4）は、`.github/workflows/perf-nominal-survey.yml`（`workflow_dispatch` のみ）で
+GitHub ホストランナーの windows-2022 / windows-2025 を多数並べて測る。1 ジョブ = ランナー個体 1 台 =
+標本 1 つで、各ジョブは OS・CPU 名・論理コア数・メモリ・ディスクの情報（`runner-identity.json`）と
+ベンチの結果 JSON を artifact に残す。
+
+### 系列と合否
+
+| 系列 | シナリオ | 表すもの |
+|---|---|---|
+| N1 | `SustainedZeroDrop --transport udp` | UDP 持続受信で損失 0・退避 0 を保てる最大 msg/s |
+| N2 | `SustainedZeroDrop --transport tcp` | TCP 持続受信で目標の 99% 以上を保ち退避 0 の最大 msg/s |
+| N3 | `ProviderWriteCeiling --transport tcp` | SQLite の書き込み上限（退避 0 の最大 msg/s） |
+| BURST | `BurstQ1Drop` | 無損失で吸収できる最大バースト（M-4 の入力） |
+
+1 段の合否、個体ごとの値 R_i、下側限界 L と公称値 X の算出は
+`tools/Yagura.Bench/scripts/aggregate-nominal-survey.py` だけが決める（定数と合格条件はスクリプト
+冒頭に明記し、変更は PR で行う）。workflow の梯子（2 段続けて不合格で打ち切り）も同じスクリプトの
+`judge` で合否を判定する。公称値の測定（explore / sample / verify）は `--flow-control off` で走る。
+
+### フェーズと入力
+
+| phase | 内容 | 既定の標本数 / 1 段の秒数 |
+|---|---|---|
+| `explore` | 粗い梯子で上限の範囲を探す（公称値の算出には使わない） | 版あたり 10 / 30 秒 |
+| `sample` | 公称値の標本。境界付近に絞った梯子を走らせる | 版あたり 29 / 60 秒 |
+| `verify` | 公称値 X で 1 段だけ走らせ、全ジョブの合格を確認する | 版あたり 30 / 300 秒 |
+| `flowcontrol` | 既定構成（流量制御は製品既定で有効）のまま X と B_q1 を走らせ、流量制御が発火しないことを確認する | 版あたり 10 / 60 秒 |
+
+入力は `os`（both / windows-2025 / windows-2022）、`samples`、`udp_rates`・`tcp_rates`・
+`sqlite_rates`・`burst_counts`（カンマ区切り。空欄の系列は省く。verify と flowcontrol では各 1 値）、
+`duration`、`padding_bytes`（既定 100 で全長 約 200 B）、`rcvbuf`（空欄 = 製品既定。M-2 の再確認に
+4194304 等を指定する）、`max_parallel`。同時実行枠を長く占有し PR の CI を待たせるため、PR の少ない
+時間帯に `max_parallel` を絞って流す。
+
+```bash
+# 例: 探索
+gh workflow run perf-nominal-survey.yml -f phase=explore
+# 例: 標本（境界付近の 5 段）
+gh workflow run perf-nominal-survey.yml -f phase=sample \
+  -f udp_rates=4000,5000,6000,8000,10000 -f tcp_rates=6000,8000,10000,15000,20000 \
+  -f sqlite_rates=2000,3000,4000,6000,8000 -f burst_counts=1000,2000,5000
+# 以下の X_N1 / X_N2 / X_N3（各系列の公称値の候補）と B_Q1（無損失で吸収できる最大バースト）は
+# sample フェーズの集計結果から入れる。
+# 例: 検証（公称値で 5 分）と長時間版（30 分、少数）
+gh workflow run perf-nominal-survey.yml -f phase=verify -f udp_rates=$X_N1 -f tcp_rates=$X_N2 -f sqlite_rates=$X_N3
+gh workflow run perf-nominal-survey.yml -f phase=verify -f samples=2 -f duration=1800 \
+  -f udp_rates=$X_N1 -f tcp_rates=$X_N2 -f sqlite_rates=$X_N3
+# 例: M-4（流量制御の発火確認。sqlite_rates は使わない）
+gh workflow run perf-nominal-survey.yml -f phase=flowcontrol -f udp_rates=$X_N1 -f tcp_rates=$X_N2 -f burst_counts=$B_Q1
+```
+
+### 集計
+
+`aggregate` ジョブがジョブのサマリと artifact `nominal-survey-summary`（Markdown と JSON）に結果を
+出す。複数回の dispatch を合算する場合（検証の通常版と長時間版など）は、artifact を 1 つの
+ディレクトリへ落としてから手元で集計する。artifact は 90 日で消えるため、確定に使った生データは
+`tools/Yagura.Bench/results/` へ PR で収録する。
+
+```bash
+gh run download <run-id> -p 'nominal-survey-windows-*' -D survey/<run-id>
+python3 tools/Yagura.Bench/scripts/aggregate-nominal-survey.py aggregate survey --phase verify \
+  --nominal N1=$X_N1,N2=$X_N2,N3=$X_N3 --out-md summary.md --out-json summary.json
+# 1 件の結果 JSON の合否だけを見る
+python3 tools/Yagura.Bench/scripts/aggregate-nominal-survey.py judge <結果JSON>
+# 集計スクリプトの単体テスト
+python3 -m unittest discover -s tools/Yagura.Bench/scripts/tests
+```
