@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
 using Yagura.Host.Administration;
+using Yagura.Host.Administration.OldDatabaseDisposal;
 using Yagura.Host.Configuration;
 using Yagura.TestSupport;
 
@@ -158,7 +159,6 @@ public sealed class PromotionWizardServiceTests : IDisposable
         var service = CreateService(new FakeValidator(success: true));
         await service.SetConnectionFormAsync(SqlForm(), password: "secret!");
         await service.ValidateConnectionAsync();
-        await service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Evacuate, @"D:\Backup\Yagura");
 
         _time.Advance(WizardSessionDefaults.InactivityTimeout + TimeSpan.FromSeconds(1));
 
@@ -168,10 +168,8 @@ public sealed class PromotionWizardServiceTests : IDisposable
         Assert.Null(snapshot.ExecuteIdempotencyToken);
         Assert.True(snapshot.CredentialReentryRequired);
 
-        // 進行状態（接続の項目・処分の選択・退避先）は保持される（再開時に打ち直させない）。
+        // 進行状態（接続の項目）は保持される（再開時に打ち直させない）。
         Assert.Equal(@"SV01\SQLEXPRESS", snapshot.Form!.ServerName);
-        Assert.Equal(OldDatabaseDisposal.Evacuate, snapshot.Disposal);
-        Assert.Equal(@"D:\Backup\Yagura", snapshot.EvacuationDirectory);
     }
 
     [Fact]
@@ -318,50 +316,92 @@ public sealed class PromotionWizardServiceTests : IDisposable
         Assert.Null(result.RemediationSql);
     }
 
-    // ---- 旧 DB 処分の選択と退避先（database.md §6.1） ----
+    // ---- 切替実行（DPAPI 保存・監査・冪等性・切替の境界） ----
 
-    [Fact]
-    public async Task ChooseDisposal_Evacuate_RequiresFullyQualifiedPath()
+    [SkippableFact]
+    public async Task Execute_DoesNotAskForDisposalChoice()
     {
-        var service = CreateService(new FakeValidator(success: true));
-
-        await Assert.ThrowsAsync<WizardValidationException>(() =>
-            service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Evacuate));
-        await Assert.ThrowsAsync<WizardValidationException>(() =>
-            service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Evacuate, @"backup\yagura"));
-
-        var snapshot = await service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Evacuate, @"D:\Backup\Yagura");
-        Assert.Equal(OldDatabaseDisposal.Evacuate, snapshot.Disposal);
-        Assert.Equal(@"D:\Backup\Yagura", snapshot.EvacuationDirectory);
-    }
-
-    [Fact]
-    public async Task ChooseDisposal_Delete_ClearsEvacuationDirectory()
-    {
-        var service = CreateService(new FakeValidator(success: true));
-        await service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Evacuate, @"D:\Backup\Yagura");
-
-        var snapshot = await service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Delete);
-
-        Assert.Equal(OldDatabaseDisposal.Delete, snapshot.Disposal);
-        Assert.Null(snapshot.EvacuationDirectory);
-    }
-
-    // ---- 切替実行（DPAPI 保存・監査・冪等性） ----
-
-    [Fact]
-    public async Task Execute_WithoutDisposalChoice_IsRejected()
-    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "切替の保存は DPAPI（Windows 専用）で接続文字列を暗号化する");
+        // 切替の時点では後始末の方法を選ばせない（database.md §6.1）——検証済みなら選択なしで実行できる。
         var service = CreateService(new FakeValidator(success: true));
         await service.SetConnectionFormAsync(WindowsForm());
         await service.ValidateConnectionAsync();
         var token = (await service.GetSnapshotAsync()).ExecuteIdempotencyToken!;
-        _audit.RecordedEvents.Clear();
 
         var result = await service.ExecuteAsync(token);
 
-        Assert.Equal(WizardApplyOutcome.InvalidToken, result.Outcome);
-        Assert.Empty(_audit.RecordedEvents);
+        Assert.Equal(WizardApplyOutcome.Applied, result.Outcome);
+    }
+
+    [SkippableFact]
+    public async Task Execute_WithBoundarySource_RecordsSwitchBoundaryInDataRoot()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "切替の保存は DPAPI（Windows 専用）で接続文字列を暗号化する");
+        var sqlitePath = Path.Combine(_dataRoot, "yagura.db");
+        var latest = new DateTimeOffset(2026, 7, 6, 23, 59, 0, TimeSpan.Zero);
+        var service = new PromotionWizardService(
+            _dataRoot,
+            new FakeValidator(success: true),
+            _audit,
+            _time,
+            ServiceAccount,
+            new PromotionSwitchBoundarySource(
+                sqlitePath,
+                _ => Task.FromResult(new PromotionLiveStoreSnapshot(latest, 42, 1234))));
+        await service.SetConnectionFormAsync(WindowsForm());
+        await service.ValidateConnectionAsync();
+        var token = (await service.GetSnapshotAsync()).ExecuteIdempotencyToken!;
+
+        await service.ExecuteAsync(token);
+
+        var boundary = PromotionSwitchBoundaryStore.TryRead(_dataRoot);
+        Assert.NotNull(boundary);
+        Assert.Equal(_time.GetUtcNow().UtcDateTime, boundary.SwitchedAtUtc);
+        Assert.Equal(sqlitePath, boundary.OldDatabasePath);
+        Assert.Equal(latest.UtcDateTime, boundary.LatestReceivedAtUtc);
+        Assert.Equal(42, boundary.LatestId);
+        Assert.Equal(1234, boundary.RecordCount);
+        Assert.Null(boundary.EffectiveSinceUtc);
+    }
+
+    [SkippableFact]
+    public async Task Execute_WithoutBoundarySource_DoesNotTouchSwitchBoundary()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "切替の保存は DPAPI（Windows 専用）で接続文字列を暗号化する");
+        // 実効 provider が既に SQL Server の間にウィザードをやり直しても、本物の切替の境界を上書きしない。
+        var service = CreateService(new FakeValidator(success: true));
+        await service.SetConnectionFormAsync(WindowsForm());
+        await service.ValidateConnectionAsync();
+        var token = (await service.GetSnapshotAsync()).ExecuteIdempotencyToken!;
+
+        await service.ExecuteAsync(token);
+
+        Assert.Null(PromotionSwitchBoundaryStore.TryRead(_dataRoot));
+    }
+
+    [SkippableFact]
+    public async Task Execute_SnapshotFails_StillRecordsTimeAndPath()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "切替の保存は DPAPI（Windows 専用）で接続文字列を暗号化する");
+        var sqlitePath = Path.Combine(_dataRoot, "yagura.db");
+        var service = new PromotionWizardService(
+            _dataRoot,
+            new FakeValidator(success: true),
+            _audit,
+            _time,
+            ServiceAccount,
+            new PromotionSwitchBoundarySource(sqlitePath, _ => throw new InvalidOperationException("db down")));
+        await service.SetConnectionFormAsync(WindowsForm());
+        await service.ValidateConnectionAsync();
+        var token = (await service.GetSnapshotAsync()).ExecuteIdempotencyToken!;
+
+        var result = await service.ExecuteAsync(token);
+
+        Assert.Equal(WizardApplyOutcome.Applied, result.Outcome);
+        var boundary = PromotionSwitchBoundaryStore.TryRead(_dataRoot);
+        Assert.NotNull(boundary);
+        Assert.Equal(sqlitePath, boundary.OldDatabasePath);
+        Assert.Null(boundary.RecordCount);
     }
 
     [Fact]
@@ -371,7 +411,6 @@ public sealed class PromotionWizardServiceTests : IDisposable
         var service = CreateService(validator);
         await service.SetConnectionFormAsync(SqlForm(trustServerCertificate: true), password: "secret!");
         await service.ValidateConnectionAsync();
-        await service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Evacuate, @"D:\Backup\Yagura");
         var token = (await service.GetSnapshotAsync()).ExecuteIdempotencyToken!;
         _audit.RecordedEvents.Clear();
 
@@ -397,13 +436,13 @@ public sealed class PromotionWizardServiceTests : IDisposable
         Assert.True(DpapiConnectionStringProtector.TryUnprotect(storedConnectionString, out var decrypted));
         Assert.Equal(validator.LastConnectionString, decrypted);
 
-        // 監査（2000 番台 ID 2003）: 接続文字列・パスワードは記録しない。退避先と証明書信頼の
-        // 選択値は記録する（database.md §6.1）。
+        // 監査（2000 番台 ID 2003）: 接続文字列・パスワードは記録しない。証明書信頼の選択値は記録し、
+        // 旧 DB の処分の選択は含めない（処分は切替の後の別の操作——2030）。
         var recorded = Assert.Single(_audit.RecordedEvents);
         Assert.Equal(AuditEventKind.PromotionExecuted, recorded.Kind);
         Assert.DoesNotContain("secret!", recorded.Detail);
-        Assert.Contains("退避", recorded.Detail);
-        Assert.Contains(@"D:\Backup\Yagura", recorded.Detail);
+        Assert.DoesNotContain("処分", recorded.Detail);
+        Assert.DoesNotContain("退避", recorded.Detail);
         Assert.Contains("サーバ証明書の信頼=有効", recorded.Detail);
 
         // 完了に伴い資格情報は破棄される（configuration.md §5「終了時に破棄」）。
@@ -418,7 +457,6 @@ public sealed class PromotionWizardServiceTests : IDisposable
         var service = CreateService(new FakeValidator(success: true));
         await service.SetConnectionFormAsync(WindowsForm());
         await service.ValidateConnectionAsync();
-        await service.ChooseOldDatabaseDisposalAsync(OldDatabaseDisposal.Delete);
         var token = (await service.GetSnapshotAsync()).ExecuteIdempotencyToken!;
         _audit.RecordedEvents.Clear();
 

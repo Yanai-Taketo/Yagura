@@ -80,17 +80,14 @@ public sealed class PromotionWizardScreenRenderTests
     }
 
     [Fact]
-    public async Task EvacuationChosen_ShowsDirectoryInputAndCurrentChoice()
+    public async Task BeforeExecute_ShowsStagesAfterSwitch_AndAsksNoDisposalChoice()
     {
-        var html = await RenderAsync(Snapshot() with
-        {
-            Disposal = OldDatabaseDisposal.Evacuate,
-            EvacuationDirectory = @"D:\Backup\Yagura",
-        });
+        // 切替の時点では後始末の方法を選ばせない（database.md §6.1）——切替の後に要る段階の予告だけを示す。
+        var html = await RenderAsync(Snapshot());
 
-        Assert.Contains(UiText.PromotionEvacuationDirectoryLabel, html);
-        Assert.Contains(UiText.PromotionConfirmEvacuation, html);
-        Assert.Contains(@"D:\Backup\Yagura", html);
+        Assert.Contains(UiText.PromotionStagesTitle, html);
+        Assert.Contains("後始末", html);
+        Assert.DoesNotContain("退避先", html);
     }
 
     [Fact]
@@ -109,8 +106,6 @@ public sealed class PromotionWizardScreenRenderTests
         ServiceAccountName: ServiceAccount,
         HasPassword: false,
         ConnectionValidated: false,
-        Disposal: null,
-        EvacuationDirectory: null,
         ExecuteIdempotencyToken: null,
         Executed: false,
         CredentialReentryRequired: false);
@@ -166,12 +161,6 @@ public sealed class PromotionWizardScreenRenderTests
             string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(new PromotionValidationResult(true, "ok"));
-
-        public Task<PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
-            OldDatabaseDisposal disposal,
-            string? evacuationDirectory = null,
-            CancellationToken cancellationToken = default)
-            => Task.FromResult(snapshot);
 
         public Task<PromotionApplyResult> ExecuteAsync(
             string idempotencyToken,

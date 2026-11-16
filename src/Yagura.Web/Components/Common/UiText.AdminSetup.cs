@@ -24,9 +24,26 @@ public static partial class UiText
     /// <summary>移行の検証不合格通知。</summary>
     public const string MigrationFailedNotification = "移行の完全性検証に不合格です（再実行で追補できます）";
 
-    /// <summary>移行完了済みの表示。</summary>
+    /// <summary>
+    /// 移行完了済みの表示。完了の表示は旧ファイルの件数による判定（database.md §6.3 の規則 1・2）であり、
+    /// 時間帯ごとの照合は後始末の直前に行う。
+    /// </summary>
     public const string MigrationAlreadyCompleted =
-        "蓄積ログの移行は完了しています。旧データベースファイルの処分は処分手順に従ってください。";
+        "蓄積ログの移行は完了しています。後始末の前に、移行先との件数を時間帯ごとに照合し直します。";
+
+    /// <summary>
+    /// 移行の完了後に組み込みデータベースへ追加されたログがある場合の表示（{0} = 件数。ui.md §5.4）。
+    /// </summary>
+    public const string MigrationAddedAfterCompletionFormat =
+        "SQL Server に保存できなかった間に、組み込みデータベースへ保存したログが {0:N0} 件あります。" +
+        "これらは SQL Server にはありません。先に『蓄積ログの移行』を実行してください。";
+
+    /// <summary>別の画面で移行を実行中の表示。</summary>
+    public const string MigrationRunningElsewhere = "蓄積ログの移行を実行中です。";
+
+    /// <summary>後始末の実行中で移行できない表示。</summary>
+    public const string MigrationBlockedByDisposal =
+        "以前の保存先（組み込みデータベース）のファイルの後始末を実行中のため、移行はできません。";
 
     // ---- 設定の再読み込み（configuration.md §3。CF-4 層1） ----
 
@@ -1001,45 +1018,24 @@ public static partial class UiText
     public const string PromotionRemediationSqlLabel =
         "解決するための SQL（このサーバは実行しません。SSMS 等で SQL Server 側で実行してください）";
 
-    /// <summary>退避先フォルダの入力ラベル（database.md §6.1——退避の選択時は必須）。</summary>
-    public const string PromotionEvacuationDirectoryLabel = "退避先のフォルダ";
-
-    /// <summary>退避先フォルダの入力例。</summary>
-    public const string PromotionEvacuationDirectoryPlaceholder = @"例: D:\Backup\Yagura";
-
-    /// <summary>退避の選択の確定ボタン（退避先の入力とセットで確定する）。</summary>
-    public const string PromotionConfirmEvacuation = "この退避先で「退避」を選択する";
+    /// <summary>切替の後に要る段階の予告の見出し。</summary>
+    public const string PromotionStagesTitle = "切り替えの後に行うこと";
 
     /// <summary>
-    /// 切替確定前の予告（database.md §6.1 の委任を ui.md §5.4 が確定した文言）。
+    /// 切替確定前の予告（database.md §6.1 の委任を ui.md §5.4 が確定した文言）。段階を番号で示し、
+    /// 「切り替えが完了しない」とは書かない——保存先の切り替え自体は再起動で反映されるため、
+    /// 「まだ SQL Server に保存されていない」と誤読させない。後始末の方法は切替の時点では選ばせない
+    /// （選んだ時点で後始末が済んだと受け取らせない）。
     /// </summary>
     public const string PromotionSwitchWarning =
-        "切り替えると、これまでに保存したログは移行機能の提供まで画面から参照できなくなります。" +
-        "あとで参照する可能性がある場合は「退避」を選んでください。";
-
-    /// <summary>
-    /// 旧・組み込み DB ファイルの処分: 退避。
-    /// **「移動して保管する」とは書かない**（Issue #502）——現行の版では実ファイルの移動は
-    /// 行われないため、動作を約束する文言にすると利用者は「退避された」と誤解する。
-    /// </summary>
-    public const string PromotionDisposalEvacuate = "退避（あとで参照できるよう保管する）";
-
-    /// <summary>旧・組み込み DB ファイルの処分: 削除。</summary>
-    public const string PromotionDisposalDelete = "削除（あとで参照しない）";
-
-    /// <summary>
-    /// 処分が未実装であることの明示（Issue #502）。**選択する前**に出す——
-    /// 切替完了後にだけ伝えると、退避先を入力した利用者は「退避済み」と思い込んだまま
-    /// 旧ファイルを放置する（または元の場所を探さない）ことになる。
-    /// </summary>
-    public const string PromotionDisposalManualNotice =
-        "現在の版では、ここでの選択は記録されるだけで、旧データベースファイルの移動・削除は" +
-        "自動では行われません。切り替え後も、旧ファイルは元の場所に残ります。";
-
-    /// <summary>処分が未実装であることの補足（次に取る手順）。</summary>
-    public const string PromotionDisposalManualSupplement =
-        "選択した内容は監査記録に残ります。実際の移動・削除は、切り替えの完了後に手動で行ってください" +
-        "（手順は運用ガイドの「昇格後に旧データベースファイルを処分する」を参照）。";
+        "保存先の切り替えは、次の順に進みます。\n" +
+        "1. サービス『Yagura』を再起動します（サービス管理ツール、または PowerShell の Restart-Service Yagura）。" +
+        "再起動の後に受信したログから SQL Server に保存されます。\n" +
+        "2. これまでに保存したログを画面で見る場合は、『蓄積ログの移行』を実行します" +
+        "（任意。移行するまで、これまでのログは画面から参照できません）。\n" +
+        "3. 最後に、組み込みデータベースのファイルを後始末します" +
+        "（必須。保管用に書き出してから削除するか、削除します。後始末の後は元に戻せません）。" +
+        "後始末が済むまで、管理画面に『後始末が残っています』と表示されます。";
 
     /// <summary>切替実行ボタン（破壊的操作。確認ダイアログ必須——ui.md §3.1）。</summary>
     public const string PromotionExecute = "切り替えを実行する";

@@ -147,52 +147,10 @@ else
         }
     </MudPaper>
 
-    @* --- 旧・組み込み DB ファイルの処分の選択（database.md §6.1「残置しない」） --- *@
+    @* --- 切替の後に要る段階の予告（database.md §6.1。後始末の方法は切替の時点では選ばせない） --- *@
     <MudPaper Elevation="1" Class="pa-4 mt-4">
-        <MudText Typo="Typo.h6">これまでに保存したログの扱い</MudText>
-        <MudText Class="mt-2">@UiText.PromotionSwitchWarning</MudText>
-
-        @* 処分が未実装であることを**選択の前**に出す（Issue #502）。 *@
-        <div class="mt-3">
-            <YaguraSystemNotice Severity="YaguraNoticeSeverity.Warning"
-                                Message="@UiText.PromotionDisposalManualNotice"
-                                Supplement="@UiText.PromotionDisposalManualSupplement" />
-        </div>
-
-        <div class="mt-4">
-            <YaguraButton OnClick="ShowEvacuationInput"
-                          Disabled="@_showEvacuationInput">
-                @UiText.PromotionDisposalEvacuate
-            </YaguraButton>
-            <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Delete, null)"
-                          Disabled="@(_snapshot.Disposal == OldDatabaseDisposal.Delete)">
-                @UiText.PromotionDisposalDelete
-            </YaguraButton>
-        </div>
-
-        @if (_showEvacuationInput)
-        {
-            @* 退避先の指定（database.md §6.1——退避の選択時は必須・選択内容とともに監査対象） *@
-            <div class="mt-4">
-                <YaguraTextField Label="@UiText.PromotionEvacuationDirectoryLabel"
-                                 Required="true"
-                                 Placeholder="@UiText.PromotionEvacuationDirectoryPlaceholder"
-                                 ErrorText="@_disposalErrorText"
-                                 @bind-Value="_evacuationDirectory" />
-                <YaguraButton OnClick="() => ChooseDisposalAsync(OldDatabaseDisposal.Evacuate, _evacuationDirectory)">
-                    @UiText.PromotionConfirmEvacuation
-                </YaguraButton>
-            </div>
-        }
-
-        @if (_snapshot.Disposal is OldDatabaseDisposal chosen)
-        {
-            <MudText Class="mt-2">
-                選択中: @(chosen == OldDatabaseDisposal.Evacuate
-                    ? $"{UiText.PromotionDisposalEvacuate}（{_snapshot.EvacuationDirectory}）"
-                    : UiText.PromotionDisposalDelete)
-            </MudText>
-        }
+        <MudText Typo="Typo.h6">@UiText.PromotionStagesTitle</MudText>
+        <MudText Class="mt-2" Style="white-space: pre-line">@UiText.PromotionSwitchWarning</MudText>
     </MudPaper>
 
     @* --- 切替本番（すべての事前検証が通ってから実行できる） --- *@
@@ -219,8 +177,22 @@ else
         {
             <MudAlert Severity="Severity.Success" Class="mt-2">@UiText.MigrationAlreadyCompleted</MudAlert>
         }
+        else if (migrationStatus.Availability == LogMigrationAvailability.Running && !_migrationRunning)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.MigrationRunningElsewhere</MudText>
+        }
+        else if (migrationStatus.Availability == LogMigrationAvailability.DisposalInProgress)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.MigrationBlockedByDisposal</MudText>
+        }
         else if (migrationStatus.Availability == LogMigrationAvailability.Ready)
         {
+            @if (migrationStatus.RecordsAddedAfterCompletion > 0)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">
+                    @string.Format(UiText.MigrationAddedAfterCompletionFormat, migrationStatus.RecordsAddedAfterCompletion)
+                </MudAlert>
+            }
             <MudText Typo="Typo.body2" Class="mt-2">@UiText.MigrationDescription</MudText>
             <MudText Typo="Typo.body2" Class="mt-1">
                 対象: @($"{migrationStatus.SourceRecordCount:N0}") 件
@@ -277,7 +249,6 @@ else
     private PromotionApplyResult? _applyResult;
     private string? _resultMessage;
     private string? _connectionErrorText;
-    private string? _disposalErrorText;
 
     // ---- 接続入力のローカル状態（snapshot から復元。パスワードだけは snapshot に含まれない
     //      ため常にこの画面のローカル状態が唯一の入力経路——configuration.md §5） ----
@@ -290,12 +261,8 @@ else
     private string? _password;
     private string? _rawConnectionString;
 
-    // ---- 処分のローカル状態 ----
-    private bool _showEvacuationInput;
-    private string? _evacuationDirectory;
-
     private bool CanExecute =>
-        _snapshot is { ConnectionValidated: true, Disposal: not null, ExecuteIdempotencyToken: not null };
+        _snapshot is { ConnectionValidated: true, ExecuteIdempotencyToken: not null };
 
     private string AuthModeValue =>
         _authenticationMode == PromotionAuthenticationMode.WindowsIntegrated ? AuthModeWindowsValue : AuthModeSqlValue;
@@ -319,12 +286,6 @@ else
             _authenticationMode = form.AuthenticationMode;
             _userName = form.UserName;
             _trustServerCertificate = form.TrustServerCertificate;
-        }
-
-        if (_snapshot.Disposal == OldDatabaseDisposal.Evacuate)
-        {
-            _showEvacuationInput = true;
-            _evacuationDirectory = _snapshot.EvacuationDirectory;
         }
     }
 
@@ -394,30 +355,6 @@ else
         catch (WizardValidationException ex)
         {
             _connectionErrorText = ex.Message;
-        }
-    }
-
-    private void ShowEvacuationInput()
-    {
-        _showEvacuationInput = true;
-        _disposalErrorText = null;
-    }
-
-    private async Task ChooseDisposalAsync(OldDatabaseDisposal disposal, string? evacuationDirectory)
-    {
-        try
-        {
-            _disposalErrorText = null;
-            _snapshot = await PromotionWizard.ChooseOldDatabaseDisposalAsync(disposal, evacuationDirectory);
-
-            if (disposal == OldDatabaseDisposal.Delete)
-            {
-                _showEvacuationInput = false;
-            }
-        }
-        catch (WizardValidationException ex)
-        {
-            _disposalErrorText = ex.Message;
         }
     }
 

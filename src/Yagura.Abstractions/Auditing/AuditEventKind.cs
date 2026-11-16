@@ -308,4 +308,19 @@ public enum AuditEventKind
     /// 相乗りさせない——資格情報の検証に到達していない事象のため。
     /// </summary>
     AdminAccountStoreUnavailableRejected,
+
+    /// <summary>
+    /// 管理操作: 本番昇格後の旧・組み込み DB ファイルの処分（イベント ID 2030。database.md §6.3）。
+    /// 開始・削除の開始（書き出して保管のみ）・終了（完了 / 書き出しの失敗 / 削除の部分失敗 / 中断）と、
+    /// 対象側の安全検査による拒否を、それぞれ 1 件として記録する——開始に終了が対応しないことが
+    /// クラッシュによる中断を示す。ログの内容・資格情報は記録しない。
+    /// </summary>
+    OldDatabaseDisposalExecuted,
+
+    /// <summary>
+    /// 製品の処分によらず旧・組み込み DB ファイルが無くなったことを観測した（イベント ID 2031。
+    /// database.md §6.3）。切替前のログ（証跡）が製品の外で消えた事実を監査記録から辿れるようにする。
+    /// 周期監視が観測するため <c>RemoteAddress</c>/<c>AuthenticationScheme</c> は <see langword="null"/>。
+    /// </summary>
+    OldDatabaseRemovedOutsideProduct,
 }

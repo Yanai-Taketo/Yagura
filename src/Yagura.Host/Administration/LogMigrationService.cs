@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Data.Sqlite;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.Host.Administration.OldDatabaseDisposal;
 using Yagura.Storage;
 using Yagura.Storage.Sqlite;
 
@@ -31,13 +33,18 @@ namespace Yagura.Host.Administration;
 /// システムイベント（Kind = <see cref="SystemEventKinds.MigrationImport"/>）として移行先に記録する
 /// ——「この範囲のレコードは移行で投入された」を後から機械可読に辿れる（レコード単位の
 /// マーカー列は追加しない——スキーマ変更を避け、範囲 + 件数の記録で識別要件を満たす判断）</item>
-/// <item><b>旧データを残置しない</b>: 旧ファイルの処分自体は DB-7（昇格ウィザードの処分手順）の
-/// 管轄。本サービスは完了状態（<see cref="LogMigrationAvailability.Completed"/>）を提示して
-/// 処分手順への引き継ぎ点を作る</item>
+/// <item><b>旧データを残置しない</b>: 旧ファイルの処分は §6.3 の後始末（<see cref="IOldDatabaseDisposalService"/>）。
+/// 本サービスは完了状態（<see cref="LogMigrationAvailability.Completed"/>）を提示して引き継ぎ点を作る</item>
 /// </list>
 /// <para>
+/// <b>システムイベントも写す</b>: 再起動による切替では切替前のシステムイベント（受信できなかった時間帯の
+/// 記録等）が旧ファイルにだけ残るため、ログ本体の移行の後に移行先に無いものを複写し、完了の条件に含める
+/// （<see cref="SystemEventReconciler"/>。重複は照合で避ける）。
+/// </para>
+/// <para>
 /// <b>実行前提</b>: 現行 provider が SQL Server であること（昇格済み）。移行は管理操作であり
-/// 監査記録（2018）の対象。二重実行はサービス内の排他で直列化する。
+/// 監査記録（2018）の対象。旧ファイルを開く操作（状態取得の件数読み取り・移行）は処分と同じ排他
+/// （<see cref="OldDatabaseAccessGate"/>）の下で行い、旧ファイルはファイルを作成しない開き方で開く。
 /// </para>
 /// </remarks>
 public sealed class LogMigrationService : ILogMigrationService
@@ -55,7 +62,10 @@ public sealed class LogMigrationService : ILogMigrationService
     private readonly LogStoreWriteGate? _writeGate;
     private readonly IAuditRecorder _auditRecorder;
     private readonly ILogger<LogMigrationService> _logger;
-    private readonly SemaphoreSlim _runGate = new(1, 1);
+    private readonly OldDatabaseAccessGate _accessGate;
+
+    /// <summary>状態取得が旧ファイルの排他を待つ上限（確認材料の読み取りなど短い保持と競合した場合）。</summary>
+    private static readonly TimeSpan StatusGateWait = TimeSpan.FromSeconds(5);
 
     public LogMigrationService(
         string dataRoot,
@@ -64,7 +74,8 @@ public sealed class LogMigrationService : ILogMigrationService
         ILogStore targetStore,
         LogStoreWriteGate? writeGate,
         IAuditRecorder auditRecorder,
-        ILogger<LogMigrationService>? logger = null)
+        ILogger<LogMigrationService>? logger = null,
+        OldDatabaseAccessGate? accessGate = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(oldSqliteDatabasePath);
@@ -78,9 +89,12 @@ public sealed class LogMigrationService : ILogMigrationService
         _writeGate = writeGate;
         _auditRecorder = auditRecorder;
         _logger = logger ?? NullLogger<LogMigrationService>.Instance;
+        _accessGate = accessGate ?? new OldDatabaseAccessGate();
     }
 
-    private string CheckpointPath => Path.Combine(_dataRoot, CheckpointFileName);
+    private string CheckpointPath => CheckpointPathOf(_dataRoot);
+
+    private static string CheckpointPathOf(string dataRoot) => Path.Combine(dataRoot, CheckpointFileName);
 
     /// <inheritdoc />
     public async Task<LogMigrationStatus> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -90,19 +104,84 @@ public sealed class LogMigrationService : ILogMigrationService
             return new LogMigrationStatus(LogMigrationAvailability.NotPromoted);
         }
 
-        var checkpoint = ReadCheckpoint();
-        if (checkpoint?.CompletedAtUtc is not null)
+        using var lease = await _accessGate.TryAcquireAsync(
+            OldDatabaseAccessHolder.Inspection, StatusGateWait, cancellationToken).ConfigureAwait(false);
+        if (lease is null)
         {
-            return new LogMigrationStatus(LogMigrationAvailability.Completed, MigratedCount: checkpoint.MigratedCount);
+            return new LogMigrationStatus(_accessGate.Holder == OldDatabaseAccessHolder.Disposal
+                ? LogMigrationAvailability.DisposalInProgress
+                : LogMigrationAvailability.Running);
         }
 
+        return await GetStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 状態の判定（呼び出し側が旧ファイルの排他を保持する）。完了の判定は database.md §6.3 の規則 1・2:
+    /// 完了記録が移行済み位置を持ち、その位置より後のレコードが旧ファイルに無いこと。位置を持たない完了記録
+    /// （移行元 0 件で完了）は、旧ファイルにレコードが 1 件でもあれば未完了とみなす。完了後でも移行先に無い
+    /// システムイベントがあれば追補できるよう実行可能を返す。
+    /// </summary>
+    private async Task<LogMigrationStatus> GetStatusCoreAsync(CancellationToken cancellationToken)
+    {
         if (!File.Exists(_oldSqliteDatabasePath))
         {
             return new LogMigrationStatus(LogMigrationAvailability.NoSourceDatabase);
         }
 
-        await using var source = new SqliteLogStore(_oldSqliteDatabasePath);
-        var sourceCount = await ((IBulkLogReader)source).CountAsync(null, cancellationToken).ConfigureAwait(false);
+        var checkpoint = ReadCheckpoint();
+        var completedRecorded = checkpoint?.CompletedAtUtc is not null;
+        var hasPosition = checkpoint?.LastReceivedAtUtc is not null && checkpoint.LastId is not null;
+
+        long sourceCount;
+        long addedAfterCompletion = 0;
+        var missingSystemEventCount = 0;
+        try
+        {
+            await using (var source = new SqliteLogStore(_oldSqliteDatabasePath, createIfMissing: false))
+            {
+                sourceCount = await ((IBulkLogReader)source).CountAsync(null, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (completedRecorded && hasPosition)
+            {
+                addedAfterCompletion = (await OldSqliteDatabase.RangeAfterPositionAsync(
+                    _oldSqliteDatabasePath,
+                    new DateTimeOffset(DateTime.SpecifyKind(checkpoint!.LastReceivedAtUtc!.Value, DateTimeKind.Utc)),
+                    checkpoint.LastId!.Value,
+                    cancellationToken).ConfigureAwait(false)).Count;
+            }
+
+            if (completedRecorded)
+            {
+                var sourceEvents = await OldSqliteDatabase.ReadSystemEventsAsync(_oldSqliteDatabasePath, cancellationToken)
+                    .ConfigureAwait(false);
+                missingSystemEventCount = (await SystemEventReconciler.FindMissingInTargetAsync(
+                    sourceEvents, _targetStore, cancellationToken).ConfigureAwait(false)).Count;
+            }
+        }
+        catch (Exception ex) when (ex is SqliteException or LogStoreWriteException)
+        {
+            // 内容を読めない旧ファイル（0 バイト・識別子の破損）は移行の対象にならない——後始末（§6.3）が
+            // 削除でのみ扱う。
+            _logger.LogInformation(ex, "旧 SQLite ファイルを読めないため、移行の対象はありません。");
+            return new LogMigrationStatus(LogMigrationAvailability.NoSourceDatabase);
+        }
+
+        if (completedRecorded)
+        {
+            var logsCompleted = hasPosition ? addedAfterCompletion == 0 : sourceCount == 0;
+            if (logsCompleted && missingSystemEventCount == 0)
+            {
+                return new LogMigrationStatus(LogMigrationAvailability.Completed, MigratedCount: checkpoint!.MigratedCount);
+            }
+
+            return new LogMigrationStatus(
+                LogMigrationAvailability.Ready,
+                SourceRecordCount: sourceCount,
+                MigratedCount: hasPosition ? checkpoint!.MigratedCount : 0,
+                RecordsAddedAfterCompletion: hasPosition ? addedAfterCompletion : 0);
+        }
 
         return new LogMigrationStatus(
             LogMigrationAvailability.Ready,
@@ -118,12 +197,16 @@ public sealed class LogMigrationService : ILogMigrationService
         IProgress<LogMigrationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (!await _runGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        using var lease = await _accessGate.TryAcquireAsync(
+            OldDatabaseAccessHolder.Migration, TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+        if (lease is null)
         {
-            throw new InvalidOperationException("蓄積ログの移行は既に実行中です。");
+            throw new InvalidOperationException(_accessGate.Holder == OldDatabaseAccessHolder.Disposal
+                ? "以前の保存先のファイルの後始末を実行中のため、移行を開始できません。"
+                : "蓄積ログの移行は既に実行中です。");
         }
 
-        var status = await GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        var status = await GetStatusCoreAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (status.Availability is not LogMigrationAvailability.Ready)
@@ -146,10 +229,6 @@ public sealed class LogMigrationService : ILogMigrationService
                 operatorAddress, authenticationScheme, authenticatedPrincipal,
                 $"途中失敗（一部が移行先へ書き込まれた可能性あり。再実行で追補可能）: {ex.Message}").ConfigureAwait(false);
             throw;
-        }
-        finally
-        {
-            _runGate.Release();
         }
     }
 
@@ -198,7 +277,7 @@ public sealed class LogMigrationService : ILogMigrationService
             : null;
         DateTimeOffset? newestMigrated = resumeAfter?.ReceivedAt;
 
-        await using (var source = new SqliteLogStore(_oldSqliteDatabasePath))
+        await using (var source = new SqliteLogStore(_oldSqliteDatabasePath, createIfMissing: false))
         {
             var batch = new List<LogRecord>(BatchSize);
 
@@ -235,6 +314,20 @@ public sealed class LogMigrationService : ILogMigrationService
 
         if (succeeded)
         {
+            var (copied, stillMissing) = await MigrateSystemEventsAsync(cancellationToken).ConfigureAwait(false);
+            if (stillMissing > 0)
+            {
+                succeeded = false;
+                message = $"検証不合格（システムイベント {stillMissing} 件が移行先にありません。再実行してください）";
+            }
+            else
+            {
+                message += $"。システムイベント {copied} 件を複写";
+            }
+        }
+
+        if (succeeded)
+        {
             // 移行由来の事後識別（要件⑤）: 移行範囲と件数をシステムイベントとして移行先に残す。
             if (sourceTotal > 0 && oldestMigrated is { } rangeStart && newestMigrated is { } rangeEnd)
             {
@@ -256,20 +349,43 @@ public sealed class LogMigrationService : ILogMigrationService
 
             _logger.LogInformation(
                 "蓄積ログの移行が完了しました（移行元 {SourceTotal} 件・累計移行 {Migrated} 件・検証合格）。" +
-                "旧 SQLite ファイルの処分は昇格ウィザードの処分手順（DB-7）で行ってください。",
+                "以前の保存先（組み込みデータベース）のファイルの後始末は、管理画面の昇格ページで行ってください。",
                 sourceTotal,
                 migrated);
         }
         else
         {
             _logger.LogWarning(
-                "蓄積ログの移行の完全性検証に不合格です（移行先範囲内 {TargetCount} < 移行元 {SourceTotal}）。" +
+                "蓄積ログの移行の完全性検証に不合格です（{Message}）。" +
                 "チェックポイントは保持されています——再実行で不足分を追補できます。",
-                targetCount,
-                sourceTotal);
+                message);
         }
 
         return new LogMigrationResult(succeeded, migrated, sourceTotal, targetCount, message);
+    }
+
+    /// <summary>
+    /// 旧ファイルのシステムイベントのうち移行先に無いものを複写し、複写後にもう一度照合する。
+    /// </summary>
+    private async Task<(int Copied, int StillMissing)> MigrateSystemEventsAsync(CancellationToken cancellationToken)
+    {
+        var sourceEvents = await OldSqliteDatabase.ReadSystemEventsAsync(_oldSqliteDatabasePath, cancellationToken)
+            .ConfigureAwait(false);
+        var missing = await SystemEventReconciler.FindMissingInTargetAsync(sourceEvents, _targetStore, cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var systemEvent in missing)
+        {
+            await WriteUnderGateAsync(
+                () => _targetStore.WriteSystemEventAsync(systemEvent with { Id = null }, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        var stillMissing = missing.Count == 0
+            ? 0
+            : (await SystemEventReconciler.FindMissingInTargetAsync(sourceEvents, _targetStore, cancellationToken)
+                .ConfigureAwait(false)).Count;
+        return (missing.Count, stillMissing);
     }
 
     private async Task<(long Migrated, DateTimeOffset? Oldest, DateTimeOffset? Newest)> FlushBatchAsync(
@@ -315,6 +431,55 @@ public sealed class LogMigrationService : ILogMigrationService
         await writeOperation().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 移行チェックポイントの状態を読む（処分の完了判定が使う）。無い場合は <see langword="null"/>。
+    /// 読めない場合は「完了記録なし」として扱う（欠落側に倒さない）。
+    /// </summary>
+    public static LogMigrationCheckpointState? ReadCheckpointState(string dataRoot)
+    {
+        CheckpointFile? checkpoint;
+        try
+        {
+            var path = CheckpointPathOf(dataRoot);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            checkpoint = JsonSerializer.Deserialize<CheckpointFile>(File.ReadAllText(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new LogMigrationCheckpointState(Completed: false, Position: null, MigratedCount: 0);
+        }
+
+        if (checkpoint is null)
+        {
+            return new LogMigrationCheckpointState(Completed: false, Position: null, MigratedCount: 0);
+        }
+
+        (DateTimeOffset, long)? position = checkpoint.LastReceivedAtUtc is { } lastAt && checkpoint.LastId is { } lastId
+            ? (new DateTimeOffset(DateTime.SpecifyKind(lastAt, DateTimeKind.Utc)), lastId)
+            : null;
+        return new LogMigrationCheckpointState(checkpoint.CompletedAtUtc is not null, position, checkpoint.MigratedCount);
+    }
+
+    /// <summary>
+    /// 移行チェックポイントを撤去する（処分の完了時。旧ファイルの消滅後に残すと、将来あらためて組み込み DB
+    /// から昇格した際に移行を「完了済み」と誤判定するため）。撤去したチェックポイントの状態を返す。
+    /// </summary>
+    public static LogMigrationCheckpointState? RemoveCheckpoint(string dataRoot)
+    {
+        var state = ReadCheckpointState(dataRoot);
+        var path = CheckpointPathOf(dataRoot);
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        return state;
+    }
+
     private CheckpointFile? ReadCheckpoint()
     {
         try
@@ -352,3 +517,12 @@ public sealed class LogMigrationService : ILogMigrationService
         public DateTime? CompletedAtUtc { get; init; }
     }
 }
+
+/// <summary>移行チェックポイントの状態（処分の完了判定・撤去の要約に使う）。</summary>
+/// <param name="Completed">完了記録（完了時の検証の合格）があるか。</param>
+/// <param name="Position">移行済み位置（最終の <c>(ReceivedAt, Id)</c>）。移行元 0 件で完了した場合は無い。</param>
+/// <param name="MigratedCount">累計の移行件数。</param>
+public sealed record LogMigrationCheckpointState(
+    bool Completed,
+    (DateTimeOffset ReceivedAt, long Id)? Position,
+    long MigratedCount);

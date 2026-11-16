@@ -158,6 +158,9 @@ public sealed class RetentionScheduler : ICapacityExhaustionHandler, IAsyncDispo
         _storageInitialization = storageInitialization;
     }
 
+    /// <summary>現在のログ保存期間（日。無期限・不正値のフォールバックでは <see langword="null"/>）。</summary>
+    public int? CurrentRetentionDays => Volatile.Read(ref _options).RetentionDays;
+
     /// <summary>
     /// 保持期間・実行時刻を実行中に更新する（設定ライブ再読み込み。CF-4 層1）。
     /// 実行ループ・削除試行は毎回 <c>_options</c> を参照するため、参照の原子的交換だけで

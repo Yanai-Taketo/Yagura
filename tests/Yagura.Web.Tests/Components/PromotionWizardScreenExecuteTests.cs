@@ -128,7 +128,7 @@ public sealed class PromotionWizardScreenExecuteTests : IAsyncLifetime
     // フェイク
     // ------------------------------------------------------------------
 
-    /// <summary>接続検証済み・旧 DB の処分を選択済みで、切替を実行できる状態を返すフェイク。</summary>
+    /// <summary>接続検証済みで、切替を実行できる状態を返すフェイク。</summary>
     private sealed class ScriptedPromotionWizardService : IPromotionWizardService
     {
         private static readonly PromotionWizardSnapshot ReadyToExecute = new(
@@ -139,8 +139,6 @@ public sealed class PromotionWizardScreenExecuteTests : IAsyncLifetime
             ServiceAccountName: @"NT SERVICE\Yagura",
             HasPassword: false,
             ConnectionValidated: true,
-            Disposal: OldDatabaseDisposal.Delete,
-            EvacuationDirectory: null,
             ExecuteIdempotencyToken: "execute-token",
             Executed: false,
             CredentialReentryRequired: false);
@@ -168,12 +166,6 @@ public sealed class PromotionWizardScreenExecuteTests : IAsyncLifetime
             string? operatorAddress = null,
             string? operatorScheme = null,
             string? operatorPrincipal = null,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public Task<PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
-            OldDatabaseDisposal disposal,
-            string? evacuationDirectory = null,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 

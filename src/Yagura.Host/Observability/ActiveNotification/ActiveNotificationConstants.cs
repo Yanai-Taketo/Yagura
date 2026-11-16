@@ -107,4 +107,17 @@ public static class ActiveNotificationConstants
     /// 週次で目に入れば閉じ忘れの検出可能性として十分、という釣り合いで選定。
     /// </summary>
     public static readonly TimeSpan ForwarderMsiOpenContinuationSuppressionWindow = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// 旧・組み込み DB ファイルの処分の未完了（EventId 1041）の継続判定期間（仮値 24 時間）。
+    /// 昇格を正しく進めている最中——再起動の直後・移行の途中——には鳴らさないための長さ。
+    /// 継続はプロセス内の観測で判定し、サービスの再起動で起算し直す。
+    /// </summary>
+    public static readonly TimeSpan OldDatabaseDisposalIncompleteContinuationThreshold = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// 1041 の専用抑制窓（仮値 24 時間）。未完了は放置のリマインダであり、既定の
+    /// <see cref="SuppressionWindow"/>（15 分）では騒音になる。1 日 1 回なら後始末の放置に気づくには足りる。
+    /// </summary>
+    public static readonly TimeSpan OldDatabaseDisposalIncompleteSuppressionWindow = TimeSpan.FromHours(24);
 }

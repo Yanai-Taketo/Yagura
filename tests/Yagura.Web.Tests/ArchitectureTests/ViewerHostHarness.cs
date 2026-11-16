@@ -374,12 +374,6 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
-        public Task<Yagura.Abstractions.Administration.PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
-            Yagura.Abstractions.Administration.OldDatabaseDisposal disposal,
-            string? evacuationDirectory = null,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
-
         public Task<Yagura.Abstractions.Administration.PromotionApplyResult> ExecuteAsync(
             string idempotencyToken,
             string? operatorAddress = null,

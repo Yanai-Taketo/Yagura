@@ -29,7 +29,7 @@ namespace Yagura.Storage.Sqlite;
 /// 「読み書きが互いをブロックしない」性質が ADO.NET 層でも成立する。
 /// </para>
 /// </remarks>
-public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
+public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IHourlyLogCountReader, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（database.md §1.2 契約 1「スキーマ管理」）。
@@ -46,7 +46,12 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
     /// 指定したデータベースファイルパスで <see cref="SqliteLogStore"/> を構築する。
     /// </summary>
     /// <param name="databasePath">SQLite データベースファイルのパス。</param>
-    public SqliteLogStore(string databasePath)
+    /// <param name="createIfMissing">
+    /// <see langword="false"/> ならファイルが無いときに作らずに開くのを失敗させる。昇格後に旧ファイルを
+    /// 開く経路（移行・状態取得）が使う——排他をすり抜けた呼び出しが空のファイルを作り直し、
+    /// 処分の未完了を鳴らし続ける事故を構造的に防ぐ（database.md §6.3）。
+    /// </param>
+    public SqliteLogStore(string databasePath, bool createIfMissing = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
 
@@ -54,7 +59,7 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = createIfMissing ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadWrite,
         }.ToString();
     }
 
@@ -628,6 +633,57 @@ public sealed class SqliteLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
 
         var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// ReceivedAt は UTC の往復形式（<c>yyyy-MM-ddTHH:mm:ss.fffffffZ</c>）の TEXT で保存しているため、
+    /// 先頭 13 文字（<c>yyyy-MM-ddTHH</c>）がそのまま UTC の正時の鍵になる。
+    /// </remarks>
+    public async Task<IReadOnlyList<HourlyLogCount>> CountByHourAsync(
+        DateTimeOffset? fromInclusive,
+        DateTimeOffset? toExclusive,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        var whereBuilder = new WhereClauseBuilder();
+        if (fromInclusive is { } from)
+        {
+            whereBuilder.Add("ReceivedAt >= $from",
+                () => command.Parameters.Add("$from", SqliteType.Text).Value = from.UtcDateTime.ToString("O"));
+        }
+
+        if (toExclusive is { } to)
+        {
+            whereBuilder.Add("ReceivedAt < $to",
+                () => command.Parameters.Add("$to", SqliteType.Text).Value = to.UtcDateTime.ToString("O"));
+        }
+
+        command.CommandText =
+            $"""
+            SELECT substr(ReceivedAt, 1, 13) AS HourKey, COUNT(*) AS RecordCount
+            FROM LogRecords
+            {whereBuilder.BuildWhereSql()}
+            GROUP BY HourKey
+            ORDER BY HourKey;
+            """;
+
+        var results = new List<HourlyLogCount>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var hourStart = DateTimeOffset.ParseExact(
+                reader.GetString(0) + ":00:00Z",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+            results.Add(new HourlyLogCount(hourStart, reader.GetInt64(1)));
+        }
+
+        return results;
     }
 
     /// <inheritdoc />

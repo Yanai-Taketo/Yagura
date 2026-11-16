@@ -1,6 +1,9 @@
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Yagura.Abstractions.Administration;
 using Yagura.Abstractions.Auditing;
+using Yagura.Host.Administration.OldDatabaseDisposal;
 using Yagura.Host.Configuration;
 using Yagura.Storage;
 
@@ -34,9 +37,13 @@ namespace Yagura.Host.Administration;
 /// <b>平文での保存へはフォールバックしない</b>。
 /// </para>
 /// <para>
-/// <b>M8-4 骨格の既知の制約（後続 Issue へ申し送り）</b>: 切替本番の実行時手順
-/// （database.md §6.1 ①〜④の無瞬断切替・旧 DB ファイルの実処分・退避先の存在/書込可否の
-/// 事前検証）は後続 Issue。
+/// <b>切替の境界の記録（database.md §6.3・DB-14 ①）</b>: 切替の保存が成立したら、その時点の事実
+/// （切替の時刻・組み込み DB ファイルのフルパス・最新の <c>(ReceivedAt, Id)</c> と件数）をデータルートに
+/// 記録する。記録の失敗は切替を失敗させない——処分の完了判定は記録が無いときに安全側（照合できない区間を
+/// 全区間とみなす）へ倒れる。旧 DB ファイルの処分の方法は切替の時点では選ばせない（database.md §6.1）。
+/// </para>
+/// <para>
+/// <b>既知の制約</b>: 再起動を要しない切替（database.md §6.1 ①〜④の無瞬断切替）は実装していない。
 /// </para>
 /// </remarks>
 public sealed class PromotionWizardService : IPromotionWizardService
@@ -52,8 +59,6 @@ public sealed class PromotionWizardService : IPromotionWizardService
     private PromotionConnectionInputMode _inputMode = PromotionConnectionInputMode.Form;
     private PromotionConnectionForm? _form;
     private string? _rawConnectionString;
-    private OldDatabaseDisposal? _disposal;
-    private string? _evacuationDirectory;
     private bool _executed;
     private string? _executedToken;
     private PromotionApplyResult? _executedResult;
@@ -69,12 +74,27 @@ public sealed class PromotionWizardService : IPromotionWizardService
     // （検証は「現に保持している入力」に対してのみ有効、の実装形）。
     private int _stateVersion;
 
+    private readonly PromotionSwitchBoundarySource? _boundarySource;
+    private readonly ILogger<PromotionWizardService> _logger;
+
+    /// <param name="dataRoot">データルート。</param>
+    /// <param name="connectionValidator">接続検証。</param>
+    /// <param name="auditRecorder">監査記録。</param>
+    /// <param name="timeProvider">時刻。</param>
+    /// <param name="serviceAccountName">実行アカウント名（省略時は現在のプロセスから導く）。</param>
+    /// <param name="boundarySource">
+    /// 切替の境界の記録の材料（実効 provider が SQLite のときだけ渡す。SQL Server で動いている間に
+    /// ウィザードをやり直しても、本物の切替の境界を上書きしない）。
+    /// </param>
+    /// <param name="logger">ロガー。</param>
     public PromotionWizardService(
         string dataRoot,
         ISqlServerConnectionValidator connectionValidator,
         IAuditRecorder auditRecorder,
         TimeProvider? timeProvider = null,
-        string? serviceAccountName = null)
+        string? serviceAccountName = null,
+        PromotionSwitchBoundarySource? boundarySource = null,
+        ILogger<PromotionWizardService>? logger = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
         ArgumentNullException.ThrowIfNull(connectionValidator);
@@ -86,6 +106,8 @@ public sealed class PromotionWizardService : IPromotionWizardService
         _timeProvider = timeProvider ?? TimeProvider.System;
         _serviceAccountName = serviceAccountName ?? CurrentProcessAccount.ResolveName();
         _lastActivityAt = _timeProvider.GetUtcNow();
+        _boundarySource = boundarySource;
+        _logger = logger ?? NullLogger<PromotionWizardService>.Instance;
     }
 
     /// <inheritdoc/>
@@ -259,40 +281,6 @@ public sealed class PromotionWizardService : IPromotionWizardService
     }
 
     /// <inheritdoc/>
-    public Task<PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
-        OldDatabaseDisposal disposal,
-        string? evacuationDirectory = null,
-        CancellationToken cancellationToken = default)
-    {
-        string? normalizedDirectory = null;
-
-        if (disposal == OldDatabaseDisposal.Evacuate)
-        {
-            normalizedDirectory = evacuationDirectory?.Trim();
-            if (string.IsNullOrWhiteSpace(normalizedDirectory))
-            {
-                throw new WizardValidationException("退避先のフォルダを入力してください。");
-            }
-
-            // 形式（絶対パス）までを本改善の検証とする。存在・書込可否の事前検証は旧 DB
-            // ファイルの実処分の実装（後続 Issue）の要件（database.md §6.1）。
-            if (!Path.IsPathFullyQualified(normalizedDirectory))
-            {
-                throw new WizardValidationException(
-                    "退避先はドライブ名から始まる絶対パスで入力してください（例: D:\\Backup\\Yagura）。");
-            }
-        }
-
-        lock (_gate)
-        {
-            Touch();
-            _disposal = disposal;
-            _evacuationDirectory = disposal == OldDatabaseDisposal.Evacuate ? normalizedDirectory : null;
-            return Task.FromResult(BuildSnapshot());
-        }
-    }
-
-    /// <inheritdoc/>
     public async Task<PromotionApplyResult> ExecuteAsync(
         string idempotencyToken,
         string? operatorAddress = null,
@@ -323,14 +311,6 @@ public sealed class PromotionWizardService : IPromotionWizardService
                     WizardApplyOutcome.InvalidToken,
                     ConfigurationApplyEffect.Immediate,
                     "実行トークンが無効か、接続検証が完了していません。");
-            }
-
-            if (_disposal is null)
-            {
-                return new PromotionApplyResult(
-                    WizardApplyOutcome.InvalidToken,
-                    ConfigurationApplyEffect.Immediate,
-                    "旧・組み込みデータベースの扱い（退避 / 削除）を先に選択してください。");
             }
 
             // 検証済みの間は入力が差し替えられていない（差し替えは検証状態を無効化する）ため、
@@ -373,9 +353,9 @@ public sealed class PromotionWizardService : IPromotionWizardService
                 // M8-4 骨格の実効: サービス再起動（configuration.md §8 の Storage:Provider 行。
                 // database.md §6.1 の無瞬断切替手順の実装後に見直す）。
                 ConfigurationApplyEffect.RestartRequired,
-                "保存先の切り替えを設定に保存しました。旧データベースの処分（" +
-                (_disposal == OldDatabaseDisposal.Evacuate ? "退避" : "削除") +
-                "）は切替手順の実装（後続）で行われるまで未完了として扱われます。");
+                "保存先の切り替えを設定に保存しました。サービスを再起動すると、それ以降に受信したログから" +
+                " SQL Server に保存されます。再起動の後、必要に応じて蓄積ログを移行し、最後に組み込みデータベースの" +
+                "ファイルを後始末してください。");
 
             _executed = true;
             _executedToken = idempotencyToken;
@@ -387,25 +367,67 @@ public sealed class PromotionWizardService : IPromotionWizardService
             InvalidateValidationState();
 
             // 監査記録（2000 番台 ID 2003）: 接続文字列・パスワードは記録しない（成立の事実と
-            // 選択・退避先・証明書信頼の選択値のみ——database.md §6.1）。
-            var disposalDetail = _disposal == OldDatabaseDisposal.Evacuate
-                ? $"退避（退避先={_evacuationDirectory}）"
-                : "削除";
+            // 証明書信頼の選択値のみ——database.md §6.1）。
             auditEvent = new AuditEvent(
                 OccurredAt: _timeProvider.GetUtcNow(),
                 Kind: AuditEventKind.PromotionExecuted,
                 RemoteAddress: operatorAddress,
                 RemotePort: null,
                 Detail: "Storage:Provider を sqlite から sqlserver へ切替（設定保存。反映はサービス再起動）。" +
-                        $"旧 DB 処分の選択={disposalDetail}、" +
                         $"サーバ証明書の信頼={(built.TrustServerCertificate ? "有効" : "無効")}",
                 AuthenticationScheme: operatorScheme,
                 AuthenticatedPrincipal: operatorPrincipal);
         }
 
+        await RecordSwitchBoundaryAsync().ConfigureAwait(false);
         await _auditRecorder.RecordAsync(auditEvent, CancellationToken.None).ConfigureAwait(false);
 
         return result;
+    }
+
+    /// <summary>
+    /// 切替の境界をデータルートに記録する（切替の保存の成立後）。失敗しても切替は成立したまま——処分の完了判定が
+    /// 安全側に倒れる。
+    /// </summary>
+    private async Task RecordSwitchBoundaryAsync()
+    {
+        if (_boundarySource is null)
+        {
+            return;
+        }
+
+        var switchedAt = _timeProvider.GetUtcNow().UtcDateTime;
+        DateTime? latestReceivedAt = null;
+        long? latestId = null;
+        long? recordCount = null;
+        try
+        {
+            var snapshot = await _boundarySource.Snapshot(CancellationToken.None).ConfigureAwait(false);
+            latestReceivedAt = snapshot.LatestReceivedAt?.UtcDateTime;
+            latestId = snapshot.LatestId;
+            recordCount = snapshot.RecordCount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "切替の時点の組み込みデータベースの件数を取得できませんでした（切替の時刻とパスだけを記録します）。");
+        }
+
+        try
+        {
+            PromotionSwitchBoundaryStore.Write(_dataRoot, new PromotionSwitchBoundary(
+                switchedAt,
+                _boundarySource.SqliteDatabasePath,
+                latestReceivedAt,
+                latestId,
+                recordCount));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                ex,
+                "切替の境界を記録できませんでした。後始末の前の照合では、移行済みかどうかを確かめられない区間が広がります" +
+                "（すべてのログについて「移行せずに後始末する」の確認が求められます）。");
+        }
     }
 
     private PromotionWizardSnapshot BuildSnapshot() => new(
@@ -415,8 +437,6 @@ public sealed class PromotionWizardService : IPromotionWizardService
         ServiceAccountName: _serviceAccountName,
         HasPassword: _password is not null,
         ConnectionValidated: _connectionValidated,
-        Disposal: _disposal,
-        EvacuationDirectory: _evacuationDirectory,
         ExecuteIdempotencyToken: _executeToken,
         Executed: _executed,
         CredentialReentryRequired: _credentialReentryRequired);
@@ -586,7 +606,7 @@ public sealed class PromotionWizardService : IPromotionWizardService
 
     /// <summary>
     /// 無操作タイムアウト（CF-3 仮値 15 分）の適用と最終活動時刻の更新。資格情報（パスワード）
-    /// と検証済み状態・実行トークンを破棄し、進行状態（接続の項目・処分の選択・実行済み状態）は
+    /// と検証済み状態・実行トークンを破棄し、進行状態（接続の項目・実行済み状態）は
     /// 保持する（configuration.md §5 の粒度）。
     /// </summary>
     private void Touch()
@@ -610,3 +630,16 @@ public sealed class PromotionWizardService : IPromotionWizardService
         _lastActivityAt = now;
     }
 }
+
+/// <summary>切替の時点の組み込み DB の件数（境界の記録の材料）。</summary>
+/// <param name="LatestReceivedAt">最新レコードの ReceivedAt（0 件なら <see langword="null"/>）。</param>
+/// <param name="LatestId">最新レコードの Id。</param>
+/// <param name="RecordCount">件数。</param>
+public sealed record PromotionLiveStoreSnapshot(DateTimeOffset? LatestReceivedAt, long? LatestId, long? RecordCount);
+
+/// <summary>切替の境界の記録の材料（合成ルートが結線する）。</summary>
+/// <param name="SqliteDatabasePath">組み込み DB ファイルのフルパス（SQLite provider の書き込み先と同じ導出）。</param>
+/// <param name="Snapshot">現在の組み込み DB の最新レコードと件数を返す。</param>
+public sealed record PromotionSwitchBoundarySource(
+    string SqliteDatabasePath,
+    Func<CancellationToken, Task<PromotionLiveStoreSnapshot>> Snapshot);

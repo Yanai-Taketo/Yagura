@@ -211,6 +211,20 @@ public static class AuditEventIds
     public static readonly EventId ViewerHttpsConfigured =
         new(2029, "ViewerHttpsConfigured");
 
+    /// <summary>
+    /// 本番昇格後の旧・組み込み DB ファイルの処分（database.md §6.3）。開始・削除の開始・終了・
+    /// 対象側の安全検査による拒否の各時点で記録する。レベルは情報。
+    /// </summary>
+    public static readonly EventId OldDatabaseDisposalExecuted =
+        new(2030, "OldDatabaseDisposalExecuted");
+
+    /// <summary>
+    /// 製品の処分によらず旧・組み込み DB ファイルが無くなったことを観測した（database.md §6.3）。
+    /// レベルは情報。
+    /// </summary>
+    public static readonly EventId OldDatabaseRemovedOutsideProduct =
+        new(2031, "OldDatabaseRemovedOutsideProduct");
+
     // ---- 3000 番台: 拒否・セキュリティ事象（レベル: 警告） ----
 
     /// <summary>

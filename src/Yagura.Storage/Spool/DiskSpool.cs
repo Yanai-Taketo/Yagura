@@ -367,6 +367,9 @@ public sealed class DiskSpool : IDisposable
         }
     }
 
+    /// <summary>現在の使用量上限（バイト。設定の即時反映で変わり得る）。</summary>
+    public long QuotaBytes => Volatile.Read(ref _quotaBytes);
+
     /// <summary>
     /// 自己検証用（§3.2.5）に現在の使用量比率（0.0〜1.0 超もあり得る）を返す。
     /// </summary>
