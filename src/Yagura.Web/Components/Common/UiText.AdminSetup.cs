@@ -9,8 +9,15 @@ public static partial class UiText
 
     /// <summary>移行の説明。</summary>
     public const string MigrationDescription =
-        "本番昇格前に SQLite へ保存されたログを、現在の SQL Server へ移送します。移行中も受信は継続します。" +
-        "移行しない場合、旧ログは閲覧できないまま、旧データベースの処分で失われます。";
+        "これまで組み込みデータベースに保存したログを、現在の SQL Server へ移します。移行中も受信は続きます。" +
+        "移行しない場合、これらのログは画面から参照できないまま、組み込みデータベースのファイルの後始末で失われます" +
+        "（書き出して保管を選べば、書き出したファイルには残ります）。";
+
+    /// <summary>移行の対象件数（{0} = 件数）。</summary>
+    public const string MigrationSourceCountFormat = "対象: {0:N0} 件";
+
+    /// <summary>中断からの再開の補足（{0} = 移行済み件数）。</summary>
+    public const string MigrationResumeFormat = "（うち {0:N0} 件は移行済み——中断からの再開になります）";
 
     /// <summary>移行の実行ボタン。</summary>
     public const string MigrationExecute = "移行を実行";

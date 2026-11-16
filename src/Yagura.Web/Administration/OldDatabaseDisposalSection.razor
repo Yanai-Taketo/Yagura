@@ -1,0 +1,802 @@
+@namespace Yagura.Web.Administration
+@using Yagura.Abstractions.Administration
+@using Yagura.Web.Circuits
+@implements IAsyncDisposable
+@inject IOldDatabaseDisposalService Disposal
+@inject YaguraCircuitContext CircuitContext
+@inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
+
+@*
+    昇格ページの処分セクション（database.md §6.3。画面上の呼び名は「後始末」——ui.md §7.2）。
+
+    - 表示は状態表（database.md §6.3）に従う。状態の取得は旧ファイルを開かない。旧ファイルを開く照合は
+      利用者の操作（照合ボタン）でだけ行う——照合は排他の下で全体を読み、その間は移行を開始できないため、
+      画面を開いただけで移行を妨げない
+    - 実行はサービス側で完走する（画面を離れても放棄しない）。実行中は状態を定期的に取り直して進み具合と
+      結果を示す
+    - 確認ダイアログは最上段に「元に戻せないこと」と未移行の件数・期間・明示確認を置き、その下に方式・
+      対象・保管先・保護責任の移転を置く（ui.md §5.4）。明示確認は既定で未確認
+*@
+@if (_status is { } status && IsVisible(status))
+{
+    <MudPaper Elevation="1" Class="pa-4 mt-4">
+        <MudText Typo="Typo.h6">@UiText.OldDatabaseDisposalSectionTitle</MudText>
+
+        @if (status.MisplacedRecordedOldDatabasePath is { } misplaced)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @string.Format(UiText.OldDatabaseDisposalMisplacedFormat, misplaced)
+            </MudAlert>
+        }
+
+        @if (status.State == OldDatabaseDisposalState.NotApplicable)
+        {
+            @if (status.LastResult is { } finished)
+            {
+                @RenderResult(finished)
+            }
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.OldDatabaseDisposalSectionDescription</MudText>
+
+            <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.OldDatabaseDisposalTargetFilesLabel</MudText>
+            <ul>
+                @foreach (var file in status.TargetFiles)
+                {
+                    <li><MudText Typo="Typo.body2">@FormatFile(file)</MudText></li>
+                }
+            </ul>
+            <MudText Typo="Typo.body2">@string.Format(UiText.OldDatabaseDisposalTotalSizeFormat, YaguraByteFormatter.Format(status.TotalSizeBytes))</MudText>
+
+            @switch (status.State)
+            {
+                case OldDatabaseDisposalState.MigrationRunning:
+                    <MudAlert Severity="Severity.Info" Class="mt-3">@UiText.OldDatabaseDisposalMigrationRunning</MudAlert>
+                    break;
+
+                case OldDatabaseDisposalState.DisposalRunning:
+                case OldDatabaseDisposalState.DisposalDeleting:
+                    @RenderProgress(status)
+                    break;
+
+                default:
+                    @if (status.State == OldDatabaseDisposalState.LastAttemptFailed && status.LastResult is { } failed)
+                    {
+                        @RenderResult(failed)
+                    }
+
+                    @if (MigrationStateText is { } migrationState)
+                    {
+                        <MudText Typo="Typo.subtitle2" Class="mt-3">@UiText.OldDatabaseDisposalMigrationStateLabel</MudText>
+                        <MudText Typo="Typo.body2">@migrationState</MudText>
+                    }
+
+                    @if (_rejection is { } rejection)
+                    {
+                        <MudAlert Severity="Severity.Warning" Class="mt-3">
+                            <MudText Typo="Typo.subtitle2"><b>@UiText.OldDatabaseDisposalRejectedTitle</b></MudText>
+                            <MudText Typo="Typo.body2">@rejection.Message</MudText>
+                        </MudAlert>
+                        @if (rejection.GrantCommand is { } grant)
+                        {
+                            <div class="mt-2">
+                                <YaguraCopyBlock Label="@UiText.OldDatabaseDisposalGrantCommandLabel" Value="@grant" />
+                            </div>
+                        }
+                        @if (rejection.RevokeCommand is { } revoke)
+                        {
+                            <div class="mt-2">
+                                <YaguraCopyBlock Label="@UiText.OldDatabaseDisposalRevokeCommandLabel" Value="@revoke" />
+                            </div>
+                        }
+                    }
+
+                    @if (_inspection is { } inspection)
+                    {
+                        @RenderInspection(inspection)
+                    }
+                    else if (_inspecting)
+                    {
+                        <MudProgressLinear Indeterminate="true" Class="mt-3" />
+                        <MudText Typo="Typo.body2">@UiText.OldDatabaseDisposalInspecting</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-3 d-block">@UiText.OldDatabaseDisposalInspectNote</MudText>
+                        <div class="mt-2">
+                            <YaguraButton Role="YaguraButtonRole.Primary"
+                                          Disabled="@(MigrationRunningHere)"
+                                          OnClick="InspectAsync">
+                                @UiText.OldDatabaseDisposalInspect
+                            </YaguraButton>
+                        </div>
+                    }
+                    break;
+            }
+        }
+
+        @if (_notice is { } notice)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2" role="status">@notice</MudText>
+        }
+    </MudPaper>
+}
+
+@code {
+    private const string MethodArchiveValue = "archive";
+    private const string MethodDeleteValue = "delete";
+
+    // 実行中の進み具合を取り直す間隔。状態の取得は旧ファイルを開かない軽い読み取り。
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>移行の状態（移行セクションと同じ取得結果。移行の状態の表示に使う）。</summary>
+    [Parameter]
+    public LogMigrationStatus? MigrationStatus { get; set; }
+
+    /// <summary>この画面で移行を実行中か（その間は照合を始めない——同じ排他を取り合うため）。</summary>
+    [Parameter]
+    public bool MigrationRunningHere { get; set; }
+
+    /// <summary>この画面で移行を実行し終えるたびに増える値（照合の結果を古いものとして捨てる合図）。</summary>
+    [Parameter]
+    public int MigrationRunVersion { get; set; }
+
+    /// <summary>後始末の状態が変わった（開始・終了）——親が移行の状態を取り直す合図。</summary>
+    [Parameter]
+    public EventCallback StateChanged { get; set; }
+
+    /// <summary>照合・開始の実行中か（親はその間、移行の開始を押せなくする）。</summary>
+    [Parameter]
+    public EventCallback<bool> BusyChanged { get; set; }
+
+    private OldDatabaseDisposalStatus? _status;
+    private OldDatabaseDisposalInspection? _inspection;
+    private bool _inspecting;
+    private string? _method;
+    private string? _destination;
+    private OldDatabaseArchiveDestinationCheck? _destinationCheck;
+    private string? _checkedDestination;
+    private OldDatabaseDisposalResult? _rejection;
+    private string? _notice;
+    private int _seenMigrationRunVersion;
+
+    private PeriodicTimer? _timer;
+    private Task? _pollLoop;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _seenMigrationRunVersion = MigrationRunVersion;
+        _status = await Disposal.GetStatusAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (MigrationRunVersion != _seenMigrationRunVersion)
+        {
+            // 移行の後は照合の前提（未移行の件数・期間）が変わる。古い確認材料で確認させない。
+            _seenMigrationRunVersion = MigrationRunVersion;
+            ResetInspection();
+            _status = await Disposal.GetStatusAsync();
+        }
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // 対話モード確立後の定期更新（prerender では動かない）。
+        _timer = new PeriodicTimer(PollInterval);
+        _pollLoop = RunPollLoopAsync(_timer);
+    }
+
+    private async Task RunPollLoopAsync(PeriodicTimer timer)
+    {
+        try
+        {
+            while (await timer.WaitForNextTickAsync())
+            {
+                await InvokeAsync(RefreshWhileBusyAsync);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // 画面の破棄による停止。
+        }
+    }
+
+    private async Task RefreshWhileBusyAsync()
+    {
+        if (_status is not { } before || !IsBusyState(before.State))
+        {
+            return;
+        }
+
+        try
+        {
+            _status = await Disposal.GetStatusAsync();
+        }
+        catch (Exception)
+        {
+            // 状態を取れない周期は前回の表示のまま次の周期で取り直す（処分そのものはサービス側で続く）。
+            return;
+        }
+
+        if (!IsBusyState(_status.State))
+        {
+            _notice = null;
+            ResetInspection();
+            await StateChanged.InvokeAsync();
+        }
+
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _timer?.Dispose();
+        if (_pollLoop is not null)
+        {
+            try
+            {
+                await _pollLoop;
+            }
+            catch (Exception)
+            {
+                // 破棄時の後片付け——定期更新の失敗はここでは伝播させない。
+            }
+        }
+    }
+
+    // ---- 表示の判定 ----
+
+    private static bool IsVisible(OldDatabaseDisposalStatus status) =>
+        status.State != OldDatabaseDisposalState.NotApplicable
+        || status.LastResult is not null
+        || status.MisplacedRecordedOldDatabasePath is not null;
+
+    private static bool IsBusyState(OldDatabaseDisposalState state) =>
+        state is OldDatabaseDisposalState.MigrationRunning
+            or OldDatabaseDisposalState.DisposalRunning
+            or OldDatabaseDisposalState.DisposalDeleting;
+
+    private string? MigrationStateText => MigrationStatus?.Availability switch
+    {
+        LogMigrationAvailability.Completed => UiText.OldDatabaseDisposalMigrationCompleted,
+        LogMigrationAvailability.Ready => UiText.OldDatabaseDisposalMigrationNotCompleted,
+        LogMigrationAvailability.Running => UiText.OldDatabaseDisposalMigrationRunning,
+        LogMigrationAvailability.NoSourceDatabase => UiText.OldDatabaseDisposalMigrationNoSource,
+        _ => null,
+    };
+
+    private OldDatabaseDisposalMethod? SelectedMethod => _method switch
+    {
+        MethodArchiveValue => OldDatabaseDisposalMethod.Archive,
+        MethodDeleteValue => OldDatabaseDisposalMethod.Delete,
+        _ => null,
+    };
+
+    /// <summary>旧ファイルを読めた（確認材料が揃った）か。読めなかった照合では操作を出さない。</summary>
+    private static bool InspectionUsable(OldDatabaseDisposalInspection inspection) =>
+        inspection.TargetKind switch
+        {
+            OldDatabaseTargetKind.Unsafe => false,
+            OldDatabaseTargetKind.SqliteDatabase => inspection.Migration is not null,
+            _ => true,
+        };
+
+    private bool DestinationAccepted =>
+        _destinationCheck is { Acceptable: true }
+        && string.Equals(_checkedDestination, _destination?.Trim(), StringComparison.Ordinal);
+
+    private bool CanExecute =>
+        _status is { State: OldDatabaseDisposalState.Pending or OldDatabaseDisposalState.LastAttemptFailed, ExecuteIdempotencyToken: not null }
+        && _inspection is { } inspection
+        && InspectionUsable(inspection)
+        && SelectedMethod is { } method
+        && (method == OldDatabaseDisposalMethod.Delete || (inspection.ArchiveAllowed && DestinationAccepted));
+
+    private IReadOnlyList<YaguraSelectOption> MethodOptions =>
+        _inspection is { ArchiveAllowed: true }
+            ? [new(MethodArchiveValue, UiText.OldDatabaseDisposalMethodArchive), new(MethodDeleteValue, UiText.OldDatabaseDisposalMethodDelete)]
+            : [new(MethodDeleteValue, UiText.OldDatabaseDisposalMethodDelete)];
+
+    // ---- 確認ダイアログの中身 ----
+
+    private string ConfirmSummary => SelectedMethod == OldDatabaseDisposalMethod.Archive
+        ? UiText.OldDatabaseDisposalConfirmSummaryArchive
+        : UiText.OldDatabaseDisposalConfirmSummaryDelete;
+
+    private IReadOnlyList<string> ConfirmAcknowledgementLines
+    {
+        get
+        {
+            var lines = new List<string>();
+            if (_inspection is not { } inspection)
+            {
+                return lines;
+            }
+
+            var archive = SelectedMethod == OldDatabaseDisposalMethod.Archive;
+            if (inspection.Migration is { } judgment)
+            {
+                if (judgment.RecordsAfterSwitchCount > 0)
+                {
+                    lines.Add(string.Format(
+                        UiText.OldDatabaseDisposalRecordsAfterSwitchFormat,
+                        judgment.RecordsAfterSwitchCount,
+                        FormatRange(judgment.RecordsAfterSwitchOldest, judgment.RecordsAfterSwitchNewest)));
+                }
+
+                if (judgment.RequiresConfirmation && judgment.UnmigratedRecordCount > 0)
+                {
+                    lines.Add(string.Format(
+                        archive ? UiText.OldDatabaseDisposalConfirmUnmigratedArchiveFormat : UiText.OldDatabaseDisposalConfirmUnmigratedDeleteFormat,
+                        judgment.UnmigratedRecordCount,
+                        FormatRange(judgment.UnmigratedOldest, judgment.UnmigratedNewest)));
+                }
+
+                if (judgment.RequiresConfirmation && judgment.UnmigratedSystemEventCount > 0)
+                {
+                    lines.Add(string.Format(
+                        archive ? UiText.OldDatabaseDisposalConfirmSystemEventsArchiveFormat : UiText.OldDatabaseDisposalConfirmSystemEventsDeleteFormat,
+                        judgment.UnmigratedSystemEventCount,
+                        FormatRange(judgment.UnmigratedSystemEventOldest, judgment.UnmigratedSystemEventNewest)));
+                }
+            }
+
+            if (inspection.TargetKind == OldDatabaseTargetKind.UnverifiableBody && BodyFile() is { } body)
+            {
+                lines.Add(string.Format(
+                    UiText.OldDatabaseDisposalConfirmUnverifiableFormat,
+                    Path.GetFileName(body.Path),
+                    FormatSize(body.SizeBytes)));
+            }
+
+            return lines;
+        }
+    }
+
+    private string? ConfirmAcknowledgementLabel => _inspection switch
+    {
+        { Migration.RequiresConfirmation: true } => UiText.OldDatabaseDisposalConfirmWithoutMigration,
+        { TargetKind: OldDatabaseTargetKind.UnverifiableBody } => UiText.OldDatabaseDisposalConfirmUnverifiableLabel,
+        _ => null,
+    };
+
+    private IReadOnlyList<YaguraConfirmDetail> ConfirmDetails
+    {
+        get
+        {
+            var archive = SelectedMethod == OldDatabaseDisposalMethod.Archive;
+            var details = new List<YaguraConfirmDetail>
+            {
+                new(UiText.OldDatabaseDisposalConfirmMethodLabel,
+                    archive ? UiText.OldDatabaseDisposalMethodArchive : UiText.OldDatabaseDisposalMethodDelete),
+                new(UiText.OldDatabaseDisposalConfirmTargetsLabel,
+                    string.Join("、", (_status?.TargetFiles ?? []).Select(FormatFile))),
+            };
+
+            if (archive)
+            {
+                details.Add(new(UiText.OldDatabaseDisposalConfirmDestinationLabel, _destination?.Trim() ?? string.Empty));
+                details.Add(new(
+                    UiText.OldDatabaseDisposalConfirmArchiveFileLabel,
+                    string.Format(
+                        UiText.OldDatabaseDisposalConfirmArchiveFileFormat,
+                        OldDatabaseArchiveNaming.WorkDirectoryPrefix,
+                        OldDatabaseArchiveNaming.FileExtension)));
+                if (BeyondRetentionText is { } beyond)
+                {
+                    details.Add(new(UiText.OldDatabaseDisposalConfirmBeyondRetentionLabel, beyond));
+                }
+
+                details.Add(new(UiText.OldDatabaseDisposalConfirmResponsibilityLabel, UiText.OldDatabaseDisposalResponsibility));
+            }
+            else
+            {
+                details.Add(new(UiText.OldDatabaseDisposalConfirmBackupLabel, UiText.OldDatabaseDisposalConfirmBackup));
+            }
+
+            return details;
+        }
+    }
+
+    private string? BeyondRetentionText =>
+        _inspection is { RetentionDays: { } days, RecordsBeyondRetentionCount: > 0 and var beyond }
+            ? string.Format(UiText.OldDatabaseDisposalBeyondRetentionFormat, days, beyond)
+            : null;
+
+    // ---- 操作 ----
+
+    private async Task InspectAsync()
+    {
+        _inspecting = true;
+        _rejection = null;
+        _notice = null;
+        await BusyChanged.InvokeAsync(true);
+        try
+        {
+            var inspection = await Disposal.InspectAsync();
+            _status = inspection.Status;
+            _inspection = inspection;
+            _method = inspection.ArchiveAllowed ? null : MethodDeleteValue;
+        }
+        finally
+        {
+            _inspecting = false;
+            await BusyChanged.InvokeAsync(false);
+        }
+
+        // 照合が排他を持っている間、移行の状態の取得は待たずに返るため、照合の後で取り直させる。
+        await StateChanged.InvokeAsync();
+    }
+
+    private Task OnMethodChanged(string? value)
+    {
+        _method = value;
+        return Task.CompletedTask;
+    }
+
+    private Task OnDestinationChanged(string? value)
+    {
+        _destination = value;
+        if (!string.Equals(_checkedDestination, value?.Trim(), StringComparison.Ordinal))
+        {
+            _destinationCheck = null;
+            _checkedDestination = null;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task CheckDestinationAsync()
+    {
+        var destination = _destination?.Trim() ?? string.Empty;
+        _destinationCheck = await Disposal.CheckArchiveDestinationAsync(destination);
+        _checkedDestination = destination;
+    }
+
+    private async Task ExecuteAsync()
+    {
+        if (!CanExecute || _status?.ExecuteIdempotencyToken is not { } token || SelectedMethod is not { } method)
+        {
+            return;
+        }
+
+        _rejection = null;
+        _notice = null;
+        await BusyChanged.InvokeAsync(true);
+        try
+        {
+            var (scheme, principal) = AuditActorResolver.Resolve((await AuthStateProvider.GetAuthenticationStateAsync()).User);
+
+            // 明示確認は確認ダイアログのチェックボックスで取った（確認するまで確認ボタンは押せない）。
+            var request = new OldDatabaseDisposalRequest(
+                method,
+                token,
+                ArchiveParentDirectory: method == OldDatabaseDisposalMethod.Archive ? _destination?.Trim() : null,
+                ConfirmDisposeWithoutMigration: _inspection?.Migration?.RequiresConfirmation == true,
+                ConfirmDeleteUnverifiableFile: _inspection?.TargetKind == OldDatabaseTargetKind.UnverifiableBody,
+                OperatorAddress: CircuitContext.RemoteAddress,
+                OperatorScheme: scheme,
+                OperatorPrincipal: principal);
+
+            var result = await Disposal.StartAsync(request);
+            switch (result.Outcome)
+            {
+                case OldDatabaseDisposalOutcome.Started:
+                case OldDatabaseDisposalOutcome.AlreadyApplied:
+                    _notice = result.Message;
+                    ResetInspection();
+                    break;
+
+                default:
+                    // 拒否は何も変更していない。照合の前提が変わった拒否（未移行が見つかった等）では確認材料を取り直させる。
+                    _rejection = result;
+                    if (result.Outcome == OldDatabaseDisposalOutcome.InvalidToken || InvalidatesInspection(result.Reason))
+                    {
+                        ResetInspection();
+                    }
+
+                    break;
+            }
+
+            _status = await Disposal.GetStatusAsync();
+        }
+        finally
+        {
+            await BusyChanged.InvokeAsync(false);
+        }
+
+        await StateChanged.InvokeAsync();
+    }
+
+    private static bool InvalidatesInspection(OldDatabaseDisposalReason? reason) =>
+        reason is OldDatabaseDisposalReason.MigrationConfirmationRequired
+            or OldDatabaseDisposalReason.UnverifiableConfirmationRequired
+            or OldDatabaseDisposalReason.ArchiveNotAllowedForTarget
+            or OldDatabaseDisposalReason.TargetUnsafe
+            or OldDatabaseDisposalReason.NoTargetFiles
+            or OldDatabaseDisposalReason.NotPromoted
+            or OldDatabaseDisposalReason.MigrationRunning
+            or OldDatabaseDisposalReason.DisposalRunning;
+
+    private async Task CancelAsync()
+    {
+        var accepted = await Disposal.CancelAsync();
+        _notice = accepted ? UiText.OldDatabaseDisposalCancelAccepted : UiText.OldDatabaseDisposalCancelRejected;
+        _status = await Disposal.GetStatusAsync();
+    }
+
+    private void ResetInspection()
+    {
+        _inspection = null;
+        _method = null;
+        _destinationCheck = null;
+        _checkedDestination = null;
+    }
+
+    // ---- 整形 ----
+
+    private OldDatabaseFile? BodyFile() =>
+        _status?.TargetFiles.FirstOrDefault(file =>
+            !file.Path.EndsWith("-wal", StringComparison.OrdinalIgnoreCase)
+            && !file.Path.EndsWith("-shm", StringComparison.OrdinalIgnoreCase));
+
+    private static string FormatFile(OldDatabaseFile file) =>
+        string.Format(UiText.OldDatabaseDisposalTargetFileFormat, file.Path, FormatSize(file.SizeBytes));
+
+    private static string FormatSize(long? bytes) =>
+        bytes is { } value ? YaguraByteFormatter.Format(value) : UiText.OldDatabaseDisposalSizeUnknown;
+
+    private static string FormatRange(DateTimeOffset? oldest, DateTimeOffset? newest) =>
+        oldest is { } from && newest is { } to
+            ? string.Format(UiText.OldDatabaseDisposalRangeFormat, YaguraTimeFormatter.FormatLocal(from), YaguraTimeFormatter.FormatLocal(to))
+            : string.Empty;
+
+    private static string StageText(OldDatabaseDisposalStage stage) => stage switch
+    {
+        OldDatabaseDisposalStage.Checkpointing => UiText.OldDatabaseDisposalStageCheckpointing,
+        OldDatabaseDisposalStage.Exporting => UiText.OldDatabaseDisposalStageExporting,
+        OldDatabaseDisposalStage.RemovingResidue => UiText.OldDatabaseDisposalStageRemovingResidue,
+        OldDatabaseDisposalStage.Verifying => UiText.OldDatabaseDisposalStageVerifying,
+        OldDatabaseDisposalStage.Finalizing => UiText.OldDatabaseDisposalStageFinalizing,
+        _ => UiText.OldDatabaseDisposalStageDeleting,
+    };
+
+    private static string MethodText(OldDatabaseDisposalMethod method) =>
+        method == OldDatabaseDisposalMethod.Archive ? UiText.OldDatabaseDisposalMethodArchive : UiText.OldDatabaseDisposalMethodDelete;
+
+    // ---- 部分描画 ----
+
+    private RenderFragment RenderProgress(OldDatabaseDisposalStatus status) => __builder =>
+    {
+        if (status.Progress is { } progress)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-3">
+                <MudText Typo="Typo.body2">
+                    @string.Format(UiText.OldDatabaseDisposalRunningFormat, MethodText(progress.Method), YaguraTimeFormatter.FormatLocal(progress.StartedAt))
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mt-1">@StageText(progress.Stage)</MudText>
+            </MudAlert>
+            <MudProgressLinear Indeterminate="true" Class="mt-2" />
+            <MudText Typo="Typo.caption" Class="mt-2 d-block">@UiText.OldDatabaseDisposalLowTrafficNote</MudText>
+            @if (progress.Cancellable)
+            {
+                <div class="mt-2">
+                    <YaguraButton OnClick="CancelAsync">@UiText.OldDatabaseDisposalCancel</YaguraButton>
+                </div>
+            }
+        }
+    };
+
+    private RenderFragment RenderResult(OldDatabaseDisposalResult result) => __builder =>
+    {
+        var completed = result.Outcome == OldDatabaseDisposalOutcome.Completed;
+        <MudAlert Severity="@(completed ? Severity.Success : Severity.Warning)" Class="mt-3">
+            <MudText Typo="Typo.subtitle2">
+                <b>@(completed ? UiText.OldDatabaseDisposalCompletedTitle : UiText.OldDatabaseDisposalLastFailedTitle)</b>
+            </MudText>
+            <MudText Typo="Typo.body2">@result.Message</MudText>
+        </MudAlert>
+        @if (result.ArchiveFilePath is { } archivePath)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mt-2">@UiText.OldDatabaseDisposalResultArchiveFileLabel</MudText>
+            <MudText Typo="Typo.body2" Class="yagura-monospace">@archivePath</MudText>
+            @if (result.ArchiveSha256 is { } sha256)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-2">@UiText.OldDatabaseDisposalResultSha256Label</MudText>
+                <MudText Typo="Typo.body2" Class="yagura-monospace">@sha256</MudText>
+            }
+            <MudText Typo="Typo.body2" Class="mt-2">@UiText.OldDatabaseDisposalResponsibility</MudText>
+        }
+        @if (result.RemainingFiles is { Count: > 0 } remaining)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mt-2">@UiText.OldDatabaseDisposalResultRemainingFilesLabel</MudText>
+            <ul>
+                @foreach (var path in remaining)
+                {
+                    <li><MudText Typo="Typo.body2" Class="yagura-monospace">@path</MudText></li>
+                }
+            </ul>
+        }
+        @if (result.WorkDirectoryLeftBehind is { } leftBehind)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">@string.Format(UiText.OldDatabaseDisposalResultWorkDirectoryLeftFormat, leftBehind)</MudText>
+        }
+    };
+
+    private RenderFragment RenderInspection(OldDatabaseDisposalInspection inspection) => __builder =>
+    {
+        switch (inspection.TargetKind)
+        {
+            case OldDatabaseTargetKind.Unsafe:
+                <MudAlert Severity="Severity.Error" Class="mt-3">
+                    @string.Format(UiText.OldDatabaseDisposalTargetUnsafeFormat, inspection.TargetRejectionReason)
+                </MudAlert>
+                return;
+
+            case OldDatabaseTargetKind.SqliteDatabase when inspection.Migration is null:
+                <MudAlert Severity="Severity.Warning" Class="mt-3">@UiText.OldDatabaseDisposalInspectionUnavailable</MudAlert>
+                <div class="mt-2">
+                    <YaguraButton OnClick="InspectAsync" Disabled="@(MigrationRunningHere)">@UiText.OldDatabaseDisposalInspect</YaguraButton>
+                </div>
+                return;
+
+            case OldDatabaseTargetKind.EmptyBody:
+                <MudText Typo="Typo.body2" Class="mt-3">@UiText.OldDatabaseDisposalTargetEmptyBody</MudText>
+                break;
+
+            case OldDatabaseTargetKind.SidecarFilesOnly:
+                <MudText Typo="Typo.body2" Class="mt-3">@UiText.OldDatabaseDisposalTargetSidecarFilesOnly</MudText>
+                break;
+
+            case OldDatabaseTargetKind.UnverifiableBody:
+                <MudAlert Severity="Severity.Warning" Class="mt-3">@UiText.OldDatabaseDisposalTargetUnverifiable</MudAlert>
+                break;
+        }
+
+        @if (inspection.RecordCount is { } recordCount)
+        {
+            <MudText Typo="Typo.body2" Class="mt-3">
+                @(recordCount > 0
+                    ? string.Format(UiText.OldDatabaseDisposalRecordCountFormat, recordCount, FormatRange(inspection.OldestReceivedAt, inspection.NewestReceivedAt))
+                    : UiText.OldDatabaseDisposalRecordCountZero)
+                @if (inspection.SystemEventCount is { } systemEvents)
+                {
+                    <text>／@string.Format(UiText.OldDatabaseDisposalSystemEventCountFormat, systemEvents)</text>
+                }
+            </MudText>
+        }
+
+        @if (inspection.Migration is { } judgment)
+        {
+            @if (judgment.Migrated)
+            {
+                <MudAlert Severity="Severity.Success" Class="mt-2">@UiText.OldDatabaseDisposalMigrated</MudAlert>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">
+                    @foreach (var line in JudgmentLines(judgment))
+                    {
+                        <MudText Typo="Typo.body2">@line</MudText>
+                    }
+                </MudAlert>
+            }
+        }
+
+        @if (inspection.ArchiveAllowed)
+        {
+            <MudText Typo="Typo.body2" Class="mt-3">@UiText.OldDatabaseDisposalMethodArchiveDescription</MudText>
+        }
+        else if (inspection.TargetKind == OldDatabaseTargetKind.UnverifiableBody)
+        {
+            <MudText Typo="Typo.body2" Class="mt-3">@UiText.OldDatabaseDisposalArchiveNotAllowed</MudText>
+        }
+        <MudText Typo="Typo.body2" Class="mt-1">@UiText.OldDatabaseDisposalMethodDeleteDescription</MudText>
+        @if (inspection.ArchiveAllowed)
+        {
+            <MudText Typo="Typo.body2" Class="mt-1">@UiText.OldDatabaseDisposalMethodGuidance</MudText>
+        }
+
+        <div class="mt-3">
+            <YaguraSelectField Label="@UiText.OldDatabaseDisposalMethodLabel"
+                               Required="true"
+                               EmptyOptionLabel="@UiText.OldDatabaseDisposalMethodEmptyOption"
+                               Options="MethodOptions"
+                               Value="@_method"
+                               ValueChanged="OnMethodChanged" />
+        </div>
+
+        @if (SelectedMethod == OldDatabaseDisposalMethod.Archive)
+        {
+            @if (BeyondRetentionText is { } beyond)
+            {
+                <MudAlert Severity="Severity.Info" Class="mb-3">@beyond</MudAlert>
+            }
+
+            @* 条件は入力の前に示す（試行錯誤の後で拒否されて初めて分かる、を避ける——ui.md §5.4） *@
+            <MudText Typo="Typo.body2" Class="mb-2">
+                @string.Format(UiText.OldDatabaseDisposalDestinationConditionsFormat, YaguraByteFormatter.Format(inspection.RequiredArchiveFreeBytes))
+            </MudText>
+            <YaguraTextField Label="@UiText.OldDatabaseDisposalDestinationLabel"
+                             Required="true"
+                             Placeholder="@UiText.OldDatabaseDisposalDestinationPlaceholder"
+                             Value="@_destination"
+                             ValueChanged="OnDestinationChanged" />
+            <YaguraButton OnClick="CheckDestinationAsync" Disabled="@string.IsNullOrWhiteSpace(_destination)">
+                @UiText.OldDatabaseDisposalDestinationCheck
+            </YaguraButton>
+            @if (_destinationCheck is { } check && string.Equals(_checkedDestination, _destination?.Trim(), StringComparison.Ordinal))
+            {
+                <MudAlert Severity="@(check.Acceptable ? Severity.Success : Severity.Warning)" Class="mt-2">@check.Message</MudAlert>
+            }
+        }
+
+        <MudText Typo="Typo.caption" Class="mt-3 d-block">@UiText.OldDatabaseDisposalLowTrafficNote</MudText>
+        <div class="mt-2">
+            <YaguraButton Role="YaguraButtonRole.Destructive"
+                          Disabled="@(!CanExecute)"
+                          ConfirmTitle="@UiText.OldDatabaseDisposalConfirmTitle"
+                          ConfirmSummary="@ConfirmSummary"
+                          ConfirmActionLabel="@UiText.OldDatabaseDisposalConfirmAction"
+                          ConfirmAcknowledgementLines="@ConfirmAcknowledgementLines"
+                          ConfirmAcknowledgementLabel="@ConfirmAcknowledgementLabel"
+                          ConfirmDetails="@ConfirmDetails"
+                          OnClick="ExecuteAsync">
+                @UiText.OldDatabaseDisposalExecute
+            </YaguraButton>
+        </div>
+    };
+
+    private static IEnumerable<string> JudgmentLines(OldDatabaseMigrationJudgment judgment)
+    {
+        if (judgment.RecordsAfterSwitchCount > 0)
+        {
+            yield return string.Format(
+                UiText.OldDatabaseDisposalRecordsAfterSwitchFormat,
+                judgment.RecordsAfterSwitchCount,
+                FormatRange(judgment.RecordsAfterSwitchOldest, judgment.RecordsAfterSwitchNewest));
+        }
+        else if (judgment.Gaps.Contains(OldDatabaseMigrationGap.RecordsAddedAfterCompletion))
+        {
+            yield return UiText.OldDatabaseDisposalRecordsAddedAfterCompletion;
+        }
+
+        if (judgment.UnmigratedRecordCount > 0)
+        {
+            yield return string.Format(
+                UiText.OldDatabaseDisposalUnmigratedFormat,
+                judgment.UnmigratedRecordCount,
+                FormatRange(judgment.UnmigratedOldest, judgment.UnmigratedNewest));
+        }
+
+        if (judgment.UnmigratedSystemEventCount > 0)
+        {
+            yield return string.Format(
+                UiText.OldDatabaseDisposalUnmigratedSystemEventsFormat,
+                judgment.UnmigratedSystemEventCount,
+                FormatRange(judgment.UnmigratedSystemEventOldest, judgment.UnmigratedSystemEventNewest));
+        }
+
+        if (judgment.Gaps.Contains(OldDatabaseMigrationGap.HourlyReconciliationFailed))
+        {
+            yield return UiText.OldDatabaseDisposalGapHourly;
+        }
+
+        if (judgment.Gaps.Contains(OldDatabaseMigrationGap.SwitchBoundaryUnknown))
+        {
+            yield return UiText.OldDatabaseDisposalGapBoundaryUnknown;
+        }
+
+        if (judgment.Gaps.Contains(OldDatabaseMigrationGap.TargetCannotReconcile))
+        {
+            yield return UiText.OldDatabaseDisposalGapTargetCannotReconcile;
+        }
+    }
+}

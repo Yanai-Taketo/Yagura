@@ -20,8 +20,11 @@
       無操作 15 分（CF-3 仮値）で破棄（configuration.md §5。パスワードは snapshot に含まれない
       ため、画面のローカル状態のみが入力経路——破棄後の再開では再入力を求める）
     - 検証失敗は原因分類ごとの案内 + 修復 SQL（表示のみ。サーバは実行しない——§5.2）
-    - 切替の確定前に蓄積ログが参照できなくなる帰結を予告する（§6.1 の予告義務・文言は ui.md §5.4）
+    - 切替の確定前に、切替の後に要る段階（再起動 → 移行 → 後始末）と帰結を予告する（§6.1 の予告義務・
+      文言は ui.md §5.4）。後始末の方法は切替の時点では選ばせない
     - 切替実行は破壊的操作 = 確認ダイアログ必須（ui.md §3.1）+ 冪等トークン（configuration.md §7）
+    - 再起動の後（実効の保存先が SQL Server）は、移行セクション（§6.2）の下に後始末セクション（§6.3。
+      OldDatabaseDisposalSection）を置く
 *@
 <PageTitle>@UiText.AdminPromotionWizardTitle - Yagura</PageTitle>
 
@@ -195,10 +198,10 @@ else
             }
             <MudText Typo="Typo.body2" Class="mt-2">@UiText.MigrationDescription</MudText>
             <MudText Typo="Typo.body2" Class="mt-1">
-                対象: @($"{migrationStatus.SourceRecordCount:N0}") 件
+                @string.Format(UiText.MigrationSourceCountFormat, migrationStatus.SourceRecordCount ?? 0)
                 @if (migrationStatus.MigratedCount > 0)
                 {
-                    <text>（うち @($"{migrationStatus.MigratedCount:N0}") 件は移行済み——中断からの再開になります）</text>
+                    @string.Format(UiText.MigrationResumeFormat, migrationStatus.MigratedCount)
                 }
             </MudText>
 
@@ -215,7 +218,8 @@ else
             else
             {
                 <div class="mt-2">
-                    <YaguraButton Role="YaguraButtonRole.Primary" OnClick="RunMigrationAsync">
+                    @* 後始末の照合・開始の間は押せない（旧ファイルの排他を取り合うため）。 *@
+                    <YaguraButton Role="YaguraButtonRole.Primary" OnClick="RunMigrationAsync" Disabled="@_disposalBusy">
                         @UiText.MigrationExecute
                     </YaguraButton>
                 </div>
@@ -230,6 +234,13 @@ else
         }
     </MudPaper>
 }
+
+@* 旧・組み込み DB ファイルの後始末（database.md §6.3）: 状態表に従い、対象がある間・このプロセスで結果が出た後に現れる。 *@
+<OldDatabaseDisposalSection MigrationStatus="_migrationStatus"
+                            MigrationRunningHere="_migrationRunning"
+                            MigrationRunVersion="_migrationRunVersion"
+                            StateChanged="RefreshMigrationStatusAsync"
+                            BusyChanged="OnDisposalBusyChanged" />
 
 @code {
     // 切替の保存が書き換えるキー（保存後の再読み込みで、これ以外に反映されたキーを利用者へ示す）。
@@ -406,6 +417,12 @@ else
     private LogMigrationProgress? _migrationProgress;
     private LogMigrationResult? _migrationResult;
     private bool _migrationRunning;
+    private int _migrationRunVersion;
+    private bool _disposalBusy;
+
+    private async Task RefreshMigrationStatusAsync() => _migrationStatus = await LogMigration.GetStatusAsync();
+
+    private void OnDisposalBusyChanged(bool busy) => _disposalBusy = busy;
 
     private async Task RunMigrationAsync()
     {
@@ -435,6 +452,7 @@ else
         {
             _migrationRunning = false;
             _migrationProgress = null;
+            _migrationRunVersion++;
             _migrationStatus = await LogMigration.GetStatusAsync();
         }
     }

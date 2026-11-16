@@ -7,8 +7,8 @@ using Yagura.Web.Components.Common;
 namespace Yagura.Web.Tests.Components;
 
 /// <summary>
-/// 本番昇格ウィザード画面の表示確認（database.md §6.1・ui.md §4。PR #102 の UX 完成——
-/// 接続の項目入力・認証トグル・マスク付きパスワード・退避先入力）。
+/// 本番昇格ウィザード画面の表示確認（database.md §6.1・ui.md §4。接続の項目入力・認証トグル・
+/// マスク付きパスワード・切替の後に要る段階の予告）。
 /// </summary>
 /// <remarks>
 /// <see cref="CommonComponentRenderHarness"/>（初期描画のみ）でスナップショットの状態ごとの
@@ -116,6 +116,7 @@ public sealed class PromotionWizardScreenRenderTests
             {
                 services.AddSingleton<IPromotionWizardService>(new FakePromotionWizardService(snapshot));
                 services.AddSingleton<ILogMigrationService>(new FakeLogMigrationService());
+                services.AddSingleton<IOldDatabaseDisposalService>(new FakeOldDatabaseDisposalService());
                 services.AddSingleton(new YaguraCircuitContext());
                 // 本画面は切替の保存後に再読み込みを呼ぶため注入を要求する。初期描画では切替を実行しない
                 // ので呼ばれない（実行後の呼び出しは PromotionWizardScreenExecuteTests が固定する）。

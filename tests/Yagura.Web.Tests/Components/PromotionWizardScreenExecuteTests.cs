@@ -34,6 +34,7 @@ public sealed class PromotionWizardScreenExecuteTests : IAsyncLifetime
         _ctx.Services.AddMudServices();
         _ctx.Services.AddSingleton<IPromotionWizardService>(_service);
         _ctx.Services.AddSingleton<ILogMigrationService>(new NotPromotedLogMigrationService());
+        _ctx.Services.AddSingleton<IOldDatabaseDisposalService>(new FakeOldDatabaseDisposalService());
         _ctx.Services.AddSingleton(new YaguraCircuitContext());
         _ctx.Services.AddSingleton(new YaguraCircuitAuthenticationStateProvider());
         _ctx.Services.AddSingleton<IYaguraNotifier>(_notifier);

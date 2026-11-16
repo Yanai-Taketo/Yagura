@@ -6,8 +6,9 @@ using Yagura.Web.Components.Common;
 namespace Yagura.Web.Tests.Components;
 
 /// <summary>
-/// 設定トップ（/admin）の表示確認。再起動待ちキーの常設カード（Issue #286。2026-07-18
-/// オーナー裁定——認証済み管理面のみ・検出時刻併記・再起動で自然消滅）の出し分けを固定する。
+/// 設定トップ（/admin）の表示確認。再起動待ちキーの常設カード（認証済み管理面のみ・検出時刻併記・再起動で
+/// 自然消滅）と、以前の保存先のファイルの後始末が残っている常設カード（database.md §6.3 の状態表）の
+/// 出し分けを固定する。
 /// </summary>
 public sealed class AdminHomeRenderTests
 {
@@ -78,16 +79,111 @@ public sealed class AdminHomeRenderTests
         Assert.DoesNotContain("SqlException", html);
     }
 
+    // ------------------------------------------------------------------
+    // 以前の保存先（組み込みデータベース）のファイルの後始末が残っている常設カード（database.md §6.3 状態表）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task OldDatabaseDisposal_NotApplicable_DoesNotShowTheCard()
+    {
+        var html = await RenderAsync([], disposalStatus: FakeOldDatabaseDisposalService.NotApplicable());
+
+        Assert.DoesNotContain(UiText.AdminOldDatabaseDisposalCardTitle, html);
+    }
+
+    [Fact]
+    public async Task OldDatabaseDisposal_CompletedInThisProcess_DoesNotShowTheCard()
+    {
+        // 完了は「対象外」に含まれる（処分の対象がいずれも存在しない）——カードは自然に消える。
+        var completed = new OldDatabaseDisposalResult(OldDatabaseDisposalOutcome.Completed, "以前の保存先のファイルを削除しました。");
+        var html = await RenderAsync([], disposalStatus: FakeOldDatabaseDisposalService.NotApplicable(completed));
+
+        Assert.DoesNotContain(UiText.AdminOldDatabaseDisposalCardTitle, html);
+    }
+
+    [Fact]
+    public async Task OldDatabaseDisposal_Pending_ShowsTheCard_LeadingWithIngestionContinuing_AndLinksToThePromotionPage()
+    {
+        var html = await RenderAsync([], disposalStatus: FakeOldDatabaseDisposalService.Pending());
+
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardTitle, html);
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardDescription, html);
+        Assert.StartsWith("受信と保存は正常に続いています。", UiText.AdminOldDatabaseDisposalCardDescription);
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardLink, html);
+        Assert.Contains("href=\"/admin/promotion\"", html);
+        Assert.Contains(string.Format(UiText.AdminOldDatabaseDisposalCardFilesFormat, 2, "3 MB"), html);
+
+        // カードは旧ファイルを開かずに判定するため、中身を「切り替え前のログ」と決めつけない。
+        Assert.DoesNotContain("切り替え前", html);
+    }
+
+    [Fact]
+    public async Task OldDatabaseDisposal_MigrationRunning_ShowsTheCardSayingSo()
+    {
+        var html = await RenderAsync([], disposalStatus: FakeOldDatabaseDisposalService.MigrationRunning());
+
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardTitle, html);
+        Assert.Contains(UiText.OldDatabaseDisposalMigrationRunning, html);
+    }
+
+    [Theory]
+    [InlineData(OldDatabaseDisposalStage.Exporting)]
+    [InlineData(OldDatabaseDisposalStage.Deleting)]
+    public async Task OldDatabaseDisposal_Running_ShowsTheCardSayingSo(OldDatabaseDisposalStage stage)
+    {
+        var html = await RenderAsync([], disposalStatus: FakeOldDatabaseDisposalService.Running(stage));
+
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardTitle, html);
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardRunning, html);
+    }
+
+    [Fact]
+    public async Task OldDatabaseDisposal_LastAttemptFailed_ShowsTheCardWithTheLastResultAndReason()
+    {
+        var failed = new OldDatabaseDisposalResult(
+            OldDatabaseDisposalOutcome.DeletePartiallyFailed,
+            "元のファイルの一部を削除できませんでした（yagura.db）。",
+            OldDatabaseDisposalReason.DeleteFailed);
+        var html = await RenderAsync([], disposalStatus: FakeOldDatabaseDisposalService.LastAttemptFailed(failed));
+
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardTitle, html);
+        Assert.Contains(string.Format(UiText.AdminOldDatabaseDisposalCardLastFailedFormat, failed.Message), html);
+    }
+
+    [Fact]
+    public async Task OldDatabaseDisposal_RecordedOldFileUnderAnotherName_ShowsTheCardWithThePathAndManualGuidance()
+    {
+        // 切替の後に設定の名前を変えた場合: 処分の対象は無いが未完了として扱う（1041 と同じ判定）。
+        const string misplaced = @"C:\ProgramData\Yagura\old-name.db";
+        var status = FakeOldDatabaseDisposalService.NotApplicable() with { MisplacedRecordedOldDatabasePath = misplaced };
+        var html = await RenderAsync([], disposalStatus: status);
+
+        Assert.Contains(UiText.AdminOldDatabaseDisposalCardTitle, html);
+        Assert.Contains(string.Format(UiText.OldDatabaseDisposalMisplacedFormat, misplaced), html);
+    }
+
+    [Fact]
+    public void SwitchWarning_RefersToTheDisposalCardByItsDisplayedTitle()
+    {
+        // 切替前の予告が「管理画面に『…』と表示されます」と名指しする名前は、管理ホームに実際に出る見出しと同じにする。
+        Assert.Contains($"『{UiText.AdminOldDatabaseDisposalCardTitle}』", UiText.PromotionSwitchWarning);
+    }
+
     private static Task<string> RenderAsync(
         IReadOnlyList<PendingRestartKey> pendingKeys,
         EmailNotificationStatus? emailStatus = null,
-        Yagura.Web.Administration.StorageAvailabilityState? storageAvailability = null) =>
+        Yagura.Web.Administration.StorageAvailabilityState? storageAvailability = null,
+        OldDatabaseDisposalStatus? disposalStatus = null) =>
         CommonComponentRenderHarness.RenderAsync<AdminHome>(
             configureServices: services =>
             {
                 services.AddSingleton<IConfigurationReloadService>(new FakeReloadService(pendingKeys));
                 services.AddSingleton<IEmailNotificationAdminService>(
                     new FakeEmailNotificationAdminService(emailStatus ?? EmailStatus(enabled: false)));
+                services.AddSingleton<IOldDatabaseDisposalService>(new FakeOldDatabaseDisposalService
+                {
+                    Status = disposalStatus ?? FakeOldDatabaseDisposalService.NotApplicable(),
+                });
 
                 if (storageAvailability is not null)
                 {

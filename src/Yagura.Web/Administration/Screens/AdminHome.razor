@@ -6,6 +6,7 @@
 @inject IEmailNotificationAdminService EmailNotificationAdminService
 @inject Yagura.Web.Administration.ViewerHttpsRuntimeState ViewerHttpsState
 @inject Yagura.Web.Administration.StorageAvailabilityState StorageAvailability
+@inject IOldDatabaseDisposalService OldDatabaseDisposal
 
 @*
     設定トップ（ui.md §4 の画面構成「設定（ウィザード群）」の入口。M8-4 骨格）。
@@ -16,6 +17,10 @@
     操作の時点だけでなく管理面の入口に常設表示する。表示先は認証済み管理面のみ——閲覧面
     （/status 等）には出さない（管理系情報を閲覧面に露出しない）。プロセス内状態の
     ため再起動で自然に消える。
+
+    以前の保存先（組み込みデータベース）のファイルの後始末が残っている常設カード（database.md §6.3 の
+    状態表・ui.md §4）: 判定は旧ファイルを開かない状態の取得による。状態を変える操作はカードに置かず、
+    昇格ページの後始末セクションへの導線だけを置く。後始末が済めば自然に消える。
 *@
 <PageTitle>@UiText.AdminHomeTitle - Yagura</PageTitle>
 
@@ -37,6 +42,29 @@
                 </li>
             }
         </ul>
+    </MudAlert>
+}
+
+@if (_disposalStatus is { } disposal && OldDatabaseDisposalIncomplete(disposal))
+{
+    <MudAlert Severity="@(OldDatabaseDisposalRunning(disposal) ? Severity.Info : Severity.Warning)" Class="mt-4">
+        <MudText Typo="Typo.subtitle1"><b>@UiText.AdminOldDatabaseDisposalCardTitle</b></MudText>
+        <MudText Typo="Typo.body2">@UiText.AdminOldDatabaseDisposalCardDescription</MudText>
+        @if (disposal.TargetFiles.Count > 0)
+        {
+            <MudText Typo="Typo.body2">
+                @string.Format(UiText.AdminOldDatabaseDisposalCardFilesFormat, disposal.TargetFiles.Count, YaguraByteFormatter.Format(disposal.TotalSizeBytes))
+            </MudText>
+        }
+        @if (OldDatabaseDisposalStateText(disposal) is { } stateText)
+        {
+            <MudText Typo="Typo.body2" Class="mt-1">@stateText</MudText>
+        }
+        @if (disposal.MisplacedRecordedOldDatabasePath is { } misplaced)
+        {
+            <MudText Typo="Typo.body2" Class="mt-1">@string.Format(UiText.OldDatabaseDisposalMisplacedFormat, misplaced)</MudText>
+        }
+        <MudLink Href="/admin/promotion" Typo="Typo.body2" Class="mt-1 d-inline-block">@UiText.AdminOldDatabaseDisposalCardLink</MudLink>
     </MudAlert>
 }
 
@@ -104,6 +132,7 @@
     private IReadOnlyList<PendingRestartKey> _pendingRestartKeys = [];
     private EmailNotificationStatus? _emailStatus;
     private bool _storageAvailable = true;
+    private OldDatabaseDisposalStatus? _disposalStatus;
 
     protected override async Task OnInitializedAsync()
     {
@@ -111,7 +140,28 @@
         _pendingRestartKeys = ReloadService.GetPendingRestartKeys();
         _storageAvailable = StorageAvailability.IsAdminAccountStoreAvailable;
         _emailStatus = await EmailNotificationAdminService.GetStatusAsync();
+        _disposalStatus = await OldDatabaseDisposal.GetStatusAsync();
     }
+
+    /// <summary>
+    /// 未完了: 状態表の「対象外」以外、または切り替えの時点のファイルが別の名前で残っている（能動通知 1041 と同じ判定）。
+    /// </summary>
+    private static bool OldDatabaseDisposalIncomplete(OldDatabaseDisposalStatus status) =>
+        status.State != OldDatabaseDisposalState.NotApplicable || status.MisplacedRecordedOldDatabasePath is not null;
+
+    private static bool OldDatabaseDisposalRunning(OldDatabaseDisposalStatus status) =>
+        status.State is OldDatabaseDisposalState.MigrationRunning
+            or OldDatabaseDisposalState.DisposalRunning
+            or OldDatabaseDisposalState.DisposalDeleting;
+
+    private static string? OldDatabaseDisposalStateText(OldDatabaseDisposalStatus status) => status.State switch
+    {
+        OldDatabaseDisposalState.MigrationRunning => UiText.OldDatabaseDisposalMigrationRunning,
+        OldDatabaseDisposalState.DisposalRunning or OldDatabaseDisposalState.DisposalDeleting => UiText.AdminOldDatabaseDisposalCardRunning,
+        OldDatabaseDisposalState.LastAttemptFailed when status.LastResult is { } failed =>
+            string.Format(UiText.AdminOldDatabaseDisposalCardLastFailedFormat, failed.Message),
+        _ => null,
+    };
 
     /// <summary>
     /// カードの色: 「有効にしたつもりで送られていない」（設定不正で無効化）と直近の失敗ありは
