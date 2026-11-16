@@ -15,6 +15,11 @@ namespace Yagura.Host.Administration.AdminAuthentication;
 /// </remarks>
 public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminService
 {
+    private const string WindowsEnabledKey = "Admin:Authentication:Windows:Enabled";
+    private const string KerberosOnlyKey = "Admin:Authentication:Windows:KerberosOnly";
+    private const string AppEnabledKey = "Admin:Authentication:App:Enabled";
+    private const string RequireForLoopbackKey = "Admin:Authentication:RequireForLoopback";
+
     private readonly string _dataRoot;
     private readonly IAdminAccountStore _accountStore;
     private readonly AppAdminAuthenticationService _appAuthenticationService;
@@ -58,7 +63,7 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         return ToStatus(snapshot.Options, account);
     }
 
-    public async Task<AdminAuthenticationStatus> ConfigureAsync(
+    public async Task<AdminAuthenticationConfigureResult> ConfigureAsync(
         bool windowsAuthEnabled,
         bool kerberosOnly,
         bool appAuthEnabled,
@@ -164,6 +169,15 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
 
         var snapshot = YaguraConfigurationWriter.Read(_dataRoot);
         var before = snapshot.Options;
+
+        // 変更差分は実効値で数える（永続値の表記ゆれ true/True を変更と数えない——他の
+        // 管理画面サービスと同じ土俵）。画面はこれが空でないときだけ保存後の再読み込みを呼ぶ。
+        var changedKeys = new List<string>();
+        AddIfChanged(changedKeys, WindowsEnabledKey, before.Admin?.Authentication?.Windows?.Enabled, windowsAuthEnabled);
+        AddIfChanged(changedKeys, KerberosOnlyKey, before.Admin?.Authentication?.Windows?.KerberosOnly, kerberosOnly);
+        AddIfChanged(changedKeys, AppEnabledKey, before.Admin?.Authentication?.App?.Enabled, appAuthEnabled);
+        AddIfChanged(changedKeys, RequireForLoopbackKey, before.Admin?.Authentication?.RequireForLoopback, requireForLoopback);
+
         var after = YaguraConfigurationOptionsCloner.Clone(before);
 
         after.Admin ??= new YaguraConfigurationOptions.AdminOptions();
@@ -171,10 +185,12 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         after.Admin.Authentication.Windows ??= new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.WindowsOptions();
         after.Admin.Authentication.App ??= new YaguraConfigurationOptions.AdminOptions.AuthenticationOptions.AppOptions();
 
-        after.Admin.Authentication.Windows.Enabled = windowsAuthEnabled.ToString();
-        after.Admin.Authentication.Windows.KerberosOnly = kerberosOnly.ToString();
-        after.Admin.Authentication.App.Enabled = appAuthEnabled.ToString();
-        after.Admin.Authentication.RequireForLoopback = requireForLoopback.ToString();
+        // 実効値の変わらないキーは生値（未設定・"true" 等の表記）のまま残す。再起動待ちカードを決める
+        // 再読み込みの差分は生値の比較のため、書き換えると操作していないキーまでカードに載る。
+        after.Admin.Authentication.Windows.Enabled = RawValueFor(before.Admin?.Authentication?.Windows?.Enabled, windowsAuthEnabled);
+        after.Admin.Authentication.Windows.KerberosOnly = RawValueFor(before.Admin?.Authentication?.Windows?.KerberosOnly, kerberosOnly);
+        after.Admin.Authentication.App.Enabled = RawValueFor(before.Admin?.Authentication?.App?.Enabled, appAuthEnabled);
+        after.Admin.Authentication.RequireForLoopback = RawValueFor(before.Admin?.Authentication?.RequireForLoopback, requireForLoopback);
 
         YaguraConfigurationWriter.Save(_dataRoot, after, snapshot.VersionToken);
 
@@ -206,8 +222,19 @@ public sealed class AdminAuthenticationAdminService : IAdminAuthenticationAdminS
         }
 
         var account = await _accountStore.GetSoleAccountAsync(cancellationToken).ConfigureAwait(false);
-        return ToStatus(after, account);
+        return new AdminAuthenticationConfigureResult(changedKeys, ToStatus(after, account));
     }
+
+    private static void AddIfChanged(List<string> changedKeys, string key, string? beforeRaw, bool afterValue)
+    {
+        if (ParseBool(beforeRaw) != afterValue)
+        {
+            changedKeys.Add(key);
+        }
+    }
+
+    private static string? RawValueFor(string? beforeRaw, bool afterValue) =>
+        ParseBool(beforeRaw) == afterValue ? beforeRaw : afterValue.ToString();
 
     private static AdminAuthenticationStatus ToStatus(YaguraConfigurationOptions options, AdminAccountRecord? account)
     {

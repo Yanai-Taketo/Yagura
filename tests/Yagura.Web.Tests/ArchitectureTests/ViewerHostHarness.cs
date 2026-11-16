@@ -394,7 +394,7 @@ internal sealed class ViewerHostHarness : IAsyncDisposable
         public Task<Yagura.Abstractions.Administration.AdminAuthenticationStatus> GetStatusAsync(CancellationToken cancellationToken = default)
             => throw new NotSupportedException("ルーティング列挙専用ハーネス。");
 
-        public Task<Yagura.Abstractions.Administration.AdminAuthenticationStatus> ConfigureAsync(
+        public Task<Yagura.Abstractions.Administration.AdminAuthenticationConfigureResult> ConfigureAsync(
             bool windowsAuthEnabled,
             bool kerberosOnly,
             bool appAuthEnabled,

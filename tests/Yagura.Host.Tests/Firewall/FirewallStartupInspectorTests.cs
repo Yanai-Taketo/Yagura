@@ -41,6 +41,9 @@ public sealed class FirewallStartupInspectorTests : IDisposable
         public IReadOnlyList<FirewallRuleInfo>? TryReadYaguraRules() => rules;
     }
 
+    /// <summary>警告文が名指しする運用ガイドの節（運用ガイドの見出しと一致させる）。</summary>
+    private const string OperationsGuideSectionReference = "docs/operations.md §14「ファイアウォール規則を自分で足す」";
+
     private FirewallStartupInspector CreateInspector(IReadOnlyList<FirewallRuleInfo>? rules) =>
         new(_dataRoot, new FakeRuleReader(rules), _auditRecorder, _logger);
 
@@ -52,11 +55,17 @@ public sealed class FirewallStartupInspectorTests : IDisposable
         new("Yagura Viewer (TCP 8514)", FirewallRuleInfo.TcpProtocol, "8514", Enabled: true, IsInboundAllow: true),
     ];
 
+    private const string ValidThumbprint = "0123456789ABCDEF0123456789ABCDEF01234567";
+
     private static ResolvedYaguraConfiguration CreateConfiguration(
         int udpPort = 514,
         int tcpPort = 514,
         int httpPort = 8514,
-        ViewerPublicAccess viewerPublicAccess = ViewerPublicAccess.Lan) =>
+        ViewerPublicAccess viewerPublicAccess = ViewerPublicAccess.Lan,
+        bool ingestionTlsEnabled = false,
+        int ingestionTlsPort = 6514,
+        bool adminRemoteBindingEnabled = false,
+        int adminHttpsPort = 8516) =>
         new(
             DataRoot: Path.GetTempPath(),
             UdpBindAddress: "::",
@@ -78,10 +87,10 @@ public sealed class FirewallStartupInspectorTests : IDisposable
             AdminWindowsAdminGroups: [],
             AdminAppAuthEnabled: false,
             AdminAuthRequireForLoopback: false,
-            AdminRemoteBindingEnabled: false,
-            AdminHttpsEnabled: false,
-            AdminHttpsCertificateThumbprint: null,
-            AdminHttpsPort: 8516,
+            AdminRemoteBindingEnabled: adminRemoteBindingEnabled,
+            AdminHttpsEnabled: adminRemoteBindingEnabled,
+            AdminHttpsCertificateThumbprint: adminRemoteBindingEnabled ? ValidThumbprint : null,
+            AdminHttpsPort: adminHttpsPort,
             SqliteFileName: "yagura.db",
             SpoolEnabled: true,
             SpoolDirectory: Path.Combine(Path.GetTempPath(), "spool"),
@@ -90,10 +99,10 @@ public sealed class FirewallStartupInspectorTests : IDisposable
             RetentionExecutionTimeOfDay: new TimeOnly(3, 0),
             StorageProvider: StorageProvider.Sqlite,
             SqlServerConnectionString: null,
-            IngestionTlsEnabled: false,
+            IngestionTlsEnabled: ingestionTlsEnabled,
             IngestionTlsBindAddress: "::",
-            IngestionTlsPort: 6514,
-            IngestionTlsCertificateThumbprint: null,
+            IngestionTlsPort: ingestionTlsPort,
+            IngestionTlsCertificateThumbprint: ingestionTlsEnabled ? ValidThumbprint : null,
             FlowControlEnabled: true,
             FlowControlMessagesPerSecond: 10000,
             FlowControlBurstSize: 20000,
@@ -169,6 +178,61 @@ public sealed class FirewallStartupInspectorTests : IDisposable
 
         var warning = Assert.Single(_logger.Collector.GetSnapshot(), r => r.Level == LogLevel.Warning);
         Assert.Contains("UDP 514", warning.Message);
+    }
+
+    [Fact]
+    public void CheckConsistency_TlsEnabledWithoutRule_WarnsWithActualPortAndPointsToOperationsGuideSection()
+    {
+        // インストーラは TLS 受信の規則を作らない。警告は実ポートを示し、手順の置き場所を
+        // 節まで名指しする（文書名だけでは、警告を見た運用者が手順に辿り着けない）。
+        CreateInspector(InstallerDefaultRules()).CheckConsistency(
+            CreateConfiguration(ingestionTlsEnabled: true, ingestionTlsPort: 7514));
+
+        var warning = Assert.Single(_logger.Collector.GetSnapshot(), r => r.Level == LogLevel.Warning);
+        Assert.Equal(ConfigurationEventIds.FirewallRuleMismatch.Id, warning.Id.Id);
+        Assert.Contains("syslog TLS 受信（TCP 7514）", warning.Message);
+        Assert.Contains(OperationsGuideSectionReference, warning.Message);
+    }
+
+    [Fact]
+    public void WarningSectionReference_ExistsAsHeadingInOperationsGuide()
+    {
+        // 警告文が名指しする節が運用ガイドに実在すること（節の付け替えで参照が宙に浮くのを防ぐ）。
+        var guide = File.ReadAllText(Path.Combine(RepositoryPaths.FindRoot(), "docs", "operations.md"));
+
+        Assert.Contains("\n## 14. ファイアウォール規則を自分で足す\n", guide.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void CheckConsistency_AdminRemoteBindingWithYaguraRule_DoesNotReportRuleAsLeftover()
+    {
+        // 案内どおり Yagura 名前空間で作った管理リモート HTTPS の規則を「取り残し」と誤検出しない。
+        var rules = InstallerDefaultRules();
+        rules.Add(new("Yagura Admin Remote (HTTPS 9516)", FirewallRuleInfo.TcpProtocol, "9516", Enabled: true, IsInboundAllow: true));
+
+        CreateInspector(rules).CheckConsistency(
+            CreateConfiguration(adminRemoteBindingEnabled: true, adminHttpsPort: 9516));
+
+        Assert.DoesNotContain(_logger.Collector.GetSnapshot(), r => r.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public void CheckConsistency_AdminRemoteBindingWithoutRule_WarnsWithActualPort()
+    {
+        CreateInspector(InstallerDefaultRules()).CheckConsistency(
+            CreateConfiguration(adminRemoteBindingEnabled: true, adminHttpsPort: 9516));
+
+        var warning = Assert.Single(_logger.Collector.GetSnapshot(), r => r.Level == LogLevel.Warning);
+        Assert.Contains("管理画面のリモート HTTPS（TCP 9516）", warning.Message);
+    }
+
+    [Fact]
+    public void CheckConsistency_AdminRemoteBindingDisabled_RemoteHttpsRuleNotRequired()
+    {
+        // 既定（loopback 束縛のみ）では管理リスナの規則は不要——無くても警告しない。
+        CreateInspector(InstallerDefaultRules()).CheckConsistency(CreateConfiguration(adminHttpsPort: 9516));
+
+        Assert.DoesNotContain(_logger.Collector.GetSnapshot(), r => r.Level == LogLevel.Warning);
     }
 
     [Fact]

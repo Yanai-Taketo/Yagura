@@ -12,6 +12,7 @@
 @inject IForwarderMsiStore MsiStore
 @inject IForwarderMsiPlacementService PlacementService
 @inject Yagura.Abstractions.Administration.IForwarderMsiUploadAdminService UploadSettingService
+@inject Yagura.Abstractions.Administration.IConfigurationReloadService ReloadService
 @inject Yagura.Web.Components.Common.IYaguraNotifier Notifier
 @inject YaguraCircuitContext CircuitContext
 @inject YaguraCircuitAuthenticationStateProvider AuthStateProvider
@@ -464,6 +465,7 @@
     private bool _operationAuthenticated;
 
     // ---- opt-in トグル（ADR-0021 決定 4） ----
+    private static readonly string[] UploadSettingKeys = ["Admin:ForwarderKit:MsiUpload:Enabled"];
     private Yagura.Abstractions.Administration.ForwarderMsiUploadSettingStatus? _uploadSetting;
     private bool _enableInventoryAcknowledged;
     private bool _settingInProgress;
@@ -529,6 +531,10 @@
             Notifier.NotifyOk(enabled
                 ? UiText.ForwarderMsiUploadEnabledSaved
                 : UiText.ForwarderMsiUploadDisabledSaved);
+
+            // 再起動まで効かない変更を、再読み込みで再起動待ちカードへ計上する。
+            await ConfigurationSaveReload.ReloadAfterSaveAsync(
+                ReloadService, Notifier, UploadSettingKeys, CircuitContext.RemoteAddress, scheme, principal);
         }
         catch (Yagura.Abstractions.Administration.WizardValidationException ex)
         {

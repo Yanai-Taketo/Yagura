@@ -23,7 +23,7 @@ dotnet build installer\Yagura.Installer.wixproj -c Release -p:YaguraArch=arm64
   とする**(x64 の無サフィックス名は維持しない。ADR-0009 決定4)。リリースワークフロー
   (`.github/workflows/release.yml`)がバージョンを冠した名前(例 `Yagura-0.3.0-x64.msi`)へ
   リネームして公開する。**MSI はビルド環境ごとに再現しない**ため、サイズ・SHA256 の byte-exact
-  値をドキュメントに書かない(docs/development/conventions.md「リリース」)
+  値をドキュメントに書かない(docs/development/release-process.md「規則」)
 - アーキ別ビルドを同じ作業ツリーで連続して行う場合、MSBuild の増分ビルド判定が
   `installer\obj` 配下のキャッシュを誤って再利用することがある(実ビルドで確認、2026-07-10)。
   `installer\obj`・`installer\bin` を削除してからビルドし直すこと(CI のマトリクスビルドは

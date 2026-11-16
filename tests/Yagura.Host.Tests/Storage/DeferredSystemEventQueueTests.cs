@@ -184,6 +184,54 @@ public sealed class DeferredSystemEventQueueTests
         Assert.True(await coordinator.WaitForLogStoreInitializationAsync(TimeSpan.FromMinutes(2)));
     }
 
+    [Fact]
+    public async Task WaitForLogStoreInitialization_DisposesTimeoutTimer_WhenSchemaBecomesReady()
+    {
+        // 初期化が先に完了したら、上限側のタイマーを上限まで生かしておかない。
+        var timeout = TimeSpan.FromMinutes(2);
+        var time = new TimerTrackingTimeProvider(Baseline);
+        var logStore = new RecordingLogStore { InitializeFails = true };
+        var coordinator = new StorageInitializationCoordinator(
+            logStore, new AlwaysOkAccountStore(), new StorageAvailabilityState(), time);
+
+        await coordinator.TryInitializeAsync(force: true);
+        var waiting = coordinator.WaitForLogStoreInitializationAsync(timeout);
+        Assert.Equal(1, time.CountLiveTimers(timeout));
+
+        logStore.InitializeFails = false;
+        await coordinator.TryInitializeAsync(force: true);
+
+        Assert.True(await waiting);
+
+        // 破棄は待ち手の継続が走った直後に行われるため、完了と同時とは限らない。時間は進めない
+        // ——上限による発火で消えたのでは検証にならない。
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (time.CountLiveTimers(timeout) > 0 && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(0, time.CountLiveTimers(timeout));
+    }
+
+    [Fact]
+    public async Task WaitForLogStoreInitialization_Throws_WhenCancelled()
+    {
+        // 停止要求での打ち切りを時間切れ（false）と区別する。false を返すと、呼び出し元は
+        // 「時間切れなので初期化を待たずに試みる」経路へ進み、停止中に保存先へ照会してしまう。
+        var time = new FakeTimeProvider(Baseline);
+        var coordinator = new StorageInitializationCoordinator(
+            new RecordingLogStore { InitializeFails = true }, new AlwaysOkAccountStore(),
+            new StorageAvailabilityState(), time);
+        await coordinator.TryInitializeAsync(force: true);
+
+        using var stopping = new CancellationTokenSource();
+        var waiting = coordinator.WaitForLogStoreInitializationAsync(TimeSpan.FromMinutes(2), stopping.Token);
+        await stopping.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+    }
+
     private sealed class RecordingLogStore : LogStoreTestDouble
     {
         public List<SystemEvent> Written { get; } = [];

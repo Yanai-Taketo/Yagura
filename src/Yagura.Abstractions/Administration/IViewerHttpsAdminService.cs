@@ -82,9 +82,10 @@ public interface IViewerHttpsAdminService : IYaguraWriteService
 
     /// <summary>
     /// 指定拇印の証明書の SAN ホスト名整合検査（決定 4）だけを実行する（保存はしない。副作用なし）。
-    /// 保存後も設定画面で現在の検査結果を確認できるようにするための読み出し面（決定 4——
-    /// 「保存時一度きりにしない」）。証明書が解決できない場合は <see langword="null"/>
-    /// （画面は縮小継続の可能性として別途表示する）。
+    /// 設定画面で選択中の証明書（保存前の選択・転写を含む）と保存済みの証明書の両方について、
+    /// 現在の検査結果を返す読み出し面（決定 4——「保存時一度きりにしない」）。画面は選択・転写・
+    /// 一覧の更新のたびに呼ぶため、操作に同期して返せる軽さを保つこと。証明書が解決できない場合は
+    /// <see langword="null"/>（画面は縮小継続の可能性として別途表示する）。
     /// </summary>
     Task<ViewerHttpsSanInspection?> InspectCertificateAsync(
         string certificateThumbprint, CancellationToken cancellationToken = default);
