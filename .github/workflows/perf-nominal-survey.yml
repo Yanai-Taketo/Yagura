@@ -237,36 +237,8 @@ jobs:
               print(f"{key} = {value}")
           PY
 
-  # ベンチを 1 回だけビルドし、全測定ジョブで同じバイナリを使う（ジョブごとのビルドは時間の
-  # 無駄で、ビルド差を標本に混ぜる余地も生む）。出力ディレクトリには Yagura.Host.dll 一式が
-  # 入る——ベンチは AppContext.BaseDirectory から本体を起動する。
-  build:
-    needs: plan
-    runs-on: windows-2025
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      - name: Build Yagura.Bench (Release)
-        run: dotnet build tools/Yagura.Bench/Yagura.Bench.csproj -c Release
-
-      - name: Upload bench binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: nominal-survey-bench-bin
-          path: tools/Yagura.Bench/bin/Release/net10.0/
-          if-no-files-found: error
-          retention-days: 7
-
   measure:
-    needs: [plan, build]
+    needs: plan
     strategy:
       # 1 個体の失敗で他の標本を捨てない。
       fail-fast: false
@@ -295,7 +267,7 @@ jobs:
       PYTHONUTF8: '1'
 
     steps:
-      # 集計スクリプト（梯子の合否判定）のために取得する。ビルドはしない。
+      # 集計スクリプト（梯子の合否判定）とベンチのビルドのために取得する。
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -304,11 +276,13 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Download bench binaries
-        uses: actions/download-artifact@v8
-        with:
-          name: nominal-survey-bench-bin
-          path: tools/Yagura.Bench/bin/Release/net10.0
+      # ベンチは各測定機でビルドする。build 出力の Yagura.Host.staticwebassets.runtime.json は、
+      # ビルド機の NuGet キャッシュと obj 配下の圧縮済みアセットを絶対パスで指し、Host は起動時に
+      # 無条件でこのマニフェストを読む（Program.cs）。別の機でビルドした出力を持ち込むと、参照先が
+      # 無く起動直後に DirectoryNotFoundException で落ちる。同じコミットからのビルドなので、標本間で
+      # 実行されるコードは同じである。
+      - name: Build Yagura.Bench (Release)
+        run: dotnet build tools/Yagura.Bench/Yagura.Bench.csproj -c Release
 
       # 値は「どの個体で測ったか」とセットでなければ集計できない。CPU 名は WMI の製品名を
       # 正とする（ベンチ JSON の PROCESSOR_IDENTIFIER は世代の判別に足りない）。
@@ -526,8 +500,8 @@ jobs:
   # 標本を集計し、個体ごとの値・版ごとの分布・公称値の候補（または検証・M-4 の判定）を
   # ジョブのサマリと artifact に出す。測定ジョブが一部失敗しても、残った標本で集計する。
   aggregate:
-    needs: [plan, build, measure]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result == 'success' }}
+    needs: [plan, measure]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
