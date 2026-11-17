@@ -6,6 +6,8 @@
 > 本手順書は再実施用に残すが、下記 2 点は実施時に判明した誤りを訂正済みである——
 > ①手順 2 の `icacls /inheritance:r` は**使ってはならない**（DACL が空になり Administrators を含む全員が締め出され、`takeown` での復旧が必要になる。正しくは `/inheritance:d`）
 > ②制限 ACE には **`S`（SYNCHRONIZE）が必須**（欠くとディレクトリ列挙の時点で `UnauthorizedAccessException` になる）
+>
+> 実施の記録: [lab 検証記録の台帳](validation-ledger.md) L-15。
 
 security.md §4.2・§5 / SEC-3（確定待ち一覧）/ Issue #261 の lab 検証手順。
 **実施環境**: Yagura サービスがインストール済みの lab（仮想サービスアカウント `NT SERVICE\Yagura` が存在すること。開発機の単体では仮想サービスアカウントの指定形式を検証できない）。
