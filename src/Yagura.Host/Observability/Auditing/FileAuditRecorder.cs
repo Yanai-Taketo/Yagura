@@ -156,7 +156,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
         ArgumentNullException.ThrowIfNull(auditEvent);
 
         var eventId = ResolveEventIdOrFallback(auditEvent.Kind);
-        if (!TryAppendToFile(auditEvent, eventId))
+        if (!TryAppendToFile(auditEvent, eventId, flushToDisk: true))
         {
             _metrics.RecordAuditWriteFailed();
             return false;
@@ -184,7 +184,13 @@ public sealed class FileAuditRecorder : IAuditRecorder
         }
     }
 
-    private bool TryAppendToFile(AuditEvent auditEvent, EventId eventId)
+    /// <param name="auditEvent">記録する事象。</param>
+    /// <param name="eventId">事象の ID。</param>
+    /// <param name="flushToDisk">
+    /// ディスクへ書き切ってから戻るか。確認つきの記録（その後に不可逆な操作が続く）では、OS のキャッシュに入った
+    /// だけで「正本に載った」と答えると、直後の停電で記録だけが失われ、操作だけが残り得る。
+    /// </param>
+    private bool TryAppendToFile(AuditEvent auditEvent, EventId eventId, bool flushToDisk = false)
     {
         var filePath = Path.Combine(_directoryPath, GetFileNameFor(auditEvent.OccurredAt));
 
@@ -220,6 +226,10 @@ public sealed class FileAuditRecorder : IAuditRecorder
                     FileAccess.Write,
                     FileShare.Read);
                 stream.Write(bytes, 0, bytes.Length);
+                if (flushToDisk)
+                {
+                    stream.Flush(flushToDisk: true);
+                }
             }
 
             return true;
