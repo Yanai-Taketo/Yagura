@@ -62,16 +62,59 @@ public static class PromotionSwitchBoundaryStore
         }
     }
 
-    /// <summary>
-    /// 切替の実行時に記録する（既存の記録は上書きする——最後の切替が境界になる）。
-    /// 原子的置換で書く。
-    /// </summary>
+    /// <summary>記録を原子的置換で書く（既存の記録は置き換わる）。</summary>
     public static void Write(string dataRoot, PromotionSwitchBoundary boundary)
     {
         var path = PathOf(dataRoot);
         var tempPath = path + ".tmp";
         File.WriteAllText(tempPath, JsonSerializer.Serialize(boundary));
         File.Move(tempPath, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// 切替の実行時に記録する。記録を書いたら <see langword="true"/>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 照合できない区間の始まりは後ろへずらさない——後ろへずれるほど、SQL Server で動いていた区間のライブ受信が
+    /// 件数の照合に混ざり、旧ファイルにだけあるログの欠落を隠す:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><paramref name="reducedFromSqlServer"/>（設定上は SQL Server だが、接続文字列の不備・復号失敗で組み込み
+    /// データベースへ縮小して動いている間のやり直し）は本物の切替ではないため、記録を書かない（無ければ無いまま
+    /// ——境界が分からないものとして安全側に倒れる）。</item>
+    /// <item>同じファイルを指す記録に反映の時刻が既にあれば（SQL Server で動いた区間がある）、記録を書き換えない。</item>
+    /// <item>それ以外（反映の前にウィザードをやり直した・別のファイルを指す記録）は、最後の切替を境界にする。</item>
+    /// </list>
+    /// </remarks>
+    public static bool RecordSwitch(string dataRoot, PromotionSwitchBoundary boundary, bool reducedFromSqlServer)
+    {
+        if (reducedFromSqlServer)
+        {
+            return false;
+        }
+
+        var existing = TryRead(dataRoot);
+        if (existing is { EffectiveSinceUtc: not null } && SamePath(existing.OldDatabasePath, boundary.OldDatabasePath))
+        {
+            return false;
+        }
+
+        Write(dataRoot, boundary);
+        return true;
+    }
+
+    private static bool SamePath(string left, string right)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        try
+        {
+            return string.Equals(System.IO.Path.GetFullPath(left), System.IO.Path.GetFullPath(right), comparison);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return string.Equals(left, right, comparison);
+        }
     }
 
     /// <summary>

@@ -359,6 +359,8 @@ public static partial class YaguraConfigurationLoader
 
         // --- 永続化: provider 選択・SQL Server 接続文字列（§1「既定値で継続」。M5-3） ---
         var (storageProvider, sqlServerConnectionString) = ResolveStorageProvider(options, warnings);
+        var storageProviderReducedFromSqlServer = storageProvider == StorageProvider.Sqlite
+            && string.Equals(options.Storage?.Provider, "sqlserver", StringComparison.OrdinalIgnoreCase);
 
         // --- スプール: 有効/無効・置き場所・上限（§1「既定値で継続」。M4-3） ---
         var spoolEnabled = ResolveSpoolEnabled(options, warnings);
@@ -434,6 +436,7 @@ public static partial class YaguraConfigurationLoader
             // 「既定は IPv4 縮小 / 明示は fail-fast」の分岐の入力——受信段へ引き渡す）。
             UdpBindAddressIsExplicit = udpBindAddressIsExplicit,
             TcpBindAddressIsExplicit = tcpBindAddressIsExplicit,
+            StorageProviderReducedFromSqlServer = storageProviderReducedFromSqlServer,
             IngestionTlsBindAddressIsExplicit = ingestionTlsBindAddressIsExplicit,
             ViewerHttpsMode = viewerHttpsMode,
             ViewerHttpsCertificateThumbprint = viewerHttpsCertificateThumbprint,

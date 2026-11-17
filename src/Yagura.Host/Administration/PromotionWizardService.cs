@@ -39,8 +39,9 @@ namespace Yagura.Host.Administration;
 /// <para>
 /// <b>切替の境界の記録（database.md §6.3・DB-14 ①）</b>: 切替の保存が成立したら、その時点の事実
 /// （切替の時刻・組み込み DB ファイルのフルパス・最新の <c>(ReceivedAt, Id)</c> と件数）をデータルートに
-/// 記録する。記録の失敗は切替を失敗させない——処分の完了判定は記録が無いときに安全側（照合できない区間を
-/// 全区間とみなす）へ倒れる。旧 DB ファイルの処分の方法は切替の時点では選ばせない（database.md §6.1）。
+/// 記録する。照合できない区間の始まりを後ろへずらさないため、縮退運転中のやり直しと、SQL Server で動いた区間を
+/// 持つ既存の記録は書き換えない（<see cref="PromotionSwitchBoundaryStore.RecordSwitch"/>）。記録の失敗は切替を
+/// 失敗させない——処分の完了判定は記録が無いときに安全側（照合できない区間を全区間とみなす）へ倒れる。旧 DB ファイルの処分の方法は切替の時点では選ばせない（database.md §6.1）。
 /// </para>
 /// <para>
 /// <b>既知の制約</b>: 再起動を要しない切替（database.md §6.1 ①〜④の無瞬断切替）は実装していない。
@@ -414,12 +415,20 @@ public sealed class PromotionWizardService : IPromotionWizardService
 
         try
         {
-            PromotionSwitchBoundaryStore.Write(_dataRoot, new PromotionSwitchBoundary(
-                switchedAt,
-                _boundarySource.SqliteDatabasePath,
-                latestReceivedAt,
-                latestId,
-                recordCount));
+            var written = PromotionSwitchBoundaryStore.RecordSwitch(
+                _dataRoot,
+                new PromotionSwitchBoundary(
+                    switchedAt,
+                    _boundarySource.SqliteDatabasePath,
+                    latestReceivedAt,
+                    latestId,
+                    recordCount),
+                _boundarySource.ReducedFromSqlServer);
+            if (!written)
+            {
+                _logger.LogInformation(
+                    "切替の境界の記録は書き換えませんでした（縮退運転中のやり直し、または SQL Server で動いた区間を持つ既存の記録）。");
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -640,6 +649,11 @@ public sealed record PromotionLiveStoreSnapshot(DateTimeOffset? LatestReceivedAt
 /// <summary>切替の境界の記録の材料（合成ルートが結線する）。</summary>
 /// <param name="SqliteDatabasePath">組み込み DB ファイルのフルパス（SQLite provider の書き込み先と同じ導出）。</param>
 /// <param name="Snapshot">現在の組み込み DB の最新レコードと件数を返す。</param>
+/// <param name="ReducedFromSqlServer">
+/// 設定上は SQL Server だが、接続文字列の不備・復号失敗で組み込み DB へ縮小して動いているか（このときのウィザードの
+/// やり直しは本物の切替ではなく、境界の記録を書き換えない）。
+/// </param>
 public sealed record PromotionSwitchBoundarySource(
     string SqliteDatabasePath,
-    Func<CancellationToken, Task<PromotionLiveStoreSnapshot>> Snapshot);
+    Func<CancellationToken, Task<PromotionLiveStoreSnapshot>> Snapshot,
+    bool ReducedFromSqlServer = false);

@@ -184,6 +184,13 @@ public sealed record ResolvedYaguraConfiguration(
     public bool UdpBindAddressIsExplicit { get; init; }
 
     /// <summary>
+    /// <c>Storage:Provider</c> に <c>sqlserver</c> を指定しているが、接続文字列の未設定・復号失敗で
+    /// <see cref="StorageProvider"/> を <see cref="Configuration.StorageProvider.Sqlite"/> へ縮小したか
+    /// （この間の昇格ウィザードのやり直しは本物の切替ではない——database.md §6.3「切替の境界の記録」）。
+    /// </summary>
+    public bool StorageProviderReducedFromSqlServer { get; init; }
+
+    /// <summary>
     /// <see cref="TcpBindAddress"/> が設定ファイルで明示指定された値か（意味づけは
     /// <see cref="UdpBindAddressIsExplicit"/> と同一）。
     /// </summary>

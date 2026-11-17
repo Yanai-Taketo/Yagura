@@ -1089,7 +1089,8 @@ public static class Program
                 dataRoot,
                 sp.GetRequiredService<Yagura.Host.Administration.ISqlServerConnectionValidator>(),
                 sp.GetRequiredService<IAuditRecorder>(),
-                // 切替の境界の記録は、実効 provider が SQLite のとき（本物の切替）に限る。
+                // 切替の境界の記録は、実効 provider が SQLite のときに限る。縮退運転中のやり直しは本物の切替ではない
+                // （記録を書き換えない——ReducedFromSqlServer）。
                 boundarySource: effectiveProviderIsSqlServer
                     ? null
                     : new Yagura.Host.Administration.PromotionSwitchBoundarySource(
@@ -1105,7 +1106,8 @@ public static class Program
                                 latest.Count > 0 ? latest[0].ReceivedAt : null,
                                 latest.Count > 0 ? latest[0].Id : null,
                                 count);
-                        }),
+                        },
+                        ReducedFromSqlServer: resolvedConfiguration.StorageProviderReducedFromSqlServer),
                 logger: sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.PromotionWizardService>()));
 
         // circuit 統治（M8-4。security.md §2）: リスナ帰属判定・上限ガードが参照する管理ポートの
