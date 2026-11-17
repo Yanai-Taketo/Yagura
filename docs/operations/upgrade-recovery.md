@@ -32,8 +32,8 @@ $Fwd  = Join-Path $Root 'forwarder'
 $Svc  = 'NT SERVICE\Yagura'   # gMSA 運用中なら 'DOMAIN\gmsa名$' に置き換える
 
 icacls "$Root" /reset /T /C
-icacls "$Root" /inheritancelevel:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(M)"
-icacls "$Fwd"  /inheritancelevel:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(R)"
+icacls "$Root" /inheritance:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(M)"
+icacls "$Fwd"  /inheritance:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(R)"
 ```
 
 そのうえで MSI を再インストールする。
