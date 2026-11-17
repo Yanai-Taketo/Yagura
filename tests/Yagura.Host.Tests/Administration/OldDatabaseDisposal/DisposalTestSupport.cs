@@ -70,6 +70,23 @@ internal sealed class FakeArchivePlatform : IArchivePlatform
 
     public List<string> CreatedDirectories { get; } = [];
 
+    /// <summary>作成はできるが保護 ACL が付かない（ACL を黙って無視するボリュームの再現）。</summary>
+    public bool CreatesWithoutWorkAcl { get; set; }
+
+    /// <summary>作業用サブフォルダを保持できない。</summary>
+    public bool HoldFails { get; set; }
+
+    /// <summary>保持中に場所が変わった（上位のフォルダの改名・差し替えの再現）作業用サブフォルダ。</summary>
+    public ConcurrentDictionary<string, bool> MovedWorkDirectories { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>保持中の作業用サブフォルダの数。</summary>
+    public int ActiveHolds => Volatile.Read(ref _activeHolds);
+
+    /// <summary>最終の ACL の適用の直後に呼ばれる（確定の途中の停止要求を再現するため）。</summary>
+    public Action? AfterApplyFinalAcl { get; set; }
+
+    private int _activeHolds;
+
     public bool IsLocalAbsolutePath(string path) =>
         Path.IsPathFullyQualified(path) && !IsNetworkOrDevicePath(path);
 
@@ -96,13 +113,30 @@ internal sealed class FakeArchivePlatform : IArchivePlatform
         }
 
         Directory.CreateDirectory(path);
-        MarkWorkInProgress(path);
+        if (!CreatesWithoutWorkAcl)
+        {
+            MarkWorkInProgress(path);
+        }
+
         lock (CreatedDirectories)
         {
             CreatedDirectories.Add(path);
         }
 
         return WorkDirectoryCreation.Created;
+    }
+
+    public IArchiveWorkDirectoryHold? HoldWorkDirectory(string path, out string? failureDetail)
+    {
+        if (HoldFails || !Directory.Exists(path))
+        {
+            failureDetail = "hold failed (test)";
+            return null;
+        }
+
+        failureDetail = null;
+        Interlocked.Increment(ref _activeHolds);
+        return new Hold(this, path);
     }
 
     /// <summary>テストが「製品の作業中の ACL を持つフォルダ」を仕込む。</summary>
@@ -120,12 +154,30 @@ internal sealed class FakeArchivePlatform : IArchivePlatform
 
         _finalized[workDirectory] = true;
         _finalized[archiveFile] = true;
+        AfterApplyFinalAcl?.Invoke();
     }
 
     public bool HasFinalAcl(string workDirectory, string archiveFile) =>
         FinalAclVerifies && _finalized.ContainsKey(workDirectory) && _finalized.ContainsKey(archiveFile);
 
     public bool IsFinalized(string path) => _finalized.ContainsKey(path);
+
+    private sealed class Hold(FakeArchivePlatform owner, string path) : IArchiveWorkDirectoryHold
+    {
+        private int _disposed;
+
+        public bool StillInPlace() => !owner.MovedWorkDirectories.ContainsKey(path);
+
+        public string? CurrentPath() => StillInPlace() ? path : path + "-moved";
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                Interlocked.Decrement(ref owner._activeHolds);
+            }
+        }
+    }
 }
 
 /// <summary>削除の順序を記録し、失敗・共有違反・待機を差し込める削除。</summary>

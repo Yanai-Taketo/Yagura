@@ -95,6 +95,9 @@ public sealed class LogMigrationService : ILogMigrationService
         _stopping = stopping;
     }
 
+    /// <summary>旧ファイルを読む直前に呼ばれる差し込み口（テストが使用中・一時的な読み取りの失敗を再現するため）。</summary>
+    internal Action? BeforeSourceReadForTest { get; set; }
+
     private string CheckpointPath => CheckpointPathOf(_dataRoot);
 
     private static string CheckpointPathOf(string dataRoot) => Path.Combine(dataRoot, CheckpointFileName);
@@ -152,6 +155,7 @@ public sealed class LogMigrationService : ILogMigrationService
         var missingSystemEventCount = 0;
         try
         {
+            BeforeSourceReadForTest?.Invoke();
             await using (var source = new SqliteLogStore(_oldSqliteDatabasePath, createIfMissing: false))
             {
                 sourceCount = await ((IBulkLogReader)source).CountAsync(null, cancellationToken).ConfigureAwait(false);
@@ -174,12 +178,19 @@ public sealed class LogMigrationService : ILogMigrationService
                     sourceEvents, _targetStore, cancellationToken).ConfigureAwait(false)).Count;
             }
         }
-        catch (Exception ex) when (ex is SqliteException or LogStoreWriteException)
+        catch (Exception ex) when (ex is SqliteException or LogStoreWriteException && !cancellationToken.IsCancellationRequested)
         {
-            // 内容を読めない旧ファイル（0 バイト・識別子の破損）は移行の対象にならない——後始末（§6.3）が
-            // 削除でのみ扱う。
-            _logger.LogInformation(ex, "旧 SQLite ファイルを読めないため、移行の対象はありません。");
-            return new LogMigrationStatus(LogMigrationAvailability.NoSourceDatabase);
+            if (OldSqliteDatabase.ClassifyReadFailure(ex) == OldDatabaseReadFailure.Corrupt)
+            {
+                // 内容を読めない旧ファイル（識別子・中身の破損）は移行の対象にならない——後始末（§6.3）が削除でのみ扱う。
+                _logger.LogInformation(ex, "旧 SQLite ファイルが破損しているため、移行の対象はありません。");
+                return new LogMigrationStatus(LogMigrationAvailability.NoSourceDatabase);
+            }
+
+            // 使用中・一時的な読み取りの失敗・移行先へ問い合わせられない: 「対象なし」と示すと、未移行のログが残る
+            // ファイルを移行せずに後始末へ進ませかねない。
+            _logger.LogWarning(ex, "移行の状態を確かめられません（旧 SQLite ファイルの使用中・読み取りの失敗、または移行先の障害）。");
+            return new LogMigrationStatus(LogMigrationAvailability.StatusUnavailable);
         }
 
         if (completedRecorded)
@@ -232,6 +243,13 @@ public sealed class LogMigrationService : ILogMigrationService
         var status = await GetStatusCoreAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (status.Availability == LogMigrationAvailability.StatusUnavailable)
+            {
+                throw new InvalidOperationException(
+                    "以前の保存先のファイルを読めないため、移行を開始できません（別のプログラムが使用中か、一時的に読めない可能性" +
+                    "があります）。しばらくしてから、もう一度実行してください。");
+            }
+
             if (status.Availability is not LogMigrationAvailability.Ready)
             {
                 throw new InvalidOperationException($"移行を実行できる状態ではありません（{status.Availability}）。");

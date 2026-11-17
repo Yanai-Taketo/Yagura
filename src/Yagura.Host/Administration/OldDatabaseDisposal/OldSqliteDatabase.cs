@@ -26,6 +26,22 @@ public enum OldDatabaseCheckpointOutcome
     Corrupt,
 }
 
+/// <summary>旧ファイルの読み取りの失敗の分類（database.md §6.3「本体が SQLite でない・壊れている場合」と前提条件 3）。</summary>
+public enum OldDatabaseReadFailure
+{
+    /// <summary>ファイルが壊れている（SQLITE_CORRUPT・SQLITE_NOTADB）。内容を検証できないものとして削除でのみ扱う。</summary>
+    Corrupt,
+
+    /// <summary>別の接続・プログラムが使用中（SQLITE_BUSY・SQLITE_LOCKED）。</summary>
+    InUse,
+
+    /// <summary>
+    /// 上記以外の読み取りの失敗（入出力の失敗・開けない・容量不足等）。ファイルが壊れているとは限らないため、
+    /// 一時的なものとして何も変更せずに拒否する。
+    /// </summary>
+    Unreadable,
+}
+
 /// <summary>件数と ReceivedAt の範囲。</summary>
 public sealed record OldDatabaseRecordRange(long Count, DateTimeOffset? Oldest, DateTimeOffset? Newest)
 {
@@ -53,6 +69,32 @@ public static class OldSqliteDatabase
     private const int SqliteLocked = 6;
     private const int SqliteCorrupt = 11;
     private const int SqliteNotADatabase = 26;
+
+    /// <summary>
+    /// 旧ファイルの読み取りで起きた例外を分類する。SQLite の失敗（<see cref="LogStoreWriteException"/> に包まれたものを
+    /// 含む）でなければ <see langword="null"/>。
+    /// </summary>
+    /// <remarks>
+    /// 破損と呼ぶのは SQLite がそう報告した場合に限る——使用中・入出力の失敗を破損とみなすと、未移行のログを持つ
+    /// 正常なファイルを「内容を確認できないファイル」として移行の照合なしに削除できてしまう。
+    /// </remarks>
+    public static OldDatabaseReadFailure? ClassifyReadFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        var sqlite = exception as SqliteException ?? (exception as LogStoreWriteException)?.InnerException as SqliteException;
+        if (sqlite is null)
+        {
+            return null;
+        }
+
+        // 拡張結果コードが届いても主結果コード（下位 8 ビット）で分類する。
+        return (sqlite.SqliteErrorCode & 0xFF) switch
+        {
+            SqliteCorrupt or SqliteNotADatabase => OldDatabaseReadFailure.Corrupt,
+            SqliteBusy or SqliteLocked => OldDatabaseReadFailure.InUse,
+            _ => OldDatabaseReadFailure.Unreadable,
+        };
+    }
 
     /// <summary>旧ファイルを作成しない・プールしない接続文字列。</summary>
     public static string ConnectionString(string path, SqliteOpenMode mode = SqliteOpenMode.ReadWrite) =>

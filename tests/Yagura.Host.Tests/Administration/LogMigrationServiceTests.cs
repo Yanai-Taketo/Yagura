@@ -418,6 +418,32 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(10)]
+    [InlineData(14)]
+    public async Task Status_SourceInUseOrUnreadable_IsUnavailable_NotNoSource(int sqliteError)
+    {
+        // 使用中・一時的に読めない旧ファイルを「移行の対象なし」と示さない（未移行のログが残っている可能性がある）。
+        await SeedSourceAsync(10);
+        var service = CreateService();
+        service.BeforeSourceReadForTest = () => throw new Microsoft.Data.Sqlite.SqliteException("read failure (test)", sqliteError);
+
+        Assert.Equal(LogMigrationAvailability.StatusUnavailable, (await service.GetStatusAsync()).Availability);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RunAsync(null, null, null));
+    }
+
+    [Fact]
+    public async Task Status_CorruptSource_IsNoSource()
+    {
+        await SeedSourceAsync(10);
+        var service = CreateService();
+        service.BeforeSourceReadForTest = () => throw new Microsoft.Data.Sqlite.SqliteException("database disk image is malformed (test)", 11);
+
+        Assert.Equal(LogMigrationAvailability.NoSourceDatabase, (await service.GetStatusAsync()).Availability);
+    }
+
     [Fact]
     public async Task Status_SourceMissing_DoesNotCreateTheFile()
     {

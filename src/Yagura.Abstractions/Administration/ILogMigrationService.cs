@@ -66,6 +66,13 @@ public enum LogMigrationAvailability
 
     /// <summary>後始末（処分）の実行中のため、旧ファイルを開けない。</summary>
     DisposalInProgress,
+
+    /// <summary>
+    /// 状態を確かめられない（旧ファイルを別のプログラムが使用中・一時的に読めない、または移行先へ問い合わせられない）。
+    /// 旧ファイルの破損とは区別する——破損したファイルは移行の対象にならないが、使用中のファイルには未移行のログが
+    /// 残っている可能性がある。
+    /// </summary>
+    StatusUnavailable,
 }
 
 /// <summary>移行の進捗通知。</summary>

@@ -3,6 +3,10 @@ using Yagura.Storage;
 
 namespace Yagura.Host.Administration.OldDatabaseDisposal;
 
+/// <summary>移行先（現行 provider）へ問い合わせられなかった（旧ファイルの読み取りの失敗と区別するため包む）。</summary>
+public sealed class MigrationTargetUnavailableException(Exception inner)
+    : Exception("移行先へ問い合わせられません。", inner);
+
 /// <summary>
 /// 処分の直前に行う移行の完了判定（database.md §6.3「移行の完了判定と明示確認」の規則 1〜4 と、
 /// システムイベントの引き継ぎ）。呼び出し側が旧ファイルの排他を保持し、旧ファイルは静止していることを前提とする。
@@ -100,8 +104,8 @@ public static class MigrationCompletionJudge
                         .ToList();
                     if (comparable.Count > 0)
                     {
-                        var targetHours = (await targetHistogram.CountByHourAsync(
-                                comparable[0].HourStartUtc, toExclusive, cancellationToken).ConfigureAwait(false))
+                        var targetHours = (await QueryTargetAsync(() => targetHistogram.CountByHourAsync(
+                                comparable[0].HourStartUtc, toExclusive, cancellationToken)).ConfigureAwait(false))
                             .ToDictionary(hour => hour.HourStartUtc.UtcTicks, hour => hour.Count);
                         failedHours.AddRange(comparable
                             .Where(hour => targetHours.GetValueOrDefault(hour.HourStartUtc.UtcTicks) < hour.Count)
@@ -122,8 +126,8 @@ public static class MigrationCompletionJudge
 
         // システムイベントの引き継ぎ（移行がシステムイベントも写す）。
         var oldEvents = await OldSqliteDatabase.ReadSystemEventsAsync(oldPath, cancellationToken).ConfigureAwait(false);
-        var missingEvents = await SystemEventReconciler.FindMissingInTargetAsync(oldEvents, target, cancellationToken)
-            .ConfigureAwait(false);
+        var missingEvents = await QueryTargetAsync(
+            () => SystemEventReconciler.FindMissingInTargetAsync(oldEvents, target, cancellationToken)).ConfigureAwait(false);
         if (missingEvents.Count > 0)
         {
             gaps.Add(OldDatabaseMigrationGap.SystemEventsNotMigrated);
@@ -162,5 +166,17 @@ public static class MigrationCompletionJudge
             UnmigratedSystemEventCount: missingEvents.Count,
             UnmigratedSystemEventOldest: missingEvents.Count > 0 ? missingEvents.Min(e => e.StartAt) : null,
             UnmigratedSystemEventNewest: missingEvents.Count > 0 ? missingEvents.Max(e => e.EndAt) : null);
+    }
+
+    private static async Task<T> QueryTargetAsync<T>(Func<Task<T>> query)
+    {
+        try
+        {
+            return await query().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new MigrationTargetUnavailableException(ex);
+        }
     }
 }

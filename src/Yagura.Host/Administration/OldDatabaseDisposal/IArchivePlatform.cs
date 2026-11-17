@@ -49,6 +49,21 @@ public enum WorkDirectoryCreation
 }
 
 /// <summary>
+/// 保持している作業用サブフォルダ（<see cref="IArchivePlatform.HoldWorkDirectory"/>）。破棄で手放す。
+/// </summary>
+public interface IArchiveWorkDirectoryHold : IDisposable
+{
+    /// <summary>
+    /// 保持しているフォルダが、保持した時点の場所から動いていないか。フォルダ自身や上位のフォルダが改名・差し替え
+    /// されて、作業用サブフォルダのパスが別の場所を指すようになっていれば <see langword="false"/>。
+    /// </summary>
+    bool StillInPlace();
+
+    /// <summary>保持しているフォルダの今の場所（取得できなければ <see langword="null"/>）。</summary>
+    string? CurrentPath();
+}
+
+/// <summary>
 /// 書き出して保管が依存するファイルシステムの性質と ACL の操作（database.md §6.3「自動テストで固定する
 /// 不変条件」——判定は差し替え可能な口の後ろに置き、Windows 以外の開発機でも前提条件・完了判定・削除順序の
 /// テストを回せるようにする）。
@@ -67,7 +82,11 @@ public interface IArchivePlatform
     /// <summary>ネットワーク上の場所を表す形（UNC・デバイスパス）か。</summary>
     bool IsNetworkOrDevicePath(string path);
 
-    /// <summary>パスが属するボリュームの情報（取得できなければ <see langword="null"/>）。</summary>
+    /// <summary>
+    /// パスの実体（ジャンクション・シンボリックリンク・フォルダにマウントしたボリュームを辿った先）が属する
+    /// ボリュームの情報（取得できなければ <see langword="null"/>）。実体がネットワーク上なら種別は
+    /// <see cref="ArchiveDriveKind.Network"/>。
+    /// </summary>
     ArchiveVolumeInfo? GetVolume(string path);
 
     /// <summary>再解析ポイントを解決した実体のパス（解決できない部分はそのまま）。</summary>
@@ -78,6 +97,13 @@ public interface IArchivePlatform
     /// <c>Administrators</c>・実行アカウント。いずれも配下へ継承）を持たせる。
     /// </summary>
     WorkDirectoryCreation CreateProtectedWorkDirectory(string path, out string? failureDetail);
+
+    /// <summary>
+    /// 作業用サブフォルダを処分の終了まで保持する: 改名・削除に要る共有を許さないハンドルを開いたままにし、
+    /// その間フォルダを改名・削除・差し替えされないようにする。保持の時点で、フォルダが再解析ポイントでない
+    /// ことを確かめる。保持できなければ <see langword="null"/>（<paramref name="failureDetail"/> に理由）。
+    /// </summary>
+    IArchiveWorkDirectoryHold? HoldWorkDirectory(string path, out string? failureDetail);
 
     /// <summary>
     /// フォルダの ACL が製品の作業中の構成（継承なし・<c>SYSTEM</c>・<c>Administrators</c>・実行アカウント）と
@@ -122,6 +148,13 @@ public sealed class UnsupportedArchivePlatform : IArchivePlatform
     {
         failureDetail = "この環境では ACL を付けられません。";
         return WorkDirectoryCreation.Failed;
+    }
+
+    /// <inheritdoc />
+    public IArchiveWorkDirectoryHold? HoldWorkDirectory(string path, out string? failureDetail)
+    {
+        failureDetail = "この環境ではフォルダを保持できません。";
+        return null;
     }
 
     /// <inheritdoc />

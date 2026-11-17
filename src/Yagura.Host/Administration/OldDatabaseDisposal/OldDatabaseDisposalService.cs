@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
@@ -14,13 +15,25 @@ namespace Yagura.Host.Administration.OldDatabaseDisposal;
 /// <summary>旧ファイルを開かずに観測した処分の事実（能動通知 1041・2031 の材料）。</summary>
 /// <param name="Status">状態表の状態。</param>
 /// <param name="EffectiveProviderIsSqlServer">実効 provider が SQL Server か。</param>
-/// <param name="CompletedInThisProcess">このプロセスで処分の完了を記録したか。</param>
+/// <param name="DisposedPathsInThisProcess">
+/// このプロセスで処分の完了を記録した旧ファイル（本体のパス。<c>-wal</c>・<c>-shm</c> は本体に含める）。
+/// </param>
 /// <param name="UnresolvableReason">利用者の画面操作では解消できない理由（あれば）。</param>
 public sealed record OldDatabaseDisposalObservation(
     OldDatabaseDisposalStatus Status,
     bool EffectiveProviderIsSqlServer,
-    bool CompletedInThisProcess,
+    IReadOnlyCollection<string> DisposedPathsInThisProcess,
     string? UnresolvableReason);
+
+/// <summary>旧ファイルを読む段（テストの差し込み口が読み取りの失敗を再現する位置）。</summary>
+internal enum OldDatabaseReadStep
+{
+    /// <summary>要約（件数・期間・スキーマ）の読み取り。</summary>
+    Summary,
+
+    /// <summary>移行の完了判定のための照合。</summary>
+    Reconciliation,
+}
 
 /// <summary>
 /// 旧・組み込み DB ファイルの処分（database.md §6.3）の実体。
@@ -37,6 +50,11 @@ public sealed record OldDatabaseDisposalObservation(
 /// </para>
 /// <para>
 /// <b>排他</b>: 処分の検証から終了まで、旧ファイルの利用権（<see cref="OldDatabaseAccessGate"/>）を保持する。
+/// </para>
+/// <para>
+/// <b>明示確認は照合の結果に結び付く</b>: 照合（<see cref="InspectAsync"/>）は明示確認の対象として示す要点の要約値を
+/// 返し、要求はそれを運ぶ。開始時に照合し直した結果の要約値が一致しなければ、確認があっても開始を拒否する——
+/// 照合の結果は画面に何時間でも残り得るため、利用者が見ていない件数のまま「確認あり」で処分しない。
 /// </para>
 /// <para>
 /// <b>削除の前の監査記録は必須</b>: 開始の記録（削除のみの方式では削除の前の記録を兼ねる）と、書き出して保管の
@@ -75,7 +93,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     private OldDatabaseDisposalResult? _lastResult;
     private string _currentToken = NewToken();
     private string? _lastExecutedToken;
-    private bool _completedInThisProcess;
+    private readonly HashSet<string> _disposedPaths = new(StringComparer.OrdinalIgnoreCase);
 
     public OldDatabaseDisposalService(
         OldDatabaseTargetPaths targets,
@@ -124,6 +142,14 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     /// </summary>
     internal Func<CancellationToken, Task>? BeforeExportForTest { get; set; }
 
+    /// <summary>旧ファイルを読む直前に呼ばれる差し込み口（テストが使用中・一時的な読み取りの失敗を再現するため）。</summary>
+    internal Action<OldDatabaseReadStep>? BeforeOldDatabaseReadForTest { get; set; }
+
+    /// <summary>
+    /// クラッシュ後の掃除で親フォルダを一覧する処理の差し替え口（テストが一覧できない親フォルダを再現するため）。
+    /// </summary>
+    internal Func<string, IEnumerable<string>>? ListWorkDirectoryCandidatesForTest { get; set; }
+
     /// <inheritdoc />
     public Task<OldDatabaseDisposalStatus> GetStatusAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(BuildStatus());
@@ -149,13 +175,13 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 "別の名前で残っています。製品はこのファイルを後始末しません。";
         }
 
-        bool completed;
+        string[] disposed;
         lock (_stateLock)
         {
-            completed = _completedInThisProcess;
+            disposed = [.. _disposedPaths];
         }
 
-        return new OldDatabaseDisposalObservation(status, _effectiveProviderIsSqlServer, completed, unresolvable);
+        return new OldDatabaseDisposalObservation(status, _effectiveProviderIsSqlServer, disposed, unresolvable);
     }
 
     /// <inheritdoc />
@@ -172,18 +198,38 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             return EmptyInspection(status, OldDatabaseTargetInspector.Inspect(_targets).Kind, requiredArchiveFreeBytes);
         }
 
+        // 照合の文も停止要求で止める（旧ファイル全体の読み取りが停止手順を待たせない）。
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _hostStopping.Token);
+        cancellationToken = linked.Token;
+
         using var lease = await _accessGate.TryAcquireAsync(
             OldDatabaseAccessHolder.Inspection, _options.GateWait, cancellationToken).ConfigureAwait(false);
         var targetInspection = OldDatabaseTargetInspector.Inspect(_targets);
-        if (lease is null || targetInspection.Kind != OldDatabaseTargetKind.SqliteDatabase)
+        if (lease is null)
         {
-            return EmptyInspection(BuildStatus(), targetInspection.Kind, requiredArchiveFreeBytes, targetInspection.RejectionReason);
+            return EmptyInspection(BuildStatus(), targetInspection.Kind, requiredArchiveFreeBytes,
+                unavailableReason: _accessGate.Holder == OldDatabaseAccessHolder.Migration
+                    ? OldDatabaseDisposalReason.MigrationRunning
+                    : OldDatabaseDisposalReason.DisposalRunning);
+        }
+
+        if (targetInspection.Kind != OldDatabaseTargetKind.SqliteDatabase)
+        {
+            return EmptyInspection(BuildStatus(), targetInspection.Kind, requiredArchiveFreeBytes, targetInspection.RejectionReason,
+                confirmationDigest: ConfirmationDigestOf(targetInspection, targetInspection.Kind, null));
         }
 
         var read = await ReadContentAsync(cancellationToken).ConfigureAwait(false);
+        if (read.Failure is OldDatabaseReadFailure.InUse or OldDatabaseReadFailure.Unreadable)
+        {
+            return EmptyInspection(BuildStatus(), OldDatabaseTargetKind.SqliteDatabase, requiredArchiveFreeBytes,
+                unavailableReason: RejectionReasonOf(read.Failure.Value));
+        }
+
         if (read.Kind != OldDatabaseTargetKind.SqliteDatabase)
         {
-            return EmptyInspection(BuildStatus(), read.Kind, requiredArchiveFreeBytes, read.RejectionReason);
+            return EmptyInspection(BuildStatus(), read.Kind, requiredArchiveFreeBytes, read.RejectionReason,
+                confirmationDigest: ConfirmationDigestOf(targetInspection, read.Kind, null));
         }
 
         long? beyondRetention = null;
@@ -195,7 +241,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
                     _targets.BodyPath, RetentionCutoff(days), cancellationToken).ConfigureAwait(false);
             }
-            catch (SqliteException ex) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (OldSqliteDatabase.ClassifyReadFailure(ex) is not null && !cancellationToken.IsCancellationRequested)
             {
                 _logger.LogInformation(ex, "保存期間を過ぎたログの件数を数えられません。");
             }
@@ -213,7 +259,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             read.Summary.SystemEventCount,
             retentionDays,
             beyondRetention,
-            requiredArchiveFreeBytes);
+            requiredArchiveFreeBytes,
+            ConfirmationDigest: ConfirmationDigestOf(targetInspection, OldDatabaseTargetKind.SqliteDatabase, read.Judgment));
     }
 
     /// <inheritdoc />
@@ -291,7 +338,9 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                     : Rejected(OldDatabaseDisposalReason.DisposalRunning, "以前の保存先のファイルを別の操作が使用中です。しばらくしてから実行してください。", request.Method);
             }
 
-            var (plan, rejection) = await ValidateAsync(request, cancellationToken).ConfigureAwait(false);
+            // 照合の文も停止要求で止める（旧ファイル全体の読み取りが停止手順を待たせない）。
+            using var validation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _hostStopping.Token);
+            var (plan, rejection) = await ValidateAsync(request, validation.Token).ConfigureAwait(false);
             if (rejection is not null)
             {
                 return rejection;
@@ -299,7 +348,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
             if (!await RecordConfirmedAuditAsync(request, BuildStartDetail(plan!)).ConfigureAwait(false))
             {
-                RemoveWorkDirectory(plan!.WorkDirectory);
+                RemoveWorkDirectory(plan!);
+                plan!.WorkDirectoryHold?.Dispose();
                 return Rejected(OldDatabaseDisposalReason.AuditUnavailable,
                     "監査記録を書き込めないため、後始末を開始しませんでした（元のファイルは変更していません）。" +
                     "データフォルダの監査記録（audit フォルダ）に書き込めるか確かめてから、もう一度実行してください。",
@@ -496,6 +546,13 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 $"対象のファイルが安全検査を満たさないため、後始末を中止しました（{targetInspection.RejectionReason}）。", method));
         }
 
+        // ライブ受信を優先する: 逼迫中は旧ファイル全体を読む照合でディスクと移行先を取り合わない。
+        if (_environment.IsLiveIngestionUnderPressure())
+        {
+            return (null, Rejected(OldDatabaseDisposalReason.LiveIngestionUnderPressure,
+                "ログの保存が受信に追いついていないため、後始末を開始しませんでした。受信の少ない時間帯に実行してください。", method));
+        }
+
         var kind = targetInspection.Kind;
         OldDatabaseSummary? summary = null;
         OldDatabaseMigrationJudgment? judgment = null;
@@ -509,10 +566,19 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                     $"対象のファイルが安全検査を満たさないため、後始末を中止しました（{read.RejectionReason}）。", method));
             }
 
+            if (read.Failure is OldDatabaseReadFailure.InUse or OldDatabaseReadFailure.Unreadable)
+            {
+                return (null, ReadFailureRejection(read.Failure.Value, method));
+            }
+
             kind = read.Kind;
             summary = read.Summary;
             judgment = read.Judgment;
         }
+
+        var digest = ConfirmationDigestOf(targetInspection, kind, judgment);
+        var confirmedThisInspection = digest is not null
+            && string.Equals(digest, request.ConfirmedInspectionDigest, StringComparison.Ordinal);
 
         if (method == OldDatabaseDisposalMethod.Archive && kind != OldDatabaseTargetKind.SqliteDatabase)
         {
@@ -520,29 +586,37 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 "このファイルは内容を検証できないため、書き出して保管はできません。削除を選んでください。", method));
         }
 
-        if (kind == OldDatabaseTargetKind.UnverifiableBody && !request.ConfirmDeleteUnverifiableFile)
+        if (kind == OldDatabaseTargetKind.UnverifiableBody && !(request.ConfirmDeleteUnverifiableFile && confirmedThisInspection))
         {
             var body = targetInspection.ExistingFiles.First(file => file.Path == _targets.BodyPath);
+            var fact = $"組み込みデータベースのファイルとして確認できないファイルです（{Path.GetFileName(body.Path)}、" +
+                       $"{body.SizeBytes?.ToString("N0", CultureInfo.InvariantCulture) ?? "?"} バイト）。";
             return (null, Rejected(OldDatabaseDisposalReason.UnverifiableConfirmationRequired,
-                $"組み込みデータベースのファイルとして確認できないファイルです（{Path.GetFileName(body.Path)}、" +
-                $"{body.SizeBytes?.ToString("N0", CultureInfo.InvariantCulture) ?? "?"} バイト）。削除してよいことを確認してください。", method));
+                request.ConfirmDeleteUnverifiableFile
+                    ? fact + "照合の時点から対象が変わったため、もう一度照合してから確認してください。"
+                    : fact + "削除してよいことを確認してください。",
+                method));
         }
 
-        if (judgment is { RequiresConfirmation: true } && !request.ConfirmDisposeWithoutMigration)
+        if (judgment is { RequiresConfirmation: true } && !(request.ConfirmDisposeWithoutMigration && confirmedThisInspection))
         {
+            var fact = $"まだ移行していないログが {judgment.UnmigratedRecordCount:N0} 件あります" +
+                       $"{FormatRange(judgment.UnmigratedOldest, judgment.UnmigratedNewest)}";
+            if (judgment.UnmigratedSystemEventCount > 0)
+            {
+                fact += $"（移行先に無いシステムイベント {judgment.UnmigratedSystemEventCount:N0} 件）";
+            }
+
             return (null, Rejected(OldDatabaseDisposalReason.MigrationConfirmationRequired,
-                $"まだ移行していないログが {judgment.UnmigratedRecordCount:N0} 件あります" +
-                $"{FormatRange(judgment.UnmigratedOldest, judgment.UnmigratedNewest)}。「移行せずに後始末する」を確認してください。", method));
-        }
-
-        if (_environment.IsLiveIngestionUnderPressure())
-        {
-            return (null, Rejected(OldDatabaseDisposalReason.LiveIngestionUnderPressure,
-                "ログの保存が受信に追いついていないため、後始末を開始しませんでした。受信の少ない時間帯に実行してください。", method));
+                request.ConfirmDisposeWithoutMigration
+                    ? fact + "。照合の時点から結果が変わったため、もう一度照合してから確認してください。"
+                    : fact + "。「移行せずに後始末する」を確認してください。",
+                method));
         }
 
         ArchiveDestination? destination = null;
         string? workDirectory = null;
+        IArchiveWorkDirectoryHold? hold = null;
         string? archiveFileName = null;
         (ArchiveVolumeInfo Volume, long Floor)? dataRootVolume = null;
         long? beyondRetention = null;
@@ -552,8 +626,18 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             // 開始の記録で開示する。
             if (_environment.RetentionDays() is { } retentionDays)
             {
-                beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
-                    _targets.BodyPath, RetentionCutoff(retentionDays), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    beyondRetention = await OldSqliteDatabase.CountBeforeAsync(
+                        _targets.BodyPath, RetentionCutoff(retentionDays), cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (OldSqliteDatabase.ClassifyReadFailure(ex) is { } readFailure
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation(ex, "保存期間を過ぎたログの件数を数えられません。");
+                    return (null, ReadFailureRejection(
+                        readFailure == OldDatabaseReadFailure.InUse ? readFailure : OldDatabaseReadFailure.Unreadable, method));
+                }
             }
 
             var bodyBytes = targetInspection.ExistingFiles.FirstOrDefault(file => file.Path == _targets.BodyPath)?.SizeBytes ?? 0;
@@ -585,7 +669,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                         "もう一度実行してください（後始末の後は、続くコマンドで付与を外してください）。",
                         method) with
                     {
-                        GrantCommand = $"icacls \"{destination.ParentDirectory}\" /grant \"{_platform.CurrentIdentityName}:(AD)\"",
+                        // フォルダの作成（AD）に加えて一覧（RD）——中断した処分の作業用サブフォルダの掃除が親フォルダを一覧する。
+                        GrantCommand = $"icacls \"{destination.ParentDirectory}\" /grant \"{_platform.CurrentIdentityName}:(AD,RD)\"",
                         RevokeCommand = $"icacls \"{destination.ParentDirectory}\" /remove:g \"{_platform.CurrentIdentityName}\"",
                     }
                     : Rejected(OldDatabaseDisposalReason.DestinationNotWritable,
@@ -593,6 +678,26 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             }
 
             workDirectory = created.Path;
+
+            // 処分の終了まで保持し、改名・差し替えを防ぐ。そのうえで作成の時点から保護 ACL が付いたことを確かめる
+            // （ACL を保持しないボリュームでは、作成時に渡したセキュリティ記述子が黙って無視される）。
+            hold = _platform.HoldWorkDirectory(workDirectory, out var holdFailure);
+            if (hold is null)
+            {
+                RemoveUnheldWorkDirectory(workDirectory, recursive: false);
+                return (null, Rejected(OldDatabaseDisposalReason.DestinationNotWritable,
+                    $"保管先に作った作業用のフォルダを確保できませんでした（{holdFailure}）。", method));
+            }
+
+            if (!_platform.HasWorkInProgressAcl(workDirectory))
+            {
+                hold.Dispose();
+                RemoveUnheldWorkDirectory(workDirectory, recursive: false);
+                return (null, Rejected(OldDatabaseDisposalReason.DestinationNoAcl,
+                    "保管先に作った作業用のフォルダに保護のアクセス権（ACL）が付きませんでした。アクセス権を保持する NTFS の" +
+                    "ドライブを指定してください（元のファイルは変更していません）。", method));
+            }
+
             archiveFileName = Path.GetFileName(workDirectory) + OldDatabaseArchiveNaming.FileExtension;
         }
 
@@ -607,7 +712,10 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             dataRootVolume?.Floor,
             workDirectory,
             archiveFileName,
-            beyondRetention), null);
+            beyondRetention)
+        {
+            WorkDirectoryHold = hold,
+        }, null);
     }
 
     private (string? Path, WorkDirectoryCreation Creation) CreateWorkDirectory(string parent, out string? failure)
@@ -637,19 +745,20 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
     /// クラッシュ後の掃除: 命名規則に一致し、かつ ACL が製品の作業中の構成と一致するサブフォルダだけを削除する
     /// （確定の前に止まったもの——元のファイルは変更されていない）。名前の一致だけでは削除しない。
     /// </summary>
-    private IReadOnlyList<string> CleanUpAbandonedWorkDirectories(string parent, string currentWorkDirectory)
+    private (IReadOnlyList<string> Removed, bool Skipped) CleanUpAbandonedWorkDirectories(string parent, string currentWorkDirectory)
     {
         var removed = new List<string>();
         IEnumerable<string> candidates;
         try
         {
-            candidates = Directory.EnumerateDirectories(parent, WorkDirectoryPrefix + "*").ToList();
+            candidates = (ListWorkDirectoryCandidatesForTest?.Invoke(parent)
+                ?? Directory.EnumerateDirectories(parent, WorkDirectoryPrefix + "*")).ToList();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // 親フォルダの一覧を読めない（付与はフォルダの作成だけのため）——掃除は見送る。
-            _logger.LogInformation(ex, "保管先の親フォルダを一覧できないため、作業用フォルダの掃除を見送ります。");
-            return removed;
+            // 一覧できなければ掃除は見送り、残っているかもしれないことを結果と終了の記録で利用者に伝える。
+            _logger.LogWarning(ex, "保管先の親フォルダ {Parent} を一覧できないため、中断した後始末の作業用フォルダの掃除を見送ります。", parent);
+            return (removed, true);
         }
 
         foreach (var candidate in candidates)
@@ -673,7 +782,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             }
         }
 
-        return removed;
+        return (removed, false);
     }
 
     /// <summary>旧ファイルの内容を読み、スキーマを確かめ、移行の完了を判定する（排他の下で呼ぶ）。</summary>
@@ -682,13 +791,16 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         OldDatabaseSummary summary;
         try
         {
+            BeforeOldDatabaseReadForTest?.Invoke(OldDatabaseReadStep.Summary);
             summary = await OldSqliteDatabase.ReadSummaryAsync(_targets.BodyPath, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqliteException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (cancellationToken.IsCancellationRequested && ex is not OperationCanceledException)
         {
-            // 先頭の識別子はあるが中身を読めない（破損）: 内容を検証できないものとして削除でのみ扱う。
-            _logger.LogInformation(ex, "以前の保存先のファイルを読めません（破損の可能性）。");
-            return new ContentRead(OldDatabaseTargetKind.UnverifiableBody, null, null, null);
+            throw new OperationCanceledException("照合を取り消しました。", ex, cancellationToken);
+        }
+        catch (Exception ex) when (OldSqliteDatabase.ClassifyReadFailure(ex) is { } failure)
+        {
+            return ReadFailed(failure, ex);
         }
 
         if (!summary.HasLogTable)
@@ -700,6 +812,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         OldDatabaseMigrationJudgment judgment;
         try
         {
+            BeforeOldDatabaseReadForTest?.Invoke(OldDatabaseReadStep.Reconciliation);
             judgment = await MigrationCompletionJudge.JudgeAsync(
                 _targets.BodyPath,
                 summary,
@@ -709,13 +822,15 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 retentionDays is { } days ? RetentionCutoff(days) : null,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (SqliteException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when (cancellationToken.IsCancellationRequested && ex is not OperationCanceledException)
         {
-            // 要約は読めたが照合の途中で旧ファイルを読めない（部分的な破損）: 内容を検証できないものとして扱う。
-            _logger.LogInformation(ex, "以前の保存先のファイルを照合の途中で読めません（破損の可能性）。");
-            return new ContentRead(OldDatabaseTargetKind.UnverifiableBody, null, null, null);
+            throw new OperationCanceledException("照合を取り消しました。", ex, cancellationToken);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (OldSqliteDatabase.ClassifyReadFailure(ex) is { } failure)
+        {
+            return ReadFailed(failure, ex);
+        }
+        catch (MigrationTargetUnavailableException ex)
         {
             // 移行先へ問い合わせられない（SQL Server の一時的な障害等）: 照合できないものとして、すべてを
             // 未移行とみなす（安全側——明示確認に回す）。
@@ -733,8 +848,75 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 UnmigratedSystemEventOldest: null,
                 UnmigratedSystemEventNewest: null);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 分類できない失敗は、何も変更せずに中止する側へ倒す。
+            return ReadFailed(OldDatabaseReadFailure.Unreadable, ex);
+        }
 
         return new ContentRead(OldDatabaseTargetKind.SqliteDatabase, null, summary, judgment);
+    }
+
+    /// <summary>
+    /// 読み取りの失敗の扱い: 破損（SQLite がそう報告したもの）だけを内容を検証できない対象とし、使用中・その他の失敗は
+    /// 何も変更せずに拒否する材料にする。
+    /// </summary>
+    private ContentRead ReadFailed(OldDatabaseReadFailure failure, Exception exception)
+    {
+        if (failure == OldDatabaseReadFailure.Corrupt)
+        {
+            _logger.LogInformation(exception, "以前の保存先のファイルが破損しているため、内容を読めません。");
+            return new ContentRead(OldDatabaseTargetKind.UnverifiableBody, null, null, null);
+        }
+
+        _logger.LogWarning(exception, "以前の保存先のファイルを読めません（{Failure}）。何も変更せずに中止します。", failure);
+        return new ContentRead(OldDatabaseTargetKind.SqliteDatabase, null, null, null, failure);
+    }
+
+    private static OldDatabaseDisposalReason RejectionReasonOf(OldDatabaseReadFailure failure) =>
+        failure == OldDatabaseReadFailure.InUse ? OldDatabaseDisposalReason.InUse : OldDatabaseDisposalReason.TargetUnreadable;
+
+    private static OldDatabaseDisposalResult ReadFailureRejection(OldDatabaseReadFailure failure, OldDatabaseDisposalMethod method) =>
+        failure == OldDatabaseReadFailure.InUse
+            ? Rejected(OldDatabaseDisposalReason.InUse,
+                "別のプログラム（バックアップソフト・ウイルス対策・データベースの閲覧ツール等）が以前の保存先のファイルを使用して" +
+                "いる可能性があるため、後始末を開始しませんでした（元のファイルは変更していません）。閉じてから、もう一度実行してください。",
+                method)
+            : Rejected(OldDatabaseDisposalReason.TargetUnreadable,
+                "以前の保存先のファイルを一時的に読めないため、後始末を開始しませんでした（元のファイルは変更していません）。" +
+                "しばらくしてから、もう一度実行してください。",
+                method);
+
+    /// <summary>
+    /// 明示確認の対象として利用者に示す照合の要点の要約値。明示確認が要らなければ <see langword="null"/>。
+    /// </summary>
+    private string? ConfirmationDigestOf(
+        OldDatabaseTargetInspection targetInspection,
+        OldDatabaseTargetKind kind,
+        OldDatabaseMigrationJudgment? judgment)
+    {
+        var basis = new StringBuilder();
+        if (kind == OldDatabaseTargetKind.UnverifiableBody
+            && targetInspection.ExistingFiles.FirstOrDefault(file => file.Path == _targets.BodyPath) is { } body)
+        {
+            basis.Append(CultureInfo.InvariantCulture, $"unverifiable|{Path.GetFileName(body.Path)}|{body.SizeBytes?.ToString(CultureInfo.InvariantCulture) ?? "?"}");
+        }
+        else if (judgment is { RequiresConfirmation: true })
+        {
+            basis.Append(CultureInfo.InvariantCulture,
+                $"unmigrated|{judgment.UnmigratedRecordCount}|{Ticks(judgment.UnmigratedOldest)}|{Ticks(judgment.UnmigratedNewest)}" +
+                $"|events|{judgment.UnmigratedSystemEventCount}|{Ticks(judgment.UnmigratedSystemEventOldest)}|{Ticks(judgment.UnmigratedSystemEventNewest)}" +
+                $"|afterSwitch|{judgment.RecordsAfterSwitchCount}|{Ticks(judgment.RecordsAfterSwitchOldest)}|{Ticks(judgment.RecordsAfterSwitchNewest)}" +
+                $"|gaps|{string.Join(",", judgment.Gaps.Distinct().Order())}");
+        }
+        else
+        {
+            return null;
+        }
+
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(basis.ToString())));
+
+        static string Ticks(DateTimeOffset? value) => value?.UtcTicks.ToString(CultureInfo.InvariantCulture) ?? "-";
     }
 
     private DateTimeOffset RetentionCutoff(int days) => _timeProvider.GetUtcNow().AddDays(-days);
@@ -760,10 +942,18 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                 plan.Method,
                 RemainingFiles: ListExistingTargets().Select(file => file.Path).ToList(),
                 // 確定済みの書き出しファイルは消さない（確定の前なら作業用サブフォルダごと片付ける）。
-                WorkDirectoryLeftBehind: plan.Finalized ? null : RemoveWorkDirectory(plan.WorkDirectory));
+                WorkDirectoryLeftBehind: plan.Finalized ? null : RemoveWorkDirectory(plan));
+        }
+        finally
+        {
+            plan.WorkDirectoryHold?.Dispose();
         }
 
-        result = result with { FinishedAt = _timeProvider.GetUtcNow() };
+        result = result with
+        {
+            FinishedAt = _timeProvider.GetUtcNow(),
+            UncheckedArchiveParentDirectory = plan.CleanupSkipped ? plan.Destination?.ParentDirectory : null,
+        };
         await RecordAuditAsync(plan.Request, BuildEndDetail(plan, result)).ConfigureAwait(false);
 
         lock (_stateLock)
@@ -772,7 +962,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             _lastResult = result;
             if (result.Outcome == OldDatabaseDisposalOutcome.Completed)
             {
-                _completedInThisProcess = true;
+                // 本体のパスで覚える（-wal・-shm は本体と同じファイルとして扱う——能動通知の 2031 の判定と同じ単位）。
+                _disposedPaths.Add(_targets.BodyPath);
             }
         }
 
@@ -792,6 +983,31 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         }
     }
 
+    /// <summary>
+    /// 取り消せない状態へ移る。利用者の取り消し・停止要求が既に届いていれば移らずに <see langword="false"/>
+    /// （取り消しの受け付けと同じロックの下で判定し、受け付けた取り消しを黙って無視しない）。
+    /// </summary>
+    private bool TryMakeNonCancellable(RunState run)
+    {
+        lock (_stateLock)
+        {
+            if (run.Token.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            run.MakeNonCancellable();
+            return true;
+        }
+    }
+
+    /// <summary>作業用サブフォルダが保持した場所から動いていないこと（パスで書く・確定する前に確かめる）。</summary>
+    private static bool WorkDirectoryStillInPlace(DisposalPlan plan) => plan.WorkDirectoryHold?.StillInPlace() ?? false;
+
+    private const string WorkDirectoryMovedMessage =
+        "保管用の作業フォルダが別の場所に移された・差し替えられた可能性があるため、取り消しました。" +
+        "保管先の親フォルダを、管理者以外が変更できない場所にしてから、もう一度実行してください。";
+
     private async Task<OldDatabaseDisposalResult> RunArchiveAsync(DisposalPlan plan, RunState run)
     {
         var workDirectory = plan.WorkDirectory!;
@@ -799,7 +1015,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         ArchiveExportResult export;
 
         // クラッシュ後の掃除は開始の記録の後に行う（最初の変更の前に開始を記録する）。
-        plan.CleanedUpWorkDirectories = CleanUpAbandonedWorkDirectories(plan.Destination!.ParentDirectory, workDirectory);
+        (plan.CleanedUpWorkDirectories, plan.CleanupSkipped) =
+            CleanUpAbandonedWorkDirectories(plan.Destination!.ParentDirectory, workDirectory);
 
         using (var watchdogCts = new CancellationTokenSource())
         using (var linked = CancellationTokenSource.CreateLinkedTokenSource(run.Token, watchdogCts.Token))
@@ -826,12 +1043,27 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
                     await beforeExport(token).ConfigureAwait(false);
                 }
 
-                export = await SqliteArchiveExporter.ExportAsync(_targets.BodyPath, workDirectory, run.SetStage, token)
-                    .ConfigureAwait(false);
+                // 各段は作業用サブフォルダの中のファイルをパスで開く。開く前に、フォルダが保持した場所のままか確かめる。
+                export = await SqliteArchiveExporter.ExportAsync(
+                    _targets.BodyPath,
+                    workDirectory,
+                    stage =>
+                    {
+                        if (!WorkDirectoryStillInPlace(plan))
+                        {
+                            throw new ArchiveExportException(OldDatabaseDisposalReason.ExportFailed, WorkDirectoryMovedMessage);
+                        }
+
+                        run.SetStage(stage);
+                    },
+                    token).ConfigureAwait(false);
 
                 run.SetStage(OldDatabaseDisposalStage.Finalizing);
                 token.ThrowIfCancellationRequested();
-                run.MakeNonCancellable();
+                if (!TryMakeNonCancellable(run))
+                {
+                    throw new OperationCanceledException(token);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -857,9 +1089,14 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
         try
         {
+            if (!WorkDirectoryStillInPlace(plan))
+            {
+                return ArchiveFailed(plan, OldDatabaseDisposalReason.FinalizationFailed, WorkDirectoryMovedMessage);
+            }
+
             File.Move(export.ExportedFilePath, finalPath, overwrite: false);
             _platform.ApplyFinalAcl(workDirectory, finalPath);
-            if (!_platform.HasFinalAcl(workDirectory, finalPath))
+            if (!_platform.HasFinalAcl(workDirectory, finalPath) || !WorkDirectoryStillInPlace(plan))
             {
                 throw new InvalidOperationException("最終のアクセス権を確認できません。");
             }
@@ -871,6 +1108,19 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         {
             return ArchiveFailed(plan, OldDatabaseDisposalReason.FinalizationFailed,
                 $"書き出したファイルの確定（名前の変更・アクセス権の適用）に失敗しました: {ex.Message}");
+        }
+
+        // 停止要求では削除の段階の前なら取り消す（確定済みの書き出しファイルは残り、結果から辿れる）。
+        if (run.StoppedByHost)
+        {
+            return new OldDatabaseDisposalResult(
+                OldDatabaseDisposalOutcome.Interrupted,
+                "サービスの停止のため、元のファイルの削除を始めませんでした（元のファイルは変更していません）。" +
+                $"書き出したファイル（{finalPath}）は確定済みです。",
+                OldDatabaseDisposalReason.ServiceStopping,
+                plan.Method,
+                ArchiveFilePath: finalPath,
+                ArchiveSha256: export.Sha256);
         }
 
         if (!await RecordConfirmedAuditAsync(plan.Request, BuildDeletionStartDetail(plan, finalPath, export)).ConfigureAwait(false))
@@ -905,7 +1155,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
     private async Task<OldDatabaseDisposalResult> RunDeleteAsync(DisposalPlan plan, RunState run)
     {
-        if (plan.Kind == OldDatabaseTargetKind.SqliteDatabase)
+        // 先頭の識別子を持たない・壊れた本体でも反映を試みる——使用中なら止め、破損による失敗なら省いて進む。
+        if (plan.Kind is OldDatabaseTargetKind.SqliteDatabase or OldDatabaseTargetKind.UnverifiableBody)
         {
             try
             {
@@ -923,14 +1174,21 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
                 // 破損による反映の失敗は削除を止める理由にならない（破損した旧ファイルは残置の理由にならない）。
                 run.Token.ThrowIfCancellationRequested();
+                if (!TryMakeNonCancellable(run))
+                {
+                    throw new OperationCanceledException(run.Token);
+                }
             }
             catch (OperationCanceledException)
             {
                 return Interrupted(plan, run.StoppedByHost ? OldDatabaseDisposalReason.ServiceStopping : OldDatabaseDisposalReason.Cancelled);
             }
         }
+        else if (!TryMakeNonCancellable(run))
+        {
+            return Interrupted(plan, run.StoppedByHost ? OldDatabaseDisposalReason.ServiceStopping : OldDatabaseDisposalReason.Cancelled);
+        }
 
-        run.MakeNonCancellable();
         var deletion = await DeleteTargetsAsync(run).ConfigureAwait(false);
         if (deletion.Remaining.Count > 0)
         {
@@ -1092,7 +1350,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
     private OldDatabaseDisposalResult ArchiveFailed(DisposalPlan plan, OldDatabaseDisposalReason reason, string detail)
     {
-        var leftBehind = RemoveWorkDirectory(plan.WorkDirectory);
+        var leftBehind = RemoveWorkDirectory(plan);
         return new OldDatabaseDisposalResult(
             OldDatabaseDisposalOutcome.ArchiveFailed,
             $"書き出して保管できませんでした。元のファイルは変更していません。（{detail}）",
@@ -1103,7 +1361,7 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
 
     private OldDatabaseDisposalResult Interrupted(DisposalPlan plan, OldDatabaseDisposalReason reason)
     {
-        var leftBehind = RemoveWorkDirectory(plan.WorkDirectory);
+        var leftBehind = RemoveWorkDirectory(plan);
         return new OldDatabaseDisposalResult(
             OldDatabaseDisposalOutcome.Interrupted,
             reason == OldDatabaseDisposalReason.ServiceStopping
@@ -1114,17 +1372,51 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             WorkDirectoryLeftBehind: leftBehind);
     }
 
-    /// <summary>作業用サブフォルダを中身ごと削除する。削除できなければそのパスを返す。</summary>
-    private string? RemoveWorkDirectory(string? workDirectory)
+    /// <summary>
+    /// 作業用サブフォルダを中身ごと削除する。削除できなければそのパスを返す。保持した場所から動いていれば、パスは
+    /// もう製品のフォルダを指さないため削除せず、フォルダの今の場所を返す（作成時点からの保護 ACL のまま残る）。
+    /// </summary>
+    private string? RemoveWorkDirectory(DisposalPlan plan)
     {
-        if (workDirectory is null || !Directory.Exists(workDirectory))
+        if (plan.WorkDirectory is not { } workDirectory)
+        {
+            return null;
+        }
+
+        if (plan.WorkDirectoryHold is { } hold)
+        {
+            if (!hold.StillInPlace())
+            {
+                var current = hold.CurrentPath() ?? workDirectory;
+                _logger.LogWarning(
+                    "後始末の作業用フォルダが {Original} から {Current} へ移された可能性があるため、パスによる削除を行いません。",
+                    workDirectory,
+                    current);
+                return current;
+            }
+
+            // 自身の保持（削除の共有を許さない）を手放してから削除する。
+            hold.Dispose();
+        }
+
+        return RemoveUnheldWorkDirectory(workDirectory, recursive: true);
+    }
+
+    /// <param name="workDirectory">作業用サブフォルダ。</param>
+    /// <param name="recursive">
+    /// 中身ごと消すか。まだ何も書いていない（保持・保護を確かめられなかった）フォルダは中身ごとは消さない——
+    /// 差し替えられた先の中身を消さないため。
+    /// </param>
+    private string? RemoveUnheldWorkDirectory(string workDirectory, bool recursive)
+    {
+        if (!Directory.Exists(workDirectory))
         {
             return null;
         }
 
         try
         {
-            Directory.Delete(workDirectory, recursive: true);
+            Directory.Delete(workDirectory, recursive);
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -1278,6 +1570,11 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
             builder.Append("、掃除した中断済みの作業用サブフォルダ=").Append(string.Join("; ", plan.CleanedUpWorkDirectories));
         }
 
+        if (result.UncheckedArchiveParentDirectory is { } uncheckedParent)
+        {
+            builder.Append("、掃除を見送った保管先の親フォルダ=").Append(uncheckedParent).Append("（一覧できないため）");
+        }
+
         if (plan.CheckpointSummary is { } checkpoint)
         {
             builder.Append("、移行チェックポイント=").Append(checkpoint);
@@ -1323,8 +1620,11 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         OldDatabaseDisposalStatus status,
         OldDatabaseTargetKind kind,
         long requiredArchiveFreeBytes,
-        string? rejectionReason = null) =>
-        new(status, kind, rejectionReason, ArchiveAllowed: false, null, null, null, null, null, null, null, requiredArchiveFreeBytes);
+        string? rejectionReason = null,
+        OldDatabaseDisposalReason? unavailableReason = null,
+        string? confirmationDigest = null) =>
+        new(status, kind, rejectionReason, ArchiveAllowed: false, null, null, null, null, null, null, null, requiredArchiveFreeBytes,
+            unavailableReason, confirmationDigest);
 
     private static OldDatabaseDisposalResult Rejected(OldDatabaseDisposalReason reason, string message, OldDatabaseDisposalMethod method) =>
         new(OldDatabaseDisposalOutcome.Rejected, message, reason, method);
@@ -1337,7 +1637,8 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         OldDatabaseTargetKind Kind,
         string? RejectionReason,
         OldDatabaseSummary? Summary,
-        OldDatabaseMigrationJudgment? Judgment);
+        OldDatabaseMigrationJudgment? Judgment,
+        OldDatabaseReadFailure? Failure = null);
 
     private sealed record DeletionOutcome(IReadOnlyList<string> Remaining, string? FailureMessage);
 
@@ -1355,6 +1656,12 @@ public sealed class OldDatabaseDisposalService : IOldDatabaseDisposalService, IA
         long? RecordsBeyondRetention)
     {
         public IReadOnlyList<string> CleanedUpWorkDirectories { get; set; } = [];
+
+        /// <summary>親フォルダを一覧できず、クラッシュ後の掃除を見送ったか。</summary>
+        public bool CleanupSkipped { get; set; }
+
+        /// <summary>作業用サブフォルダの保持（書き出して保管のみ。処分の終了で手放す）。</summary>
+        public IArchiveWorkDirectoryHold? WorkDirectoryHold { get; init; }
 
         /// <summary>書き出したファイルを確定した（改名と最終の ACL）か。確定後は作業用サブフォルダを片付けない。</summary>
         public bool Finalized { get; set; }

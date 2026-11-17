@@ -236,6 +236,15 @@ public sealed record OldDatabaseMigrationJudgment(
 /// 保管先の入力の前に示す目安であり、一時保管と同じドライブでは下限がこれより大きくなり得る
 /// （確定は <see cref="IOldDatabaseDisposalService.CheckArchiveDestinationAsync"/>）。
 /// </param>
+/// <param name="UnavailableReason">
+/// 本体を読めずに照合できなかった理由（別の操作が排他を保持している・別のプログラムが使用中・一時的に読めない）。
+/// 照合できた場合と、内容を読む必要のない対象では <see langword="null"/>。
+/// </param>
+/// <param name="ConfirmationDigest">
+/// 明示確認の対象として利用者に示した照合の要点（未移行のログ・システムイベントの件数と期間、内容を確認できない
+/// ファイルの名前とサイズ）の要約値。明示確認が要らなければ <see langword="null"/>。処分の開始時にサービスが照合し
+/// 直した結果の要約値と一致しなければ、確認を取り直させる（<see cref="OldDatabaseDisposalRequest.ConfirmedInspectionDigest"/>）。
+/// </param>
 public sealed record OldDatabaseDisposalInspection(
     OldDatabaseDisposalStatus Status,
     OldDatabaseTargetKind TargetKind,
@@ -248,7 +257,9 @@ public sealed record OldDatabaseDisposalInspection(
     long? SystemEventCount,
     int? RetentionDays,
     long? RecordsBeyondRetentionCount,
-    long RequiredArchiveFreeBytes);
+    long RequiredArchiveFreeBytes,
+    OldDatabaseDisposalReason? UnavailableReason = null,
+    string? ConfirmationDigest = null);
 
 /// <summary>書き出して保管で製品が付ける名前（画面の確認ダイアログと実体で同じ規則を使う）。</summary>
 public static class OldDatabaseArchiveNaming
@@ -272,6 +283,10 @@ public static class OldDatabaseArchiveNaming
 /// <param name="OperatorAddress">操作者の接続元（監査記録用）。</param>
 /// <param name="OperatorScheme">操作者の認証方式。</param>
 /// <param name="OperatorPrincipal">操作者の認証済み利用者名。</param>
+/// <param name="ConfirmedInspectionDigest">
+/// 明示確認を取った照合の結果の要約値（<see cref="OldDatabaseDisposalInspection.ConfirmationDigest"/>）。明示確認は
+/// この照合の結果に対してのみ有効であり、開始時の照合し直しで結果が変わっていれば拒否される。
+/// </param>
 public sealed record OldDatabaseDisposalRequest(
     OldDatabaseDisposalMethod Method,
     string IdempotencyToken,
@@ -280,7 +295,8 @@ public sealed record OldDatabaseDisposalRequest(
     bool ConfirmDeleteUnverifiableFile = false,
     string? OperatorAddress = null,
     string? OperatorScheme = null,
-    string? OperatorPrincipal = null);
+    string? OperatorPrincipal = null,
+    string? ConfirmedInspectionDigest = null);
 
 /// <summary>処分の結果の分類。</summary>
 public enum OldDatabaseDisposalOutcome
@@ -346,8 +362,11 @@ public enum OldDatabaseDisposalReason
     /// </summary>
     AuditUnavailable,
 
-    /// <summary>旧ファイルを別のプログラムが使用中の可能性がある（WAL の反映が完了しない）。</summary>
+    /// <summary>旧ファイルを別のプログラムが使用中の可能性がある（WAL の反映が完了しない・読み取りが競合で失敗する）。</summary>
     InUse,
+
+    /// <summary>旧ファイルを一時的に読めない（使用中・破損以外の読み取りの失敗。何も変更せずに拒否する）。</summary>
+    TargetUnreadable,
 
     /// <summary>保管先が空・相対パス・ドライブ文字から始まらない。</summary>
     DestinationNotLocalAbsolutePath,
@@ -407,6 +426,10 @@ public enum OldDatabaseDisposalReason
 /// <param name="GrantCommand">保管先にフォルダを作れないときの付与コマンド。</param>
 /// <param name="RevokeCommand">処分の後に付与を外すコマンド。</param>
 /// <param name="FinishedAt">結果の確定時刻。</param>
+/// <param name="UncheckedArchiveParentDirectory">
+/// 中断した処分の作業用サブフォルダの掃除を、一覧できずに見送った保管先の親フォルダ（見送っていなければ
+/// <see langword="null"/>）。利用者に残りの確認と削除を案内する。
+/// </param>
 public sealed record OldDatabaseDisposalResult(
     OldDatabaseDisposalOutcome Outcome,
     string Message,
@@ -418,7 +441,8 @@ public sealed record OldDatabaseDisposalResult(
     string? WorkDirectoryLeftBehind = null,
     string? GrantCommand = null,
     string? RevokeCommand = null,
-    DateTimeOffset? FinishedAt = null);
+    DateTimeOffset? FinishedAt = null,
+    string? UncheckedArchiveParentDirectory = null);
 
 /// <summary>保管先の事前検査の結果。</summary>
 /// <param name="Acceptable">条件を満たすか（フォルダを作れるかは実行時に確かめる）。</param>

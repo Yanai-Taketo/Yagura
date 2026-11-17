@@ -20,20 +20,24 @@ public sealed class OldDatabaseDisposalNotifierTests
 
     private OldDatabaseDisposalNotifier CreateNotifier() => new(() => _observation, _audit, _time, _logger);
 
+    private const string CurrentFile = @"C:\ProgramData\Yagura\yagura.db";
+
     private static OldDatabaseDisposalObservation Observation(
         OldDatabaseDisposalState state,
         bool promoted = true,
         bool completedInThisProcess = false,
         string? unresolvable = null,
-        string? misplaced = null)
+        string? misplaced = null,
+        string currentFile = CurrentFile,
+        IReadOnlyCollection<string>? disposed = null)
     {
         IReadOnlyList<OldDatabaseFile> files = state == OldDatabaseDisposalState.NotApplicable
             ? []
-            : [new OldDatabaseFile(@"C:\ProgramData\Yagura\yagura.db", 3L * 1024 * 1024)];
+            : [new OldDatabaseFile(currentFile, 3L * 1024 * 1024)];
         return new OldDatabaseDisposalObservation(
             new OldDatabaseDisposalStatus(state, files, files.Sum(f => f.SizeBytes ?? 0), null, null, null, misplaced),
             promoted,
-            completedInThisProcess,
+            disposed ?? (completedInThisProcess ? [currentFile] : []),
             unresolvable);
     }
 
@@ -148,6 +152,29 @@ public sealed class OldDatabaseDisposalNotifierTests
         await notifier.EvaluateAsync();
 
         Assert.Empty(_audit.Events);
+    }
+
+    [Fact]
+    public async Task FileUnderAnotherNameRemovedOutside_AfterDisposingTheCurrentFile_IsAuditedWithItsPath()
+    {
+        // 今の設定名のファイルを製品で処分した後でも、切替の時点の別名のファイルが製品の外で消えたことは記録する。
+        const string custom = @"C:\ProgramData\Yagura\custom.db";
+        const string recorded = @"C:\ProgramData\Yagura\yagura.db";
+        var notifier = CreateNotifier();
+        _observation = Observation(OldDatabaseDisposalState.Pending, currentFile: custom, misplaced: recorded);
+        await notifier.EvaluateAsync();
+
+        _observation = Observation(OldDatabaseDisposalState.NotApplicable, misplaced: recorded, disposed: [custom]);
+        await notifier.EvaluateAsync();
+        Assert.Empty(_audit.Events);
+
+        _observation = Observation(OldDatabaseDisposalState.NotApplicable, disposed: [custom]);
+        await notifier.EvaluateAsync();
+
+        var audit = Assert.Single(_audit.Events);
+        Assert.Equal(AuditEventKind.OldDatabaseRemovedOutsideProduct, audit.Kind);
+        Assert.Contains(recorded, audit.Detail);
+        Assert.DoesNotContain(custom, audit.Detail);
     }
 
     [Fact]

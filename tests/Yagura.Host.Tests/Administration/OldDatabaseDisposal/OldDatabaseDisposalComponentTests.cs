@@ -214,6 +214,82 @@ public sealed class OldDatabaseDisposalComponentTests : IDisposable
         Assert.Null(PromotionSwitchBoundaryStore.TryRead(_temp.Path));
     }
 
+    [Fact]
+    public void RecordSwitch_KeepsTheEffectiveTimeOfAnEarlierSwitchOfTheSameFile()
+    {
+        // SQL Server で動いた区間（反映の時刻以降）は移行先にライブ受信がある。やり直した切替で照合できない区間の
+        // 始まりを後ろへずらすと、縮退中に旧ファイルへ書かれたログの欠落がその区間のライブ受信に隠れる。
+        var path = Path.Combine(_temp.Path, "yagura.db");
+        var first = new PromotionSwitchBoundary(
+            new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc), path, null, null, 10,
+            EffectiveSinceUtc: new DateTime(2026, 7, 1, 0, 5, 0, DateTimeKind.Utc));
+        PromotionSwitchBoundaryStore.Write(_temp.Path, first);
+
+        var written = PromotionSwitchBoundaryStore.RecordSwitch(
+            _temp.Path,
+            new PromotionSwitchBoundary(new DateTime(2026, 7, 3, 0, 0, 0, DateTimeKind.Utc), path, null, null, 20),
+            reducedFromSqlServer: false);
+
+        Assert.False(written);
+        Assert.Equal(first, PromotionSwitchBoundaryStore.TryRead(_temp.Path));
+    }
+
+    [Fact]
+    public void RecordSwitch_WhileReducedFromSqlServer_IsNotARealSwitch_AndDoesNotWrite()
+    {
+        var path = Path.Combine(_temp.Path, "yagura.db");
+        var later = new PromotionSwitchBoundary(new DateTime(2026, 7, 3, 0, 0, 0, DateTimeKind.Utc), path, null, null, 20);
+
+        Assert.False(PromotionSwitchBoundaryStore.RecordSwitch(_temp.Path, later, reducedFromSqlServer: true));
+        Assert.Null(PromotionSwitchBoundaryStore.TryRead(_temp.Path));
+
+        var notYetEffective = new PromotionSwitchBoundary(new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc), path, null, null, 10);
+        PromotionSwitchBoundaryStore.Write(_temp.Path, notYetEffective);
+        Assert.False(PromotionSwitchBoundaryStore.RecordSwitch(_temp.Path, later, reducedFromSqlServer: true));
+        Assert.Equal(notYetEffective, PromotionSwitchBoundaryStore.TryRead(_temp.Path));
+    }
+
+    [Fact]
+    public void RecordSwitch_ReplacesARecordThatNeverTookEffect()
+    {
+        // 再起動の前にウィザードをやり直した場合は、最後の切替が境界になる（SQL Server はまだ受信していない）。
+        var path = Path.Combine(_temp.Path, "yagura.db");
+        PromotionSwitchBoundaryStore.Write(_temp.Path,
+            new PromotionSwitchBoundary(new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc), path, null, null, 10));
+        var later = new PromotionSwitchBoundary(new DateTime(2026, 7, 1, 1, 0, 0, DateTimeKind.Utc), path, null, null, 12);
+
+        Assert.True(PromotionSwitchBoundaryStore.RecordSwitch(_temp.Path, later, reducedFromSqlServer: false));
+        Assert.Equal(later, PromotionSwitchBoundaryStore.TryRead(_temp.Path));
+    }
+
+    // ---- 旧ファイルの読み取りの失敗の分類 ----
+
+    [Theory]
+    [InlineData(11, OldDatabaseReadFailure.Corrupt)]
+    [InlineData(26, OldDatabaseReadFailure.Corrupt)]
+    [InlineData(5, OldDatabaseReadFailure.InUse)]
+    [InlineData(6, OldDatabaseReadFailure.InUse)]
+    [InlineData(10, OldDatabaseReadFailure.Unreadable)]
+    [InlineData(13, OldDatabaseReadFailure.Unreadable)]
+    [InlineData(14, OldDatabaseReadFailure.Unreadable)]
+    [InlineData(8, OldDatabaseReadFailure.Unreadable)]
+    [InlineData(266, OldDatabaseReadFailure.Unreadable)]
+    [InlineData(261, OldDatabaseReadFailure.InUse)]
+    public void ClassifyReadFailure_CallsOnlyCorruptionCorrupt(int code, OldDatabaseReadFailure expected)
+    {
+        Assert.Equal(expected, OldSqliteDatabase.ClassifyReadFailure(new SqliteException("test", code)));
+        Assert.Equal(expected, OldSqliteDatabase.ClassifyReadFailure(new Yagura.Storage.LogStoreWriteException(
+            Yagura.Storage.LogStoreFailureKind.Permanent, "wrapped (test)", new SqliteException("test", code))));
+    }
+
+    [Fact]
+    public void ClassifyReadFailure_IgnoresFailuresThatAreNotTheOldFiles()
+    {
+        Assert.Null(OldSqliteDatabase.ClassifyReadFailure(new InvalidOperationException("target (test)")));
+        Assert.Null(OldSqliteDatabase.ClassifyReadFailure(new Yagura.Storage.LogStoreWriteException(
+            Yagura.Storage.LogStoreFailureKind.Transient, "sql server (test)", new TimeoutException())));
+    }
+
     // ---- 旧ファイルの読み取り ----
 
     [Fact]

@@ -268,8 +268,10 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         Assert.True(File.Exists(_targets.BodyPath));
         Assert.Empty(DisposalAudits());
 
+        var inspection = await service.InspectAsync();
         var confirmed = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
-            OldDatabaseDisposalMethod.Delete, token, ConfirmDisposeWithoutMigration: true));
+            OldDatabaseDisposalMethod.Delete, token, ConfirmDisposeWithoutMigration: true,
+            ConfirmedInspectionDigest: inspection.ConfirmationDigest));
         Assert.Equal(OldDatabaseDisposalOutcome.Completed, confirmed.Outcome);
         Assert.Contains(DisposalAudits(), e => e.Detail!.Contains("移行せずに後始末する=確認あり"));
         Assert.Equal(30, records.Count);
@@ -344,8 +346,10 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         Assert.Equal(OldDatabaseDisposalReason.UnverifiableConfirmationRequired, unconfirmed.Reason);
         Assert.Contains("yagura.db", unconfirmed.Message);
 
+        var inspection = await service.InspectAsync();
         var deleted = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
-            OldDatabaseDisposalMethod.Delete, token, ConfirmDeleteUnverifiableFile: true));
+            OldDatabaseDisposalMethod.Delete, token, ConfirmDeleteUnverifiableFile: true,
+            ConfirmedInspectionDigest: inspection.ConfirmationDigest));
         Assert.Equal(OldDatabaseDisposalOutcome.Completed, deleted.Outcome);
         Assert.False(File.Exists(_targets.BodyPath));
     }
@@ -640,7 +644,8 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         var service = CreateService();
 
         var result = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
-            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent, ConfirmDisposeWithoutMigration: true));
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent, ConfirmDisposeWithoutMigration: true,
+            ConfirmedInspectionDigest: (await service.InspectAsync()).ConfirmationDigest));
 
         Assert.Equal(OldDatabaseDisposalOutcome.Completed, result.Outcome);
         var bytes = await File.ReadAllBytesAsync(result.ArchiveFilePath!);
@@ -886,7 +891,8 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         var result = await service.StartAsync(new OldDatabaseDisposalRequest(OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
 
         Assert.Equal(OldDatabaseDisposalReason.DestinationNotWritable, result.Reason);
-        Assert.Equal($"icacls \"{_archiveParent}\" /grant \"NT SERVICE\\Yagura:(AD)\"", result.GrantCommand);
+        // 親フォルダの一覧（RD）も付与する——中断した処分の作業用サブフォルダの掃除に要る。
+        Assert.Equal($"icacls \"{_archiveParent}\" /grant \"NT SERVICE\\Yagura:(AD,RD)\"", result.GrantCommand);
         Assert.Equal($"icacls \"{_archiveParent}\" /remove:g \"NT SERVICE\\Yagura\"", result.RevokeCommand);
         Assert.Empty(DisposalAudits());
     }
@@ -1002,6 +1008,331 @@ public sealed class OldDatabaseDisposalServiceTests : IAsyncLifetime
         service.Observe();
 
         Assert.False(File.Exists(_targets.BodyPath));
+    }
+
+    // ---- 旧ファイルの読み取りの失敗の分類 ----
+
+    [Fact]
+    public async Task Inspect_OldFileInUse_IsNotTreatedAsAnUnverifiableFile()
+    {
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 20);
+        var service = CreateService();
+        service.BeforeOldDatabaseReadForTest = step =>
+        {
+            if (step == OldDatabaseReadStep.Summary)
+            {
+                throw new SqliteException("database is locked (test)", 5);
+            }
+        };
+
+        var inspection = await service.InspectAsync();
+
+        Assert.Equal(OldDatabaseTargetKind.SqliteDatabase, inspection.TargetKind);
+        Assert.Null(inspection.Migration);
+        Assert.Equal(OldDatabaseDisposalReason.InUse, inspection.UnavailableReason);
+        Assert.Null(inspection.ConfirmationDigest);
+    }
+
+    [Fact]
+    public async Task Inspect_ReadFailureDuringReconciliation_IsReportedAsUnreadable()
+    {
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 20);
+        var service = CreateService();
+        service.BeforeOldDatabaseReadForTest = step =>
+        {
+            if (step == OldDatabaseReadStep.Reconciliation)
+            {
+                throw new SqliteException("disk I/O error (test)", 10);
+            }
+        };
+
+        var inspection = await service.InspectAsync();
+
+        Assert.Equal(OldDatabaseTargetKind.SqliteDatabase, inspection.TargetKind);
+        Assert.Null(inspection.Migration);
+        Assert.Equal(OldDatabaseDisposalReason.TargetUnreadable, inspection.UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData(5, OldDatabaseDisposalReason.InUse)]
+    [InlineData(6, OldDatabaseDisposalReason.InUse)]
+    [InlineData(10, OldDatabaseDisposalReason.TargetUnreadable)]
+    [InlineData(14, OldDatabaseDisposalReason.TargetUnreadable)]
+    public async Task Start_OldFileInUseOrUnreadable_IsRejected_WithoutDeleting(int sqliteError, OldDatabaseDisposalReason expected)
+    {
+        // 使用中・一時的に読めないファイルを「内容を確認できないファイル」として移行の照合なしに削除しない。
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 20);
+        await File.WriteAllBytesAsync(_targets.WalPath, new byte[64]);
+        var service = CreateService();
+        service.BeforeOldDatabaseReadForTest = _ => throw new SqliteException("read failure (test)", sqliteError);
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Delete, await TokenAsync(service), ConfirmDeleteUnverifiableFile: true));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Rejected, result.Outcome);
+        Assert.Equal(expected, result.Reason);
+        Assert.Contains("元のファイルは変更していません", result.Message);
+        Assert.True(File.Exists(_targets.BodyPath));
+        Assert.True(File.Exists(_targets.WalPath));
+        Assert.Empty(_deleter.Deleted);
+        Assert.Empty(DisposalAudits());
+    }
+
+    [Fact]
+    public async Task Start_ReadFailureDuringReconciliation_IsRejected_NotTreatedAsCorrupt()
+    {
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 20);
+        var service = CreateService();
+        service.BeforeOldDatabaseReadForTest = step =>
+        {
+            if (step == OldDatabaseReadStep.Reconciliation)
+            {
+                throw new SqliteException("database is locked (test)", 5);
+            }
+        };
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Delete, await TokenAsync(service), ConfirmDeleteUnverifiableFile: true));
+
+        Assert.Equal(OldDatabaseDisposalReason.InUse, result.Reason);
+        Assert.True(File.Exists(_targets.BodyPath));
+    }
+
+    [Fact]
+    public async Task Start_CorruptBodyWithAValidHeader_IsUnverifiable_AndCanOnlyBeDeletedWithConfirmation()
+    {
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 200);
+        SqliteConnection.ClearAllPools();
+        var bytes = await File.ReadAllBytesAsync(_targets.BodyPath);
+        for (var i = 4096; i < bytes.Length; i++)
+        {
+            bytes[i] = 0x5A;
+        }
+
+        await File.WriteAllBytesAsync(_targets.BodyPath, bytes);
+        var service = CreateService();
+
+        var inspection = await service.InspectAsync();
+        Assert.Equal(OldDatabaseTargetKind.UnverifiableBody, inspection.TargetKind);
+        Assert.NotNull(inspection.ConfirmationDigest);
+
+        var unconfirmed = await service.StartAsync(new OldDatabaseDisposalRequest(OldDatabaseDisposalMethod.Delete, await TokenAsync(service)));
+        Assert.Equal(OldDatabaseDisposalReason.UnverifiableConfirmationRequired, unconfirmed.Reason);
+    }
+
+    [Fact]
+    public async Task Start_LiveIngestionUnderPressure_IsRejectedBeforeReadingTheOldFile()
+    {
+        // 逼迫中は旧ファイル全体を読む照合でディスクと移行先を取り合わない。
+        await SeedMigratedAsync();
+        var service = CreateService();
+        var reads = 0;
+        service.BeforeOldDatabaseReadForTest = _ => Interlocked.Increment(ref reads);
+        _underPressure = true;
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(OldDatabaseDisposalMethod.Delete, await TokenAsync(service)));
+
+        Assert.Equal(OldDatabaseDisposalReason.LiveIngestionUnderPressure, result.Reason);
+        Assert.Equal(0, reads);
+    }
+
+    // ---- 明示確認は利用者に示した照合の結果に結び付く ----
+
+    [Fact]
+    public async Task Inspect_IssuesAConfirmationDigestOnlyWhenConfirmationIsRequired()
+    {
+        await SeedMigratedAsync();
+        var migrated = await CreateService().InspectAsync();
+        Assert.Null(migrated.ConfirmationDigest);
+
+        PromotionSwitchBoundaryStore.Write(_dataRoot, new PromotionSwitchBoundary(
+            DisposalFixtures.BaseTime.UtcDateTime, _targets.BodyPath, null, null, null));
+        var unmigrated = await CreateService().InspectAsync();
+        Assert.True(unmigrated.Migration!.RequiresConfirmation);
+        Assert.NotNull(unmigrated.ConfirmationDigest);
+    }
+
+    [Fact]
+    public async Task Start_UnmigratedRecordsGrewSinceInspection_IsRejected_EvenWithConfirmation()
+    {
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 30);
+        var service = CreateService();
+        var token = await TokenAsync(service);
+        var inspection = await service.InspectAsync();
+        Assert.Equal(30, inspection.Migration!.UnmigratedRecordCount);
+
+        // 照合の後で未移行が増えた（移行先の復元・旧ファイルへの追加の再現）。
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 5, DisposalFixtures.BaseTime.AddDays(2), "late");
+
+        var stale = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Delete, token, ConfirmDisposeWithoutMigration: true,
+            ConfirmedInspectionDigest: inspection.ConfirmationDigest));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Rejected, stale.Outcome);
+        Assert.Equal(OldDatabaseDisposalReason.MigrationConfirmationRequired, stale.Reason);
+        Assert.Contains("35", stale.Message);
+        Assert.True(File.Exists(_targets.BodyPath));
+        Assert.Empty(DisposalAudits());
+
+        // 照合し直して確認すれば開始できる。
+        var again = await service.InspectAsync();
+        var result = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Delete, token, ConfirmDisposeWithoutMigration: true,
+            ConfirmedInspectionDigest: again.ConfirmationDigest));
+        Assert.Equal(OldDatabaseDisposalOutcome.Completed, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Start_ConfirmationWithoutTheInspectionItConfirmed_IsRejected()
+    {
+        await DisposalFixtures.SeedOldAsync(_targets.BodyPath, 30);
+        var service = CreateService();
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Delete, await TokenAsync(service), ConfirmDisposeWithoutMigration: true));
+
+        Assert.Equal(OldDatabaseDisposalReason.MigrationConfirmationRequired, result.Reason);
+        Assert.True(File.Exists(_targets.BodyPath));
+    }
+
+    [Fact]
+    public async Task Start_UnverifiableFileReplacedSinceInspection_IsRejected()
+    {
+        await File.WriteAllTextAsync(_targets.BodyPath, "not a database");
+        var service = CreateService();
+        var token = await TokenAsync(service);
+        var inspection = await service.InspectAsync();
+
+        await File.WriteAllTextAsync(_targets.BodyPath, "not a database, but a different and longer file");
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Delete, token, ConfirmDeleteUnverifiableFile: true,
+            ConfirmedInspectionDigest: inspection.ConfirmationDigest));
+
+        Assert.Equal(OldDatabaseDisposalReason.UnverifiableConfirmationRequired, result.Reason);
+        Assert.True(File.Exists(_targets.BodyPath));
+    }
+
+    // ---- 作業用サブフォルダの保護と保持 ----
+
+    [Fact]
+    public async Task Archive_WorkDirectoryCreatedWithoutTheProtectedAcl_IsRejected_AndRemoved()
+    {
+        await SeedMigratedAsync();
+        _platform.CreatesWithoutWorkAcl = true;
+        var service = CreateService();
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Rejected, result.Outcome);
+        Assert.Equal(OldDatabaseDisposalReason.DestinationNoAcl, result.Reason);
+        Assert.Empty(Directory.GetDirectories(_archiveParent));
+        Assert.True(File.Exists(_targets.BodyPath));
+        Assert.Empty(DisposalAudits());
+        Assert.Equal(0, _platform.ActiveHolds);
+    }
+
+    [Fact]
+    public async Task Archive_WorkDirectoryCannotBeHeld_IsRejected_AndRemoved()
+    {
+        await SeedMigratedAsync();
+        _platform.HoldFails = true;
+        var service = CreateService();
+
+        var result = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Rejected, result.Outcome);
+        Assert.Equal(OldDatabaseDisposalReason.DestinationNotWritable, result.Reason);
+        Assert.Empty(Directory.GetDirectories(_archiveParent));
+        Assert.Empty(DisposalAudits());
+    }
+
+    [Fact]
+    public async Task Archive_HoldsTheWorkDirectoryWhileWriting_AndReleasesItAtTheEnd()
+    {
+        await SeedMigratedAsync();
+        var service = CreateService();
+        var heldDuringExport = -1;
+        service.BeforeExportForTest = _ =>
+        {
+            heldDuringExport = _platform.ActiveHolds;
+            return Task.CompletedTask;
+        };
+
+        var result = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Completed, result.Outcome);
+        Assert.Equal(1, heldDuringExport);
+        Assert.Equal(0, _platform.ActiveHolds);
+    }
+
+    [Fact]
+    public async Task Archive_WorkDirectoryMovedDuringExport_IsArchiveFailure_AndNothingIsDeletedByItsPath()
+    {
+        // 親フォルダの改名・差し替えで作業用サブフォルダのパスが別の場所を指すようになったら、以後そのパスに
+        // 書かない・そのパスで削除しない（差し替え先は製品のフォルダではない）。
+        await SeedMigratedAsync();
+        var service = CreateService();
+        string? workDirectory = null;
+        service.BeforeExportForTest = _ =>
+        {
+            workDirectory = Assert.Single(_platform.CreatedDirectories);
+            _platform.MovedWorkDirectories[workDirectory] = true;
+            return Task.CompletedTask;
+        };
+
+        var result = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.ArchiveFailed, result.Outcome);
+        Assert.True(File.Exists(_targets.BodyPath));
+        Assert.Empty(_deleter.Deleted);
+        Assert.True(Directory.Exists(workDirectory));
+        Assert.Empty(Directory.GetFileSystemEntries(workDirectory!));
+        Assert.Equal(workDirectory + "-moved", result.WorkDirectoryLeftBehind);
+        Assert.Equal(0, _platform.ActiveHolds);
+    }
+
+    [Fact]
+    public async Task Archive_ParentCannotBeListed_ReportsThatTheCleanupWasSkipped()
+    {
+        await SeedMigratedAsync();
+        var service = CreateService();
+        service.ListWorkDirectoryCandidatesForTest = _ => throw new UnauthorizedAccessException("cannot list (test)");
+
+        var result = await RunToEndAsync(service, new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Completed, result.Outcome);
+        Assert.Equal(_archiveParent, result.UncheckedArchiveParentDirectory);
+        Assert.Contains("掃除を見送った保管先の親フォルダ=" + _archiveParent, DisposalAudits().Last().Detail);
+    }
+
+    // ---- 取り消せない段階への移り方 ----
+
+    [Fact]
+    public async Task Archive_ServiceStopDuringFinalization_StopsBeforeDeleting_AndKeepsTheArchive()
+    {
+        await SeedMigratedAsync();
+        var service = CreateService();
+        _platform.AfterApplyFinalAcl = () => _ = service.StopAsync();
+
+        var started = await service.StartAsync(new OldDatabaseDisposalRequest(
+            OldDatabaseDisposalMethod.Archive, await TokenAsync(service), _archiveParent));
+        Assert.Equal(OldDatabaseDisposalOutcome.Started, started.Outcome);
+        await service.CurrentRun!.WaitAsync(TimeSpan.FromSeconds(30));
+        var result = (await service.GetStatusAsync()).LastResult!;
+
+        Assert.Equal(OldDatabaseDisposalOutcome.Interrupted, result.Outcome);
+        Assert.Equal(OldDatabaseDisposalReason.ServiceStopping, result.Reason);
+        Assert.Empty(_deleter.Deleted);
+        Assert.True(File.Exists(_targets.BodyPath));
+        Assert.NotNull(result.ArchiveFilePath);
+        Assert.True(File.Exists(result.ArchiveFilePath));
+        Assert.DoesNotContain(DisposalAudits(), e => e.Detail!.Contains("削除の開始"));
     }
 
     /// <summary>時刻だけを固定し、待機は実時間で進める時計。</summary>

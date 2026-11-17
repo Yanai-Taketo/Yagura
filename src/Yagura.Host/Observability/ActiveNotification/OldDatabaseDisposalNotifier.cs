@@ -23,6 +23,13 @@ namespace Yagura.Host.Observability.ActiveNotification;
 /// 中断で終わったら、継続判定期間・抑制窓によらず 1 回発火する（本文に結果と理由）。以後は処分待ちと同じ。
 /// </para>
 /// <para>
+/// <b>製品の外での消失（2031）はファイルごとに判定する</b>: 未完了の間に観測した旧ファイル（今の設定名のファイルと、
+/// 切替の時点の別名のファイル）を覚えておき、解消を観測したとき、このプロセスで後始末の完了を記録していない
+/// ファイルがあれば、そのパスを記録する。今の設定名のファイルを製品で処分した後に、別名のファイルが製品の外で
+/// 消えた場合も辿れるようにするため。<c>-wal</c>・<c>-shm</c> は本体と同じファイルとして扱う（製品が旧ファイルを
+/// 開いて閉じると SQLite が消すことがあり、別に数えると製品の操作を製品の外での消失と誤る）。
+/// </para>
+/// <para>
 /// 旧ファイルはデータベースとしては開かない。周期評価と即時発火は別スレッドから来るため、状態はロックで守る。
 /// </para>
 /// </remarks>
@@ -37,6 +44,7 @@ public sealed class OldDatabaseDisposalNotifier
     private DateTimeOffset? _incompleteSince;
     private DateTimeOffset? _lastNotifiedAt;
     private bool _wasIncomplete;
+    private readonly HashSet<string> _observedFiles = new(StringComparer.OrdinalIgnoreCase);
 
     public OldDatabaseDisposalNotifier(
         Func<OldDatabaseDisposalObservation> observe,
@@ -66,21 +74,26 @@ public sealed class OldDatabaseDisposalNotifier
             or OldDatabaseDisposalState.DisposalRunning
             or OldDatabaseDisposalState.DisposalDeleting;
 
-        var recordRemovedOutside = false;
+        List<string> removedOutside = [];
         lock (_gate)
         {
             if (!incomplete)
             {
-                recordRemovedOutside = _wasIncomplete
-                    && observation.EffectiveProviderIsSqlServer
-                    && !observation.CompletedInThisProcess;
+                if (_wasIncomplete && observation.EffectiveProviderIsSqlServer)
+                {
+                    var disposed = new HashSet<string>(observation.DisposedPathsInThisProcess, StringComparer.OrdinalIgnoreCase);
+                    removedOutside = _observedFiles.Where(path => !disposed.Contains(path)).Order(StringComparer.OrdinalIgnoreCase).ToList();
+                }
+
                 _wasIncomplete = false;
                 _incompleteSince = null;
                 _lastNotifiedAt = null;
+                _observedFiles.Clear();
             }
             else
             {
                 _wasIncomplete = true;
+                _observedFiles.UnionWith(DatabaseFilesOf(status));
                 _incompleteSince ??= now;
                 var continued = now - _incompleteSince.Value;
                 if (!running
@@ -94,9 +107,9 @@ public sealed class OldDatabaseDisposalNotifier
             }
         }
 
-        if (recordRemovedOutside)
+        if (removedOutside.Count > 0)
         {
-            await RecordRemovedOutsideProductAsync().ConfigureAwait(false);
+            await RecordRemovedOutsideProductAsync(removedOutside).ConfigureAwait(false);
         }
     }
 
@@ -106,7 +119,12 @@ public sealed class OldDatabaseDisposalNotifier
         lock (_gate)
         {
             _lastNotifiedAt = _timeProvider.GetUtcNow();
-            _wasIncomplete |= observation.Status.State is not OldDatabaseDisposalState.NotApplicable;
+            if (observation.Status.State is not OldDatabaseDisposalState.NotApplicable)
+            {
+                _wasIncomplete = true;
+                _observedFiles.UnionWith(DatabaseFilesOf(observation.Status));
+            }
+
             _incompleteSince ??= _lastNotifiedAt;
         }
 
@@ -145,7 +163,24 @@ public sealed class OldDatabaseDisposalNotifier
             ActiveNotificationConstants.OldDatabaseDisposalIncompleteSuppressionWindow);
     }
 
-    private async Task RecordRemovedOutsideProductAsync()
+    /// <summary>旧ファイル（本体のパスで表す。<c>-wal</c>・<c>-shm</c> は本体に寄せる）。</summary>
+    private static IEnumerable<string> DatabaseFilesOf(OldDatabaseDisposalStatus status)
+    {
+        foreach (var file in status.TargetFiles)
+        {
+            yield return file.Path.EndsWith("-wal", StringComparison.OrdinalIgnoreCase)
+                || file.Path.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)
+                    ? file.Path[..^4]
+                    : file.Path;
+        }
+
+        if (status.MisplacedRecordedOldDatabasePath is { } misplaced)
+        {
+            yield return misplaced;
+        }
+    }
+
+    private async Task RecordRemovedOutsideProductAsync(IReadOnlyList<string> paths)
     {
         try
         {
@@ -155,8 +190,8 @@ public sealed class OldDatabaseDisposalNotifier
                     Kind: AuditEventKind.OldDatabaseRemovedOutsideProduct,
                     RemoteAddress: null,
                     RemotePort: null,
-                    Detail: "以前の保存先（組み込みデータベース）のファイルが、製品の後始末によらず無くなったことを観測しました" +
-                            "（このプロセスでは後始末の完了を記録していません）。"),
+                    Detail: $"以前の保存先（組み込みデータベース）のファイル（{string.Join("、", paths)}）が、製品の後始末によらず" +
+                            "無くなったことを観測しました（このプロセスでは、このファイルの後始末の完了を記録していません）。"),
                 CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
