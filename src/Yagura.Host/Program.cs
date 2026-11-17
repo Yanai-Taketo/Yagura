@@ -1405,10 +1405,10 @@ public static class Program
                 adminHttpsCertificate, effectiveServiceAccountName);
 
             var auditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
-            // 既に権限があった場合は ACL を変えていないため監査記録を残さない（Issue #511）
-            // ——監査は状態の変化を残すもので、変えていないものを「付与した」と書くと
-            // 証跡が事実と食い違う。
-            if (grantResult.Succeeded && !grantResult.WasAlreadyGranted)
+            // 「監査に残すか」と「警告を出すか」は独立した問いであり、**独立した if で書く**
+            // （if / else にすると「既に権限があった」が else 側へ落ちて誤警告になる——
+            // CertificatePrivateKeyGrantResult の注記を参照）。
+            if (grantResult.ShouldRecordGrantAudit)
             {
                 await auditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: TimeProvider.System.GetUtcNow(),
@@ -1418,7 +1418,8 @@ public static class Program
                     Detail: $"thumbprint={resolvedConfiguration.AdminHttpsCertificateThumbprint};account={effectiveServiceAccountName}"))
                     .ConfigureAwait(false);
             }
-            else
+
+            if (grantResult.ShouldWarnGrantFailed)
             {
                 httpsLogger.LogWarning(
                     "[admin-https-private-key-grant-failed] 管理リスナのリモート HTTPS 証明書の秘密鍵読み取り権限を" +
@@ -1459,10 +1460,8 @@ public static class Program
                 ingestionTlsCertificate, effectiveServiceAccountName);
 
             var ingestionTlsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
-            // 既に権限があった場合は ACL を変えていないため監査記録を残さない（Issue #511）
-            // ——監査は状態の変化を残すもので、変えていないものを「付与した」と書くと
-            // 証跡が事実と食い違う。
-            if (ingestionTlsGrantResult.Succeeded && !ingestionTlsGrantResult.WasAlreadyGranted)
+            // 「監査に残すか」と「警告を出すか」は独立した問い（管理 HTTPS と同型。上記コメント参照）。
+            if (ingestionTlsGrantResult.ShouldRecordGrantAudit)
             {
                 await ingestionTlsAuditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: TimeProvider.System.GetUtcNow(),
@@ -1472,7 +1471,8 @@ public static class Program
                     Detail: $"thumbprint={resolvedConfiguration.IngestionTlsCertificateThumbprint};account={effectiveServiceAccountName}"))
                     .ConfigureAwait(false);
             }
-            else
+
+            if (ingestionTlsGrantResult.ShouldWarnGrantFailed)
             {
                 tlsLogger.LogWarning(
                     "[ingestion-tls-private-key-grant-failed] TLS 受信証明書の秘密鍵読み取り権限を" +
@@ -1514,10 +1514,8 @@ public static class Program
                 viewerHttpsCertificate, effectiveServiceAccountName);
 
             var viewerHttpsAuditRecorder = app.Services.GetRequiredService<IAuditRecorder>();
-            // 既に権限があった場合は ACL を変えていないため監査記録を残さない（Issue #511）
-            // ——監査は状態の変化を残すもので、変えていないものを「付与した」と書くと
-            // 証跡が事実と食い違う。
-            if (viewerHttpsGrantResult.Succeeded && !viewerHttpsGrantResult.WasAlreadyGranted)
+            // 「監査に残すか」と「警告を出すか」は独立した問い（管理 HTTPS と同型。上記コメント参照）。
+            if (viewerHttpsGrantResult.ShouldRecordGrantAudit)
             {
                 await viewerHttpsAuditRecorder.RecordAsync(new AuditEvent(
                     OccurredAt: TimeProvider.System.GetUtcNow(),
@@ -1527,7 +1525,8 @@ public static class Program
                     Detail: $"thumbprint={resolvedConfiguration.ViewerHttpsCertificateThumbprint};account={effectiveServiceAccountName}"))
                     .ConfigureAwait(false);
             }
-            else
+
+            if (viewerHttpsGrantResult.ShouldWarnGrantFailed)
             {
                 viewerHttpsLogger.LogWarning(
                     "[viewer-https-private-key-grant-failed] 閲覧 UI HTTPS 証明書の秘密鍵読み取り権限を" +

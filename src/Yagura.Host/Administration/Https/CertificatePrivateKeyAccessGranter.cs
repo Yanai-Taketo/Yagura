@@ -231,15 +231,27 @@ public static class CertificatePrivateKeyAccessGranter
 }
 
 /// <summary><see cref="CertificatePrivateKeyAccessGranter.TryGrantReadAccess"/> の結果。</summary>
+/// <remarks>
+/// 呼び出し側が答えるべき問いは**二つあり、互いに独立している**:
+/// 「ACL を変えたので監査に残すか」（<see cref="ShouldRecordGrantAudit"/>）と
+/// 「付与できなかったので警告を出すか」（<see cref="ShouldWarnGrantFailed"/>）。
+/// この二つを if / else の一本の分岐で表すと、**どちらでもない第三の結果**
+/// （既に権限があり、変更も失敗もしていない）が else 側へ落ちて誤った警告になる。
+/// 実際に Issue #511 の修正でこれが起き、正常な構成で毎回「付与できませんでした（理由: (null)）」が
+/// 出る状態を作った（第 4 回 lab 検証で検出）。**再発させないため、素の真偽値は公開せず、
+/// 問いごとに名前の付いた述語だけを公開する**——呼び出し側で分類を組み立て直せないようにする。
+/// </remarks>
 public sealed class CertificatePrivateKeyGrantResult
 {
+    private readonly bool _wasAlreadyGranted;
+
     private CertificatePrivateKeyGrantResult(
         bool succeeded, string? keyFilePath, string? failureReason, bool wasAlreadyGranted = false)
     {
         Succeeded = succeeded;
         KeyFilePath = keyFilePath;
         FailureReason = failureReason;
-        WasAlreadyGranted = wasAlreadyGranted;
+        _wasAlreadyGranted = wasAlreadyGranted;
     }
 
     public bool Succeeded { get; }
@@ -249,14 +261,22 @@ public sealed class CertificatePrivateKeyGrantResult
     public string? FailureReason { get; }
 
     /// <summary>
-    /// 権限が**既にあったため何もしなかった**か（Issue #511）。
+    /// 監査記録を残すべきか——すなわち**この起動で ACL を実際に変更したか**（Issue #511）。
     /// </summary>
     /// <remarks>
-    /// <see cref="Succeeded"/> は true だが、**ACL は変更していない**。監査記録は状態の変化を
-    /// 残すものであり、変えていないものを「付与した」と記録すると監査証跡が事実と食い違う。
-    /// 呼び出し側はこのフラグで記録の要否を分ける。
+    /// 既に権限があった場合は false。監査は状態の変化を残すものであり、変えていないものを
+    /// 「付与した」と記録すると監査証跡が事実と食い違う。
     /// </remarks>
-    public bool WasAlreadyGranted { get; }
+    public bool ShouldRecordGrantAudit => Succeeded && !_wasAlreadyGranted;
+
+    /// <summary>
+    /// 「自動付与できませんでした」の警告を出すべきか——すなわち**付与に失敗したか**。
+    /// </summary>
+    /// <remarks>
+    /// 既に権限があった場合は false（変更していないだけで、権限は足りている）。
+    /// <see cref="ShouldRecordGrantAudit"/> の否定ではないことに注意。
+    /// </remarks>
+    public bool ShouldWarnGrantFailed => !Succeeded;
 
     public static CertificatePrivateKeyGrantResult Success(string keyFilePath) => new(true, keyFilePath, null);
 
