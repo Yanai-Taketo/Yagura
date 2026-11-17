@@ -173,7 +173,7 @@ public sealed class FirewallStartupInspector
                 ConfigurationEventIds.FirewallRuleMismatch,
                 "[firewall-rule-mismatch] リスナの実ポートと Yagura 名前空間のファイアウォール規則に不一致があります: {Findings}。" +
                 "この状態では該当ポートへの受信がファイアウォールで破棄され、Yagura のカウンタにも現れません" +
-                "（規則の作成・修正手順は運用ガイド docs/operations.md §14「ファイアウォール規則を自分で足す」を参照）。",
+                "（規則の作成・修正手順は運用ガイド docs/operations/firewall.md「ファイアウォール規則を自分で足す」を参照）。",
                 string.Join(" / ", findings));
         }
     }
