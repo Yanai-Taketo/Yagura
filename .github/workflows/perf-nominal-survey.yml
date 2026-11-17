@@ -1,0 +1,575 @@
+# 性能公称値（architecture.md §9 M-6）と流量制御の既定閾値（M-4）の実測調査
+#
+# ■ 何を測るか
+# 推奨区分の 2 版（windows-2022 / windows-2025 のホストランナー）で、Yagura.Bench のレートを
+# 段階的に上げる梯子を走らせ、各段の合否から個体ごとの上限を求める。系列は 3 つ:
+#   N1 = UDP 持続受信（SustainedZeroDrop --transport udp）
+#   N2 = TCP 持続受信（SustainedZeroDrop --transport tcp）
+#   N3 = SQLite の書き込み上限（ProviderWriteCeiling --transport tcp）
+# ほかに、無損失で吸収できる最大バースト（BurstQ1Drop）を M-4 の入力として測る。
+#
+# ■ 標本の単位はジョブ
+# ランナーは個体ごとに CPU 世代・ディスク性能が違い、同じ個体を何度測っても個体差は分散に
+# 入らない。そのため 1 ジョブ = 1 個体 = 標本 1 つとし、ジョブを matrix で並べる。各ジョブは
+# OS・CPU・メモリ・ディスクの情報を runner-identity.json に残す（マシン名は個体の識別子にならない）。
+#
+# ■ 合否と算出方法は集計スクリプトが持つ
+# 1 段の合否、個体ごとの値、下側限界と公称値の算出は
+# tools/Yagura.Bench/scripts/aggregate-nominal-survey.py だけが決める。梯子の打ち切り
+# （2 段連続不合格）もそのスクリプトの judge を呼んで判定し、定義を 2 か所に持たない。
+#
+# ■ 流量制御を外して測る（phase = flowcontrol を除く）
+# ベンチは本物のホストを起動するため、製品既定の流量制御（送信元単位の token bucket）が効く。
+# ベンチの送信元は 127.0.0.1 の 1 つだけなので、外さないと閾値を超えるレートが流量制御に
+# 削られ、受信能力ではなく閾値を測ってしまう。phase = flowcontrol は逆に、既定構成のまま
+# 流量制御が発火しないことを確かめる。
+#
+# ■ トリガは workflow_dispatch のみ
+# 1 回で数十ジョブを使うため、push や PR では起動しない。同時実行枠を長く占有し PR の CI を
+# 待たせるので、PR の少ない時間帯に max_parallel を絞って流す。使い方は
+# tools/Yagura.Bench/README.md「性能公称値の調査」節を参照。
+name: Perf Nominal Survey
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'explore = 粗い梯子で範囲を探す / sample = 公称値の標本 / verify = 公称値で全数合格を確認 / flowcontrol = 既定構成で流量制御が発火しないことを確認'
+        type: choice
+        required: true
+        default: explore
+        options: [explore, sample, verify, flowcontrol]
+      os:
+        description: '測る版'
+        type: choice
+        required: true
+        default: both
+        options: [both, windows-2025, windows-2022]
+      samples:
+        description: '版あたりのジョブ数（空欄 = explore 10 / sample 29 / verify 30 / flowcontrol 10）'
+        type: string
+        default: ''
+      udp_rates:
+        description: 'N1 の梯子（msg/s、カンマ区切り。空欄で N1 を省く。verify / flowcontrol は 1 値）'
+        type: string
+        default: '1000,2000,3000,4000,5000,6000,8000,10000,12000'
+      tcp_rates:
+        description: 'N2 の梯子（msg/s。空欄で省く。verify / flowcontrol は 1 値）'
+        type: string
+        default: '2000,4000,6000,8000,10000,15000,20000'
+      sqlite_rates:
+        description: 'N3 の梯子（msg/s。空欄で省く。verify は 1 値、flowcontrol では使わない）'
+        type: string
+        default: '1000,2000,3000,4000,6000,8000,10000,15000'
+      burst_counts:
+        description: 'バーストの梯子（件。空欄で省く。flowcontrol は 1 値 = B_q1、verify では使わない）'
+        type: string
+        default: '500,1000,2000,5000,10000,20000'
+      duration:
+        description: '1 段の持続秒数（空欄 = explore 30 / sample 60 / verify 300 / flowcontrol 60）'
+        type: string
+        default: ''
+      padding_bytes:
+        description: 'メッセージのパディング（バイト。100 で全長 約 200 B）'
+        type: number
+        default: 100
+      rcvbuf:
+        description: 'UDP 受信バッファ（バイト。空欄 = 製品既定。M-2 の再確認に 4194304 等）'
+        type: string
+        default: ''
+      max_parallel:
+        description: '同時に走らせる測定ジョブの上限'
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+
+# 調査どうしを並走させない（同時実行枠の奪い合いで互いの標本の条件が変わるため）。
+# 走行中の調査は止めない——途中で止めると標本が版ごとに偏る。
+# queue: max で後続の dispatch を待たせる。既定（queue: single）では待機できる run は 1 本だけで、
+# 次の run が来ると待機中の run が取り消される（検証の通常版・長時間版・M-4 を続けて投げると
+# 2 本目が消える）。max は最大 100 本まで待機でき、cancel-in-progress: true とは併用できない。
+concurrency:
+  group: perf-nominal-survey
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  # 入力を検証して matrix と各ジョブの設定に展開する。matrix は範囲を直接書けないため、
+  # 標本の番号列をここで JSON にして渡す。
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      os: ${{ steps.plan.outputs.os }}
+      idx: ${{ steps.plan.outputs.idx }}
+      phase: ${{ steps.plan.outputs.phase }}
+      udp_rates: ${{ steps.plan.outputs.udp_rates }}
+      tcp_rates: ${{ steps.plan.outputs.tcp_rates }}
+      sqlite_rates: ${{ steps.plan.outputs.sqlite_rates }}
+      burst_counts: ${{ steps.plan.outputs.burst_counts }}
+      duration: ${{ steps.plan.outputs.duration }}
+      padding_bytes: ${{ steps.plan.outputs.padding_bytes }}
+      rcvbuf: ${{ steps.plan.outputs.rcvbuf }}
+      drain_timeout: ${{ steps.plan.outputs.drain_timeout }}
+      timeout_minutes: ${{ steps.plan.outputs.timeout_minutes }}
+      max_parallel: ${{ steps.plan.outputs.max_parallel }}
+
+    steps:
+      - name: Validate inputs and expand the plan
+        id: plan
+        shell: bash
+        env:
+          IN_PHASE: ${{ inputs.phase }}
+          IN_OS: ${{ inputs.os }}
+          IN_SAMPLES: ${{ inputs.samples }}
+          IN_UDP_RATES: ${{ inputs.udp_rates }}
+          IN_TCP_RATES: ${{ inputs.tcp_rates }}
+          IN_SQLITE_RATES: ${{ inputs.sqlite_rates }}
+          IN_BURST_COUNTS: ${{ inputs.burst_counts }}
+          IN_DURATION: ${{ inputs.duration }}
+          IN_PADDING_BYTES: ${{ inputs.padding_bytes }}
+          IN_RCVBUF: ${{ inputs.rcvbuf }}
+          IN_MAX_PARALLEL: ${{ inputs.max_parallel }}
+        run: |
+          python3 - <<'PY'
+          import json, math, os, sys
+
+          def fail(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+          def integer(name, text, low, high):
+              # number 型の入力は "100" とも "100.0" とも届き得るため、整数値の浮動小数も受ける。
+              text = str(text).strip()
+              try:
+                  number = float(text)
+              except ValueError:
+                  fail(f"{name} は整数で指定する（指定値: {text!r}）")
+              if not number.is_integer():
+                  fail(f"{name} は整数で指定する（指定値: {text!r}）")
+              value = int(number)
+              if not low <= value <= high:
+                  fail(f"{name} は {low}〜{high} の範囲で指定する（指定値: {value}）")
+              return value
+
+          def values(name, text):
+              parts = [p.strip() for p in str(text).split(",") if p.strip()]
+              return [integer(name, p, 1, 10_000_000) for p in parts]
+
+          phase = os.environ["IN_PHASE"]
+          if phase not in ("explore", "sample", "verify", "flowcontrol"):
+              fail(f"phase が不正: {phase!r}")
+
+          versions = {"both": ["windows-2025", "windows-2022"]}.get(os.environ["IN_OS"], [os.environ["IN_OS"]])
+          if not set(versions) <= {"windows-2025", "windows-2022"}:
+              fail(f"os が不正: {os.environ['IN_OS']!r}")
+
+          default_samples = {"explore": 10, "sample": 29, "verify": 30, "flowcontrol": 10}[phase]
+          samples = integer("samples", os.environ["IN_SAMPLES"] or default_samples, 1, 128)
+
+          default_duration = {"explore": 30, "sample": 60, "verify": 300, "flowcontrol": 60}[phase]
+          duration = integer("duration", os.environ["IN_DURATION"] or default_duration, 10, 7200)
+          padding = integer("padding_bytes", os.environ["IN_PADDING_BYTES"], 0, 8192)
+          rcvbuf = os.environ["IN_RCVBUF"].strip()
+          if rcvbuf:
+              rcvbuf = str(integer("rcvbuf", rcvbuf, 64 * 1024, 256 * 1024 * 1024))
+          max_parallel = integer("max_parallel", os.environ["IN_MAX_PARALLEL"], 1, 256)
+
+          lists = {
+              "udp_rates": values("udp_rates", os.environ["IN_UDP_RATES"]),
+              "tcp_rates": values("tcp_rates", os.environ["IN_TCP_RATES"]),
+              "sqlite_rates": values("sqlite_rates", os.environ["IN_SQLITE_RATES"]),
+              "burst_counts": values("burst_counts", os.environ["IN_BURST_COUNTS"]),
+          }
+          used = {
+              "explore": ("udp_rates", "tcp_rates", "sqlite_rates", "burst_counts"),
+              "sample": ("udp_rates", "tcp_rates", "sqlite_rates", "burst_counts"),
+              "verify": ("udp_rates", "tcp_rates", "sqlite_rates"),
+              "flowcontrol": ("udp_rates", "tcp_rates", "burst_counts"),
+          }[phase]
+          for name in lists:
+              if name not in used:
+                  lists[name] = []
+          if phase in ("verify", "flowcontrol"):
+              # 1 段だけ走らせるフェーズで複数値を黙って先頭に丸めると、意図しないレートで
+              # 検証したことに気付けない。
+              for name in used:
+                  if len(lists[name]) > 1:
+                      fail(f"{phase} では {name} に 1 値だけを指定する（指定値: {lists[name]}）。省く系列は空欄にする")
+          else:
+              for name in used:
+                  lists[name] = sorted(set(lists[name]))
+          if not any(lists[name] for name in used):
+              fail("測る系列が 1 つもない（レートの入力がすべて空欄）")
+
+          # drain は退避が起きた段でのみ長引く。その段はどのみち不合格なので、上限は持続時間の
+          # 2 倍（最低 120 秒）に留め、ジョブ時間を不合格の段で食い潰さない。
+          drain_timeout = max(120, duration * 2)
+
+          sustained_steps = len(lists["udp_rates"]) + len(lists["tcp_rates"]) + len(lists["sqlite_rates"])
+          burst_steps = len(lists["burst_counts"])
+          # 1 段のオーバーヘッド（起動・停止・静定）は 1 分弱。各系列で最大 2 段が drain 上限まで
+          # 待つ場合を足し、準備（SDK・artifact・識別情報）に 20 分を見込む。
+          estimate = 20 + (sustained_steps * (duration + 50) + burst_steps * 50 + 4 * 2 * drain_timeout) / 60
+          timeout_minutes = min(355, max(30, math.ceil(estimate * 1.25)))
+
+          if samples * len(versions) > 256:
+              fail(f"ジョブ数 {samples * len(versions)} が matrix の上限 256 を超える")
+
+          outputs = {
+              "os": json.dumps(versions),
+              "idx": json.dumps(list(range(1, samples + 1))),
+              "phase": phase,
+              "duration": str(duration),
+              "padding_bytes": str(padding),
+              "rcvbuf": rcvbuf,
+              "drain_timeout": str(drain_timeout),
+              "timeout_minutes": str(timeout_minutes),
+              "max_parallel": str(max_parallel),
+              **{name: ",".join(str(v) for v in lst) for name, lst in lists.items()},
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for key, value in outputs.items():
+                  out.write(f"{key}={value}\n")
+          for key, value in outputs.items():
+              print(f"{key} = {value}")
+          PY
+
+  # ベンチを 1 回だけビルドし、全測定ジョブで同じバイナリを使う（ジョブごとのビルドは時間の
+  # 無駄で、ビルド差を標本に混ぜる余地も生む）。出力ディレクトリには Yagura.Host.dll 一式が
+  # 入る——ベンチは AppContext.BaseDirectory から本体を起動する。
+  build:
+    needs: plan
+    runs-on: windows-2025
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Build Yagura.Bench (Release)
+        run: dotnet build tools/Yagura.Bench/Yagura.Bench.csproj -c Release
+
+      - name: Upload bench binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: nominal-survey-bench-bin
+          path: tools/Yagura.Bench/bin/Release/net10.0/
+          if-no-files-found: error
+          retention-days: 7
+
+  measure:
+    needs: [plan, build]
+    strategy:
+      # 1 個体の失敗で他の標本を捨てない。
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.max_parallel) }}
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+        idx: ${{ fromJSON(needs.plan.outputs.idx) }}
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.timeout_minutes) }}
+
+    env:
+      PHASE: ${{ needs.plan.outputs.phase }}
+      UDP_RATES: ${{ needs.plan.outputs.udp_rates }}
+      TCP_RATES: ${{ needs.plan.outputs.tcp_rates }}
+      SQLITE_RATES: ${{ needs.plan.outputs.sqlite_rates }}
+      BURST_COUNTS: ${{ needs.plan.outputs.burst_counts }}
+      DURATION: ${{ needs.plan.outputs.duration }}
+      PADDING_BYTES: ${{ needs.plan.outputs.padding_bytes }}
+      RCVBUF: ${{ needs.plan.outputs.rcvbuf }}
+      DRAIN_TIMEOUT: ${{ needs.plan.outputs.drain_timeout }}
+      SURVEY_OS: ${{ matrix.os }}
+      SURVEY_INDEX: ${{ matrix.idx }}
+      # judge の出力は ASCII に限っているが、Python の標準入出力を UTF-8 に固定して、ANSI コード
+      # ページ（cp1252）で日本語を書こうとして落ちる経路を二重に塞ぐ。
+      PYTHONUTF8: '1'
+
+    steps:
+      # 集計スクリプト（梯子の合否判定）のために取得する。ビルドはしない。
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Download bench binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: nominal-survey-bench-bin
+          path: tools/Yagura.Bench/bin/Release/net10.0
+
+      # 値は「どの個体で測ったか」とセットでなければ集計できない。CPU 名は WMI の製品名を
+      # 正とする（ベンチ JSON の PROCESSOR_IDENTIFIER は世代の判別に足りない）。
+      - name: Record runner identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path nominal-survey -Force | Out-Null
+
+          # 梯子の合否は集計スクリプトの judge で決めるため、Python が無ければ測る前に止める。
+          if ($null -eq (Get-Command python -ErrorAction SilentlyContinue)) {
+            throw 'python is not on PATH; the ladder uses aggregate-nominal-survey.py judge for each step.'
+          }
+          python --version
+
+          $cv  = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          $os  = Get-CimInstance Win32_OperatingSystem
+          $cs  = Get-CimInstance Win32_ComputerSystem
+          $cpu = @(Get-CimInstance Win32_Processor)
+
+          $disks = @()
+          try {
+            $disks = @(Get-PhysicalDisk | ForEach-Object {
+              [ordered]@{
+                FriendlyName = $_.FriendlyName
+                MediaType    = "$($_.MediaType)"
+                BusType      = "$($_.BusType)"
+                SizeBytes    = $_.Size
+              }
+            })
+          } catch {
+            Write-Warning "Get-PhysicalDisk failed: $_"
+          }
+          $volumes = @(Get-Volume | Where-Object { $_.DriveLetter } | ForEach-Object {
+            [ordered]@{
+              DriveLetter = "$($_.DriveLetter)"
+              FileSystem  = "$($_.FileSystemType)"
+              SizeBytes   = $_.Size
+              FreeBytes   = $_.SizeRemaining
+            }
+          })
+
+          $identity = [ordered]@{
+            SchemaVersion            = 1
+            Phase                    = $env:PHASE
+            RunnerLabel              = $env:SURVEY_OS
+            SampleIndex              = [int]$env:SURVEY_INDEX
+            SampleLabel              = "$($env:SURVEY_OS)-$($env:SURVEY_INDEX)"
+            RunId                    = $env:GITHUB_RUN_ID
+            RunAttempt               = $env:GITHUB_RUN_ATTEMPT
+            Commit                   = $env:GITHUB_SHA
+            ImageOS                  = $env:ImageOS
+            ImageVersion             = $env:ImageVersion
+            ProductName              = $cv.ProductName
+            DisplayVersion           = $cv.DisplayVersion
+            BuildNumber              = "$($cv.CurrentMajorVersionNumber).$($cv.CurrentMinorVersionNumber).$($cv.CurrentBuildNumber).$($cv.UBR)"
+            OsDescription            = "Microsoft Windows $($os.Version)"
+            OsCaption                = $os.Caption
+            CpuName                  = $cpu[0].Name.Trim()
+            CpuSockets               = $cpu.Count
+            CpuCores                 = ($cpu | Measure-Object -Property NumberOfCores -Sum).Sum
+            LogicalProcessors        = $cs.NumberOfLogicalProcessors
+            CpuMaxClockMHz           = $cpu[0].MaxClockSpeed
+            ProcessorIdentifier      = $env:PROCESSOR_IDENTIFIER
+            TotalPhysicalMemoryBytes = $cs.TotalPhysicalMemory
+            MachineName              = $env:COMPUTERNAME
+            # ベンチのデータルートは一時ディレクトリに作られる（製品既定の %ProgramData% と同じく
+            # システムドライブ側。ディスク個体差を見るため、どのドライブかを残す）。
+            DataRootParent           = [System.IO.Path]::GetTempPath()
+            PhysicalDisks            = $disks
+            Volumes                  = $volumes
+            Inputs                   = [ordered]@{
+              UdpRates     = $env:UDP_RATES
+              TcpRates     = $env:TCP_RATES
+              SqliteRates  = $env:SQLITE_RATES
+              BurstCounts  = $env:BURST_COUNTS
+              Duration     = $env:DURATION
+              PaddingBytes = $env:PADDING_BYTES
+              Rcvbuf       = $env:RCVBUF
+              DrainTimeout = $env:DRAIN_TIMEOUT
+            }
+          }
+          $json = $identity | ConvertTo-Json -Depth 6
+          Set-Content -Path nominal-survey/runner-identity.json -Value $json -Encoding utf8
+          Write-Host $json
+
+      - name: Measure
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          # ベンチの終了コード（2 = 突合不成立）は段の結果として記録するデータであり、
+          # スクリプトの失敗ではない。
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $bench = 'tools/Yagura.Bench/bin/Release/net10.0/Yagura.Bench.dll'
+          $judge = 'tools/Yagura.Bench/scripts/aggregate-nominal-survey.py'
+          $root  = (Resolve-Path 'nominal-survey').Path
+          $log   = [System.Collections.Generic.List[object]]::new()
+
+          function ConvertTo-Values([string]$text) {
+            if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+            return @($text.Split(',') | ForEach-Object { [int]$_.Trim() })
+          }
+
+          function Save-Log {
+            # 毎段書き直す: ジョブがタイムアウトしても、そこまでの段（JSON の無い段を含む）が残る。
+            ConvertTo-Json -InputObject @($log.ToArray()) -Depth 5 |
+              Set-Content -Path (Join-Path $root 'ladder-log.json') -Encoding utf8
+          }
+
+          # 1 段を実行し、集計スクリプトの judge で合否を決める。$FlowControl = 'off' は流量制御を
+          # 外した公称値の測定、'default' は製品既定のまま（M-4 の確認）。
+          function Invoke-Step([string]$Series, [string]$Scenario, [string]$Transport, [int]$Value, [string]$FlowControl) {
+            $outDir = Join-Path $root $Series
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $before = @(Get-ChildItem -Path $outDir -Filter "$Scenario-*.json" | ForEach-Object { $_.FullName })
+
+            $benchArgs = @($bench, $Scenario, '--output-dir', $outDir,
+              '--padding-bytes', $env:PADDING_BYTES, '--drain-timeout', $env:DRAIN_TIMEOUT)
+            if ($Scenario -eq 'BurstQ1Drop') {
+              $benchArgs += @('--burst-count', "$Value")
+            } else {
+              $benchArgs += @('--transport', $Transport, '--rate', "$Value", '--duration', $env:DURATION)
+            }
+            if ($FlowControl -eq 'off') { $benchArgs += @('--flow-control', 'off') }
+            if ($env:RCVBUF) { $benchArgs += @('--udp-receive-buffer-bytes', $env:RCVBUF) }
+
+            Write-Host "::group::$Series $Scenario $Value"
+            & dotnet @benchArgs | Out-Host
+            $exitCode = $LASTEXITCODE
+            Write-Host '::endgroup::'
+
+            $created = @(Get-ChildItem -Path $outDir -Filter "$Scenario-*.json" |
+              Where-Object { $before -notcontains $_.FullName } | Sort-Object LastWriteTime)
+            $jsonPath = $null
+            $pass = $false
+            $reasons = @("no result JSON (bench exit code $exitCode)")
+            if ($created.Count -gt 0) {
+              $file = $created[-1]
+              $jsonPath = [System.IO.Path]::GetRelativePath($root, $file.FullName).Replace('\', '/')
+              $expect = if ($FlowControl -eq 'off') { 'off' } else { 'on' }
+              $line = & python $judge judge $file.FullName --flow-control $expect
+              if ($LASTEXITCODE -ne 0) { throw "judge failed for $($file.FullName): $line" }
+              $verdict = $line | ConvertFrom-Json
+              $pass = [bool]$verdict.pass
+              $reasons = @($verdict.reasons)
+            }
+
+            $log.Add([ordered]@{
+              Series = $Series; Scenario = $Scenario; Transport = $Transport; Value = $Value
+              FlowControl = $FlowControl; ExitCode = $exitCode; Json = $jsonPath; Pass = $pass; Reasons = $reasons
+            })
+            Save-Log
+            $status = if ($pass) { 'PASS' } else { 'FAIL' }
+            Write-Host "$status $Series $Value $($reasons -join ' / ')"
+            return $pass
+          }
+
+          # 梯子: 低いレートから順に上げ、2 段続けて落ちたら打ち切る（1 段だけの不合格は個体の
+          # 揺らぎでも起こるため続行し、上の段の情報も取る。R_i は集計側が最初の不合格で切る）。
+          function Invoke-Ladder([string]$Series, [string]$Scenario, [string]$Transport, [int[]]$Values) {
+            $consecutiveFailures = 0
+            foreach ($value in $Values) {
+              if (Invoke-Step $Series $Scenario $Transport $value 'off') {
+                $consecutiveFailures = 0
+              } else {
+                $consecutiveFailures++
+                if ($consecutiveFailures -ge 2) {
+                  Write-Host "$Series : stopping the ladder after two consecutive failures"
+                  break
+                }
+              }
+            }
+          }
+
+          $udp    = ConvertTo-Values $env:UDP_RATES
+          $tcp    = ConvertTo-Values $env:TCP_RATES
+          $sqlite = ConvertTo-Values $env:SQLITE_RATES
+          $burst  = ConvertTo-Values $env:BURST_COUNTS
+
+          switch ($env:PHASE) {
+            { $_ -in @('explore', 'sample') } {
+              Invoke-Ladder 'N1' 'SustainedZeroDrop' 'udp' $udp
+              Invoke-Ladder 'N2' 'SustainedZeroDrop' 'tcp' $tcp
+              Invoke-Ladder 'N3' 'ProviderWriteCeiling' 'tcp' $sqlite
+              Invoke-Ladder 'BURST' 'BurstQ1Drop' 'udp' $burst
+            }
+            'verify' {
+              foreach ($v in $udp)    { [void](Invoke-Step 'N1' 'SustainedZeroDrop' 'udp' $v 'off') }
+              foreach ($v in $tcp)    { [void](Invoke-Step 'N2' 'SustainedZeroDrop' 'tcp' $v 'off') }
+              foreach ($v in $sqlite) { [void](Invoke-Step 'N3' 'ProviderWriteCeiling' 'tcp' $v 'off') }
+            }
+            'flowcontrol' {
+              foreach ($v in $udp)   { [void](Invoke-Step 'N1' 'SustainedZeroDrop' 'udp' $v 'default') }
+              foreach ($v in $tcp)   { [void](Invoke-Step 'N2' 'SustainedZeroDrop' 'tcp' $v 'default') }
+              foreach ($v in $burst) { [void](Invoke-Step 'BURST' 'BurstQ1Drop' 'udp' $v 'default') }
+            }
+            default { throw "unknown phase: $($env:PHASE)" }
+          }
+
+          Save-Log
+          # 段の不合格はデータであってジョブの失敗ではない（最後のネイティブコマンドの終了コードを
+          # ステップの結果にしない）。
+          exit 0
+
+      - name: Upload measurement
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nominal-survey-${{ matrix.os }}-${{ matrix.idx }}
+          path: nominal-survey/
+          if-no-files-found: warn
+
+  # 標本を集計し、個体ごとの値・版ごとの分布・公称値の候補（または検証・M-4 の判定）を
+  # ジョブのサマリと artifact に出す。測定ジョブが一部失敗しても、残った標本で集計する。
+  aggregate:
+    needs: [plan, build, measure]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # merge-multiple は使わない: 各ジョブの runner-identity.json が同名で衝突し、標本の
+      # 区切りが消える。artifact ごとのサブディレクトリが標本の単位になる。
+      - name: Download measurements
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nominal-survey-windows-*
+          path: survey-artifacts
+
+      - name: Self-test the aggregation script
+        run: python3 -m unittest discover -s tools/Yagura.Bench/scripts/tests
+
+      - name: Aggregate
+        shell: bash
+        env:
+          PHASE: ${{ needs.plan.outputs.phase }}
+        run: |
+          mkdir -p survey-artifacts
+          strict=()
+          # 検証と M-4 は判定そのものが成果なので、否定的な判定をジョブの失敗として見せる。
+          if [ "$PHASE" = "verify" ] || [ "$PHASE" = "flowcontrol" ]; then strict=(--strict); fi
+          set +e
+          python3 tools/Yagura.Bench/scripts/aggregate-nominal-survey.py aggregate survey-artifacts \
+            --phase "$PHASE" \
+            --out-json nominal-survey-summary.json \
+            --out-md nominal-survey-summary.md \
+            "${strict[@]}"
+          code=$?
+          set -e
+          if [ -f nominal-survey-summary.md ]; then cat nominal-survey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          exit $code
+
+      - name: Upload summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nominal-survey-summary
+          path: nominal-survey-summary.*
+          if-no-files-found: warn
