@@ -18,6 +18,8 @@ MSI のアップグレードが `1920`（サービスを開始できませんで
 
 `%ProgramData%\Yagura` 配下の設定・データベース・スプールは**アンインストールでは消えない**。新しい MSI をそのままインストールすれば、既存のデータを引き継いで復帰する。
 
+データルートの中身そのものが失われた・壊れた場合は、バックアップから戻す（[同じサーバへ戻す（復旧）](backup-and-migration.md#同じサーバへ戻す復旧)）。
+
 ## 再インストールしても `Access to the path ... is denied` で起動しない場合
 
 アップグレードが途中で失敗した際に、データルート配下のファイルのアクセス権が壊れている可能性がある（[Issue #467](https://github.com/Yanai-Taketo/Yagura/issues/467) 現象 B）。0.6.0 以降ではインストーラがこれを自動で戻す・是正するが、それ以前の版で壊れた状態はそのまま残る。
@@ -30,8 +32,8 @@ $Fwd  = Join-Path $Root 'forwarder'
 $Svc  = 'NT SERVICE\Yagura'   # gMSA 運用中なら 'DOMAIN\gmsa名$' に置き換える
 
 icacls "$Root" /reset /T /C
-icacls "$Root" /inheritancelevel:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(M)"
-icacls "$Fwd"  /inheritancelevel:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(R)"
+icacls "$Root" /inheritance:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(M)"
+icacls "$Fwd"  /inheritance:r /grant "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" "${Svc}:(OI)(CI)(R)"
 ```
 
 そのうえで MSI を再インストールする。

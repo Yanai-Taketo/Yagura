@@ -80,7 +80,7 @@ Kerberos のみを許可し NTLM を拒否したい場合は `Viewer:Authenticat
 
 ## 監査（誰がアクセスしたか）
 
-認証を経由した操作は、監査記録（`audit.jsonl` + Windows イベントログ、ソース `Yagura`）の「誰が」欄に方式（`windows`/`app`）と利用者名が残る（[security.md](../design/security.md) §4）。認証まわりの主なイベント ID:
+認証を経由した操作は、監査記録（データルートの `audit\audit-yyyyMMdd.jsonl` + Windows イベントログ、ソース `Yagura`）の「誰が」欄に方式（`windows`/`app`）と利用者名が残る（[security.md](../design/security.md) §4）。認証まわりの主なイベント ID:
 
 | ID | レベル | 意味 |
 |---|---|---|
