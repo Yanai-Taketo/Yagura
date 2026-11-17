@@ -117,7 +117,4 @@ CI の回帰ベンチ（`.github/workflows/ci.yml` の「Regression bench」ス�
 
 ## リリース
 
-- **バージョンの単一の正（single source of truth）は `Directory.Build.props` の `<YaguraVersion>`**（ADR-0014 決定7）。アセンブリ（`Version` 系）と MSI（`installer/Package.wxs` の `Version="$(var.YaguraVersion)"`）がともにこれを参照するため、git タグ・MSI・アセンブリの三者は構造的に一致する。**リリース時に版を上げるときは chore(release) PR でこの `<YaguraVersion>` だけを更新する**（`Package.wxs` に直接版を書かない）。`release.yml` はタグと本値の一致を CI で検証し、不一致なら「Directory.Build.props を先に更新すること」と明示して失敗する
-- 公開済みバージョンタグの再 push 禁止
-- リリース artifact には `.sha256` チェックサムを必ず添付する（v0.1 の最初のリリースから適用）
-- インストーラ（MSI）はビルドごとに再現しないため、byte-exact な size/SHA256 をドキュメントに書かない。「約 N MB」+ Release artifact の `.sha256` を正とする
+**バージョンの単一の正は `Directory.Build.props` の `<YaguraVersion>`**（ADR-0014 決定 7）。そのほかのリリースの規則（chore(release) PR・タグの再 push 禁止・`.sha256` の添付・MSI のサイズと SHA256 を文書に書かないこと）と手順（当日の確認・タグの push・署名の承認・公開後の確認・途中で止まったときの復旧）は、[release-process.md](release-process.md) を正とする。

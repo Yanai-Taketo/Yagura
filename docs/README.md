@@ -28,4 +28,4 @@
 
 ## 開発規約 — docs/development/
 
-コミット規約・ブランチ戦略・コーディング規約（[conventions.md](development/conventions.md)）と、設計文書のレビュー制度（[persona-review.md](development/persona-review.md)）。
+コミット規約・ブランチ戦略・コーディング規約（[conventions.md](development/conventions.md)）、設計文書のレビュー制度（[persona-review.md](development/persona-review.md)）、リリース手順（[release-process.md](development/release-process.md)）、コード署名基盤の構築記録（[code-signing-setup.md](development/code-signing-setup.md)）。
