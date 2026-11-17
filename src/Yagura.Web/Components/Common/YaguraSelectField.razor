@@ -21,7 +21,7 @@
             @onchange="HandleChangeAsync">
         @if (AllowEmpty)
         {
-            <option value="">@UiText.SelectNoneOption</option>
+            <option value="">@(EmptyOptionLabel ?? UiText.SelectNoneOption)</option>
         }
         @foreach (var option in Options ?? [])
         {
@@ -53,6 +53,13 @@
     /// </summary>
     [Parameter]
     public bool AllowEmpty { get; set; } = true;
+
+    /// <summary>
+    /// 空の選択肢の文言（既定は「指定なし」）。既定の選択を置かずに利用者へ能動的に選ばせる択一では
+    /// 「選んでください」の形にする——「指定なし」は「指定しなくてよい」と読めるため。
+    /// </summary>
+    [Parameter]
+    public string? EmptyOptionLabel { get; set; }
 
     /// <summary>選択値の変更通知（@bind-Value で双方向バインドできる）。</summary>
     [Parameter]

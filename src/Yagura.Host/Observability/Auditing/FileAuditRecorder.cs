@@ -126,22 +126,7 @@ public sealed class FileAuditRecorder : IAuditRecorder
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
 
-        EventId eventId;
-        try
-        {
-            eventId = ResolveEventId(auditEvent.Kind);
-        }
-        catch (ArgumentOutOfRangeException ex)
-        {
-            // never-throw 契約（ADR-0004 決定 7）の最終防衛線。EventId 解決表への追随漏れ
-            // （enum に事象種別を足したが switch を更新し忘れた等）があっても、監査記録・要求処理を
-            // 止めてはならない——特に認証拒否の記録経路で throw すると、攻撃を受けている最中に
-            // 要求が 500 になり、かつ攻撃の証跡が沈黙する。未知 Kind は EventId 0（種別名を Name に
-            // 残す）で最善努力で記録し、ドリフト自体は AuditEventKind 全網羅テストが機械検出する。
-            Console.Error.WriteLine($"[audit-eventid-unresolved] {ex.Message}");
-            eventId = new EventId(0, auditEvent.Kind.ToString());
-        }
-
+        var eventId = ResolveEventIdOrFallback(auditEvent.Kind);
         var fileWriteSucceeded = TryAppendToFile(auditEvent, eventId);
 
         // Windows イベントログへの併記は、アプリ記録ファイルの成否に関わらず常に試みる
@@ -161,7 +146,51 @@ public sealed class FileAuditRecorder : IAuditRecorder
         return new AuditWriteOutcome(fileWriteSucceeded, eventLogWriteSucceeded);
     }
 
-    private bool TryAppendToFile(AuditEvent auditEvent, EventId eventId)
+    /// <summary>
+    /// アプリ記録ファイルへ先に書き、載ったときだけイベントログへ併記する（<see cref="IConfirmedAuditRecorder"/> の実体）。
+    /// ファイルに載らなければ何も残さずに <see langword="false"/> を返す——呼び出し側はその操作を行わないため、
+    /// 行われなかった操作をイベントログにだけ残さない。例外は投げない。
+    /// </summary>
+    internal bool TryRecordRequiringFile(AuditEvent auditEvent)
+    {
+        ArgumentNullException.ThrowIfNull(auditEvent);
+
+        var eventId = ResolveEventIdOrFallback(auditEvent.Kind);
+        if (!TryAppendToFile(auditEvent, eventId, flushToDisk: true))
+        {
+            _metrics.RecordAuditWriteFailed();
+            return false;
+        }
+
+        TryWriteEventLog(auditEvent, eventId);
+        return true;
+    }
+
+    private static EventId ResolveEventIdOrFallback(AuditEventKind kind)
+    {
+        try
+        {
+            return ResolveEventId(kind);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            // never-throw 契約（ADR-0004 決定 7）の最終防衛線。EventId 解決表への追随漏れ
+            // （enum に事象種別を足したが switch を更新し忘れた等）があっても、監査記録・要求処理を
+            // 止めてはならない——特に認証拒否の記録経路で throw すると、攻撃を受けている最中に
+            // 要求が 500 になり、かつ攻撃の証跡が沈黙する。未知 Kind は EventId 0（種別名を Name に
+            // 残す）で最善努力で記録し、ドリフト自体は AuditEventKind 全網羅テストが機械検出する。
+            Console.Error.WriteLine($"[audit-eventid-unresolved] {ex.Message}");
+            return new EventId(0, kind.ToString());
+        }
+    }
+
+    /// <param name="auditEvent">記録する事象。</param>
+    /// <param name="eventId">事象の ID。</param>
+    /// <param name="flushToDisk">
+    /// ディスクへ書き切ってから戻るか。確認つきの記録（その後に不可逆な操作が続く）では、OS のキャッシュに入った
+    /// だけで「正本に載った」と答えると、直後の停電で記録だけが失われ、操作だけが残り得る。
+    /// </param>
+    private bool TryAppendToFile(AuditEvent auditEvent, EventId eventId, bool flushToDisk = false)
     {
         var filePath = Path.Combine(_directoryPath, GetFileNameFor(auditEvent.OccurredAt));
 
@@ -197,6 +226,10 @@ public sealed class FileAuditRecorder : IAuditRecorder
                     FileAccess.Write,
                     FileShare.Read);
                 stream.Write(bytes, 0, bytes.Length);
+                if (flushToDisk)
+                {
+                    stream.Flush(flushToDisk: true);
+                }
             }
 
             return true;
@@ -305,6 +338,8 @@ public sealed class FileAuditRecorder : IAuditRecorder
         AuditEventKind.ForwarderMsiDeleted => AuditEventIds.ForwarderMsiDeleted,
         AuditEventKind.ForwarderMsiUploadRejected => AuditEventIds.ForwarderMsiUploadRejected,
         AuditEventKind.AdminAccountStoreUnavailableRejected => AuditEventIds.AdminAccountStoreUnavailableRejected,
+        AuditEventKind.OldDatabaseDisposalExecuted => AuditEventIds.OldDatabaseDisposalExecuted,
+        AuditEventKind.OldDatabaseRemovedOutsideProduct => AuditEventIds.OldDatabaseRemovedOutsideProduct,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "未知の監査事象種別。"),
     };
 

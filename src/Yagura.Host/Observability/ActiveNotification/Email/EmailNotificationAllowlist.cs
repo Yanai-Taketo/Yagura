@@ -96,6 +96,11 @@ internal static class EmailNotificationAllowlist
             //     ログイン手段が失われたまま放置される経路をメールで塞ぐ。回復側（1040）は
             //     対象外: 復帰は対応を要する事象ではない（1029〔途絶からの復帰〕と同じ判断） ---
             [ActiveNotificationEventIds.AdminAccountStoreUnavailable.Id] = Severity.Warning,        // 1039
+
+            // --- 旧・組み込み DB ファイルの後始末の未完了・失敗（database.md §6.3）。
+            //     管理画面を開かない運用でも、保存期間の約束が旧ファイルについて破れている状態と、
+            //     画面を離れても完走する処分の失敗に夜間でも気づけるようにする ---
+            [ActiveNotificationEventIds.OldDatabaseDisposalIncomplete.Id] = Severity.Warning,       // 1041
         };
 
     /// <summary>本表に登録済みのすべてのイベント ID。テスト・網羅性検証用。</summary>

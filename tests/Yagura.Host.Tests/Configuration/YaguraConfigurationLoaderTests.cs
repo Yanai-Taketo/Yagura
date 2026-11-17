@@ -684,6 +684,33 @@ public sealed class YaguraConfigurationLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Load_SqlServerReducedToSqlite_IsMarkedAsReducedFromSqlServer()
+    {
+        // 縮退運転中の昇格ウィザードのやり直しを本物の切替と区別する材料（database.md §6.3「切替の境界の記録」）。
+        WriteConfigurationFile(
+            """
+            {
+              "Storage": {
+                "Provider": "sqlserver",
+                "SqlServer": { "ConnectionString": "dpapi:not-valid-base64!!" }
+              }
+            }
+            """);
+
+        var reduced = YaguraConfigurationLoader.Load(_dataRoot, new FakeLogger()).Configuration;
+
+        Assert.Equal(StorageProvider.Sqlite, reduced.StorageProvider);
+        Assert.True(reduced.StorageProviderReducedFromSqlServer);
+
+        WriteConfigurationFile("""{ "Storage": { "Provider": "sqlite" } }""");
+        Assert.False(YaguraConfigurationLoader.Load(_dataRoot, new FakeLogger()).Configuration.StorageProviderReducedFromSqlServer);
+
+        WriteConfigurationFile(
+            """{ "Storage": { "Provider": "sqlserver", "SqlServer": { "ConnectionString": "Server=.;Database=Yagura;Integrated Security=true;" } } }""");
+        Assert.False(YaguraConfigurationLoader.Load(_dataRoot, new FakeLogger()).Configuration.StorageProviderReducedFromSqlServer);
+    }
+
+    [Fact]
     public void Load_PlaintextCredentialConnectionString_AcceptedWithWarning()
     {
         // 手編集の平文は従来どおり受理する（2026-07-06 オーナー決定: 自動書き換えはしない）。

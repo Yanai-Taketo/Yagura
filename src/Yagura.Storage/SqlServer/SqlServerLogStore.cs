@@ -38,7 +38,7 @@ namespace Yagura.Storage.SqlServer;
 /// 発生を抑える）。
 /// </para>
 /// </remarks>
-public sealed partial class SqlServerLogStore : ILogStore, IBulkLogReader, IAsyncDisposable
+public sealed partial class SqlServerLogStore : ILogStore, IBulkLogReader, IHourlyLogCountReader, IAsyncDisposable
 {
     /// <summary>
     /// 現行のスキーマバージョン（<see cref="Sqlite.SqliteLogStore.CurrentSchemaVersion"/> と同じ意味）。

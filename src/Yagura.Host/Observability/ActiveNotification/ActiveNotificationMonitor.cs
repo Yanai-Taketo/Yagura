@@ -106,7 +106,8 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         bool forwarderMsiUploadEnabled = false,
         ICertificateStatusProbe? viewerHttpsCertificateProbe = null,
         string? forwarderMsiFolderPath = null,
-        Yagura.Host.Storage.StorageInitializationCoordinator? storageInitialization = null)
+        Yagura.Host.Storage.StorageInitializationCoordinator? storageInitialization = null,
+        OldDatabaseDisposalNotifier? oldDatabaseDisposalNotifier = null)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         ArgumentNullException.ThrowIfNull(volumeInfo);
@@ -130,7 +131,14 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         _viewerHttpsCertificateProbe = viewerHttpsCertificateProbe;
         _forwarderMsiFolderPath = forwarderMsiFolderPath;
         _storageInitialization = storageInitialization;
+        _oldDatabaseDisposalNotifier = oldDatabaseDisposalNotifier;
     }
+
+    /// <summary>
+    /// 旧・組み込み DB ファイルの後始末の未完了（1041）と製品外での消失（2031）の評価（database.md §6.3）。
+    /// 未注入（テスト・昇格と無関係な構成）の間は何もしない。
+    /// </summary>
+    private readonly OldDatabaseDisposalNotifier? _oldDatabaseDisposalNotifier;
 
     /// <summary>
     /// 保存先のスキーマ初期化の実行主体（ADR-0023 決定 1）。未注入（テスト等）の間は
@@ -368,6 +376,11 @@ public sealed class ActiveNotificationMonitor : IAsyncDisposable
         EvaluateSourceSilence();
         EvaluateForwarderMsiFolderAcl();
         await EvaluateStorageInitializationAsync(cancellationToken).ConfigureAwait(false);
+        if (_oldDatabaseDisposalNotifier is not null)
+        {
+            await _oldDatabaseDisposalNotifier.EvaluateAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         PruneStaleNotificationSuppression();
     }
 

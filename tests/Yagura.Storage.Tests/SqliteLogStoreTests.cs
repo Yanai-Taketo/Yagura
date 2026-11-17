@@ -276,6 +276,42 @@ public sealed class SqliteLogStoreTests : IAsyncLifetime
             return result;
         });
 
+    [Fact]
+    public async Task CountByHourAsync_GroupsByUtcHour_RespectsBounds_AndOmitsEmptyHours()
+    {
+        var hour0 = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        await _store.WriteBatchAsync(
+        [
+            CreateParsedRecord(hour0, "10.0.0.1", "h0-a"),
+            CreateParsedRecord(hour0.AddMinutes(59).AddSeconds(59), "10.0.0.1", "h0-b"),
+            // UTC 以外のオフセットで渡しても UTC の正時で数える。
+            CreateParsedRecord(new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.FromHours(9)), "10.0.0.1", "h1"),
+            CreateParsedRecord(hour0.AddHours(3).AddMinutes(1), "10.0.0.1", "h3"),
+        ]);
+
+        var all = await ((IHourlyLogCountReader)_store).CountByHourAsync(null, null);
+        Assert.Equal(
+            new[] { (hour0, 2L), (hour0.AddHours(1), 1L), (hour0.AddHours(3), 1L) },
+            all.Select(h => (h.HourStartUtc, h.Count)).ToArray());
+
+        var bounded = await ((IHourlyLogCountReader)_store).CountByHourAsync(hour0.AddMinutes(30), hour0.AddHours(3));
+        Assert.Equal(
+            new[] { (hour0, 1L), (hour0.AddHours(1), 1L) },
+            bounded.Select(h => (h.HourStartUtc, h.Count)).ToArray());
+    }
+
+    [Fact]
+    public async Task Constructor_WithoutCreate_DoesNotCreateAMissingFile()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"yagura-storage-tests-missing-{Guid.NewGuid():N}.db");
+        var store = new SqliteLogStore(missing, createIfMissing: false);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => ((IBulkLogReader)store).CountAsync(null));
+        await store.DisposeAsync();
+
+        Assert.False(File.Exists(missing));
+    }
+
     private static LogRecord CreateParsedRecord(DateTimeOffset receivedAt, string sourceAddress, string message) =>
         new(
             ReceivedAt: receivedAt,

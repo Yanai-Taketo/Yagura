@@ -63,6 +63,18 @@
     [Parameter]
     public string? ConfirmActionLabel { get; set; }
 
+    /// <summary>確認ダイアログの要確認事項（任意。<see cref="YaguraConfirmDialog.AcknowledgementLines"/>）。</summary>
+    [Parameter]
+    public IReadOnlyList<string>? ConfirmAcknowledgementLines { get; set; }
+
+    /// <summary>確認ダイアログの必須の確認チェックボックス（任意。<see cref="YaguraConfirmDialog.AcknowledgementLabel"/>）。</summary>
+    [Parameter]
+    public string? ConfirmAcknowledgementLabel { get; set; }
+
+    /// <summary>確認ダイアログの補足の項目（任意。<see cref="YaguraConfirmDialog.Details"/>）。</summary>
+    [Parameter]
+    public IReadOnlyList<YaguraConfirmDetail>? ConfirmDetails { get; set; }
+
     private Variant Variant => Role switch
     {
         YaguraButtonRole.Primary => Variant.Filled,
@@ -111,7 +123,14 @@
             if (Role == YaguraButtonRole.Destructive)
             {
                 var confirmed = await YaguraConfirmDialog.ShowAsync(
-                    DialogService, ConfirmTitle!, ConfirmSummary!, ConfirmActionLabel!, destructive: true);
+                    DialogService,
+                    ConfirmTitle!,
+                    ConfirmSummary!,
+                    ConfirmActionLabel!,
+                    destructive: true,
+                    ConfirmAcknowledgementLines,
+                    ConfirmAcknowledgementLabel,
+                    ConfirmDetails);
                 if (!confirmed)
                 {
                     return;

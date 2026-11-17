@@ -108,6 +108,30 @@ public static class Program
 
         var resolvedConfiguration = configurationLoadResult.Configuration;
         var databasePath = Path.Combine(dataRoot, resolvedConfiguration.SqliteFileName);
+        var effectiveProviderIsSqlServer =
+            resolvedConfiguration.StorageProvider == Yagura.Host.Configuration.StorageProvider.SqlServer;
+
+        // 切替の境界（database.md §6.3・DB-14 ①）: 実効 provider が SQL Server になった最初の起動の時刻を、
+        // 切替の時点の記録へ書き足す。受信の開始より前に書くことで、これより後の ReceivedAt だけが移行先の
+        // ライブ受信と重なる区間になる。失敗しても起動は続ける（後始末の照合が安全側へ倒れる）。
+        if (effectiveProviderIsSqlServer)
+        {
+            try
+            {
+                Yagura.Host.Administration.OldDatabaseDisposal.PromotionSwitchBoundaryStore.MarkEffectiveIfAbsent(
+                    dataRoot, DateTime.UtcNow);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                configurationLogger.LogWarning(
+                    ex,
+                    "切替の境界の記録に反映の時刻を書き足せませんでした（起動は継続します）。後始末の前の照合では、" +
+                    "移行済みかどうかを確かめられない区間が広がります。");
+            }
+        }
+
+        // 旧・組み込み DB ファイルの利用権の排他（database.md §6.3 前提条件 2）。移行と後始末が取り合う。
+        var oldDatabaseAccessGate = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessGate();
 
         // 設定ライブ再読み込み（CF-4 層1）の差分計算の初期基準——起動時点の
         // ファイルの生 options を捕捉しておく（ConfigurationReloadService の doc コメント参照）。
@@ -721,7 +745,9 @@ public static class Program
                 forwarderMsiFolderPath: forwarderMsiFolderPath,
                 // ADR-0023 決定 1: 保存先のスキーマ初期化は起動経路ではなく監視ループで行う
                 // （起動は完了を待たない。失敗しても受信は継続し、復旧すると自動回復する）。
-                storageInitialization: sp.GetRequiredService<Yagura.Host.Storage.StorageInitializationCoordinator>());
+                storageInitialization: sp.GetRequiredService<Yagura.Host.Storage.StorageInitializationCoordinator>(),
+                // 旧・組み込み DB ファイルの後始末の未完了（1041）と製品外での消失（2031）。database.md §6.3。
+                oldDatabaseDisposalNotifier: sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.OldDatabaseDisposalNotifier>());
         });
 
         // メール通知の送信ループ（ADR-0017 決定 5）。プロバイダ（投入側）と同じキューを共有する。
@@ -832,11 +858,53 @@ public static class Program
         builder.Services.AddSingleton<ILogMigrationService>(sp => new Yagura.Host.Administration.LogMigrationService(
             dataRoot,
             databasePath,
-            resolvedConfiguration.StorageProvider == Yagura.Host.Configuration.StorageProvider.SqlServer,
+            effectiveProviderIsSqlServer,
             sp.GetRequiredService<ILogStore>(),
             sp.GetRequiredService<LogStoreWriteGate>(),
             sp.GetRequiredService<IAuditRecorder>(),
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.LogMigrationService>()));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.LogMigrationService>(),
+            oldDatabaseAccessGate,
+            sp.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping));
+
+        // 旧・組み込み DB ファイルの後始末（database.md §6.3。昇格の最終段）。対象は SQLite provider の書き込み先・
+        // 移行元と同じ導出（データルート + Storage:SqliteFileName）。処分の実行は停止要求に結び付けた背景の処理と
+        // して完走する（画面の circuit とは独立）。
+        builder.Services.AddSingleton(sp =>
+        {
+            var pipelineForDisposal = sp.GetRequiredService<IngestionPipeline>();
+            var service = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseDisposalService(
+                Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseTargetPaths.Derive(dataRoot, resolvedConfiguration.SqliteFileName),
+                effectiveProviderIsSqlServer,
+                sp.GetRequiredService<ILogStore>(),
+                oldDatabaseAccessGate,
+                // 削除の前の記録は正本に載ったことを確かめてから進む（database.md §6.3「監査記録」）。
+                sp.GetRequiredService<Yagura.Host.Observability.Auditing.AggregatingAuditRecorder>(),
+                OperatingSystem.IsWindows()
+                    ? new Yagura.Host.Administration.OldDatabaseDisposal.WindowsArchivePlatform()
+                    : new Yagura.Host.Administration.OldDatabaseDisposal.UnsupportedArchivePlatform(),
+                new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseDisposalEnvironment(
+                    SpoolDirectory: resolvedConfiguration.SpoolEnabled ? resolvedConfiguration.SpoolDirectory : null,
+                    InstallDirectory: AppContext.BaseDirectory,
+                    SpoolRemainingQuotaBytes: () => spool is { } openSpool
+                        ? Math.Max(0, openSpool.QuotaBytes - openSpool.CurrentUsageBytes)
+                        : null,
+                    IsLiveIngestionUnderPressure: () =>
+                        (spool?.CurrentUsageBytes ?? 0) > 0
+                        || pipelineForDisposal.Q2UsageRatio > Yagura.Storage.Spool.SpoolConstants.DrainHighWatermarkRatio,
+                    RetentionDays: () => sp.GetRequiredService<Yagura.Host.Retention.RetentionScheduler>().CurrentRetentionDays),
+                logger: sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseDisposalService>());
+            service.FailureFinalized = (result, observation) =>
+                sp.GetRequiredService<Yagura.Host.Observability.ActiveNotification.OldDatabaseDisposalNotifier>()
+                    .NotifyFinalized(result, observation);
+            return service;
+        });
+        builder.Services.AddSingleton<Yagura.Abstractions.Administration.IOldDatabaseDisposalService>(sp =>
+            sp.GetRequiredService<Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseDisposalService>());
+        builder.Services.AddSingleton(sp => new Yagura.Host.Observability.ActiveNotification.OldDatabaseDisposalNotifier(
+            sp.GetRequiredService<Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseDisposalService>().Observe,
+            sp.GetRequiredService<IAuditRecorder>(),
+            timeProvider: null,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Observability.ActiveNotification.OldDatabaseDisposalNotifier>()));
 
         // ファイアウォール規則の不一致検出 + インストール記録の転記（CF-2。configuration.md §4.3）。
         // 起動時（app.Build() 後）とリスナ再構成の適用時に照合する。
@@ -1020,7 +1088,27 @@ public static class Program
             new Yagura.Host.Administration.PromotionWizardService(
                 dataRoot,
                 sp.GetRequiredService<Yagura.Host.Administration.ISqlServerConnectionValidator>(),
-                sp.GetRequiredService<IAuditRecorder>()));
+                sp.GetRequiredService<IAuditRecorder>(),
+                // 切替の境界の記録は、実効 provider が SQLite のときに限る。縮退運転中のやり直しは本物の切替ではない
+                // （記録を書き換えない——ReducedFromSqlServer）。
+                boundarySource: effectiveProviderIsSqlServer
+                    ? null
+                    : new Yagura.Host.Administration.PromotionSwitchBoundarySource(
+                        Path.GetFullPath(databasePath),
+                        async ct =>
+                        {
+                            var store = sp.GetRequiredService<ILogStore>();
+                            var latest = await store.QueryLatestAsync(1, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+                            long? count = store is IBulkLogReader bulk
+                                ? await bulk.CountAsync(null, ct).ConfigureAwait(false)
+                                : null;
+                            return new Yagura.Host.Administration.PromotionLiveStoreSnapshot(
+                                latest.Count > 0 ? latest[0].ReceivedAt : null,
+                                latest.Count > 0 ? latest[0].Id : null,
+                                count);
+                        },
+                        ReducedFromSqlServer: resolvedConfiguration.StorageProviderReducedFromSqlServer),
+                logger: sp.GetRequiredService<ILoggerFactory>().CreateLogger<Yagura.Host.Administration.PromotionWizardService>()));
 
         // circuit 統治（M8-4。security.md §2）: リスナ帰属判定・上限ガードが参照する管理ポートの
         // 実値と、circuit 管理（一覧・個別切断）のサービスを登録する。
@@ -1241,6 +1329,11 @@ public static class Program
         builder.Services.AddYaguraWebViewer();
 
         var app = builder.Build();
+
+        // 停止要求で後始末（削除の段階の前）を直ちに取り消す——停止手順（メモリ上のログの一時保管への退避）を
+        // 待たせない。完了の待ち合わせは上限つき（OldDatabaseDisposalOptions.StopResponseTimeout）。
+        app.Lifetime.ApplicationStopping.Register(() =>
+            _ = app.Services.GetRequiredService<Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseDisposalService>().StopAsync());
 
         // SEC-9: AD グループ → SID の解決をここで実行する。singleton の遅延解決に
         // 任せると初回のログイン要求まで解決されず、解決できない指定の警告

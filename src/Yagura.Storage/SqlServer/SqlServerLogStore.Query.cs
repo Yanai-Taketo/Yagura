@@ -315,6 +315,57 @@ public sealed partial class SqlServerLogStore
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// 正時の鍵は固定の基準時刻からの経過時間数（<c>DATEDIFF(hour, ...)</c>）で求める。DATEDIFF は
+    /// 跨いだ時の境界の数を返すため、基準時刻より後の時刻では「正時への切り捨て」と一致する。
+    /// 派生表で鍵を先に作ってから GROUP BY する（SELECT と GROUP BY の式の一致に頼らない）。
+    /// </remarks>
+    public async Task<IReadOnlyList<HourlyLogCount>> CountByHourAsync(
+        DateTimeOffset? fromInclusive,
+        DateTimeOffset? toExclusive,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        var whereBuilder = new WhereClauseBuilder();
+        if (fromInclusive is { } from)
+        {
+            whereBuilder.Add("ReceivedAt >= @from",
+                () => command.Parameters.Add("@from", System.Data.SqlDbType.DateTime2).Value = from.UtcDateTime);
+        }
+
+        if (toExclusive is { } to)
+        {
+            whereBuilder.Add("ReceivedAt < @to",
+                () => command.Parameters.Add("@to", System.Data.SqlDbType.DateTime2).Value = to.UtcDateTime);
+        }
+
+        command.CommandText =
+            $"""
+            SELECT HourIndex, COUNT_BIG(*) AS RecordCount
+            FROM (
+                SELECT DATEDIFF(hour, CAST('2000-01-01T00:00:00' AS DATETIME2(7)), ReceivedAt) AS HourIndex
+                FROM dbo.LogRecords
+                {whereBuilder.BuildWhereSql()}
+            ) AS Hours
+            GROUP BY HourIndex
+            ORDER BY HourIndex;
+            """;
+
+        var epoch = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var results = new List<HourlyLogCount>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(new HourlyLogCount(epoch.AddHours(reader.GetInt32(0)), reader.GetInt64(1)));
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<SystemEvent>> QuerySystemEventsAsync(
         DateTimeOffset? from,
         DateTimeOffset? to,

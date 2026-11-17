@@ -298,6 +298,12 @@ public sealed class IngestionPipeline : IAsyncDisposable
     public IngestionMetrics Metrics => _metrics;
 
     /// <summary>
+    /// Q2（解析済みレコードの永続化待ち）の使用率（0〜1）。保存側の保守操作が自ら飽和を作らない
+    /// よう、開始・継続の可否の判断に使う（drain の高水位判定と同じ尺度）。
+    /// </summary>
+    public double Q2UsageRatio => (double)_q2.Reader.Count / PipelineConstants.Q2Capacity;
+
+    /// <summary>
     /// 受信リスナの現在の受信可否（ADR-0018 委任 6）。送信元の途絶検知が
     /// 「サーバ都合の受信断」の保留判定と警告 Detail への受信経路の状態の併記に使う。
     /// <see cref="StartListenerAsync"/> より前はすべて受信不能として返る。

@@ -30,8 +30,9 @@ namespace Yagura.Abstractions.Administration;
 /// 差し替え → drain。database.md §6.1）の実行時無瞬断切替は対象外。
 /// <see cref="ExecuteAsync"/> は検証済み接続を設定ファイルへ保存し、現時点の実効の反映方式
 /// （サービス再起動。configuration.md §8 の <c>Storage:Provider</c> 行）を結果として返す。
-/// 旧・組み込み DB ファイルの処分（退避 / 削除）は選択の記録と監査までを対象とし、
-/// 実ファイル操作・退避先の存在/書込可否の事前検証は切替の実行時手順の実装で扱う。
+/// 旧・組み込み DB ファイルの処分は切替の時点では選ばせない——再起動と移行の後に
+/// <see cref="IOldDatabaseDisposalService"/> で行う（database.md §6.1・§6.3）。切替の実行は、
+/// 処分の完了判定が使う切替の境界をデータルートに記録する。
 /// </para>
 /// </remarks>
 public interface IPromotionWizardService : IYaguraWriteService
@@ -87,19 +88,6 @@ public interface IPromotionWizardService : IYaguraWriteService
         string? operatorAddress = null,
         string? operatorScheme = null,
         string? operatorPrincipal = null,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 旧・組み込み DB ファイルの処分方法を選択する（database.md §6.1「残置しない」）。
-    /// 退避の選択時は退避先（絶対パス）の指定を必須とする（同 §6.1——選択内容・退避先は
-    /// 監査記録の対象。存在・書込可否の事前検証は実処分の実装 = 後続 Issue の要件）。
-    /// </summary>
-    /// <param name="disposal">処分方法。</param>
-    /// <param name="evacuationDirectory">退避先のフォルダ（退避の場合は必須・絶対パス。削除の場合は無視）。</param>
-    /// <exception cref="WizardValidationException">退避なのに退避先が空・相対パスの場合。</exception>
-    Task<PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
-        OldDatabaseDisposal disposal,
-        string? evacuationDirectory = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

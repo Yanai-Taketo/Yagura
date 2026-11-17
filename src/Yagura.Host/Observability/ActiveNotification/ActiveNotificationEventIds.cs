@@ -212,4 +212,13 @@ public static class ActiveNotificationEventIds
     /// </summary>
     public static readonly EventId AdminAccountStoreRecovered =
         new(1040, "AdminAccountStoreRecovered");
+
+    /// <summary>
+    /// 本番昇格後の旧・組み込み DB ファイルの処分（画面上の呼び名は後始末）が未完了のまま継続している、
+    /// または処分が失敗・部分失敗・中断で終わった（database.md §6.3）。レベル: 警告——保存期間による
+    /// 自動削除が旧ファイルには効かず、保存期間の約束が旧ファイルについてだけ破れている状態のため。
+    /// 受信と保存は続いている（機能停止ではない）のでエラーにはしない。
+    /// </summary>
+    public static readonly EventId OldDatabaseDisposalIncomplete =
+        new(1041, "OldDatabaseDisposalIncomplete");
 }

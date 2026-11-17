@@ -7,8 +7,8 @@ using Yagura.Web.Components.Common;
 namespace Yagura.Web.Tests.Components;
 
 /// <summary>
-/// 本番昇格ウィザード画面の表示確認（database.md §6.1・ui.md §4。PR #102 の UX 完成——
-/// 接続の項目入力・認証トグル・マスク付きパスワード・退避先入力）。
+/// 本番昇格ウィザード画面の表示確認（database.md §6.1・ui.md §4。接続の項目入力・認証トグル・
+/// マスク付きパスワード・切替の後に要る段階の予告）。
 /// </summary>
 /// <remarks>
 /// <see cref="CommonComponentRenderHarness"/>（初期描画のみ）でスナップショットの状態ごとの
@@ -80,17 +80,14 @@ public sealed class PromotionWizardScreenRenderTests
     }
 
     [Fact]
-    public async Task EvacuationChosen_ShowsDirectoryInputAndCurrentChoice()
+    public async Task BeforeExecute_ShowsStagesAfterSwitch_AndAsksNoDisposalChoice()
     {
-        var html = await RenderAsync(Snapshot() with
-        {
-            Disposal = OldDatabaseDisposal.Evacuate,
-            EvacuationDirectory = @"D:\Backup\Yagura",
-        });
+        // 切替の時点では後始末の方法を選ばせない（database.md §6.1）——切替の後に要る段階の予告だけを示す。
+        var html = await RenderAsync(Snapshot());
 
-        Assert.Contains(UiText.PromotionEvacuationDirectoryLabel, html);
-        Assert.Contains(UiText.PromotionConfirmEvacuation, html);
-        Assert.Contains(@"D:\Backup\Yagura", html);
+        Assert.Contains(UiText.PromotionStagesTitle, html);
+        Assert.Contains("後始末", html);
+        Assert.DoesNotContain("退避先", html);
     }
 
     [Fact]
@@ -109,8 +106,6 @@ public sealed class PromotionWizardScreenRenderTests
         ServiceAccountName: ServiceAccount,
         HasPassword: false,
         ConnectionValidated: false,
-        Disposal: null,
-        EvacuationDirectory: null,
         ExecuteIdempotencyToken: null,
         Executed: false,
         CredentialReentryRequired: false);
@@ -121,6 +116,7 @@ public sealed class PromotionWizardScreenRenderTests
             {
                 services.AddSingleton<IPromotionWizardService>(new FakePromotionWizardService(snapshot));
                 services.AddSingleton<ILogMigrationService>(new FakeLogMigrationService());
+                services.AddSingleton<IOldDatabaseDisposalService>(new FakeOldDatabaseDisposalService());
                 services.AddSingleton(new YaguraCircuitContext());
                 // 本画面は切替の保存後に再読み込みを呼ぶため注入を要求する。初期描画では切替を実行しない
                 // ので呼ばれない（実行後の呼び出しは PromotionWizardScreenExecuteTests が固定する）。
@@ -166,12 +162,6 @@ public sealed class PromotionWizardScreenRenderTests
             string? operatorPrincipal = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(new PromotionValidationResult(true, "ok"));
-
-        public Task<PromotionWizardSnapshot> ChooseOldDatabaseDisposalAsync(
-            OldDatabaseDisposal disposal,
-            string? evacuationDirectory = null,
-            CancellationToken cancellationToken = default)
-            => Task.FromResult(snapshot);
 
         public Task<PromotionApplyResult> ExecuteAsync(
             string idempotencyToken,

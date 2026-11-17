@@ -160,6 +160,36 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Run_ServiceStopRequest_CancelsEvenWithoutTheCallersToken()
+    {
+        // 画面は取り消しトークンを渡さない——サービスの停止要求だけで移行が止まり、チェックポイントが残る。
+        await SeedSourceAsync(2000);
+        using var stopping = new CancellationTokenSource();
+        var service = new LogMigrationService(
+            _dataRoot,
+            _sourcePath,
+            currentProviderIsSqlServer: true,
+            _target,
+            writeGate: null,
+            _auditRecorder,
+            new FakeLogger<LogMigrationService>(),
+            stopping: stopping.Token);
+        var progressCount = 0;
+        var progress = new Progress<LogMigrationProgress>(_ =>
+        {
+            if (Interlocked.Increment(ref progressCount) == 1)
+            {
+                stopping.Cancel();
+            }
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.RunAsync(null, null, null, progress));
+
+        Assert.Equal(LogMigrationAvailability.Ready, (await service.GetStatusAsync()).Availability);
+        Assert.Contains(_auditRecorder.Recorded, e => e.Detail!.Contains("途中失敗", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Run_TargetWriteFails_RecordsFailureAudit_AndRethrows()
     {
         // レビュー指摘(fail-open): 移行の途中失敗も監査に残す——DB を変更した管理操作が
@@ -234,6 +264,211 @@ public sealed class LogMigrationServiceTests : IAsyncLifetime
         await service.RunAsync(null, null, null);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RunAsync(null, null, null));
+    }
+
+    [Fact]
+    public async Task Status_RecordsAddedAfterCompletion_IsReady_WithTheAddedCount()
+    {
+        // 移行の完了後に縮退運転で旧ファイルへ書かれたログを「移行済み」と誤認しない（database.md §6.3 規則 2）。
+        await SeedSourceAsync(20);
+        var service = CreateService();
+        await service.RunAsync(null, null, null);
+        await using (var source = new SqliteLogStore(_sourcePath))
+        {
+            await source.WriteBatchAsync([CreateRecord(500, "degraded-1"), CreateRecord(501, "degraded-2")]);
+        }
+
+        var status = await service.GetStatusAsync();
+
+        Assert.Equal(LogMigrationAvailability.Ready, status.Availability);
+        Assert.Equal(2, status.RecordsAddedAfterCompletion);
+
+        var rerun = await service.RunAsync(null, null, null);
+        Assert.True(rerun.Succeeded, rerun.Message);
+        Assert.Equal(22, await ((IBulkLogReader)_target).CountAsync(null));
+        Assert.Equal(LogMigrationAvailability.Completed, (await service.GetStatusAsync()).Availability);
+    }
+
+    [Fact]
+    public async Task Status_CompletedWithoutPosition_ButRecordsExist_IsReady()
+    {
+        // 移行元 0 件で完了した後に旧ファイルへレコードが入った場合（位置を持たない完了記録）。
+        var service = CreateService();
+        await service.RunAsync(null, null, null);
+        await SeedSourceAsync(3);
+
+        var status = await service.GetStatusAsync();
+
+        Assert.Equal(LogMigrationAvailability.Ready, status.Availability);
+        Assert.Equal(3, status.SourceRecordCount);
+
+        var result = await service.RunAsync(null, null, null);
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(3, await ((IBulkLogReader)_target).CountAsync(null));
+    }
+
+    [Fact]
+    public async Task Run_CopiesSystemEvents_WithoutDuplicatingOnRerun()
+    {
+        // 再起動による切替では切替前のシステムイベントが旧ファイルにだけ残る——移行が写す。
+        await SeedSourceAsync(5);
+        var downtime = new SystemEvent(
+            SystemEventKinds.DowntimeNormalStop, CreateRecord(0, "x").ReceivedAt.AddHours(-1), CreateRecord(0, "x").ReceivedAt.AddMinutes(-50), false);
+        await using (var source = new SqliteLogStore(_sourcePath))
+        {
+            await source.WriteSystemEventAsync(downtime);
+        }
+
+        var service = CreateService();
+        var result = await service.RunAsync(null, null, null);
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Contains("システムイベント 1 件を複写", result.Message);
+
+        // 追補（完了後の追加）の再実行でも、既に写したイベントは重複させない。
+        await using (var source = new SqliteLogStore(_sourcePath))
+        {
+            await source.WriteBatchAsync([CreateRecord(100, "later")]);
+        }
+
+        await service.RunAsync(null, null, null);
+        var copied = await _target.QuerySystemEventsAsync(
+            null, null, limit: 10, timeout: TimeSpan.FromSeconds(5), kind: SystemEventKinds.DowntimeNormalStop);
+        Assert.Single(copied);
+        Assert.Equal(downtime.StartAt, copied[0].StartAt);
+    }
+
+    [Fact]
+    public async Task Status_AfterCompletion_WithSystemEventsMissingInTheTarget_IsReady()
+    {
+        await SeedSourceAsync(5);
+        var service = CreateService();
+        await service.RunAsync(null, null, null);
+        await using (var source = new SqliteLogStore(_sourcePath))
+        {
+            await source.WriteSystemEventAsync(new SystemEvent(
+                SystemEventKinds.DowntimeCrashApproximate, CreateRecord(0, "x").ReceivedAt.AddDays(-1), CreateRecord(0, "x").ReceivedAt.AddDays(-1).AddMinutes(3), true));
+        }
+
+        Assert.Equal(LogMigrationAvailability.Ready, (await service.GetStatusAsync()).Availability);
+        var result = await service.RunAsync(null, null, null);
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(LogMigrationAvailability.Completed, (await service.GetStatusAsync()).Availability);
+    }
+
+    [Fact]
+    public async Task SharedGate_DisposalInProgress_BlocksStatusReadAndRun()
+    {
+        await SeedSourceAsync(5);
+        var gate = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessGate();
+        var service = new LogMigrationService(
+            _dataRoot, _sourcePath, currentProviderIsSqlServer: true, _target, writeGate: null, _auditRecorder,
+            new FakeLogger<LogMigrationService>(), gate);
+
+        using (await gate.TryAcquireAsync(Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Disposal, TimeSpan.Zero))
+        {
+            Assert.Equal(LogMigrationAvailability.DisposalInProgress, (await service.GetStatusAsync()).Availability);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.RunAsync(null, null, null));
+        }
+
+        Assert.Equal(LogMigrationAvailability.Ready, (await service.GetStatusAsync()).Availability);
+        Assert.Empty(_auditRecorder.Recorded);
+    }
+
+    [Fact]
+    public async Task Run_WhileTheDisposalCheckReadsTheOldFile_SaysSoInsteadOfClaimingAMigrationIsRunning()
+    {
+        // 後始末の照合（確認材料の読み取り）が排他を持つ間に移行を押した利用者へ「移行は既に実行中」と
+        // 返すと、動いていない移行を待ち続けることになる。
+        await SeedSourceAsync(5);
+        var gate = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessGate();
+        var service = new LogMigrationService(
+            _dataRoot, _sourcePath, currentProviderIsSqlServer: true, _target, writeGate: null, _auditRecorder,
+            new FakeLogger<LogMigrationService>(), gate);
+
+        using (await gate.TryAcquireAsync(Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Inspection, TimeSpan.Zero))
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RunAsync(null, null, null));
+            Assert.DoesNotContain("既に実行中", ex.Message);
+            Assert.Contains("照合", ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task Status_WhileDisposalOrMigrationHoldsTheGate_ReturnsWithoutWaiting()
+    {
+        // 後始末・移行は排他を長く保持する——画面の表示を排他の待ち時間で止めない。
+        await SeedSourceAsync(5);
+        var gate = new Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessGate();
+        var service = new LogMigrationService(
+            _dataRoot, _sourcePath, currentProviderIsSqlServer: true, _target, writeGate: null, _auditRecorder,
+            new FakeLogger<LogMigrationService>(), gate);
+
+        foreach (var (holder, expected) in new[]
+                 {
+                     (Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Disposal, LogMigrationAvailability.DisposalInProgress),
+                     (Yagura.Host.Administration.OldDatabaseDisposal.OldDatabaseAccessHolder.Migration, LogMigrationAvailability.Running),
+                 })
+        {
+            using (await gate.TryAcquireAsync(holder, TimeSpan.Zero))
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                Assert.Equal(expected, (await service.GetStatusAsync()).Availability);
+                Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"状態の取得に {stopwatch.Elapsed} かかった。");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(10)]
+    [InlineData(14)]
+    public async Task Status_SourceInUseOrUnreadable_IsUnavailable_NotNoSource(int sqliteError)
+    {
+        // 使用中・一時的に読めない旧ファイルを「移行の対象なし」と示さない（未移行のログが残っている可能性がある）。
+        await SeedSourceAsync(10);
+        var service = CreateService();
+        service.BeforeSourceReadForTest = () => throw new Microsoft.Data.Sqlite.SqliteException("read failure (test)", sqliteError);
+
+        Assert.Equal(LogMigrationAvailability.StatusUnavailable, (await service.GetStatusAsync()).Availability);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RunAsync(null, null, null));
+    }
+
+    [Fact]
+    public async Task Status_CorruptSource_IsNoSource()
+    {
+        await SeedSourceAsync(10);
+        var service = CreateService();
+        service.BeforeSourceReadForTest = () => throw new Microsoft.Data.Sqlite.SqliteException("database disk image is malformed (test)", 11);
+
+        Assert.Equal(LogMigrationAvailability.NoSourceDatabase, (await service.GetStatusAsync()).Availability);
+    }
+
+    [Fact]
+    public async Task Status_SourceMissing_DoesNotCreateTheFile()
+    {
+        File.Delete(_sourcePath);
+        var service = CreateService();
+
+        Assert.Equal(LogMigrationAvailability.NoSourceDatabase, (await service.GetStatusAsync()).Availability);
+        Assert.False(File.Exists(_sourcePath));
+    }
+
+    [Fact]
+    public async Task CheckpointState_CanBeReadAndRemoved_ForTheDisposal()
+    {
+        await SeedSourceAsync(10);
+        await CreateService().RunAsync(null, null, null);
+
+        var state = LogMigrationService.ReadCheckpointState(_dataRoot);
+        Assert.NotNull(state);
+        Assert.True(state.Completed);
+        Assert.NotNull(state.Position);
+        Assert.Equal(10, state.MigratedCount);
+
+        var removed = LogMigrationService.RemoveCheckpoint(_dataRoot);
+        Assert.Equal(state, removed);
+        Assert.Null(LogMigrationService.ReadCheckpointState(_dataRoot));
     }
 
     [Fact]

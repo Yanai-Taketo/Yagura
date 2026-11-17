@@ -22,11 +22,6 @@ namespace Yagura.Abstractions.Administration;
 /// </param>
 /// <param name="HasPassword">パスワードを保持しているか（無操作タイムアウトで false に戻る）。</param>
 /// <param name="ConnectionValidated">保持中の接続入力で接続検証に成功済みか。</param>
-/// <param name="Disposal">旧・組み込み DB ファイルの処分の選択（未選択は <see langword="null"/>）。</param>
-/// <param name="EvacuationDirectory">
-/// 退避先のフォルダ（絶対パス。処分の選択が退避の場合のみ非 null——database.md §6.1
-/// 「選択内容・退避先は監査記録の対象」の入力面）。
-/// </param>
 /// <param name="ExecuteIdempotencyToken">
 /// 切替実行に使う冪等トークン（接続検証の成功後に非 null。configuration.md §7）。
 /// </param>
@@ -42,21 +37,6 @@ public sealed record PromotionWizardSnapshot(
     string ServiceAccountName,
     bool HasPassword,
     bool ConnectionValidated,
-    OldDatabaseDisposal? Disposal,
-    string? EvacuationDirectory,
     string? ExecuteIdempotencyToken,
     bool Executed,
     bool CredentialReentryRequired);
-
-/// <summary>
-/// 旧・組み込み DB ファイルの処分方法（database.md §6.1「旧・組み込み DB ファイルは残置しない」
-/// ——ADR-0004 決定 5）。
-/// </summary>
-public enum OldDatabaseDisposal
-{
-    /// <summary>明示の退避（利用者が指定する場所への移動。保護責任は退避完了をもって利用者へ移転）。</summary>
-    Evacuate,
-
-    /// <summary>削除。</summary>
-    Delete,
-}
