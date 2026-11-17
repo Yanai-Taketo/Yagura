@@ -24,9 +24,16 @@ public sealed class WindowsArchivePlatformTests : IDisposable
 
     private readonly TestTempDirectory _temp = new("archive-acl");
 
+    public WindowsArchivePlatformTests()
+    {
+        // TestTempDirectory はディレクトリ自体を作らない。作業用フォルダは CreateDirectoryW で親フォルダの直下に
+        // 作るため、親が無いと ERROR_PATH_NOT_FOUND で失敗する。
+        Directory.CreateDirectory(_temp.Path);
+    }
+
     public void Dispose()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() && Directory.Exists(_temp.Path))
         {
             // 確定後の ACL では親フォルダごとの削除に所有者の権限が要る場合があるため、継承を戻してから消す。
             foreach (var directory in Directory.EnumerateDirectories(_temp.Path, "*", SearchOption.AllDirectories).Reverse())
