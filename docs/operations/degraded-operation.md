@@ -24,7 +24,7 @@
 
 ## 管理画面に入れなくなる構成
 
-`Admin:Authentication:RequireForLoopback` が有効で、かつ**アプリ独自認証（ID/パスワード）しか有効にしていない**構成では、DB が復旧するまで管理画面へ入る手段が実質なくなる。この構成の復旧経路は**設定ファイルの手編集**である（[ADR-0010](../adr/0010-admin-ui-authentication.md) 決定 1 が「認証手段が全滅した場合の最終復旧経路」として設計している）。
+`Admin:Authentication:RequireForLoopback` が有効で、かつ**アプリ独自認証（ID/パスワード）しか有効にしていない**構成では、DB が復旧するまで管理画面へ入る手段が実質なくなる。この構成の復旧経路は**設定ファイルの手編集**である（手順と注意は[設定ファイルを手で編集する](prerequisites-and-hand-editing.md#設定ファイルを手で編集する)。[ADR-0010](../adr/0010-admin-ui-authentication.md) 決定 1 が「認証手段が全滅した場合の最終復旧経路」として設計している）。
 
 > **緩めるのは `RequireForLoopback` 側**。`yagura.json` の `Admin:Authentication:RequireForLoopback` を `false` にしてサービスを再起動する。
 >
