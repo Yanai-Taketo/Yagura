@@ -188,6 +188,10 @@ else
         {
             <MudText Typo="Typo.body2" Class="mt-2">@UiText.MigrationBlockedByDisposal</MudText>
         }
+        else if (migrationStatus.Availability == LogMigrationAvailability.StatusUnavailable)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">@UiText.MigrationStatusUnavailable</MudAlert>
+        }
         else if (migrationStatus.Availability == LogMigrationAvailability.Ready)
         {
             @if (migrationStatus.RecordsAddedAfterCompletion > 0)

@@ -89,6 +89,10 @@ public static partial class UiText
     public const string OldDatabaseDisposalMigrationNoSource =
         "移行の対象（組み込みデータベースの本体）はありません。";
 
+    /// <summary>移行の状態を確かめられない（旧ファイルの使用中・一時的な読み取りの失敗・移行先の障害）。</summary>
+    public const string OldDatabaseDisposalMigrationUnavailable =
+        "移行の状態を確かめられませんでした（以前の保存先のファイルを読めない、または移行先へ問い合わせられません）。";
+
     /// <summary>照合の実行ボタン。</summary>
     public const string OldDatabaseDisposalInspect = "照合して後始末の内容を確かめる";
 
@@ -102,6 +106,16 @@ public static partial class UiText
     /// <summary>照合できなかった（移行・別の後始末・別の照合が旧ファイルを使用中）。</summary>
     public const string OldDatabaseDisposalInspectionUnavailable =
         "照合できませんでした（別の操作が以前の保存先のファイルを使用中です）。しばらくしてから、もう一度照合してください。";
+
+    /// <summary>照合できなかった——別のプログラムが旧ファイルを使用中の可能性がある。</summary>
+    public const string OldDatabaseDisposalInspectionInUse =
+        "照合できませんでした。別のプログラム（バックアップソフト・ウイルス対策・データベースの閲覧ツール等）が以前の保存先の" +
+        "ファイルを使用している可能性があります。閉じてから、もう一度照合してください。";
+
+    /// <summary>照合できなかった——旧ファイルを一時的に読めない（破損とは限らない）。</summary>
+    public const string OldDatabaseDisposalInspectionUnreadable =
+        "照合できませんでした。以前の保存先のファイルを一時的に読めません（壊れているとは限りません）。" +
+        "しばらくしてから、もう一度照合してください。";
 
     /// <summary>対象が安全検査を満たさない（{0} = 理由）。</summary>
     public const string OldDatabaseDisposalTargetUnsafeFormat =
@@ -363,6 +377,15 @@ public static partial class UiText
 
     /// <summary>結果: 削除できずに残ったファイル。</summary>
     public const string OldDatabaseDisposalResultRemainingFilesLabel = "削除できずに残ったファイル";
+
+    /// <summary>
+    /// 中断した処分の作業用フォルダの掃除を、親フォルダを一覧できずに見送った（{0} = 保管先の親フォルダ、
+    /// {1} = 作業用フォルダ名の接頭辞）。
+    /// </summary>
+    public const string OldDatabaseDisposalResultCleanupSkippedFormat =
+        "保管先のフォルダ（{0}）の中身を一覧できなかったため、以前に中断した後始末の作業用フォルダの確認を見送りました。" +
+        "このフォルダに「{1}」で始まるフォルダが残っていないか管理者として確かめ、残っていれば削除してください" +
+        "（書き出しの途中のデータが入っている場合があります）。";
 
     /// <summary>結果: 作業用のフォルダを削除できなかった（{0} = パス）。</summary>
     public const string OldDatabaseDisposalResultWorkDirectoryLeftFormat =

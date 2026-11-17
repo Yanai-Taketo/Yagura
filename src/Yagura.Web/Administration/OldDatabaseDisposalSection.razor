@@ -269,6 +269,7 @@
         LogMigrationAvailability.Ready => UiText.OldDatabaseDisposalMigrationNotCompleted,
         LogMigrationAvailability.Running => UiText.OldDatabaseDisposalMigrationRunning,
         LogMigrationAvailability.NoSourceDatabase => UiText.OldDatabaseDisposalMigrationNoSource,
+        LogMigrationAvailability.StatusUnavailable => UiText.OldDatabaseDisposalMigrationUnavailable,
         _ => null,
     };
 
@@ -281,7 +282,8 @@
 
     /// <summary>旧ファイルを読めた（確認材料が揃った）か。読めなかった照合では操作を出さない。</summary>
     private static bool InspectionUsable(OldDatabaseDisposalInspection inspection) =>
-        inspection.TargetKind switch
+        inspection.UnavailableReason is null
+        && inspection.TargetKind switch
         {
             OldDatabaseTargetKind.Unsafe => false,
             OldDatabaseTargetKind.SqliteDatabase => inspection.Migration is not null,
@@ -474,7 +476,8 @@
         {
             var (scheme, principal) = AuditActorResolver.Resolve((await AuthStateProvider.GetAuthenticationStateAsync()).User);
 
-            // 明示確認は確認ダイアログのチェックボックスで取った（確認するまで確認ボタンは押せない）。
+            // 明示確認は確認ダイアログのチェックボックスで取った（確認するまで確認ボタンは押せない）。確認は画面に
+            // 示した照合の結果に対してのもの——その要約値を添え、開始時の照合し直しで結果が変わっていれば拒否させる。
             var request = new OldDatabaseDisposalRequest(
                 method,
                 token,
@@ -483,7 +486,8 @@
                 ConfirmDeleteUnverifiableFile: _inspection?.TargetKind == OldDatabaseTargetKind.UnverifiableBody,
                 OperatorAddress: CircuitContext.RemoteAddress,
                 OperatorScheme: scheme,
-                OperatorPrincipal: principal);
+                OperatorPrincipal: principal,
+                ConfirmedInspectionDigest: _inspection?.ConfirmationDigest);
 
             var result = await Disposal.StartAsync(request);
             switch (result.Outcome)
@@ -518,6 +522,8 @@
     private static bool InvalidatesInspection(OldDatabaseDisposalReason? reason) =>
         reason is OldDatabaseDisposalReason.MigrationConfirmationRequired
             or OldDatabaseDisposalReason.UnverifiableConfirmationRequired
+            or OldDatabaseDisposalReason.InUse
+            or OldDatabaseDisposalReason.TargetUnreadable
             or OldDatabaseDisposalReason.ArchiveNotAllowedForTarget
             or OldDatabaseDisposalReason.TargetUnsafe
             or OldDatabaseDisposalReason.NoTargetFiles
@@ -566,6 +572,13 @@
         OldDatabaseDisposalStage.Verifying => UiText.OldDatabaseDisposalStageVerifying,
         OldDatabaseDisposalStage.Finalizing => UiText.OldDatabaseDisposalStageFinalizing,
         _ => UiText.OldDatabaseDisposalStageDeleting,
+    };
+
+    private static string UnavailableText(OldDatabaseDisposalReason? reason) => reason switch
+    {
+        OldDatabaseDisposalReason.InUse => UiText.OldDatabaseDisposalInspectionInUse,
+        OldDatabaseDisposalReason.TargetUnreadable => UiText.OldDatabaseDisposalInspectionUnreadable,
+        _ => UiText.OldDatabaseDisposalInspectionUnavailable,
     };
 
     private static string MethodText(OldDatabaseDisposalMethod method) =>
@@ -628,6 +641,12 @@
         {
             <MudText Typo="Typo.body2" Class="mt-2">@string.Format(UiText.OldDatabaseDisposalResultWorkDirectoryLeftFormat, leftBehind)</MudText>
         }
+        @if (result.UncheckedArchiveParentDirectory is { } uncheckedParent)
+        {
+            <MudText Typo="Typo.body2" Class="mt-2">
+                @string.Format(UiText.OldDatabaseDisposalResultCleanupSkippedFormat, uncheckedParent, OldDatabaseArchiveNaming.WorkDirectoryPrefix)
+            </MudText>
+        }
     };
 
     private RenderFragment RenderInspection(OldDatabaseDisposalInspection inspection) => __builder =>
@@ -640,8 +659,9 @@
                 </MudAlert>
                 return;
 
+            case var _ when inspection.UnavailableReason is not null:
             case OldDatabaseTargetKind.SqliteDatabase when inspection.Migration is null:
-                <MudAlert Severity="Severity.Warning" Class="mt-3">@UiText.OldDatabaseDisposalInspectionUnavailable</MudAlert>
+                <MudAlert Severity="Severity.Warning" Class="mt-3">@UnavailableText(inspection.UnavailableReason)</MudAlert>
                 <div class="mt-2">
                     <YaguraButton OnClick="InspectAsync" Disabled="@(MigrationRunningHere)">@UiText.OldDatabaseDisposalInspect</YaguraButton>
                 </div>

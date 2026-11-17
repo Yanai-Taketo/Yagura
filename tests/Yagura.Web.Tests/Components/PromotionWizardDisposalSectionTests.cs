@@ -322,6 +322,104 @@ public sealed class PromotionWizardDisposalSectionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConfirmedStart_CarriesTheDigestOfTheInspectionItConfirmed()
+    {
+        // 明示確認は画面に示した照合の結果に対してのもの——開始時の照合し直しで結果が変わっていればサービスが拒否する。
+        Pending(FakeOldDatabaseDisposalService.SqliteInspection(FakeOldDatabaseDisposalService.UnmigratedAfterSwitch())
+            with { ConfirmationDigest = "digest-of-the-shown-inspection" });
+        var cut = Render();
+        await InspectAsync(cut);
+        MethodSelect(cut).Change("delete");
+
+        var executing = ClickExecuteAsync(cut);
+        WaitForDialog(cut);
+        cut.Find(".mud-dialog input[type=checkbox]").Change(true);
+        cut.WaitForAssertion(() => Assert.False(ConfirmButton(cut).HasAttribute("disabled")), WaitTimeout);
+        await ConfirmAsync(cut);
+        await executing;
+
+        var request = Assert.Single(_disposal.StartRequests);
+        Assert.Equal("digest-of-the-shown-inspection", request.ConfirmedInspectionDigest);
+    }
+
+    [Theory]
+    [InlineData(OldDatabaseDisposalReason.MigrationConfirmationRequired)]
+    [InlineData(OldDatabaseDisposalReason.InUse)]
+    [InlineData(OldDatabaseDisposalReason.TargetUnreadable)]
+    public async Task StartRejectedOnReinspection_AsksForANewInspection(OldDatabaseDisposalReason reason)
+    {
+        Pending(FakeOldDatabaseDisposalService.SqliteInspection());
+        _disposal.StartResult = new OldDatabaseDisposalResult(
+            OldDatabaseDisposalOutcome.Rejected, "照合の時点から結果が変わりました（テスト）。", reason, OldDatabaseDisposalMethod.Delete);
+        var cut = Render();
+        await InspectAsync(cut);
+        MethodSelect(cut).Change("delete");
+
+        var executing = ClickExecuteAsync(cut);
+        WaitForDialog(cut);
+        await ConfirmAsync(cut);
+        await executing;
+
+        cut.WaitForAssertion(() => Assert.Contains(_disposal.StartResult.Message, cut.Markup), WaitTimeout);
+        Assert.DoesNotContain(UiText.OldDatabaseDisposalExecute, cut.Markup);
+        Assert.Contains(UiText.OldDatabaseDisposalInspect, cut.Markup);
+    }
+
+    [Theory]
+    [InlineData(OldDatabaseDisposalReason.InUse, UiText.OldDatabaseDisposalInspectionInUse)]
+    [InlineData(OldDatabaseDisposalReason.TargetUnreadable, UiText.OldDatabaseDisposalInspectionUnreadable)]
+    [InlineData(OldDatabaseDisposalReason.DisposalRunning, UiText.OldDatabaseDisposalInspectionUnavailable)]
+    public async Task InspectionThatCouldNotReadTheFile_SaysWhy_AndOffersOnlyAnotherInspection(OldDatabaseDisposalReason reason, string expected)
+    {
+        Pending(new OldDatabaseDisposalInspection(
+            FakeOldDatabaseDisposalService.Pending(),
+            OldDatabaseTargetKind.SqliteDatabase,
+            null,
+            ArchiveAllowed: false,
+            null, null, null, null, null, null, null, 0,
+            UnavailableReason: reason));
+        var cut = Render();
+
+        await InspectAsync(cut, expected);
+
+        Assert.DoesNotContain(UiText.OldDatabaseDisposalTargetUnverifiable, cut.Markup);
+        Assert.DoesNotContain(UiText.OldDatabaseDisposalExecute, cut.Markup);
+        Assert.DoesNotContain(UiText.OldDatabaseDisposalMethodLabel, cut.Markup);
+    }
+
+    [Fact]
+    public void MigrationStatusUnavailable_IsNotShownAsNoMigrationTarget()
+    {
+        _migration.Status = new LogMigrationStatus(LogMigrationAvailability.StatusUnavailable);
+        _disposal.Status = FakeOldDatabaseDisposalService.Pending();
+
+        var cut = Render();
+
+        Assert.Contains(UiText.MigrationStatusUnavailable, cut.Markup);
+        Assert.Contains(UiText.OldDatabaseDisposalMigrationUnavailable, cut.Markup);
+        Assert.DoesNotContain(UiText.OldDatabaseDisposalMigrationNoSource, cut.Markup);
+    }
+
+    [Fact]
+    public void Result_WhenTheCleanupOfAnEarlierRunWasSkipped_TellsTheAdministratorWhereToLook()
+    {
+        _migration.Status = new LogMigrationStatus(LogMigrationAvailability.NoSourceDatabase);
+        _disposal.Status = FakeOldDatabaseDisposalService.NotApplicable(new OldDatabaseDisposalResult(
+            OldDatabaseDisposalOutcome.Completed,
+            "以前の保存先のファイルを書き出して保管し、元のファイルを削除しました。",
+            Method: OldDatabaseDisposalMethod.Archive,
+            ArchiveFilePath: @"D:\Secure\yagura-archive-20261116T000000Z\yagura-archive-20261116T000000Z.db",
+            ArchiveSha256: new string('a', 64),
+            UncheckedArchiveParentDirectory: @"D:\Secure"));
+
+        var cut = Render();
+
+        Assert.Contains(
+            string.Format(UiText.OldDatabaseDisposalResultCleanupSkippedFormat, @"D:\Secure", OldDatabaseArchiveNaming.WorkDirectoryPrefix),
+            cut.Markup);
+    }
+
+    [Fact]
     public async Task Unmigrated_CancelledDialog_DoesNotStart()
     {
         Pending(FakeOldDatabaseDisposalService.SqliteInspection(FakeOldDatabaseDisposalService.UnmigratedAfterSwitch()));

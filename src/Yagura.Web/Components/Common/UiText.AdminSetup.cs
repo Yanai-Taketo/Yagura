@@ -56,6 +56,11 @@ public static partial class UiText
     public const string MigrationBlockedByDisposal =
         "以前の保存先（組み込みデータベース）のファイルの後始末を実行中のため、移行はできません。";
 
+    /// <summary>移行の状態を確かめられない表示（旧ファイルの使用中・一時的な読み取りの失敗・移行先の障害）。</summary>
+    public const string MigrationStatusUnavailable =
+        "移行の状態を確かめられませんでした。以前の保存先（組み込みデータベース）のファイルを別のプログラムが使用しているか、" +
+        "一時的に読めない、または移行先へ問い合わせられない可能性があります。しばらくしてから画面を開き直してください。";
+
     // ---- 設定の再読み込み（configuration.md §3。CF-4 層1） ----
 
     /// <summary>設定再読み込み画面のタイトル。</summary>
