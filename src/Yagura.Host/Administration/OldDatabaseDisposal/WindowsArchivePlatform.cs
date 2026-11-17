@@ -76,7 +76,7 @@ public sealed class WindowsArchivePlatform : IArchivePlatform
     {
         try
         {
-            using var handle = OpenForQuery(Path.GetFullPath(path));
+            using var handle = OpenForQuery(NearestExisting(Path.GetFullPath(path)));
             if (handle.IsInvalid || FinalPathOf(handle) is not { } finalPath)
             {
                 return null;
@@ -175,8 +175,30 @@ public sealed class WindowsArchivePlatform : IArchivePlatform
             return null;
         }
 
+        // 作成から保持までの間に差し替えられたフォルダは、差し替えた利用者が所有者になる（所有者は特権なしには
+        // 他者へ移せない）。所有者が実行アカウント・管理者でなければ製品のフォルダではない。
+        if (!IsOwnedByProduct(path))
+        {
+            failureDetail = "作業用のフォルダの所有者が製品の実行アカウントではありません（差し替えられた可能性があります）。";
+            handle.Dispose();
+            return null;
+        }
+
         failureDetail = null;
         return new WorkDirectoryHold(handle, finalPath);
+    }
+
+    private bool IsOwnedByProduct(string directory)
+    {
+        try
+        {
+            var owner = new DirectoryInfo(directory).GetAccessControl(AccessControlSections.Owner).GetOwner(typeof(SecurityIdentifier));
+            return owner is SecurityIdentifier sid && (sid == _currentIdentity || sid == Administrators || sid == LocalSystem);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -374,6 +396,20 @@ public sealed class WindowsArchivePlatform : IArchivePlatform
         OpenExisting,
         FileFlagBackupSemantics,
         IntPtr.Zero);
+
+    /// <summary>
+    /// まだ無い場所（作られる前の一時保管の置き場所等）は、最も近い既存の上位フォルダのボリュームで代える。
+    /// </summary>
+    private static string NearestExisting(string fullPath)
+    {
+        var current = fullPath;
+        while (!Directory.Exists(current) && !File.Exists(current) && Path.GetDirectoryName(current) is { } parent)
+        {
+            current = parent;
+        }
+
+        return current;
+    }
 
     private static string? FinalPathOf(SafeFileHandle handle)
     {

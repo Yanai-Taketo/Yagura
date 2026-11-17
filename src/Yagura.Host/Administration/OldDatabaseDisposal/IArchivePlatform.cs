@@ -100,8 +100,9 @@ public interface IArchivePlatform
 
     /// <summary>
     /// 作業用サブフォルダを処分の終了まで保持する: 改名・削除に要る共有を許さないハンドルを開いたままにし、
-    /// その間フォルダを改名・削除・差し替えされないようにする。保持の時点で、フォルダが再解析ポイントでない
-    /// ことを確かめる。保持できなければ <see langword="null"/>（<paramref name="failureDetail"/> に理由）。
+    /// その間フォルダを改名・削除・差し替えされないようにする。保持の時点で、フォルダが再解析ポイントでなく、
+    /// 所有者が実行アカウントまたは管理者であることを確かめる。保持できなければ <see langword="null"/>
+    /// （<paramref name="failureDetail"/> に理由）。
     /// </summary>
     IArchiveWorkDirectoryHold? HoldWorkDirectory(string path, out string? failureDetail);
 
