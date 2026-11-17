@@ -85,7 +85,7 @@ Yagura のリリース（署名付き MSI を GitHub Release で公開するこ�
 - ブランチ名は `chore/release-vX.Y.Z`、PR タイトルは `chore(release): vX.Y.Z`
 - **変更は `Directory.Build.props` の `<YaguraVersion>` の 1 行だけ**にする（入口文書・雛形の修正は §3 のとおり先に済ませる）
 - body に書くこと: 前回のリリースからの主な変更の要約、§3.2 で控えた .NET の最新パッチ、§3.3 の Fluent Bit 版の判断
-- `Directory.Build.props` を変えるため、必須チェックの CI（`build-and-test`）に加えて Installer E2E（`installer-e2e.yml`）も走る。両方が緑になってから squash merge する
+- `Directory.Build.props` を変えるため、必須チェックの CI（`build-and-test`）に加えて Installer E2E（`installer-e2e.yml`）と Installer Upgrade E2E（`installer-upgrade-e2e.yml`。公開済み版からの更新の検証）も走る。すべてが緑になってから squash merge する
 
 ## 5. main の CI が緑であることを確かめる
 
@@ -104,6 +104,16 @@ Yagura のリリース（署名付き MSI を GitHub Release で公開するこ�
   ```bash
   git show "$SHA:Directory.Build.props" | grep '<YaguraVersion>'
   ```
+
+- そのコミットで公開済み版からの更新の検証（`installer-upgrade-e2e.yml`）を手動で起動し、success を確かめる。§4 の chore(release) PR で走った run は、その時点の PR のマージ結果を検証したもので、マージの後に main へ入った変更を含まない。この workflow は必須チェックではなく、main が進んでも再実行されない。タグのコミットで走らせた run が、出荷する版についての「直前の v0.x からの更新検証の記録」（ADR-0006 基準 4）になる:
+
+  ```bash
+  gh workflow run installer-upgrade-e2e.yml --ref main
+  # run が終わってから。一覧に出る run のコミットが $SHA であること
+  gh run list --workflow installer-upgrade-e2e.yml --commit "$SHA"
+  ```
+
+  起動の前後で main が進んだ場合は、run のコミットが `$SHA` と一致しない。`$SHA` を取り直して、この節を最初からやり直す
 
 ## 6. タグの作成と push（オーナー）
 

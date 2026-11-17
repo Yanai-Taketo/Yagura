@@ -4,6 +4,10 @@
 # サービス起動 → UDP 514 受信 → 閲覧リスナ(8514)照合 → アンインストール →
 # 残置物確認までを installer/e2e/Invoke-YaguraInstallerE2E.ps1 で実行する。
 #
+# 公開済みの旧版 MSI(リリース資産そのもの)からの更新は、トリガの異なる別 workflow
+# installer-upgrade-e2e.yml が検証する(旧版のバイナリが作ったデータを新版が引き継げるかは
+# src/ 側の性質であり、src/ だけの変更でも走らせる必要があるため。同ファイル冒頭を参照)。
+#
 # トリガ設計(CI 時間への配慮):
 #   - pull_request は installer/ 配下(+ 本 workflow 自身)の変更時のみ。
 #     src/ 側の変更はビルド・テスト・回帰ベンチを ci.yml が検証しており、

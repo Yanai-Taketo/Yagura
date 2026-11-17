@@ -1,0 +1,173 @@
+# 公開済み版からの更新の E2E: 公開済みの v0.5.0 MSI(リリース資産そのもの)から、現在のソースで
+# ビルドした MSI への更新を installer/e2e/Invoke-YaguraPublishedUpgradeE2E.ps1 で検証する
+# (ADR-0006 基準 4 の「直前の v0.x からの更新検証」・ADR-0023 決定 6 が指摘した「製品の存続」)。
+#
+# installer-e2e.yml のアップグレード検証は、同じツリーから版だけを下げて焼いた MSI を更新元にする
+# (コンポーネント参照カウントの検証として残す)。それでは新旧でアセンブリの中身が同じになり、
+# 「版だけ上がって中身が旧版のまま残るファイル」(Issue #479・#514)を原理的に捉えられず、
+# 旧版のバイナリが作ったデータを新版が引き継げるかも確かめられない。そこで実際に配布した MSI を
+# 更新元にする。
+#
+# トリガ設計(installer-e2e.yml と分けた理由):
+#   - 本 workflow が確かめる中身の大半は src/ 側の性質である: 旧版が書いたスプールの読み込みと
+#     消化、DB スキーマ(管理者アカウント表を含む)の移行、設定キーと DPAPI の entropy、監査行の
+#     形式、永続化カウンタのファイル形式。これらのコードは src/ の 5 プロジェクトすべてにまたがる
+#     (Yagura.Storage の Spool・Sqlite・Administration、Yagura.Ingestion の Persistence、
+#     Yagura.Host の Configuration・Observability、Yagura.Abstractions の Auditing、閲覧の CSV
+#     エクスポートと管理要求の拒否を担う Yagura.Web)。installer-e2e.yml と同じ paths
+#     (installer/ 配下と集中管理ファイル)のままでは、これらを壊す PR で走らず、回帰が原因から
+#     離れた PR で見つかる。そのため pull_request の paths に src/** を含める
+#   - installer-e2e.yml には src/** を加えない。あちらは MSI の構造・インストール挙動の検証に
+#     特化しており、src/ だけの変更で走らせる理由がない。paths の絞り込みはワークフローのトリガ
+#     (on.pull_request.paths)に掛かるため、走る条件を変えるためにファイルを分けた
+#   - 所要時間は 1 OS あたり約 5 分(2026-11 時点の実測)。src/ を変える PR ごとに走らせても
+#     CI 時間への影響は小さい
+#   - tests/・tools/・docs/ だけの変更では走らない(MSI に収まるものが変わらないため)
+#   - workflow_dispatch: リリースではタグを付けるコミットで手動実行し、出荷する版についての記録に
+#     する(docs/development/release-process.md §5)。chore(release) PR で走った run はその時点の
+#     PR のマージ結果を検証したもので、マージの後に main へ入った変更を含まない。本 workflow は
+#     paths フィルタ付きで必須ステータスチェックではないため、main が進んでも再実行されない
+#     (workflow_dispatch は既定ブランチにファイルがあるときだけ呼び出せる。導入 PR では
+#     pull_request の実行が初回の記録になる)
+name: Installer Upgrade E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'installer/**'
+      - '.github/workflows/installer-upgrade-e2e.yml'
+      - 'Directory.Packages.props'
+      - 'Directory.Build.props'
+
+permissions:
+  contents: read
+
+# 同一 PR への連続 push では古い run を自動キャンセルする(Actions 時間の節約。
+# ci.yml・installer-e2e.yml と同じ設計。workflow_dispatch はキャンセル対象にしない)。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # 推奨環境の 2 バージョン(ADR-0024 決定 1)を両方踏む。matrix の各 OS は別のランナーで動き、
+  # 前のシナリオの残骸(データルート・製品登録)を持ち込まない(スクリプトは既存の製品・
+  # データルートがあると中止する)。x64 専用(ADR-0009 決定 5「installer-e2e.yml 相当の重い
+  # E2E は当面 x64 のみに残す」)。
+  upgrade-from-v0-5-0:
+    name: upgrade-from-v0.5.0 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+
+    runs-on: ${{ matrix.os }}
+    # MSI ビルド + インストール・失敗注入・更新・管理者用展開・アンインストールの通し。
+    timeout-minutes: 45
+
+    env:
+      # 更新元はリリース資産そのもの。ハッシュと署名者は資産と同じ取得元(.sha256)だけに頼らず、
+      # ここに固定値として持つ(取得元が差し替えられた場合に両方が揃って変わるのを検知するため)。
+      # 署名者の拇印は v0.5.0 の署名に使った証明書のもの(有効期間 2026-07-23〜2027-07-16)。
+      # docs/code-signing-policy.md の期待値表は証明書の年次更新で新しい拇印に変わるが、
+      # v0.5.0 の資産はこの証明書で署名済みのため、更新後もこの値は変えない。
+      YAGURA_UPGRADE_SOURCE_VERSION: '0.5.0'
+      YAGURA_UPGRADE_SOURCE_MSI: Yagura-0.5.0-x64.msi
+      YAGURA_UPGRADE_SOURCE_BASE_URL: https://github.com/Yanai-Taketo/Yagura/releases/download/v0.5.0
+      YAGURA_UPGRADE_SOURCE_SHA256: 0CF9FEC1D131918825885F864B52A13625E894C30032A13F14FF6FCBBE068D54
+      YAGURA_UPGRADE_SOURCE_SIGNER_THUMBPRINT: 36257D1DC06F7CDECA61B9727A88320DA24D27B6
+      # ツリーの版が更新元以下のときに更新先の MSI へ与える版。ADR-0006 基準 4 が実証を求めるのは
+      # v0.x → v1.0 の更新のため 1.0.0 とする。同じ版だと MajorUpgrade にならず製品が 2 つ並ぶため、
+      # 版を上げる PR より前でもこのジョブが意味を持つように版だけを上げて焼く。
+      # 更新元は公開済みの最新の v0.x(直前の v0.x)。別の v0.x を公開した場合は上の 5 つの値を
+      # その版に替える。
+      YAGURA_UPGRADE_TARGET_FALLBACK_VERSION: '1.0.0'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      # リリース PR(Directory.Build.props を 1.0.0 にする)では版を上書きせず、そのコミットの
+      # MSI そのものを更新先にする。
+      - name: Resolve the upgrade target version
+        id: target
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $propsMatch = Select-String -Path Directory.Build.props -Pattern '<YaguraVersion>(\d+\.\d+\.\d+)</YaguraVersion>' | Select-Object -First 1
+          if ($null -eq $propsMatch) { throw 'Directory.Build.props から <YaguraVersion> を読み取れなかった' }
+          $treeVersion = $propsMatch.Matches[0].Groups[1].Value
+          if ([version]$treeVersion -gt [version]$env:YAGURA_UPGRADE_SOURCE_VERSION) {
+            $version = $treeVersion
+            $overridden = 'false'
+          } else {
+            $version = $env:YAGURA_UPGRADE_TARGET_FALLBACK_VERSION
+            $overridden = 'true'
+          }
+          Write-Host "tree version = $treeVersion, upgrade target version = $version (overridden: $overridden)"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "overridden=$overridden" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # -p:YaguraVersion が収録アセンブリの FileVersion まで届くことは installer-e2e ジョブの
+      # 「Verify the MSI version reaches the published assemblies」が検査している。本ジョブでは
+      # 更新後に導入された Yagura.Host.exe の版と、導入ファイル一式が MSI の中身と一致することを
+      # スクリプトが確かめる。
+      - name: Build MSI (upgrade target)
+        run: dotnet build installer/Yagura.Installer.wixproj -c Release -p:YaguraArch=x64 -p:YaguraVersion=${{ steps.target.outputs.version }}
+
+      # 公開 URL のためトークンは不要(fork からの PR でも取得できる)。取得できなければ落とす
+      # ——黙ってスキップすると更新の実証がないまま緑になる。
+      - name: Download the published v0.5.0 MSI
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $dir = 'upgrade-source'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          foreach ($name in @($env:YAGURA_UPGRADE_SOURCE_MSI, "$($env:YAGURA_UPGRADE_SOURCE_MSI).sha256")) {
+            $url = "$($env:YAGURA_UPGRADE_SOURCE_BASE_URL)/$name"
+            $out = Join-Path $dir $name
+            for ($attempt = 1; ; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 300
+                break
+              } catch {
+                if ($attempt -ge 4) { throw "download failed after $attempt attempts: $url ($($_.Exception.Message))" }
+                Write-Host "download attempt $attempt failed ($($_.Exception.Message)); retrying"
+                Start-Sleep -Seconds (10 * $attempt)
+              }
+            }
+            Write-Host ("{0}: {1} bytes" -f $name, (Get-Item $out).Length)
+          }
+
+      - name: Run published-version upgrade E2E
+        shell: pwsh
+        run: |
+          # 探索先を installer/bin/Release に限定する(他の出力を掴むと別の版を検証してしまう)。
+          $msi = Get-ChildItem -Path installer/bin/Release -Recurse -Filter Yagura-*.msi | Select-Object -First 1
+          if ($null -eq $msi) { throw 'Yagura-*.msi not found under installer/bin/Release' }
+          Write-Host "Upgrade target MSI: $($msi.FullName) (version ${{ steps.target.outputs.version }}, overridden: ${{ steps.target.outputs.overridden }})"
+          ./installer/e2e/Invoke-YaguraPublishedUpgradeE2E.ps1 `
+            -SourceMsiPath (Join-Path 'upgrade-source' $env:YAGURA_UPGRADE_SOURCE_MSI) `
+            -SourceSha256Path (Join-Path 'upgrade-source' "$($env:YAGURA_UPGRADE_SOURCE_MSI).sha256") `
+            -ExpectedSourceSha256 $env:YAGURA_UPGRADE_SOURCE_SHA256 `
+            -ExpectedSourceVersion $env:YAGURA_UPGRADE_SOURCE_VERSION `
+            -ExpectedSourceSignerThumbprint $env:YAGURA_UPGRADE_SOURCE_SIGNER_THUMBPRINT `
+            -TargetMsiPath $msi.FullName `
+            -OutputDir 'upgrade-e2e-results'
+
+      - name: Upload upgrade E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-upgrade-from-v0.5.0-results-${{ matrix.os }}
+          path: upgrade-e2e-results/
+          if-no-files-found: warn

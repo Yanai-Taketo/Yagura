@@ -57,7 +57,7 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
 | スタートメニュー | 「Yagura ログ閲覧」(.url、http://localhost:8514/、無条件)+ 「Yagura 管理」(.url、http://localhost:8515/admin、無条件) |
 | デスクトップ | 「Yagura」(.url、http://localhost:8514/。閲覧 UI。**opt-in・既定 ON**)。perMachine(ALLUSERS=1)のため作成先は **`%PUBLIC%\Desktop` = 全ユーザー共有のパブリック デスクトップ**(特定ユーザーのデスクトップではない。learn.microsoft.com/windows/win32/msi/desktopfolder、確認日 2026-07-09)。この性質はセットアップ画面(`YaguraShortcutDlg`)の注記でも利用者に明示する |
 | ショートカットのオプトアウト | セットアップ UI の `YaguraShortcutDlg` チェックボックス、またはサイレント時 `msiexec /i Yagura-x64.msi /qn YAGURA_DESKTOP_SHORTCUT=""`(デスクトップの閲覧ショートカットのみ対象。管理 UI のスタートメニューリンクは無条件のためオプトアウト不可) |
-| アップグレード | `MajorUpgrade`(既定 Schedule = afterInstallValidate)。データルートは MSI 管理外のため設定・ログは保持される。`forwarder` フォルダの ACL も新製品インストール時に `PermissionEx` が再実行され再適用される |
+| アップグレード | `MajorUpgrade`(`Schedule="afterInstallExecute"`。旧製品の削除がトランザクション内に入り、更新が失敗すると全体がロールバックされて旧版が残る——ADR-0023 決定 2)。データルートは MSI 管理外のため設定・ログは保持される。`forwarder` フォルダの ACL も新製品インストール時に `PermissionEx` が再実行され再適用される |
 | アンインストール | 規則・ショートカット(スタートメニュー・デスクトップとも)・記録 ini は削除。**データルートのログ・設定は保持**(ログは資産。空フォルダの場合のみ MSI が削除)。`forwarder` フォルダも同じ規則(MSI 未配置で空なら削除、配置済みで非空なら ACL ごと保持) |
 
 管理 UI は **loopback 固定**(TCP 8515)のため、スタートメニューの「Yagura 管理」・完了画面の
@@ -85,9 +85,12 @@ WiX v7 はビルドに Open Source Maintenance Fee(OSMF)の EULA 承諾を要求
   - 照合は ASCII の RunId トークンのみで行う(日本語本文の照合は en-US CI の CP437 で
     文字化けして誤判定するため)
 - CI: [.github/workflows/installer-e2e.yml](../.github/workflows/installer-e2e.yml)
-  (workflow_dispatch + installer/ 配下変更の pull_request)。MSI ビルド →
+  (workflow_dispatch + `installer/` 配下・本 workflow・`Directory.Packages.props`・
+  `Directory.Build.props` を変える pull_request)。MSI ビルド →
   **アップグレード元 MSI（版だけ下げた 2 本目）のビルド** → E2E 実行 →
-  証拠を artifact `installer-e2e-results` に保存する
+  証拠を artifact `installer-e2e-results-<OS>` に保存する。公開済み v0.5.0 からの更新は、
+  走る条件の異なる別 workflow `installer-upgrade-e2e.yml` が検証する（後述「公開済み版からの
+  更新の検証」）
 
 ### メジャーアップグレードの検証（ADR-0023 決定 2。Issue #467）
 
@@ -141,6 +144,79 @@ ACE 集合一致の確認は引き続き lab の管轄）。
 - 証拠形式(ADR-0006 基準 1): 人間可読ログ(`*.log.txt`)+ 機械可読サマリ
   (`*.summary.json`。RunId・各手順の合否・所要時間・実行環境)+ msiexec 詳細ログ。
   CI 実行記録(workflow run と artifact)を基準 1 の証拠としてリンクする
+
+### 公開済み版からの更新の検証（ADR-0006 基準 4・ADR-0023 決定 6）
+
+上のアップグレード検証は、更新元を同じツリーから版だけを下げて焼く。参照カウントの検証には
+この形が鋭いが、新旧でアセンブリの中身が同じになるため、**版だけ上がって中身が旧版のまま残る
+ファイル**（Issue #479・#514）は原理的に捉えられない。旧版のバイナリが作ったデータを新版が
+引き継げるかも確かめられない。そこで、**実際に配布した v0.5.0 の MSI（リリース資産そのもの）**
+を更新元にした検証を、[.github/workflows/installer-upgrade-e2e.yml](../.github/workflows/installer-upgrade-e2e.yml)
+のジョブ `upgrade-from-v0-5-0`（windows-2025 / windows-2022。x64 のみ）で行う。ADR-0006 基準 4 が
+求める「直前の v0.x からの更新検証の記録」と、ADR-0023 決定 6 が基準 4 の穴として指摘した
+「製品の存続」（失敗した更新の後に旧版が残ること）を確かめる。
+
+**どの変更で走るか**:
+
+| 契機 | 走る条件 |
+|---|---|
+| pull_request | `src/**`・`installer/**`・本 workflow・`Directory.Packages.props`・`Directory.Build.props` のいずれかを変えたとき |
+| workflow_dispatch | 任意の時点。リリースでは、タグを付けるコミットで実行する（[release-process.md](../docs/development/release-process.md) §5） |
+
+- installer-e2e.yml と分けたのは走る条件が違うため。この検証が確かめる中身の大半（旧版が書いた
+  スプールの消化・DB スキーマの移行・設定キーと DPAPI の entropy・監査行の形式・永続化カウンタの
+  ファイル形式）は `src/` 側の性質であり、そのコードは `src/` の 5 プロジェクトすべてにまたがる。
+  installer-e2e.yml と同じ条件（`installer/` 配下と集中管理ファイル）では、これらを壊す PR で
+  走らない。1 OS あたり約 5 分のため、`src/` を変える PR ごとに走らせる
+- `tests/`・`tools/`・`docs/` だけの変更では走らない。必須ステータスチェックではないため、
+  main が進んでも既存の PR の run は再実行されない。リリースでタグのコミットを改めて確かめるのは
+  このため
+
+- スクリプト: [e2e/Invoke-YaguraPublishedUpgradeE2E.ps1](e2e/Invoke-YaguraPublishedUpgradeE2E.ps1)
+  （管理者権限必須。既存の製品・データルートがあるマシンでは、どの版が作ったデータかを判定
+  できないため中止する）
+- 更新元の照合: SHA-256 をワークフローに固定した値と公開された `.sha256` の両方で照合し、
+  Authenticode 署名（Status が Valid・署名者の拇印・タイムスタンプの有無）と ProductVersion・
+  UpgradeCode を確かめる。取得できなければジョブを落とす（黙ってスキップしない）
+- 更新先の版: ツリーの版（Directory.Build.props）が更新元以下のときは `-p:YaguraVersion=1.0.0`
+  で焼く（ADR-0006 基準 4 が実証を求めるのは v0.x → v1.0 の更新。同じ版だと MajorUpgrade に
+  ならず、製品が 2 つ並ぶ）。版を上げた chore(release) PR とタグのコミットでは版を上書きせず、
+  そのコミットの MSI そのものを更新先にする
+- 更新元は公開済みの最新の v0.x（v0.5.0）。SHA-256 と署名者の拇印はワークフローに固定値で持つ。
+  拇印は v0.5.0 の署名に使った証明書のもので、[コード署名ポリシー](../docs/code-signing-policy.md)
+  の期待値表が証明書の年次更新で変わっても、この値は変えない
+- DB の書き込みロックと蓄積ログの読み取りには OS 同梱の `winsqlite3.dll` を使う（ランナーに
+  追加の導入物を持ち込まない）
+
+| 段階 | 何を作る・何を見るか |
+|---|---|
+| A. 旧版にデータを作らせる | v0.5.0 を新規にインストールし、UDP/TCP のマーカー付きメッセージ、上限超過の TCP フレーム（永続化されるカウンタ `TcpMessageOversizedDiscarded`）、閲覧リスナへの管理要求の拒否（監査 3001）、設定（`Retention:Days`・メール通知と DPAPI で暗号化した SMTP パスワード・途絶検知のウォッチリスト）、未消化のスプールセグメント（DB の書き込みロックを握って退避させ、ロックを握ったまま停止する）を作る |
+| A. 更新後 | 新版のサービスが稼働すること（実行ファイルの版と起動時刻）、UDP/TCP 514・8514・8515 を新版のプロセスが bind していること、製品エントリが 1 件であること、導入ファイル一式が新版 MSI の管理者用展開とバイト一致すること（旧版にしか無いファイルの取り残しも検出する）、`yagura.json` のバイト一致、暗号化値を新版が復号できること、スプールの全件消化（閲覧の件数が退避したレコード数と一致すること。二重の投入も検出する）、更新前の蓄積ログの内容ダイジェストと件数の一致、管理者アカウント表のスキーマ移行、受信と閲覧、監査記録の保全と追記、カウンタの連続、FW 規則 3 本、実行アカウントと記録、記憶プロパティとショートカット、ACL、旧版 MSI の再実行がダウングレードとして拒否されること |
+| B. 失敗注入 | データルートを消して v0.5.0 を入れ直し、稼働中の v0.5.0 に対して実在しない gMSA 形式のアカウントで更新を失敗させる（上の検証と同じ細工）。製品エントリが v0.5.0 の 1 件のまま残ること、サービスが旧版のバイナリで Running に戻ること、`Program Files\Yagura` の全ファイルが失敗前とバイト一致すること、実行アカウントと `ServiceAccount` 記録が元に戻ること、データルートの ACL、受信の再開。A と分けるのは、失敗した更新の後始末が成功側の結果に混ざらないようにするため |
+
+**暗号化値の観測点**: SMTP の資格情報があり `Security` が `required` でない構成では、パスワードの
+復号に成功した場合にだけ `Notification:Email:Smtp:Security` の警告が出る（復号に失敗すると
+`Notification:Email:Smtp:Password` の警告を出してメール通知を無効化し、`Security` の判定まで
+進まない）。新版は起動時の設定警告をイベントログにも書くため、この警告の有無で新版が復号できた
+ことを確かめる。v0.5.0 は起動時の設定警告をコンソールにしか出さないため、旧版側の復号結果は
+観測しない。
+
+**この検証で作れない・踏めない項目**: 正本はスクリプトの `$script:NotExercised` で、run のサマリ
+（`*.summary.json`）の `notExercised` に理由とともに出る。下の表はその索引である。項目を足し引き
+するときはスクリプトを先に直し、この表の ID を合わせる。
+
+| ID（`item`） | 踏めないもの |
+|---|---|
+| `app-auth-admin-account` | アプリ独自認証の管理者アカウント。v0.5.0 は対話 UI でしか作れず、空の表に対するスキーマ移行だけを確かめる |
+| `dpapi-value-saved-by-source-admin-screen` | v0.5.0 の管理画面で保存した暗号化値。同じ算法（DPAPI のマシン範囲・同じ entropy・`dpapi:` 接頭辞）でスクリプトが暗号化した値で代える |
+| `sql-server-provider` | SQL Server の実インスタンスへ昇格した構成からの更新 |
+| `gmsa-service-account` | gMSA で動く構成からの更新（失敗注入は実在しない gMSA 形式の名前を使うだけ） |
+| `certificate-thumbprint-configuration` | 証明書の拇印を参照する構成（TLS 受信・閲覧 HTTPS・管理 HTTPS）からの更新 |
+| `long-running-state` | 数か月運用した環境の状態（更新元のデータは更新の数分前に作ったもの） |
+| `upgrade-while-running-success-path` | 稼働中のサービスからの更新の成功経路。未消化のスプールを残すため停止状態から更新する。稼働中の旧版を新版の MSI が止める経路は失敗注入（ロールバック）で、稼働中からの成功経路は上の同一ツリーの検証で踏む |
+| `ingestion-gap-under-load` | 既知の流量下での受信断の時間（ADR-0023 受け入れ基準⑪）。msiexec の所要時間は記録するが、受信断の計測ではない |
+| `arm64-upgrade` | ARM64（試験的区分）での `Yagura-0.5.0-arm64.msi` からの更新。本ジョブは x64 のみで、release.yml の ARM64 スモークは単一版のインストールだけを踏む |
+| `supported-tier-os` | 対応区分の OS（Windows Server 2019・Windows 11・Windows 10 LTSC / Enterprise）での更新。本ジョブは推奨区分の Server 2025 / 2022 だけを踏む（`windows-2019` ランナーは退役済み。ADR-0024 決定 5） |
 
 ## ARM64 対応(ADR-0009 決定4・委任事項2)
 
