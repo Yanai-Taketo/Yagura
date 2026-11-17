@@ -7,7 +7,7 @@
 - [configuration.md](configuration.md) — 設定とセットアップ（スキーマ原則、ファイル配置、既定ポートとファイアウォール、資格情報、HTTPS 証明書）
 - [ui.md](ui.md) — デザインシステムと画面設計（トークン、共通コンポーネント、画面骨格、用語対応表、アクセシビリティ）
 - [security.md](security.md) — セキュリティ設計（loopback 束縛 CI テスト仕様、circuit 防御、役割、監査記録、ACL、TLS 受信証明書）
-- operations.md — セットアップ・運用手順
+- [operations.md](../operations.md) — セットアップ・運用手順（利用者向けの運用ガイド。本書は目次で、トピックごとの本文は [operations/](../operations/) 配下に置く）
 - [homework.md](homework.md) — ADR・レビューから委任された宿題の追跡一覧（起筆時にここから引き取る）
 
 **機能を追加・変更する PR は、この層の該当文書の更新を同じ PR に含めること**（docs/README.md 参照）。

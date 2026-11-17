@@ -78,7 +78,7 @@ Kerberos のみを許可し NTLM を拒否したい場合は `Viewer:Authenticat
 ## NTLM 縮退・非ドメイン機
 
 - Windows 統合認証は Kerberos を優先し、成立しない場合（ホスト名の SPN 未登録・IP アドレスでのアクセス等）は自動的に **NTLM へ縮退**する。非ドメイン参加機（ワークグループ）でもローカル Windows アカウントに対する NTLM 認証がそのまま使える——ドメイン必須ではない。
-- NTLM 縮退時は、ブラウザに**資格情報の入力ダイアログ**が出る（Kerberos SSO のような透過ログインにはならない）。NTLM の既知の弱点（リレー攻撃・pass-the-hash・相互認証の欠如）を受容できない環境では、`KerberosOnly = "true"` で NTLM を拒否する（Kerberos SSO が成立する SPN 構成が前提）。
+- NTLM 縮退時は、ブラウザに**資格情報の入力ダイアログ**が出る（Kerberos SSO のような透過ログインにはならない）。NTLM の既知の弱点（リレー攻撃・pass-the-hash・相互認証の欠如）を受容できない環境では、`KerberosOnly = "true"` で NTLM を拒否する（Kerberos SSO が成立する SPN 構成が前提）。管理 UI の Kerberos-only はサーバ上（8515）の待ち受けにも効き、サーバ自身からの Windows サインインは NTLM になるため拒否される。管理 UI で有効にする条件と、loopback 認証と組み合わせたときの締め出しは [Kerberos-only モード（NTLM を拒否する）](opt-in-features.md#kerberos-only-モードntlm-を拒否する)を参照。
 
 ## 監査（誰がアクセスしたか）
 
