@@ -92,7 +92,7 @@
       メジャー更新（5.0 系。メタパッケージ化と既定 S/MIME コンテキスト登録の廃止を含む）は、
       4.x 系内の追従とは別に判断する。
     -->
-    <PackageVersion Include="MailKit" Version="4.18.2" />
+    <PackageVersion Include="MailKit" Version="5.0.0" />
     <PackageVersion Include="MimeKit" Version="4.18.2" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <!--
